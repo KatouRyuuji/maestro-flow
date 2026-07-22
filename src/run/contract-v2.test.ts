@@ -109,6 +109,38 @@ describe('command-contract/2.0', () => {
     const reversedOrder = parseCommandContract({ ...validV2(), consumes: [...reversed.consumes].reverse() });
     expect(hashCommandContract(reversed)).not.toBe(hashCommandContract(reversedOrder));
   });
+
+  it('parses optional chain effects into the normalized contract without changing legacy defaults', () => {
+    const plain = parseCommandContract(validV2());
+    expect(plain.orchestration).toBeUndefined();
+
+    const capable = parseCommandContract({
+      ...validV2(),
+      orchestration: { chain_effects: ['insert', 'skip'] },
+    });
+    expect(capable.orchestration?.chain_effects).toEqual(['insert', 'skip']);
+    expect(createContractSnapshot(capable).normalized).toMatchObject({
+      orchestration: { chain_effects: ['insert', 'skip'] },
+    });
+    expect(hashCommandContract(capable)).not.toBe(hashCommandContract(plain));
+
+    expect(() => parseCommandContract({
+      ...validV2(),
+      orchestration: { chain_effects: ['insert', 'insert'] },
+    })).toThrow(/duplicate chain effect/);
+    expect(() => parseCommandContract({
+      ...validV2(),
+      orchestration: { chain_effects: ['delete'] },
+    })).toThrow();
+  });
+
+  it('supports chain effects on compatibility v1 contracts while preserving empty default behavior', () => {
+    expect(parseCommandContract({
+      consumes: [], produces: [], gates: { entry: [], exit: [] },
+      orchestration: { chain_effects: ['decide'] },
+    }).orchestration?.chain_effects).toEqual(['decide']);
+    expect(parseCommandContract({}).orchestration).toBeUndefined();
+  });
 });
 
 describe('snapshot and creation authority schemas', () => {

@@ -7,6 +7,7 @@ import { z } from 'zod';
 
 import { paths } from '../config/paths.js';
 import {
+  chainEffectSchema,
   contractSnapshotSchema,
   type ContractSnapshot,
 } from './protocol-schemas.js';
@@ -69,6 +70,15 @@ const commandArgumentSchema = z.object({
   question: z.string().min(1).optional(),
 }).strict();
 
+export type ChainEffect = z.infer<typeof chainEffectSchema>;
+
+const orchestrationContractSchema = z.object({
+  chain_effects: z.array(chainEffectSchema).max(4).refine(
+    effects => new Set(effects).size === effects.length,
+    { message: 'duplicate chain effect' },
+  ),
+}).strict();
+
 const produceV2Schema = z.object({
   kind: z.string().min(1),
   path: z.string().min(1),
@@ -116,6 +126,7 @@ function refineStrictContract(
 
 const commandContractV20Schema = z.object({
   contract_version: z.literal(2),
+  orchestration: orchestrationContractSchema.optional(),
   consumes: z.array(consumeV20Schema).default([]),
   produces: z.array(produceV2Schema).default([]),
   gates: z.object({
@@ -126,6 +137,7 @@ const commandContractV20Schema = z.object({
 
 const commandContractV21Schema = z.object({
   contract_version: z.literal(2.1),
+  orchestration: orchestrationContractSchema.optional(),
   arguments: z.array(commandArgumentSchema).default([]),
   consumes: z.array(consumeV21Schema).default([]),
   produces: z.array(produceV2Schema).default([]),
@@ -168,6 +180,7 @@ export interface CommandContract {
   consumes: CommandContractConsume[];
   arguments: CommandArgumentContract[];
   produces: CommandContractProduce[];
+  orchestration?: { chain_effects: ChainEffect[] };
   gates: { entry: ContractGateDefinition[]; exit: ContractGateDefinition[] };
   compatibility_warnings?: string[];
 }
@@ -201,11 +214,15 @@ export function parseCommandContract(raw: unknown): CommandContract {
         ...item,
         primary: item.role === 'primary',
       })),
+      ...(parsed.orchestration ? { orchestration: parsed.orchestration } : {}),
       gates: parsed.gates,
       compatibility_warnings: [],
     };
   }
   const parsed = commandContractV1Schema.parse(raw ?? {});
+  const orchestration = raw && typeof raw === 'object' && 'orchestration' in raw
+    ? orchestrationContractSchema.parse((raw as { orchestration: unknown }).orchestration)
+    : undefined;
   const warnings = semanticWarnings(parsed);
   return {
     contract_version: 1,
@@ -227,6 +244,7 @@ export function parseCommandContract(raw: unknown): CommandContract {
       required: false,
       ...(typeof item.schema === 'string' ? { schema: item.schema } : {}),
     })),
+    ...(orchestration ? { orchestration } : {}),
     gates: parsed.gates,
     compatibility_warnings: warnings,
   };
@@ -237,6 +255,7 @@ export function normalizedCommandContract(contract: CommandContract): Record<str
     const v21 = contract.contract_version === 2.1;
     return {
       contract_version: contract.contract_version,
+      ...(contract.orchestration ? { orchestration: contract.orchestration } : {}),
       ...(v21 ? { arguments: contract.arguments.map(item => ({ ...item })) } : {}),
       consumes: contract.consumes.map(item => ({
         kind: item.kind,
@@ -259,6 +278,7 @@ export function normalizedCommandContract(contract: CommandContract): Record<str
   }
   return {
     contract_version: 1,
+    ...(contract.orchestration ? { orchestration: contract.orchestration } : {}),
     consumes: contract.consumes.map(item => ({
       kind: item.kind,
       ...(item.alias ? { alias: item.alias } : {}),

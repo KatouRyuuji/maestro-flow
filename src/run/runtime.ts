@@ -53,6 +53,7 @@ import {
   type TransitionPointer,
 } from './protocol-schemas.js';
 import { createIntentIdentity } from './intent-identity.js';
+import { validateChainProposalArtifacts } from './chain-proposal.js';
 import { createTopicIdentity, normalizeTopic, sameTopicIdentity, type TopicIdentity } from './topic-identity.js';
 import { assessArtifactReuse, type ReuseAssessment } from './reuse-assessment.js';
 import {
@@ -2044,14 +2045,22 @@ function validateStrictArtifactContract(
 export function checkRun(projectRoot: string, runId: string, sessionId?: string): CheckRunResult {
   const store = new SessionStore(projectRoot);
   const located = store.findRun(runId, sessionId);
+  const initialBundle = store.readBundle(located.sessionId);
   const resolvedContract = contractForRun(projectRoot, located.run);
-  const reuse = revalidateRunReuse(projectRoot, store, store.readBundle(located.sessionId), located.run, resolvedContract.contract);
+  const reuse = revalidateRunReuse(projectRoot, store, initialBundle, located.run, resolvedContract.contract);
   const scan = scanOutputs(
     store.runDir(located.sessionId, runId),
     store.sessionDir(located.sessionId),
     resolvedContract.contract,
   );
   validateStrictArtifactContract(store.runDir(located.sessionId, runId), resolvedContract.contract, scan);
+  validateChainProposalArtifacts(
+    store.runDir(located.sessionId, runId),
+    initialBundle,
+    located.run,
+    resolvedContract.contract,
+    scan,
+  );
   scan.errors.push(...reuse.blockers);
   if (resolvedContract.warning) scan.warnings.unshift(resolvedContract.warning);
   const frontmatter = readReportFrontmatter(store.runDir(located.sessionId, runId));
@@ -2566,6 +2575,13 @@ export function prepareCompleteInputs(
   const scan = scanOutputs(runDir, sessionDir, resolved.contract);
   if (!isFailureVerdict(options.chainVerdict)) {
     validateStrictArtifactContract(runDir, resolved.contract, scan);
+    validateChainProposalArtifacts(
+      runDir,
+      store.readBundle(located.sessionId),
+      located.run,
+      resolved.contract,
+      scan,
+    );
   }
   const extraArtifacts = discoverExtraArtifacts(runDir, sessionDir, options.extraArtifacts ?? []);
   const completionPaths = [
@@ -3289,6 +3305,7 @@ export function briefRun(
     },
     argument_requirements: argumentRequirements,
     reuse_assessments: reuseAssessments,
+    orchestration: { chain_effects: [...(contract.orchestration?.chain_effects ?? [])] },
   });
 
   return briefResultV10Schema.parse({

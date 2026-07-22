@@ -330,7 +330,7 @@ export interface InsertChainStepOpts {
   transition?: Partial<TransitionMutationOptions>;
 }
 
-type ChainMutation =
+export type ChainMutation =
   | { operation: 'insert'; options: InsertChainStepOpts }
   | { operation: 'skip'; stepId: string }
   | { operation: 'replace'; stepId: string; options: ReplaceChainStepOpts };

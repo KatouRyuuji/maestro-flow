@@ -5,6 +5,8 @@ const sha256Schema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const nullableSha256Schema = sha256Schema.nullable();
 const commandHashSchema = z.string().regex(/^[a-f0-9]{64}$/);
 
+export const chainEffectSchema = z.enum(['insert', 'replace', 'skip', 'decide']);
+
 export const intentIdentitySchema = z.object({
   schema_version: z.literal('intent-identity/1.0'),
   normalization: z.literal('NFKC+unicode-lower+whitespace-collapse/1'),
@@ -331,6 +333,9 @@ export const executionContractV11Schema = executionContractV10Schema
     schema_version: z.literal('execution-contract/1.1'),
     argument_requirements: z.array(argumentRequirementSchema),
     reuse_assessments: z.array(reuseAssessmentSchema),
+    orchestration: z.object({
+      chain_effects: z.array(chainEffectSchema),
+    }).strict().optional(),
   })
   .strict();
 
