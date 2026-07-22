@@ -1,6 +1,6 @@
 ---
 title: "Maestro 与 maestro-ralph 统一 Session/Run 链架构规划"
-status: proposed
+status: implemented
 date: 2026-07-22
 ---
 
@@ -361,7 +361,7 @@ Skill 产出的是 proposal，不是 mutation authority：
 | `maestro ralph skills` | 通用 `maestro skills` 或 `maestro run steps` | 复用现有 scanner/resolver |
 | `maestro ralph session` | `maestro session status` | 不按 engine 过滤 |
 | `maestro ralph check` | `maestro session check` | 检查通用 chain/Run/decision |
-| `maestro ralph ledger` | Artifact/Evidence Registry | 旧 ledger 只读兼容 |
+| `maestro ralph ledger` | Artifact/Evidence Registry | 旧 ledger 作为兼容期验证缓存保留；规范查询使用 `maestro session evidence` |
 | `resolveRalphSession()` | generic Session resolver | legacy sidecar 仅在 migration adapter 使用 |
 | `ralph-executor` | generic single-Run executor | 旧名保留兼容 alias |
 
@@ -495,19 +495,19 @@ Skill 产出的是 proposal，不是 mutation authority：
 
 ## 13. 完成标准
 
-- [ ] Session schema 中没有 static/adaptive strategy 或 Maestro/Ralph Session 类型。
-- [ ] `/maestro` 与 `/maestro-ralph` 能双向继续同一 Session。
-- [ ] Ralph 扩展 Maestro Session 不需要 promotion、engine rewrite、fork 或 copy。
-- [ ] chain 是否变化由 Skill contract 和本次 Run 输出决定。
-- [ ] Skill 只能产出 proposal，不能直接修改 protocol state。
-- [ ] proposal capability、schema、source、anchor 和 revision 均由 Runtime 校验。
-- [ ] Run completion 与 accepted proposal 原子提交且支持幂等 replay。
-- [ ] `run next` 是唯一普通 Run allocator。
-- [ ] executor 不 complete，`run complete` 不隐式 next。
-- [ ] Runtime 不包含 drift、goal audit、fix-loop 或业务 routing 策略。
-- [ ] generic resolver 不按 engine 排除 compatible Session。
-- [ ] 新 Session 不创建 Ralph 私有 sidecar。
-- [ ] targeted tests、Session/Run lint、contract parity 和 release-machine checks 全绿。
+- [x] Session schema 中没有 static/adaptive strategy 或 Maestro/Ralph Session 类型。
+- [x] `/maestro` 与 `/maestro-ralph` 能双向继续同一 Session。
+- [x] Ralph 扩展 Maestro Session 不需要 promotion、engine rewrite、fork 或 copy。
+- [x] chain 是否变化由 Skill contract 和本次 Run 输出决定。
+- [x] Skill 只能产出 proposal，不能直接修改 protocol state。
+- [x] proposal capability、schema、source、anchor 和 revision 均由 Runtime 校验。
+- [x] Run completion 与 accepted proposal 原子提交且支持幂等 replay。
+- [x] `run next` 是唯一普通 Run allocator。
+- [x] executor 不 complete，`run complete` 不隐式 next。
+- [x] Runtime 不包含 drift、goal audit、fix-loop 或业务 routing 策略。
+- [x] generic resolver 不按 engine 排除 compatible Session。
+- [x] 新 Session 不创建 Ralph 私有 sidecar。
+- [x] targeted tests、Session/Run lint、contract parity 和 release-machine checks 全绿。
 
 ## 14. 非目标
 
