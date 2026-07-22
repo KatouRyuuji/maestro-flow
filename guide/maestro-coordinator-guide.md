@@ -2,30 +2,30 @@
 title: "Maestro 智能协调器指南"
 ---
 
-静态 chain 选择器 — 分析用户意图，读取项目状态，选择最优命令链，交由统一执行器顺序执行。
+通用 chain composer/runner — 分析用户意图、选择 initial chain，并在同一 Session/Run 协议上执行普通 Skill 或 chain-effect Skill。
 
 ---
 
 ## 定位
 
-Maestro 是 Maestro Flow 的**主入口**。它不自己执行任何 skill：
+Maestro 是 Maestro Flow 的**主入口**：
 
 1. 解析用户意图（action + object + scope）
 2. 读取项目状态（`.workflow/state.json`）
-3. 从 40+ 命令链中选择最优链
-4. 创建 session，交由 `maestro-ralph-execute` 统一执行器
+3. 从命令链目录中选择 initial chain
+4. 创建或继续 Session，通过 `run-executor` 或 direct executor 执行每个 Run
 
-**静态 chain**：链确定后不再变化。没有 decision 节点，没有闭环循环。一次性顺序执行。
+Session/chain 不区分 static/adaptive。普通 Skill 不改链；声明 `orchestration.chain_effects` 的 Skill 可产出 typed proposal，由 Maestro 交互确认或按 `-y` policy 处置，再由 Runtime 原子应用。
 
 与 [Maestro Ralph](./maestro-ralph-guide.md) 的区别：
 
 | | Maestro | Maestro Ralph |
 |---|---------|---------------|
-| **定位** | 静态 chain 选择器 | 自适应生命周期引擎 |
-| **链类型** | 固定链，创建后不变 | 活链，decision 节点动态扩展/收缩 |
-| **循环** | 无 | 闭环循环（失败 → debug → fix → 重试） |
-| **适用场景** | 单次任务、明确意图 | 完整 milestone 推进 |
-| **执行器** | `maestro-ralph-execute`（统一） | `maestro-ralph-execute`（统一） |
+| **定位** | 通用 initial chain composer/runner | closed-loop proposal policy |
+| **Session/Run 协议** | canonical | canonical，可直接继续 Maestro Session |
+| **链变化来源** | Skill proposal | Skill proposal |
+| **策略重点** | 交互确认、chain 耗尽停止 | budget、confidence、escalation、goal/gate stop |
+| **执行器** | `run-executor` 或 direct | `run-executor` |
 
 ---
 
@@ -143,7 +143,7 @@ Maestro 使用 `action x object` 矩阵进行语义路由：
 
 **Step type**：`"skill"` 当前会话内调用（轻量） / `"cli"` CLI delegate 后台执行（重量）
 
-Maestro session **没有** `"decision"` 类型的 step — 与 Ralph 的核心区别。
+新 chain 优先使用可执行 Skill step；是否增加 decision 或 repair step 由对应 Skill proposal 决定，而不是由 Maestro/Ralph Session 类型决定。
 
 </details>
 
@@ -152,15 +152,15 @@ Maestro session **没有** `"decision"` 类型的 step — 与 Ralph 的核心�
 ## 执行流程
 
 ```
-用户输入 → 意图解析 → chain 选择 → session 创建 → maestro-ralph-execute → 顺序执行
+用户输入 → 意图解析 → initial chain → canonical Session → run-executor/direct → check/proposal/complete
 ```
 
 1. **意图解析**：提取 action、object、scope、phase_ref
 2. **状态读取**：读取 `.workflow/state.json`
 3. **链选择**：从 chainMap 选择命令链
 4. **类型选择**：预计算 step type（auto：重量 → cli，轻量 → skill）
-5. **Session 创建**：写入 status.json
-6. **执行派发**：调用统一执行器
+5. **Session 创建**：通过 `session create --chain-file` 写入 canonical `session.json`
+6. **执行派发**：每步通过显式 `run next` 分配，再由所选 executor 执行
 
 ### 状态推断（continue 模式）
 

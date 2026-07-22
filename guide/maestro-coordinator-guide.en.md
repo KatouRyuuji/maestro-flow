@@ -2,30 +2,30 @@
 title: "Maestro Coordinator Guide"
 ---
 
-Static chain selector — analyzes user intent, reads project state, selects the optimal command chain, and hands it off to the unified executor for sequential execution.
+Generic chain composer/runner — analyzes intent, selects an initial chain, and executes ordinary or chain-effect Skills on the canonical Session/Run protocol.
 
 ---
 
 ## Positioning
 
-Maestro is the **main entry point** of Maestro Flow. It does not execute any skills itself:
+Maestro is the **main entry point** of Maestro Flow:
 
 1. Parse user intent (action + object + scope)
 2. Read project state (`.workflow/state.json`)
-3. Select the optimal chain from 40+ command chains
-4. Create a session and hand it off to `maestro-ralph-execute`
+3. Select an initial chain from the command catalog
+4. Create or continue a Session and execute each Run through `run-executor` or the direct executor
 
-**Static chain**: Once determined, it does not change. No decision nodes, no closed-loop cycles. One-pass sequential execution.
+Sessions and chains have no static/adaptive type. Ordinary Skills leave the chain unchanged; a Skill declaring `orchestration.chain_effects` may emit a typed proposal that Maestro confirms and the Runtime applies atomically.
 
 Difference from [Maestro Ralph](./maestro-ralph-guide.en.md):
 
 | | Maestro | Maestro Ralph |
 |---|---------|---------------|
-| **Positioning** | Static chain selector | Adaptive lifecycle engine |
-| **Chain type** | Fixed chain, immutable after creation | Live chain, decision nodes dynamically expand/shrink |
-| **Loops** | None | Closed-loop (failure → debug → fix → retry) |
-| **Use case** | One-off tasks, clear intent | Full milestone progression, automated closed-loop |
-| **Executor** | `maestro-ralph-execute` (unified) | `maestro-ralph-execute` (unified) |
+| **Positioning** | Initial chain composer/runner | Closed-loop proposal policy |
+| **Session/Run protocol** | Canonical | Canonical; directly continues Maestro Sessions |
+| **Chain change source** | Skill proposal | Skill proposal |
+| **Policy focus** | Interactive confirmation, stop when chain is exhausted | Budget, confidence, escalation, goal/gate stop |
+| **Executor** | `run-executor` or direct | `run-executor` |
 
 ---
 
@@ -143,7 +143,7 @@ Storage location: `.workflow/.maestro/maestro-{YYYYMMDD-HHMMSS}/status.json`
 
 **Step type**: `"skill"` in-session call (lightweight) / `"cli"` CLI delegate background execution (heavyweight)
 
-Maestro sessions do **not** have `"decision"` type steps — the core difference from Ralph.
+New chains prefer executable Skill steps. Whether a decision or repair step is added comes from the relevant Skill proposal, not a Maestro/Ralph Session type.
 
 </details>
 
@@ -152,15 +152,15 @@ Maestro sessions do **not** have `"decision"` type steps — the core difference
 ## Execution Flow
 
 ```
-User Input → Intent Parsing → Chain Selection → Session Creation → maestro-ralph-execute → Sequential Execution
+User Input → Intent Parsing → Initial Chain → Canonical Session → run-executor/direct → check/proposal/complete
 ```
 
 1. **Intent Parsing**: Extract action, object, scope, phase_ref
 2. **State Reading**: Read `.workflow/state.json`
 3. **Chain Selection**: Select command chain from chainMap
 4. **Type Selection**: Pre-compute step type (auto: heavyweight → cli, lightweight → skill)
-5. **Session Creation**: Write status.json
-6. **Execution Dispatch**: Call unified executor
+5. **Session Creation**: Persist canonical `session.json` through `session create --chain-file`
+6. **Execution Dispatch**: Explicit `run next`, then the selected executor
 
 ### State Inference (continue mode)
 

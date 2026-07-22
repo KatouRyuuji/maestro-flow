@@ -455,21 +455,21 @@ Ralph is the adaptive lifecycle engine that reads project state → infers posit
 ```
 
 **Core invariants**:
-- Ralph only builds and evaluates, never executes steps
-- `status.json` is the single source of truth
-- Hands off execution via `Skill("maestro-ralph-execute")`
-- Every step must have `completion_confirmed: true`
+- Session/Run/Artifact/Evidence protocol files are the only authority
+- Ralph policy owns proposal disposition, budgets, confidence, escalation, and stop conditions
+- `run-executor` executes exactly one Skill Run and never completes or advances the chain
+- Skills may only emit typed proposals; the Runtime owns mutation authority
 
 **Decision gates**: post-execute / post-business-test / post-review / post-test / post-goal-audit / post-analyze-scope / post-milestone — auto-evaluates quality gate results, decides proceed / fix / escalate
 
-### `/maestro-ralph-execute` — Single-Step Executor
+### `run-executor` — Generic Single-Run Executor
 
 ```bash
-/maestro-ralph-execute                                # Execute next pending step
-/maestro-ralph-execute -y                             # Auto mode
+maestro run next --session <session-id>               # Allocate the next chain Run
+maestro run brief <run-id> --session <session-id>     # Load the canonical Resume Packet
 ```
 
-Ralph's executor: Locate session → Find next step → Load via `maestro ralph next` CLI → Inline execute → `maestro ralph complete` → Self-invoke next. Mutual invocation with `/maestro-ralph` forms a self-perpetuating work loop.
+`run-executor` performs `run next/brief` → one inline Skill → `run check` → returns Artifacts and an optional proposal. The outer `/maestro-ralph` policy evaluates the proposal and completes through `maestro run complete --verdict [--chain-proposal]`; only another explicit `run next` allocates a later Run.
 
 ---
 

@@ -321,17 +321,19 @@ Next steps:
   /{alt-command}      -- {description}
 ```
 
-### Ralph-invoked completion
+### Orchestrated Run completion
 
-Report completion via CLI (do not output text blocks):
+An executor reports `run_id`, check state, artifacts, summary, concerns, and optional proposal path to the orchestrator. It MUST NOT call `run complete` itself. The orchestrator maps the result to:
+
 ```
-maestro ralph complete <idx> --status {STATUS} [--evidence {path}] [--concerns "..."]
+maestro run complete --session <session-id> --verdict {verdict} \
+  [--chain-proposal outputs/chain-proposal.json] [--evidence <path>] [--note "..."]
 ```
 
 Status verdicts:
 - **DONE** — Normal completion
 - **DONE_WITH_CONCERNS** — Completed with caveats; pass `--concerns`
-- **NEEDS_RETRY** — Tooling error / transient issue; ralph will retry
+- **NEEDS_RETRY** — Tooling error / transient issue; the orchestrator may retry
 - **BLOCKED** — External hard blocker; pass `--reason`
 
 ### Next-step routing

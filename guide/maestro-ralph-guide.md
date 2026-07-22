@@ -1,28 +1,28 @@
 ---
-title: "Maestro Ralph 自适应生命周期引擎指南"
+title: "Maestro Ralph 闭环编排策略指南"
 ---
 
-闭环决策引擎 — 读取项目状态，推断生命周期位置，构建自适应命令链，decision 节点动态扩展/收缩链。
+Closed-loop orchestration policy — 在 canonical Session/Run 链上评价 Skill 输出、proposal、budget、confidence、escalation 与停止条件。
 
 ---
 
 ## 定位
 
-Maestro Ralph 是 Maestro Flow 的**全自动推进引擎**：
+Maestro Ralph 是 Maestro Flow 的**闭环推进入口**：
 
 1. 读取项目状态，自动推断当前生命周期位置
-2. 构建从当前位置到目标的完整命令链
-3. 在关键检查点插入 **decision 节点**，动态调整链
-4. 失败时自动插入 debug → fix → 重试循环
+2. 创建或继续任意 compatible Session，并复用同 Session 的 sealed Runs/Artifacts
+3. 执行普通 Skill 或声明 `orchestration.chain_effects` 的 Skill
+4. 对 typed chain proposal 应用 budget、confidence、escalation 与停止策略
 
-**活链**：链在执行过程中可以增长/收缩。与 [Maestro](./maestro-coordinator-guide.md) 的区别：
+Session 与 chain 不区分 static/adaptive。链是否变化由当前 Skill 的 contract 和本次 Run 输出决定。与 [Maestro](./maestro-coordinator-guide.md) 的区别只在 orchestration policy：
 
 | | Maestro | Maestro Ralph |
 |---|---------|---------------|
-| **链类型** | 静态链，确定后不变 | 活链，decision 节点动态扩展 |
-| **循环** | 无 | 闭环（失败 → debug → fix → 重试） |
-| **Decision 节点** | 无 | post-verify、post-review、post-test、post-milestone |
-| **适用场景** | 单次任务、明确意图 | 完整 milestone 生命周期推进 |
+| **Session/Run 协议** | canonical | canonical（可直接继续 Maestro Session） |
+| **初始策略** | 组合 initial chain，偏交互确认 | closed loop，偏 budget/confidence/escalation |
+| **链变化来源** | Skill proposal | Skill proposal |
+| **停止条件** | chain 耗尽或用户停止 | goal/gate 满足、预算耗尽、阻塞或用户停止 |
 
 ---
 
@@ -35,26 +35,26 @@ Maestro Ralph 是 Maestro Flow 的**全自动推进引擎**：
 /maestro-ralph status                # 查看进度
 ```
 
-### Ralph CLI 子命令（v0.4.16+）
+### Canonical CLI
 
-除 slash 命令外，Ralph 还提供终端 CLI 子命令族：
+Ralph 与 Maestro 共享通用 CLI；`maestro ralph ...` 只保留 deprecated compatibility aliases：
 
 ```bash
-maestro ralph session              # 列出活跃 ralph session
-maestro ralph skills               # 列出可用 skill
-maestro ralph skills --platform codex  # 按平台过滤
-maestro ralph next                 # 加载下一步（注入 skill defaults）
-maestro ralph check                # 检查当前 step 状态
-maestro ralph complete N --status DONE  # 标记 step 完成
+maestro session status <session-id>
+maestro session check <session-id>
+maestro session evidence <session-id>
+maestro skills --platform codex --steps
+maestro run next --session <session-id>
+maestro run complete --session <session-id> --verdict done \
+  --chain-proposal outputs/chain-proposal.json
 ```
 
 | 子命令 | 功能 | 使用场景 |
 |--------|------|----------|
-| `session` | 列出活跃 session 及状态 | 查看当前运行的 ralph 会话 |
-| `skills` | 扫描 `.claude/commands/` 和 `.codex/skills/` 中可用 skill | 调试 skill 发现问题 |
-| `next` | 加载下一步的 SKILL.md 并注入 config defaults | ralph-execute 内部调用 |
-| `check` | 查询当前 step 执行状态 | 监控进度 |
-| `complete` | 标记 step 完成并写入 emit 结果 | ralph-execute 内部调用 |
+| `session status/check/evidence` | 查询任意 compatible Session、链一致性和 Evidence Registry | 状态与证据 |
+| `skills` | 扫描 `.claude/commands/`、各平台 Skills 与 Run-resolvable steps | 建链预检 |
+| `run next` | 分配并绑定下一条 chain Run | 唯一普通 chain allocator |
+| `run check/complete` | 校验并原子 seal 当前 Run；可同时应用 accepted proposal | lifecycle 收口 |
 
 ### 双平台 Skill 支持（v0.4.17+）
 
@@ -65,11 +65,11 @@ Ralph 支持扫描两个平台的 skill 目录：
 | Claude | `.claude/commands/` | `platform: "claude"` |
 | Codex | `.codex/skills/` | `platform: "codex"` |
 
-`maestro ralph skills --platform codex` 可过滤只显示 codex 平台 skill。Session JSON 新增 `platform` 和 `cli_tool` 字段标识来源平台。
+`maestro skills --platform codex` 可过滤只显示 Codex 平台 Skill。Session 的 executor metadata 标识来源平台，但不改变 Session 或 chain 类型。
 
 ### Skill Defaults 注入（v0.4.17+）
 
-`maestro ralph next` 加载 step 的 SKILL.md 时，自动注入 `skill-config.json` 中的默认参数。用户无需每次手动指定常用 flag：
+`maestro run next` 分配 step Run，`maestro run brief` 加载 Skill 正文与 contract；平台默认参数仍可从 `skill-config.json` 注入。用户无需每次手动指定常用 flag：
 
 ```json
 // .workflow/skill-config.json
@@ -138,12 +138,12 @@ brainstorm → init → roadmap → analyze → plan → execute
 
 | 节点 | 类型 | 读取文件 | 通过 | 失败处理 |
 |------|------|----------|------|----------|
-| **post-execute** | quality-gate | `verification.json` | 继续 | 插入 debug → plan --gaps → execute → verify 循环 |
-| **post-business-test** | quality-gate | `.tests/auto-test/report.json` | 继续 | 插入 fix 循环 |
-| **post-review** | quality-gate | `review.json` | PASS/WARN 继续 | BLOCK → 插入 fix 循环 |
-| **post-test** | quality-gate | `uat.md` + `test-results.json` | 全部通过 | 轻量重跑未通过的质量门 |
-| **post-frontend-verify** | quality-gate | `e2e-results.json` | 继续 | 插入 frontend fix 循环 |
-| **post-goal-audit** | goal-gate | `task_decomposition` + evidence | `all_met` + `INTENT_ALIGNED=true` | `has_unmet` → 插入 scoped mini-loop；`all_met` + `INTENT_ALIGNED=false` → 漂移熔断 |
+| **post-execute** | quality-gate | `verification.json` | 继续 | 对应 verify/repair Skill 可提出 scoped proposal |
+| **post-business-test** | quality-gate | `.tests/auto-test/report.json` | 继续 | 对应 test/repair Skill 可提出 proposal |
+| **post-review** | quality-gate | `review.json` | PASS/WARN 继续 | BLOCK → review/repair Skill 提出 proposal |
+| **post-test** | quality-gate | `uat.md` + `test-results.json` | 全部通过 | test Skill 可提议重跑未通过质量门 |
+| **post-frontend-verify** | quality-gate | `e2e-results.json` | 继续 | frontend repair Skill 可提出 proposal |
+| **post-goal-audit** | goal-gate | `task_decomposition` + evidence | `all_met` + `INTENT_ALIGNED=true` | unmet goal 由 audit/planning Skill 提出 scoped proposal；漂移仍可触发暂停 |
 | **post-analyze-scope** | scope-gate | `conclusions.json` | `scope_verdict` 确定 → 路由链路 | `unknown` → AskUserQuestion 或默认 standalone |
 | **post-milestone** | structural | `state.json` | 有下一个 M → 插入完整链 | 全部完成 → session 结束 |
 | **post-debug-escalate** | structural | — | — | 达到最大重试，暂停等人工介入 |
@@ -234,7 +234,7 @@ Session Anchor 是 Ralph 在每个 step 执行前自动注入的只读上下文�
 
 ### 注入时机
 
-由 `maestro ralph next` CLI 在加载 step 时通过 `buildSessionAnchor()` 自动生成，嵌入 skill prompt 头部：
+由 `maestro run next` / `maestro run brief` 在加载 step 时生成 canonical Resume Packet，嵌入 Skill prompt：
 
 ```xml
 <session_anchor>
@@ -313,7 +313,7 @@ Re-grounding 是 Ralph 的**意图保真安全门**，周期性检查累积执�
 | 执行 step（不含 decision）≥ 3 | 从第 3 个执行 step 起，每隔 3 个插入 |
 | 最后一个执行 step | 不插入（由 goal-audit 覆盖） |
 | 与已有 quality-gate decision 相邻 | 顺延到下一个 3-step 边界 |
-| fix-loop 动态插入的 step | 纳入计数（从插入点起重新计算间隔） |
+| accepted Skill proposal 插入的 step | 纳入计数（从插入点起重新计算间隔） |
 
 ### 评估流程（A_REGROUND_EVALUATE）
 
@@ -370,7 +370,7 @@ Session 状态设为 `paused`，等待用户决策。
 
 ## Decomposition 工作流（v0.5.36+）
 
-Decomposition 将宽泛意图拆解为可观测的子目标清单，驱动 steps[] 动态生长。
+Decomposition 将宽泛意图拆解为可观测的子目标清单，作为 planning/audit Skill 的输入；是否改变后续 chain 由 Skill proposal 决定。
 
 ### 触发条件
 
@@ -462,11 +462,11 @@ Ralph 的有限状态机（FSM）包含 16 个状态，控制 session 的完整�
 | **S_PLANNING_MODE** | `planning_mode` | 决定统一/独立规划模式 |
 | **S_DECOMPOSE** | `boundary_contract`, `execution_criteria`, `task_decomposition` | 边界澄清 + 子目标拆解 |
 | **S_BUILD_CHAIN** | `steps[]` | 构建步骤链 |
-| **S_CREATE_SESSION** | 全量 session | 写 status.json |
+| **S_CREATE_SESSION** | 全量 Session | 通过 CLI 写 canonical session.json |
 | **S_CONFIRM** | — | 用户确认（非 auto_confirm 时） |
-| **S_DISPATCH** | — | 移交 maestro-ralph-execute |
+| **S_DISPATCH** | — | 派发 generic run-executor |
 | **S_DECISION_EVAL** | — | 委托评估质量门 |
-| **S_APPLY_VERDICT** | `steps[]`, `passed_gates[]` | 应用裁决 + 插入命令 |
+| **S_APPLY_VERDICT** | transition receipt | 评价 proposal；Runtime 原子应用 accepted operations |
 | **S_AMEND_GOAL** | `task_decomposition`, `boundary_contract`, `goal_changelog`, `steps[]` | 修改运行中 session 目标 |
 | **S_FALLBACK** | — | 请求用户输入 |
 
@@ -533,7 +533,7 @@ S_PARSE_ROUTE → S_RESOLVE_PHASE → S_INFER → S_RESOLVE_SCOPE
 
 ### 3. Phase-level deferred chaining
 
-独立模式下，含 `{phase}` 占位符的 step 在 build 阶段无法预知 artifact ID，由 `ralph-execute` 运行时从 state.json 查找注入：
+独立模式下，含 `{phase}` 占位符的 step 在 build 阶段无法预知 Artifact ID，由 `run next/brief` 从 canonical upstream/Artifact Registry 解析并注入：
 
 | Step | 运行时注入 | 写入字段 |
 |------|-----------|----------|
@@ -720,7 +720,7 @@ Session JSON 包含 35+ 字段，以下为完整结构：
 | `retry_count` | number | decision 节点重试计数 |
 | `max_retries` | number | decision 节点最大重试（默认 2） |
 | `command_scope` | string? | `"global"` / `"project"` / `"missing"` / null（decision 节点） |
-| `command_path` | string? | skill .md 绝对路径（由 `ralph skills` 预校验） |
+| `command_path` | string? | Skill `.md` 绝对路径（由 `maestro skills` 预校验） |
 | `milestone_id` | string? | D-007 反查注入的 milestone ID |
 | `source_artifact_ref` | string? | `--from` 注入的源 artifact 引用 |
 | `status` | string | `pending` / `running` / `completed` / `skipped` / `failed` |
@@ -733,7 +733,7 @@ Session JSON 包含 35+ 字段，以下为完整结构：
 | `completion_caveats` | string? | 后续需注意事项 |
 | `completion_deferred` | string[]? | 推迟到后续的工作 |
 | `completed_at` | string? | ISO 时间戳 |
-| `deferred_reads` | string[] | ralph next CLI 解析的 deferred 文件 |
+| `deferred_reads` | string[] | `run brief` 解析的 deferred 文件 |
 | `load` | object? | 加载记录（loaded_at, required_files, deferred_files, resolve_version） |
 
 ---
@@ -746,7 +746,7 @@ Session JSON 包含 35+ 字段，以下为完整结构：
 |------|------|
 | 重试时已通过且代码未变 | 跳过该质量门 |
 | 代码修改后 | 清除受影响的门，重新执行 |
-| fix-loop 插入 | 自动清除下游门 |
+| accepted repair proposal 插入 | 按 proposal 影响范围重新评估下游门 |
 
 质量模式决定管线长度：
 
@@ -760,13 +760,13 @@ Session JSON 包含 35+ 字段，以下为完整结构：
 
 ## 统一执行器
 
-Maestro 和 Ralph 共用 `maestro-ralph-execute`：
+Maestro 和 Ralph 共用 `run-executor` 与 canonical Run lifecycle：
 
-- **skill 节点**：`Skill()` 同步调用，完成后自动执行下一步
-- **cli 节点**：`maestro delegate` 后台执行，等待回调后继续
-- **decision 节点**：回调 `maestro-ralph` 评估（仅 Ralph session）
+- **Skill step**：`run next/brief` 加载并只执行一个 Run
+- **proposal**：executor 返回 Artifact/proposal，不 complete、不直接改链
+- **completion**：外层 policy 调 `run complete [--chain-proposal]`，下一步仍需显式 `run next`
 
-Maestro session 无 decision 节点，纯顺序执行。
+Session 不按 Maestro/Ralph 分型；是否出现 decision/repair step 由 initial chain 或 Skill proposal 决定。
 
 ---
 
@@ -774,10 +774,10 @@ Maestro session 无 decision 节点，纯顺序执行。
 
 | 模式 | 流程 |
 |------|------|
-| **新会话** | 读取 state.json → 推断位置 → 构建 steps[] → 确认 → 执行 |
-| **恢复** | 发现 running session → 读取结果 → 评估 → 可能插入 fix 循环 → 继续 |
-| **`-y` 全自动** | 构建链 → 执行 → decision 自动评估 → 继续（或 escalate 暂停） |
-| **`--amend`** | 修改运行中 session 目标 → 重建链路 → 继续 |
+| **新会话** | 推断位置 → 构建 initial chain → 创建 canonical Session → 执行 Run |
+| **恢复** | 定位 compatible Session → 读取 Run/Artifact → 评价可选 proposal → 继续 |
+| **`-y` 全自动** | 执行 → 按 budget/confidence policy 处置 proposal → 继续或暂停 |
+| **`--amend`** | 修改运行中 Session 目标 → planning Skill 提出后续 proposal → 继续 |
 
 ---
 

@@ -2,7 +2,7 @@
 
 ## 概述
 
-Session Run 是 Maestro 的链式执行编排核心，位于 `src/run/`。围绕 `session/1.x` + `command-run/1.x` 协议构建，支持 ralph / coordinator / manual 三种引擎，提供 `prepare → create → brief → check → complete` 的 machine 生命周期，并提供 `run start` / `run done` / `run edit` 的人类友好入口。
+Session Run 是 Maestro 的链式执行编排核心，位于 `src/run/`。围绕 `session/1.x` + `command-run/1.x` 协议构建，所有入口共享一种 Session 和一种 chain。历史 `engine` 字段仅作兼容元数据，不定义 Session 能力。Runtime 提供 `prepare → create → brief → check → complete` 的 machine 生命周期，并提供 `run start` / `run done` / `run edit` 的人类友好入口。
 
 ## 模块结构
 
@@ -17,6 +17,8 @@ Session Run 是 Maestro 的链式执行编排核心，位于 `src/run/`。围绕
 | 身份 | `intent-identity.ts`, `topic-identity.ts` | NFKC Unicode-safe 意图/主题匹配 |
 | 复用 | `reuse-assessment.ts`, `recall.ts`, `recall-actions.ts` | similarity advisory + recall 基础设施 |
 | 转换 | `session-transition.ts` | resolve/resume 生命周期闭合 |
+| Session 查询 | `session-resolver.ts`, `session-status.ts`, `session-check.ts` | engine-neutral Session 定位、状态与一致性检查 |
+| 链提案 | `chain-proposal.ts` | `chain-proposal/1.0` 校验与 mutation preflight |
 | 响应 | `response.ts` | run-response/1.0 all-exit CLI envelope |
 | 租约 | `lease.ts` | 惰性并发保护（opt-in） |
 | 裁决 | `decide.ts` | decision point 评估落盘 |
@@ -40,9 +42,15 @@ prepare → create → brief → check → complete
 - **create**：machine 协议入口，分配 Session + Run，返回 `session_id / run_id / run_dir / upstream`；人类入口优先使用 `maestro run start`。
 - **brief**：Resume Packet，断点续接的单注入点。
 - **check**：校验 gate 状态，识别 blocking 条件。
-- **complete**：提交当前 Run/chain 转换，返回 `suggest_only` 的 next 摘要；绝不执行建议。
+- **complete**：提交当前 Run/chain 转换；可通过 `--chain-proposal` 把 Run seal、verdict 和已接受链提案作为同一原子 transition 落盘，随后只返回 `suggest_only` next。
 
 显式 `run next` 负责创建下一条 chain-bound Run；`run complete` / `run done` 只完成当前 Run 并返回 suggest-only next，不会自动分配下一步。
+
+## 统一链与 Skill chain effects
+
+Session 不区分 static/adaptive，chain 也没有 fixed/dynamic 类型。普通 Skill 只产出领域 Artifact，后续链保持不变；声明 `orchestration.chain_effects` 的 Skill 可按本次结果选择产出 `outputs/chain-proposal.json`。Skill 只提出 proposal，Maestro 或 Ralph policy 负责 accept/reject/revise，Runtime 校验 capability、source、anchor 与 revision 后原子应用。
+
+`/maestro` 与 `/maestro-ralph` 是两个独立入口，但可创建和继续同一个 Session。前者偏向 initial chain composition 与交互确认，后者偏向 proposal budget、confidence、escalation 和停止条件；两者不需要 Session promotion、engine rewrite、fork 或 copy。
 
 ## 人类入口与 machine 协议
 
@@ -65,16 +73,17 @@ prepare → create → brief → check → complete
 | `session chain insert` | 在指定步骤后插 pending 步骤 | 不能插到 active position 之前 |
 | `session chain skip / replace` | 跳过/原位改字段 | 仅 pending 步骤 |
 | `run next [--pick]` | 步进：取队头 pending 步骤建 Run + 发 birth packet | single-running guard |
-| `run done` / `run complete --verdict` | 原子推进链步状态 | verdict 驱动；不自动执行下一步 |
+| `run done` / `run complete --verdict [--chain-proposal]` | 原子推进链步状态，可同时应用 Skill proposal | verdict 驱动；不自动执行下一步 |
 | `run decide <point-id>` | decision point 裁决落盘 + 推进 | 评估留在 prompt 层 |
 
 ## 入口治理
 
 - **统一步进器 = CLI 动词**：`maestro run next` / `run complete --verdict` 是所有引擎共享的链步进器；`run start` / `run done` / `run edit` 是其上的人类友好薄封装。
 - **单主题 Session 优先**：中途新增步骤应改同一个 Session 的未来 chain，而不是为同一任务反复创建新 Session。
-- **maestro**：ralph/coordinator 引擎的 FSM 驱动者（自动循环、verdict 推进）。
+- **maestro**：通用 initial chain composer/runner；可执行普通 Skill 或 chain-effect Skill。
+- **maestro-ralph**：同一 Session/Run 协议上的闭环 policy；负责 proposal 评价、budget、confidence、escalation 与停止条件。
 - **maestro-next**：默认交互入口（单步推荐 + 执行，No auto-orchestration）。
-- **隔离保证**：ralph 按 `engine !== 'ralph'` 过滤不认领 manual session；lease 惰性（null 零验证）。
+- **兼容保证**：generic resolver 不按 `engine` 过滤；lease 惰性（null 零验证）。
 - **依赖方向**：ralph → run 单向，`src/run` 永不 import `src/ralph`。
 
 ---

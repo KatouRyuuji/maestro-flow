@@ -1,28 +1,28 @@
 ---
-title: "Maestro Ralph Adaptive Lifecycle Engine Guide"
+title: "Maestro Ralph Closed-Loop Orchestration Policy Guide"
 ---
 
-Closed-loop decision engine — reads project state, infers lifecycle position, builds adaptive command chains, with decision nodes that dynamically expand/shrink the chain.
+Closed-loop orchestration policy over the canonical Session/Run chain. It evaluates Skill outputs and proposals under budget, confidence, escalation, and stop policies.
 
 ---
 
 ## Positioning
 
-Maestro Ralph is the **fully automated progression engine** of Maestro Flow:
+Maestro Ralph is the **closed-loop progression entry** of Maestro Flow:
 
 1. Read project state and automatically infer the current lifecycle position
-2. Build a complete command chain from the current position to the target
-3. Insert **decision nodes** at key checkpoints, dynamically adjusting the chain
-4. On failure, automatically insert debug → fix → retry loops
+2. Create or continue any compatible Session and reuse its sealed Runs and Artifacts
+3. Execute ordinary Skills or Skills that declare `orchestration.chain_effects`
+4. Evaluate typed chain proposals under budget, confidence, escalation, and stop policies
 
-**Live chain**: The chain can grow/shrink during execution. Difference from [Maestro](./maestro-coordinator-guide.en.md):
+Sessions and chains have no static/adaptive type. Whether the chain changes is decided by the current Skill contract and Run output. The difference from [Maestro](./maestro-coordinator-guide.en.md) is policy only:
 
 | | Maestro | Maestro Ralph |
 |---|---------|---------------|
-| **Chain type** | Static chain, fixed once determined | Live chain, decision nodes dynamically expand |
-| **Loops** | None | Closed-loop (failure → debug → fix → retry) |
-| **Decision nodes** | None | post-verify, post-review, post-test, post-milestone |
-| **Use case** | One-off tasks, clear intent | Full milestone lifecycle progression |
+| **Session/Run protocol** | Canonical | Canonical; directly continues Maestro Sessions |
+| **Initial policy** | Initial chain composition and interactive confirmation | Closed-loop budget/confidence/escalation |
+| **Chain change source** | Skill proposal | Skill proposal |
+| **Stop condition** | Chain exhausted or user stops | Goal/gate satisfied, budget exhausted, blocked, or user stops |
 
 ---
 
@@ -152,9 +152,9 @@ Storage location: `.workflow/.maestro/ralph-{YYYYMMDD-HHmmss}/status.json`
 
 | Mode | Flow |
 |------|------|
-| **New session** | Read state.json → infer position → build steps[] → confirm → execute |
-| **Resume** | Find running session → read results → evaluate → may insert fix loop → continue |
-| **`-y` automatic** | Build chain → execute → decision auto-evaluate → continue (or escalate pause) |
+| **New session** | Infer position → build initial chain → create canonical Session → execute Runs |
+| **Resume** | Locate a compatible Session → read Runs/Artifacts → evaluate an optional proposal → continue |
+| **`-y` automatic** | Execute → apply budget/confidence proposal policy → continue or pause |
 
 ---
 
@@ -175,13 +175,13 @@ Storage location: `.workflow/.maestro/ralph-{YYYYMMDD-HHmmss}/status.json`
 
 ## Unified Executor
 
-Maestro and Ralph share `maestro-ralph-execute`:
+Maestro and Ralph share `run-executor` and the canonical Run lifecycle:
 
-- **skill nodes**: `Skill()` synchronous call, auto-advances to next step
-- **cli nodes**: `maestro delegate` background execution, waits for callback
-- **decision nodes**: Calls back to `maestro-ralph` for evaluation (Ralph sessions only)
+- **Skill step**: `run next/brief` loads and executes exactly one Run
+- **proposal**: the executor returns Artifacts and an optional proposal; it never completes or mutates the chain
+- **completion**: the outer policy calls `run complete [--chain-proposal]`; another explicit `run next` is still required
 
-Maestro sessions have no decision nodes — purely sequential execution.
+Sessions are not typed as Maestro or Ralph; decision/repair steps come from the initial chain or an accepted Skill proposal.
 
 ---
 

@@ -482,21 +482,21 @@ Ralph 是自适应生命周期引擎，读取项目状态 → 推断位置 → �
 ```
 
 **核心不变量**：
-- Ralph 只构建和评估，不执行步骤
-- `status.json` 是唯一真源
-- 通过 `Skill("maestro-ralph-execute")` 移交执行
-- 每个步骤必须 `completion_confirmed: true`
+- Session/Run/Artifact/Evidence protocol 是唯一真源
+- Ralph policy 负责 proposal 评价、budget、confidence、escalation 与停止条件
+- `run-executor` 每次只执行一个 Skill Run，不 complete、不推进 chain
+- Skill 只能提出 typed proposal，Runtime 独占 mutation authority
 
 **决策门控**：post-execute / post-business-test / post-review / post-test / post-goal-audit / post-analyze-scope / post-milestone — 自动评估质量门结果，决定 proceed / fix / escalate
 
-### `/maestro-ralph-execute` — 单步执行器
+### `run-executor` — 通用单 Run 执行器
 
 ```bash
-/maestro-ralph-execute                                # 执行下一个 pending step
-/maestro-ralph-execute -y                             # 自动模式
+maestro run next --session <session-id>               # 分配下一条 chain Run
+maestro run brief <run-id> --session <session-id>     # 加载 canonical Resume Packet
 ```
 
-Ralph 的执行器：定位会话 → 找下一步 → 通过 `maestro ralph next` CLI 加载 → 内联执行 → `maestro ralph complete` → 自调用下一步。与 `/maestro-ralph` 互调形成自延续工作循环。
+`run-executor`：`run next/brief` → 内联执行一个 Skill → `run check` → 返回 Artifact/proposal。外层 `/maestro-ralph` 评价 proposal，并通过 `maestro run complete --verdict [--chain-proposal]` 收口；只有下一次显式 `run next` 才分配后续 Run。
 
 ---
 

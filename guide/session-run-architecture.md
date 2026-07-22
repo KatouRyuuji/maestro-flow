@@ -61,6 +61,18 @@ paused ──→ session resolve ──→ paused ──→ session resume ─�
 
 Canonical paused recovery 必须严格分成 `resolve` 与 `resume` 两个 phase：`resolve` 只处置一个 escalated decision 或 failed step，Session 仍为 `paused`；`resume` 只在所有 blocker 清空后把 Session 改为 `running`。两者都不创建 Run、不绑定 chain step；恢复后只有显式 `maestro run next` 可以推进 chain 并分配下一个 Run。
 
+### 1.5 统一链与 chain proposal
+
+Session 不区分 static/adaptive，chain 不携带 fixed/dynamic 类型；历史 `engine` 字段仅作兼容元数据。链是否变化由当前 Skill 的 contract/output 决定：
+
+- 未声明 `orchestration.chain_effects`：只能产出领域 Artifact，chain 不变；
+- 声明 chain effects：可选择产出 `outputs/chain-proposal.json`（`chain-proposal/1.0`）；
+- Skill/executor 不修改 `session.json`，只返回 proposal；
+- orchestrator 决定 accept/reject/revise；
+- `run complete --chain-proposal <run-relative-path>` 原子提交 Run seal、verdict 与 proposal operations，且仍只返回 `suggest_only` next。
+
+`/maestro` 与 `/maestro-ralph` 可双向继续同一个 Session。差异只在 initial chain 与 proposal/budget/confidence/escalation/stop policy，不在 Session schema 或 chain 类型。
+
 ---
 
 ## 二、CLI 命令（`src/commands/run.ts` / `src/commands/session.ts`）
@@ -83,6 +95,12 @@ maestro run start "重构 session run 文档" --chain analyze execute review --n
 # 当前 Run 收口；完成后只返回 suggest-only next
 maestro run done --verdict done-with-concerns --note "后续补充 docs-site 镜像"
 
+# canonical 辅助查询与 Skill scanner
+maestro session status <session-id>
+maestro session check <session-id>
+maestro session evidence <session-id>
+maestro skills --platform codex --steps --json
+
 # 中途改变未来 chain，不创建第二个 Session
 maestro run edit test review --after latest
 maestro run edit verify --replace step-003-review
@@ -101,7 +119,7 @@ maestro run edit verify --replace step-003-review
 | `brief` | `<run-id> [--session]` | 恢复包：返回 Run 元信息 + 上游 artifact 快照 + 已产出扫描 |
 | `check` | `<run-id> [--session] [--stage]` | 扫描 outputs/ + 评估 exit gate → 返回通过/失败/阻断 |
 | `decide` | `<point-id> --session --verdict --confidence` | 记录 decision point verdict，写 transition receipt 并给出 suggest-only next |
-| `complete` | `<run-id> [--session]` | check + 标记 Run 完成 + 更新 state.json |
+| `complete` | `<run-id> [--session] [--chain-proposal]` | check + seal Run；可在同一 transition 原子应用已接受 proposal |
 | `seal-session` | `<session-id>` | 锁定 Session：所有 Run 必须已完成，产物变为不可变 |
 | `list` | `[--workflow-root]` | 列出所有 Session 及其 Run |
 
@@ -114,6 +132,9 @@ maestro run edit verify --replace step-003-review
 | `chain insert` | `--session --after --command` | 追加 pending step，receipt-backed |
 | `chain replace` | `--session --step [--command] [--args]` | 原位替换 pending step |
 | `chain skip` | `--session --step` | 将 pending step 标记 skipped |
+| `status` | `[session-id]` | engine-neutral Session/chain/registry 摘要 |
+| `check` | `[session-id]` | 校验 canonical chain、Run binding 与 decision references |
+| `evidence` | `[session-id] [--kind/--status/--run/--point]` | 查询 Evidence Registry 并解析 Artifact references |
 
 ### 2.1 createRun 数据流
 
@@ -374,7 +395,7 @@ interface ConversionProfile {
 
 **正文替换**（除上述映射外的额外规则）：
 - `SendMessage({ to:` → `followup_task({ target:`
-- `ralph skills --platform claude` → `ralph skills --platform codex`
+- `maestro skills --platform claude` → `maestro skills --platform codex`
 - `<task_tracking>` 块替换为 Codex 专用版本
 - `spawn_agents_on_csv` 调用强制注入 `max_runtime_seconds: 3600`
 - `wait_agent` 调用强制注入 `timeout_ms: 3600000`
@@ -454,7 +475,7 @@ interface ConversionProfile {
 5. LLM 加载 workflow 内容（via briefRun 或 prepareStep）→ 执行 → 写入 outputs/
 
 6. maestro run check → 扫描 outputs/ + 评估 gate
-7. maestro run complete → check + 标记完成 + 更新 state.json
+7. maestro run complete [--chain-proposal] → 原子 seal Run、推进 chain、更新 Session/Artifact/Evidence authority
 ```
 
 ---

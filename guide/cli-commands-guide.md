@@ -374,8 +374,12 @@ maestro run prepare <step> --platform codex
 maestro run create <command> --session <id> --intent "<intent>" --json
 maestro run brief <run-id> --session <id> --json
 maestro run check <run-id> --session <id> --json
-maestro run complete <run-id> --session <id> --json
+maestro run complete <run-id> --session <id> --chain-proposal outputs/chain-proposal.json --json
 maestro run seal-session <session-id> --json
+maestro session status <session-id>
+maestro session check <session-id>
+maestro session evidence <session-id> --status accepted
+maestro skills --platform codex --steps --json
 ```
 
 `run brief` 的成功结果固定为 `brief-result/1.0`：`session`/`run` 是 durable authority，
@@ -385,6 +389,8 @@ maestro run seal-session <session-id> --json
 顶层只保留 human locator（`session_id/run_id/run_dir`）和 Pi bridge 使用的 canonical
 `upstream` map；不再重复输出 args、argument requirements、reuse assessments、gate summary
 或 outputs。
+
+所有入口共享一种 Session 和一种 chain；历史 `engine` 只作兼容元数据。声明 `orchestration.chain_effects` 的 Skill 可产出 typed proposal，orchestrator 决定 accept/reject/revise，Runtime 通过 `run complete --chain-proposal` 将 Run seal、verdict 与链变更原子提交。`/maestro` 与 `/maestro-ralph` 可双向继续同一 Session，无需 promotion 或 engine rewrite。
 
 Canonical paused recovery 必须按 `resolve` → `resume` 执行：
 
@@ -411,7 +417,7 @@ maestro run next --session <id> --json
 | human wrapper | `run edit` | 手写入口；插入/替换/跳过 pending chain step，不创建 Run |
 | `create` | `run create`；legacy confirmed `run new` | `create` 需要 command；Session identity 建议显式传 `--session` |
 | `next` | `run next` | 可选 `--session`/`--pick`；选择 pending step 并分配 chain Run |
-| `complete` | `run complete` | 可选 run ID；verdict path 支持 request/revision/lease guards |
+| `complete` | `run complete` | 可选 run ID；支持 `--chain-proposal` 原子应用已接受 Skill proposal，并保留 request/revision/lease guards |
 | `brief` | `run brief <run-id>` | 返回强校验的 `brief-result/1.0` Resume Packet；外层与结果层 next 一致 |
 | `recall` | `run recall <command> --intent <text>` | 只读 advisory projection，不授权 mutation |
 | `fork` | legacy `run recall-confirm fork` / `run fork` | confirmation-token 管理兼容面 |
@@ -422,6 +428,7 @@ maestro run next --session <id> --json
 | `resolve` | `session resolve` | 必填 audit/revision flags 和且仅一个 recovery target；保持 paused |
 | `resume` | `session resume` | 必填 audit/revision flags；只执行 paused → running |
 | session creation | `session create --chain` | 简单命令链建 Session；`--chain-file` 仅用于高级 JSON definition |
+| session query | `session status/check/evidence` | engine-neutral Session 状态、一致性检查与 Evidence Registry 查询 |
 | `chain-insert` | `session chain insert` | 必填 `--session --after --command`；receipt-backed |
 | `chain-replace` | `session chain replace` | 必填 `--session --step`；仅 pending step |
 | `chain-skip` | `session chain skip` | 必填 `--session --step`；仅 pending step |
@@ -682,26 +689,25 @@ maestro tool exec read_file '{"path":"README.md"}'
 ## 智能路由
 
 <details>
-<summary>maestro ralph</summary>
+<summary>maestro-ralph policy 与兼容 CLI</summary>
 
-Ralph CLI 子命令族 — 管理 Ralph 自适应生命周期引擎的 session、skill 和执行。
+`/maestro-ralph` 是 canonical Session/Run 之上的 closed-loop policy，不拥有 Ralph 专属 Session。通用辅助能力使用中立 namespace；旧 `maestro ralph ...` 仅保留兼容窗口。
 
 ```bash
-maestro ralph session              # 列出活跃 ralph session
-maestro ralph skills               # 列出可用 skill
-maestro ralph skills --platform codex  # 按平台过滤
-maestro ralph next                 # 加载下一步（注入 skill defaults）
-maestro ralph check                # 检查当前 step 状态
-maestro ralph complete N --status DONE  # 标记 step 完成
+maestro session status <session-id>     # 通用 Session 状态
+maestro session check <session-id>      # 通用 chain/Run/decision 检查
+maestro session evidence <session-id>   # canonical Evidence Registry
+maestro skills --platform codex --steps # 通用 Skill/step scanner
+maestro run next --session <session-id> # 分配下一条 chain-bound Run
+maestro run complete --session <session-id> --verdict done
 ```
 
 | 子命令 | 说明 |
 |--------|------|
-| `session` | 列出活跃 session 及状态 |
-| `skills` | 扫描可用 skill（支持 `--platform` 过滤） |
-| `next` | 加载下一步 SKILL.md 并注入 config defaults |
-| `check` | 查询当前 step 执行状态 |
-| `complete` | 标记 step 完成并写入 emit 结果 |
+| `maestro session status/check/evidence` | 查询任意 compatible Session，不按 engine 分型 |
+| `maestro skills` | 扫描可用 Skill 与 Run-resolvable steps |
+| `maestro run next/complete` | 所有 orchestrator 共享的 canonical Run lifecycle |
+| `maestro ralph skills/session/check/next/complete` | deprecated compatibility aliases；新调用不要使用 |
 
 </details>
 

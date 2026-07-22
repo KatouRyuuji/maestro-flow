@@ -161,7 +161,7 @@ maestro delegate "continue" --to gemini --resume
 <details>
 <summary>maestro coordinate</summary>
 
-Graph workflow coordinator with step mode and auto mode. Ralph sessions use this internally via `maestro-ralph-execute` for skill-type chain nodes.
+Graph workflow coordinator with step mode and auto mode. Orchestrated chains use the generic `run-executor` and canonical Run lifecycle for Skill steps.
 
 ```bash
 maestro coordinate list                                    # List chain graphs
@@ -221,8 +221,12 @@ maestro run prepare <step> --platform codex
 maestro run create <command> --session <id> --intent "<intent>" --json
 maestro run brief <run-id> --session <id> --json
 maestro run check <run-id> --session <id> --json
-maestro run complete <run-id> --session <id> --json
+maestro run complete <run-id> --session <id> --chain-proposal outputs/chain-proposal.json --json
 maestro run seal-session <session-id> --json
+maestro session status <session-id>
+maestro session check <session-id>
+maestro session evidence <session-id> --status accepted
+maestro skills --platform codex --steps --json
 ```
 
 Canonical paused recovery must run as `resolve` → `resume`:
@@ -241,6 +245,8 @@ maestro run next --session <id> --json
 
 Each `resolve` handles exactly one escalated decision (`--decision` + `proceed|retry`) or failed step (`--step` + `retry|skip`) and leaves the Session `paused`. `resume` changes the Session to `running` only after every blocker is clear. Neither command creates a Run; `run next` is the sole chain allocator after recovery. When the Session has a lease, both commands require `--execution-owner`, `--owner-epoch`, and `--lease-id` together.
 
+Every entry point shares one Session and one chain; the historical `engine` field is compatibility metadata only. A Skill that declares `orchestration.chain_effects` may emit a typed proposal. The orchestrator accepts, rejects, or requests revision, and the Runtime atomically commits the Run seal, verdict, and accepted proposal through `run complete --chain-proposal`. `/maestro` and `/maestro-ralph` can continue the same Session without promotion or engine rewriting.
+
 #### `run-response/1.0` operation matrix
 
 | `operation` | CLI surface | Required inputs / behavior |
@@ -250,7 +256,7 @@ Each `resolve` handles exactly one escalated decision (`--decision` + `proceed|r
 | human wrapper | `run edit` | Handwritten entry; inserts/replaces/skips pending chain steps without allocating a Run |
 | `create` | `run create`; legacy confirmed `run new` | `create` requires a command; pass an explicit `--session` for stable identity |
 | `next` | `run next` | Optional `--session`/`--pick`; selects a pending step and allocates its chain Run |
-| `complete` | `run complete` | Optional Run ID; verdict path supports request/revision/lease guards |
+| `complete` | `run complete` | Optional Run ID; `--chain-proposal` atomically applies an accepted Skill proposal while preserving request/revision/lease guards |
 | `brief` | `run brief <run-id>` | Returns the Resume Packet |
 | `recall` | `run recall <command> --intent <text>` | Read-only advisory projection; never mutation authority |
 | `fork` | legacy `run recall-confirm fork` / `run fork` | Confirmation-token administration compatibility surface |
@@ -261,6 +267,7 @@ Each `resolve` handles exactly one escalated decision (`--decision` + `proceed|r
 | `resolve` | `session resolve` | Requires audit/revision flags and exactly one recovery target; stays paused |
 | `resume` | `session resume` | Requires audit/revision flags; performs only paused → running |
 | session creation | `session create --chain` | Creates a simple command-chain Session; `--chain-file` is only for advanced JSON definitions |
+| session query | `session status/check/evidence` | Engine-neutral status, consistency checks, and canonical Evidence Registry queries |
 | `chain-insert` | `session chain insert` | Requires `--session --after --command`; receipt-backed |
 | `chain-replace` | `session chain replace` | Requires `--session --step`; pending steps only |
 | `chain-skip` | `session chain skip` | Requires `--session --step`; pending steps only |

@@ -500,7 +500,7 @@ Ralph 的 `A_BUILD_STEPS` 可以将 step 的执行器设为 `maestro-ralph`（�
 }
 ```
 
-执行流程不变：`ralph-execute` → `maestro ralph next` 加载 → 内联执行 → ralph swarm 内部调 Workflow 工具。
+执行流程不变：`run-executor` → `maestro run next/brief` 加载 → 内联执行一个 Skill Run → Ralph policy 评价可选 proposal → `run complete` 原子收口。swarm/universal 只是在该 Run 内调用 Workflow 的执行载体，不定义 Session 或 chain 类型。
 
 ### 产出兼容性
 

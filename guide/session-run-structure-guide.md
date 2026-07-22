@@ -347,7 +347,8 @@ LLM 眼里的全流程（**零协议 schema 学习**，prepare 可选——不�
    · Write report.md（含 frontmatter，§7.5）
    （中途可选）maestro run brief <run>       ← brief-result/1.0：Session authority + guidance drift + execution contract + 完整 run-mode.md，防压缩遗忘
 
-5. maestro run complete <run>              ← 只传 run id
+5. maestro run complete <run> [--chain-proposal outputs/chain-proposal.json]
+                                               ← proposal 与 Run seal 原子提交；不隐式 next
    → CLI 扫 outputs/ → 派生 artifacts.json
    → CLI 读 report.md frontmatter → 派生 run.json.handoff + 追加 gate（source:handoff）
    → CLI 求值全部 exit 门 → 更新 alias → seal
