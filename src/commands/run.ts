@@ -271,6 +271,7 @@ export function registerRunCommand(program: Command): void {
     .option('--decision <text>', 'decision appended to handoff.decisions (repeatable)', collect, [])
     .option('--evidence <path>', 'run-relative evidence path registered as an artifact (repeatable)', collect, [])
     .option('--artifact <path>', 'run-relative path registered as evidence beyond the outputs scan (repeatable)', collect, [])
+    .option('--chain-proposal <path>', 'run-relative chain-proposal artifact applied atomically with completion')
     .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
     .action((runIdArg: string | undefined, opts: {
       session?: string;
@@ -281,6 +282,7 @@ export function registerRunCommand(program: Command): void {
       decision: string[];
       evidence: string[];
       artifact: string[];
+      chainProposal?: string;
       workflowRoot: string;
     }) => {
       try {
@@ -313,6 +315,7 @@ export function registerRunCommand(program: Command): void {
           extraArtifacts: [...opts.artifact, ...opts.evidence],
           summaryFallback: opts.summary,
           reason: opts.reason,
+          chainProposal: opts.chainProposal,
         });
         print(result);
         process.stderr.write(`next: ${result.next.command}\n      ${result.next.reason}\n`);
@@ -596,6 +599,7 @@ Compatibility boundary:
     .option('--decision <text>', 'decision appended to handoff.decisions (repeatable)', collect, [])
     .option('--evidence <path>', 'run-relative evidence path registered as an artifact (repeatable)', collect, [])
     .option('--artifact <path>', 'run-relative path registered as evidence beyond the outputs scan (repeatable)', collect, [])
+    .option('--chain-proposal <path>', 'run-relative chain-proposal artifact applied atomically with completion')
     .option('--execution-owner <owner>', 'lease execution owner (checked against session.orchestration.lease)')
     .option('--owner-epoch <epoch>', 'lease owner epoch', Number.parseInt)
     .option('--lease-id <id>', 'lease identifier for concurrency safety')
@@ -613,6 +617,7 @@ Compatibility boundary:
       decision: string[];
       evidence: string[];
       artifact: string[];
+      chainProposal?: string;
       executionOwner?: string;
       ownerEpoch?: number;
       leaseId?: string;
@@ -627,6 +632,7 @@ Compatibility boundary:
         // 免参 (no run-id), routes through the chain-driving verdict path.
         const verbless = !opts.verdict && (opts.decision?.length ?? 0) === 0
           && (opts.evidence?.length ?? 0) === 0 && !opts.reason
+          && !opts.chainProposal
           && !opts.executionOwner && !opts.leaseId && opts.ownerEpoch === undefined;
         if (runIdArg && verbless) {
           const result = completeRun(projectRoot, runIdArg, opts.session, {
@@ -695,6 +701,7 @@ Compatibility boundary:
           extraArtifacts: [...opts.artifact, ...opts.evidence],
           summaryFallback: opts.summary,
           reason: opts.reason,
+          chainProposal: opts.chainProposal,
           leaseClaim: {
             executionOwner: opts.executionOwner,
             ownerEpoch: opts.ownerEpoch,

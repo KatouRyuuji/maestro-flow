@@ -5,6 +5,7 @@ import {
   createRunResponseSuccess,
   emitRunResponse,
   runResponseSchema,
+  stableRunResponseErrorCode,
 } from './response.js';
 
 afterEach(() => {
@@ -120,5 +121,7 @@ describe('run-response/1.0', () => {
         message: `exit ${exit_code}`,
       }).exit_code).toBe(exit_code);
     }
+    expect(stableRunResponseErrorCode(new Error('chain proposal is missing or invalid')))
+      .toBe('CHAIN_PROPOSAL_INVALID');
   });
 });

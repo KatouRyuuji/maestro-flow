@@ -53,7 +53,12 @@ import {
   type TransitionPointer,
 } from './protocol-schemas.js';
 import { createIntentIdentity } from './intent-identity.js';
-import { validateChainProposalArtifacts } from './chain-proposal.js';
+import {
+  applyChainProposal,
+  selectChainProposal,
+  validateChainProposalArtifacts,
+  type ValidatedChainProposal,
+} from './chain-proposal.js';
 import { createTopicIdentity, normalizeTopic, sameTopicIdentity, type TopicIdentity } from './topic-identity.js';
 import { assessArtifactReuse, type ReuseAssessment } from './reuse-assessment.js';
 import {
@@ -252,6 +257,13 @@ export interface CompleteRunResult extends CheckRunResult {
     step_status: string;
     retry: { count: number; max: number; exhausted: boolean } | null;
   } | null;
+  /** Proposal operations applied inside the same completion transition. */
+  chain_proposal?: {
+    proposal_id: string;
+    path: string;
+    status: 'applied';
+    operations: Array<{ op: string; target: string; status: string }>;
+  } | null;
   transition: TransitionMutationReceipt;
 }
 
@@ -359,6 +371,8 @@ export interface CompleteRunOptions {
   leaseClaim?: LeaseClaim;
   /** Internal chain transition used by completeRunWithVerdict. */
   chainVerdict?: CompletionVerdict;
+  /** Run-relative chain-proposal artifact selected for atomic application. */
+  chainProposal?: string;
   /** Audited retry/revision/lease authority for completion. */
   transition?: Partial<TransitionMutationOptions>;
 }
@@ -2060,6 +2074,7 @@ export function checkRun(projectRoot: string, runId: string, sessionId?: string)
     located.run,
     resolvedContract.contract,
     scan,
+    { preflight: located.run.status !== 'sealed' },
   );
   scan.errors.push(...reuse.blockers);
   if (resolvedContract.warning) scan.warnings.unshift(resolvedContract.warning);
@@ -2480,6 +2495,7 @@ export interface PreparedCompleteInputs {
   options: CompleteRunOptions;
   files: PreparedCompleteFile[];
   completionInputSnapshot: CompleteInputSnapshot;
+  chainProposal: ValidatedChainProposal | null;
 }
 
 type CompleteAuthorityResult = Omit<CompleteRunResult, 'transition'>;
@@ -2549,12 +2565,13 @@ export function prepareCompleteInputs(
   const store = new SessionStore(projectRoot);
   const located = store.findRun(runId, sessionId);
   const replayRequestId = options.transition?.requestId?.trim();
+  let replayRecord: PersistedTransitionRecord | undefined;
   if (replayRequestId) {
-    const replayRecord = store.readBundle(located.sessionId).session.requests.find(item => (
+    const candidate = store.readBundle(located.sessionId).session.requests.find(item => (
       item.type === 'transition' && 'outcome' in item && item.request_id === replayRequestId
     ));
-    if (replayRecord) {
-      const validated = validatePersistedTransitionRecord(replayRecord);
+    if (candidate) {
+      const validated = validatePersistedTransitionRecord(candidate);
       if (validated.payload.operation !== 'complete'
         || validated.payload.subject.session_id !== located.sessionId
         || validated.payload.subject.run_id !== runId) {
@@ -2567,21 +2584,27 @@ export function prepareCompleteInputs(
         store.runDir(located.sessionId, runId),
         validated,
       );
+      replayRecord = validated;
     }
   }
   const resolved = contractForRun(projectRoot, located.run);
   const runDir = store.runDir(located.sessionId, runId);
   const sessionDir = store.sessionDir(located.sessionId);
   const scan = scanOutputs(runDir, sessionDir, resolved.contract);
+  let chainProposal: ValidatedChainProposal | null = null;
   if (!isFailureVerdict(options.chainVerdict)) {
     validateStrictArtifactContract(runDir, resolved.contract, scan);
-    validateChainProposalArtifacts(
+    const proposals = validateChainProposalArtifacts(
       runDir,
       store.readBundle(located.sessionId),
       located.run,
       resolved.contract,
       scan,
+      { preflight: replayRecord === undefined },
     );
+    if (options.chainProposal) chainProposal = selectChainProposal(runDir, options.chainProposal, proposals);
+  } else if (options.chainProposal) {
+    throw new Error('chain proposal cannot be applied with needs-retry or blocked verdict');
   }
   const extraArtifacts = discoverExtraArtifacts(runDir, sessionDir, options.extraArtifacts ?? []);
   const completionPaths = [
@@ -2614,6 +2637,7 @@ export function prepareCompleteInputs(
     options,
     files: [...paths].sort().map(path => ({ path, hash: preparedPathHash(path) })),
     completionInputSnapshot: completeInputSnapshot(runDir, completionPaths),
+    chainProposal,
   };
 }
 
@@ -2674,6 +2698,7 @@ export function applyCompleteRunMutation(
           preconditions: ['repair blocking outputs or gates', 'run check must report no blocking gates'],
         },
         chain_transition: null,
+        chain_proposal: null,
       },
     };
   }
@@ -2695,6 +2720,14 @@ export function applyCompleteRunMutation(
   const chainTransition = options.chainVerdict
     ? applyChainVerdict(draft.session, run, options.chainVerdict)
     : null;
+  const chainProposal = prepared.chainProposal
+    ? {
+        proposal_id: prepared.chainProposal.proposal.proposal_id,
+        path: prepared.chainProposal.path,
+        status: 'applied' as const,
+        operations: applyChainProposal(draft, prepared.chainProposal.proposal),
+      }
+    : null;
   summarizeRegistry(draft.gates);
   tx.writeRun(run);
   tx.writeJson(join(store.workflowRoot, 'state.json'), ensureSessionProjection(
@@ -2707,7 +2740,9 @@ export function applyCompleteRunMutation(
       artifacts: scanSummary(scan), warnings: scan.warnings, errors: scan.errors,
       upstream: reuse.upstream, reuse_assessments: reuse.assessments, sealed: true,
       primary_artifact_id: primary, artifact_ids: artifactIds,
-      next_action: completionNextPointer(draft.session, runId), chain_transition: chainTransition,
+      next_action: completionNextPointer(draft.session, runId),
+      chain_transition: chainTransition,
+      chain_proposal: chainProposal,
     },
   };
 }
@@ -2739,6 +2774,13 @@ export function completeRun(
       summary_fallback: options.summaryFallback ?? null,
       decisions: options.decisions ?? [],
       chain_verdict: options.chainVerdict ?? null,
+      chain_proposal: preparedInputs.chainProposal
+        ? {
+            path: preparedInputs.chainProposal.path,
+            proposal_id: preparedInputs.chainProposal.proposal.proposal_id,
+            content_hash: preparedInputs.chainProposal.artifact.contentHash,
+          }
+        : null,
       completion_input_snapshot: priorSnapshot ?? preparedInputs.completionInputSnapshot,
     },
     options: options.transition ?? { leaseClaim: options.leaseClaim },
@@ -2900,6 +2942,7 @@ export function completeRunWithVerdict(
     decisions: options.decisions,
     leaseClaim: options.leaseClaim,
     chainVerdict: verdict,
+    chainProposal: options.chainProposal,
     transition: options.transition,
   });
 

@@ -37,6 +37,43 @@ function stepCommand(projectRoot: string, name: string): void {
   writeFileSync(join(wfDir, `${name}.md`), `# ${name}\n\nwork\n`, 'utf8');
 }
 
+function proposalCommand(projectRoot: string, name: string, effects: string[]): void {
+  stepCommand(projectRoot, name);
+  writeFileSync(join(projectRoot, '.claude', 'commands', `${name}.md`), `<contract>\ncontract_version: 2
+orchestration:
+  chain_effects: [${effects.join(', ')}]
+consumes: []
+produces:
+  - kind: chain-proposal
+    path: outputs/chain-proposal.json
+    alias: chain-proposal
+    role: attachment
+    required: false
+    schema: chain-proposal/1.0
+gates:
+  entry: []
+  exit: []
+</contract>\n`, 'utf8');
+}
+
+function writeChainProposal(
+  projectRoot: string,
+  sessionId: string,
+  runId: string,
+  skill: string,
+  operations: unknown[],
+): string {
+  const relativePath = 'outputs/chain-proposal.json';
+  writeFileSync(join(projectRoot, '.workflow', 'sessions', sessionId, 'runs', runId, relativePath), JSON.stringify({
+    _meta: { kind: 'chain-proposal', schema: 'chain-proposal/1.0', role: 'attachment', alias: 'chain-proposal' },
+    proposal_id: 'cp-atomic-1',
+    source: { session_id: sessionId, run_id: runId, skill },
+    reason: 'Insert verification after the completed analysis.',
+    operations,
+  }, null, 2), 'utf8');
+  return relativePath;
+}
+
 interface StepSeed {
   command: string;
   status?: string;
@@ -260,6 +297,97 @@ describe('run complete — verdict chain transitions', () => {
 });
 
 describe('run complete — completion gate integrity', () => {
+  it('applies and replays a selected chain proposal in the completion transaction', () => {
+    const projectRoot = root();
+    proposalCommand(projectRoot, 'adaptive', ['insert', 'replace', 'skip']);
+    stepCommand(projectRoot, 'execute');
+    seedSession(projectRoot, 's', [
+      { command: 'adaptive' }, { command: 'execute' }, { command: 'cleanup' },
+    ]);
+    const runId = startStep(projectRoot, 's', 0);
+    const proposalPath = writeChainProposal(projectRoot, 's', runId, 'adaptive', [
+      { op: 'insert', after: 'step-000-adaptive', command: 'verify' },
+      { op: 'replace', step_id: 'step-001-execute', command: 'debug' },
+      { op: 'skip', step_id: 'step-002-cleanup', reason: 'No cleanup remains after verification.' },
+    ]);
+    const store = new SessionStore(projectRoot);
+    const before = store.readBundle('s').session;
+    const transition = {
+      requestId: 'req-complete-chain-proposal',
+      expectedIdentityRevision: before.identity_revision,
+      expectedActivityRevision: before.activity_revision,
+    };
+
+    const original = (SessionStore.prototype as any).writeBatchUnlocked;
+    const fault = vi.spyOn(SessionStore.prototype as any, 'writeBatchUnlocked')
+      .mockImplementationOnce(() => { throw new Error('injected proposal commit fault'); });
+    expect(() => completeRunWithVerdict(projectRoot, runId, 's', {
+      verdict: 'done', chainProposal: proposalPath, transition,
+    })).toThrow(/injected proposal commit fault/);
+    fault.mockRestore();
+    expect(chainOf(projectRoot, 's').map(step => [step.command, step.status])).toEqual([
+      ['adaptive', 'running'], ['execute', 'pending'], ['cleanup', 'pending'],
+    ]);
+    expect(store.readRun('s', runId).status).not.toBe('sealed');
+
+    const batches: string[][] = [];
+    const capture = vi.spyOn(SessionStore.prototype as any, 'writeBatchUnlocked')
+      .mockImplementation(function (this: SessionStore, writes: Array<{ path: string }>) {
+        batches.push(writes.map(write => write.path));
+        return original.call(this, writes);
+      });
+    const applied = completeRunWithVerdict(projectRoot, runId, 's', {
+      verdict: 'done', chainProposal: proposalPath, transition,
+    });
+    capture.mockRestore();
+    expect(applied.seal.chain_proposal).toMatchObject({
+      proposal_id: 'cp-atomic-1', path: proposalPath, status: 'applied',
+      operations: [
+        { op: 'insert', status: 'pending' },
+        { op: 'replace', status: 'pending' },
+        { op: 'skip', status: 'skipped' },
+      ],
+    });
+    expect(chainOf(projectRoot, 's').map(step => [step.command, step.status])).toEqual([
+      ['adaptive', 'sealed'], ['verify', 'pending'], ['debug', 'pending'], ['cleanup', 'skipped'],
+    ]);
+    expect(batches).toHaveLength(1);
+    const receipt = store.readBundle('s').session.requests.find(item => item.request_id === transition.requestId) as any;
+    expect(receipt.payload.payload.chain_proposal).toMatchObject({
+      path: proposalPath, proposal_id: 'cp-atomic-1', content_hash: expect.any(String),
+    });
+
+    const replay = completeRunWithVerdict(projectRoot, runId, 's', {
+      verdict: 'done', chainProposal: proposalPath, transition,
+    });
+    expect(replay.seal.transition.status).toBe('replayed');
+    expect(chainOf(projectRoot, 's').map(step => step.command)).toEqual(['adaptive', 'verify', 'debug', 'cleanup']);
+
+    const proposalFile = join(store.runDir('s', runId), proposalPath);
+    writeFileSync(proposalFile, `${readFileSync(proposalFile, 'utf8')}\n`, 'utf8');
+    expect(() => completeRunWithVerdict(projectRoot, runId, 's', {
+      verdict: 'done', chainProposal: proposalPath, transition,
+    })).toThrowError(expect.objectContaining({ code: 'FENCE_CONFLICT' }));
+  });
+
+  it('rejects chain proposal application on failure verdicts without changing authority', () => {
+    const projectRoot = root();
+    proposalCommand(projectRoot, 'adaptive', ['insert']);
+    seedSession(projectRoot, 's', [{ command: 'adaptive' }]);
+    const runId = startStep(projectRoot, 's', 0);
+    const proposalPath = writeChainProposal(projectRoot, 's', runId, 'adaptive', [
+      { op: 'insert', after: 'step-000-adaptive', command: 'verify' },
+    ]);
+
+    expect(() => completeRunWithVerdict(projectRoot, runId, 's', {
+      verdict: 'needs-retry', chainProposal: proposalPath,
+    })).toThrow(/cannot be applied with needs-retry or blocked/);
+    expect(chainOf(projectRoot, 's').map(step => [step.command, step.status])).toEqual([
+      ['adaptive', 'running'],
+    ]);
+    expect(new SessionStore(projectRoot).readRun('s', runId).status).not.toBe('sealed');
+  });
+
   it('commits complete authority and receipt in one StoreTransaction', () => {
     const projectRoot = root();
     stepCommand(projectRoot, 'demo');
@@ -331,6 +459,7 @@ describe('run complete — completion gate integrity', () => {
       payload: {
         run_id: runId, notes: [], extra_artifacts: [], summary_fallback: null,
         decisions: [], chain_verdict: 'needs-retry',
+        chain_proposal: null,
         completion_input_snapshot: (storedRequest as any).payload.payload.completion_input_snapshot,
       },
       options: transition,
@@ -673,6 +802,22 @@ describe('run complete — next pointer', () => {
 // ── CLI wiring (commander) ───────────────────────────────────────────────────────
 
 describe('run complete CLI — verdict + 免参 + lease', () => {
+  it('applies --chain-proposal through the canonical complete path', async () => {
+    const projectRoot = root();
+    proposalCommand(projectRoot, 'adaptive', ['insert']);
+    seedSession(projectRoot, 's', [{ command: 'adaptive' }], { active: true });
+    const runId = startStep(projectRoot, 's', 0);
+    const proposalPath = writeChainProposal(projectRoot, 's', runId, 'adaptive', [
+      { op: 'insert', after: 'step-000-adaptive', command: 'verify' },
+    ]);
+
+    const out = (await runCompleteCli(projectRoot, [
+      runId, '--session', 's', '--verdict', 'done', '--chain-proposal', proposalPath,
+    ])) as { seal?: { chain_proposal?: { proposal_id: string } } };
+    expect(out?.seal?.chain_proposal?.proposal_id).toBe('cp-atomic-1');
+    expect(chainOf(projectRoot, 's').map(step => step.command)).toEqual(['adaptive', 'verify']);
+  });
+
   it('免参 done resolves the active step and seals it', async () => {
     const projectRoot = root();
     stepCommand(projectRoot, 'demo');

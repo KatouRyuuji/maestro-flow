@@ -34,6 +34,7 @@ export function stableRunResponseErrorCode(error: unknown): RunResponseErrorCode
   if (/(unknown|invalid).*platform|platform.*(unknown|invalid)/i.test(message)) return 'PLATFORM_INVALID';
   if (/platform.*(mismatch|conflict)/i.test(message)) return 'PLATFORM_CONFLICT';
   if (/contract.*drift/i.test(message)) return 'CONTRACT_DRIFT';
+  if (/chain[- ]proposal/i.test(message)) return 'CHAIN_PROPOSAL_INVALID';
   if (/immutable/i.test(message)) return 'RUN_IMMUTABLE';
   if (/confirmation token not found|invalid confirmation token/i.test(message)) return 'TOKEN_INVALID';
   if (/expired/i.test(message)) return 'TOKEN_EXPIRED';

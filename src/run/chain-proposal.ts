@@ -76,6 +76,18 @@ export const chainProposalV10Schema = z.object({
 
 export type ChainProposal = z.infer<typeof chainProposalV10Schema>;
 
+export interface ValidatedChainProposal {
+  proposal: ChainProposal;
+  artifact: DiscoveredArtifact;
+  path: string;
+}
+
+export interface AppliedChainProposalOperation {
+  op: ChainEffect;
+  target: string;
+  status: string;
+}
+
 function runRelativePath(runDir: string, artifact: DiscoveredArtifact): string {
   return relative(runDir, artifact.absolutePath).replaceAll('\\', '/');
 }
@@ -105,12 +117,15 @@ function operationEffect(operation: ChainProposal['operations'][number]): ChainE
   return operation.op;
 }
 
-function preflightProposal(bundle: SessionBundle, proposal: ChainProposal): void {
-  const draft = structuredClone(bundle);
+export function applyChainProposal(
+  draft: SessionBundle,
+  proposal: ChainProposal,
+): AppliedChainProposalOperation[] {
+  const applied: AppliedChainProposalOperation[] = [];
   for (const [index, operation] of proposal.operations.entries()) {
     try {
       if (operation.op === 'insert') {
-        applyChainMutation(draft, {
+        const step = applyChainMutation(draft, {
           operation: 'insert',
           options: {
             after: operation.after,
@@ -122,8 +137,9 @@ function preflightProposal(bundle: SessionBundle, proposal: ChainProposal): void
             ...(operation.decision_ref !== undefined ? { decisionRef: operation.decision_ref } : {}),
           },
         });
+        applied.push({ op: operation.op, target: step.step_id, status: step.status });
       } else if (operation.op === 'replace') {
-        applyChainMutation(draft, {
+        const step = applyChainMutation(draft, {
           operation: 'replace',
           stepId: operation.step_id,
           options: {
@@ -133,20 +149,24 @@ function preflightProposal(bundle: SessionBundle, proposal: ChainProposal): void
             ...(operation.goal_ref !== undefined ? { goalRef: operation.goal_ref } : {}),
           },
         });
+        applied.push({ op: operation.op, target: step.step_id, status: step.status });
       } else if (operation.op === 'skip') {
-        applyChainMutation(draft, { operation: 'skip', stepId: operation.step_id });
+        const step = applyChainMutation(draft, { operation: 'skip', stepId: operation.step_id });
+        applied.push({ op: operation.op, target: step.step_id, status: step.status });
       } else {
-        applyDecideMutation(draft, operation.point_id, {
+        const decision = applyDecideMutation(draft, operation.point_id, {
           verdict: operation.verdict,
           confidence: operation.confidence,
           ...(operation.summary !== undefined ? { summary: operation.summary } : {}),
           ...(operation.evidence !== undefined ? { evidence: operation.evidence } : {}),
-        }, `proposal:${proposal.proposal_id}:${index}`, new Date(0).toISOString());
+        }, `proposal:${proposal.proposal_id}:${index}`, new Date(0).toISOString()).decision;
+        applied.push({ op: operation.op, target: decision.point_id, status: decision.point_status });
       }
     } catch (error) {
       throw new Error(`operations[${index}] ${operation.op}: ${(error as Error).message}`);
     }
   }
+  return applied;
 }
 
 export function validateChainProposalArtifacts(
@@ -155,7 +175,8 @@ export function validateChainProposalArtifacts(
   run: CommandRun,
   contract: CommandContract,
   scan: ArtifactScanResult,
-): void {
+  options: { preflight?: boolean } = {},
+): ValidatedChainProposal[] {
   const proposals = scan.artifacts.filter(artifact => (
     artifact.kind === 'chain-proposal'
     || artifact.schemaVersion === 'chain-proposal/1.0'
@@ -163,6 +184,7 @@ export function validateChainProposalArtifacts(
   ));
   const allowed = new Set(contract.orchestration?.chain_effects ?? []);
   const ids = new Set<string>();
+  const validated: ValidatedChainProposal[] = [];
 
   for (const artifact of proposals) {
     const label = runRelativePath(runDir, artifact);
@@ -183,7 +205,8 @@ export function validateChainProposalArtifacts(
         const effect = operationEffect(operation);
         if (!allowed.has(effect)) throw new Error(`operation ${effect} is not allowed by contract orchestration.chain_effects`);
       }
-      preflightProposal(bundle, proposal);
+      if (options.preflight !== false) applyChainProposal(structuredClone(bundle), proposal);
+      validated.push({ proposal, artifact, path: label });
     } catch (error) {
       const detail = error instanceof z.ZodError
         ? error.issues.map(issue => `${issue.path.join('.') || 'proposal'}: ${issue.message}`).join('; ')
@@ -191,4 +214,21 @@ export function validateChainProposalArtifacts(
       scan.errors.push(`${label}: invalid chain-proposal/1.0 (${detail})`);
     }
   }
+  return validated;
+}
+
+export function selectChainProposal(
+  runDir: string,
+  requestedPath: string,
+  proposals: readonly ValidatedChainProposal[],
+): ValidatedChainProposal {
+  const outputsRoot = realpathSync(resolve(runDir, 'outputs'));
+  const requested = resolve(runDir, requestedPath);
+  const rel = relative(outputsRoot, requested);
+  if (!rel || rel.startsWith('..') || resolve(outputsRoot, rel) !== requested) {
+    throw new Error(`chain proposal path must remain under the current Run outputs/: ${requestedPath}`);
+  }
+  const selected = proposals.find(item => resolve(item.artifact.absolutePath) === requested);
+  if (!selected) throw new Error(`chain proposal is missing or invalid: ${requestedPath}`);
+  return selected;
 }
