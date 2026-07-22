@@ -6,7 +6,7 @@
 # Workflow: maestro — Chain Catalog
 
 > 本文件是 `/maestro` 命令体（A_CLASSIFY_INTENT）消费的**语义目录**：意图 → task_type → chain。
-> 执行流程（状态机、session 创建、`Agent(ralph-executor)` 派发、决策评估、compose/play 模板系统）全部在命令体内定义，本文件不含执行语义。
+> 执行流程（状态机、Session 创建、`Agent(run-executor)` 派发、决策评估、compose/play 模板系统）全部在命令体内定义，本文件不含执行语义。
 >
 > **cmd 记法**：裸名称（`plan`、`execute`、`review`…）= first-tier step；`maestro-*` 与 `quality-refactor` = 独立 command 名。`team-*` 与 `maestro-odyssey` 是用户手动入口，明确排除在本目录的分类和 chain routing 之外。
 

@@ -89,7 +89,7 @@ Remaining      → intent (amend_mode 时为 change_request)
 9. **执行 step 通过 `maestro run next` CLI 加载并内联执行**（由 execute Agent 完成）
 10. **session.json orchestration 是唯一编排真相源** — 自动链变化只能由 Skill 的已校验 `chain-proposal/1.0` 经 `run complete --chain-proposal` 原子提交。`session chain insert|skip|replace` 仅为 operator/admin 与 legacy recovery 保留；prompt 层不得用它复制 Skill 判断，也不得直写 session.json/ralph-meta.json
 11. **每个 step 必须在 chain 中标记 sealed** — 由 `maestro run complete --verdict done`（或 `done-with-concerns`）驱动链推进；CLI 是唯一合法写入路径
-12. **step command 在 A_BUILD_STEPS 解析** — 通过 `maestro ralph skills --platform claude --steps --json --quiet` 预校验（`--steps` 引入 prepare/workflows 步骤注册表，覆盖生命周期 step 名）
+12. **step command 在 A_BUILD_STEPS 解析** — 通过 `maestro skills --platform claude --steps --json --quiet` 预校验（`--steps` 引入 prepare/workflows 步骤注册表，覆盖生命周期 step 名）
 13. **执行 step 内容加载** — 由 `maestro run next` CLI 通过 `resolveStepContent()` 在执行期完成
 14. **Decomposition is outcome-oriented** — sub-goals 为可观测交付，禁止 lifecycle 复刻
 15. **Sessions are topic grouping/indexes** — Run 才是 execution/output 单元；skill args 统一用 `--session {session}` 模式，无 phase/milestone 占位符；后续 Run 仅经 canonical upstream 引用同 Session sealed outputs
@@ -417,7 +417,7 @@ narrow → derive defaults from intent + codebase, skip questions.
 
 Generate steps from `session.lifecycle_position` to `session-seal`（`session.session_id` 存在时）或最后一个质量门（standalone 时）。
 
-> **执行模型**：每个 step 由 [@subagent] Agent(ralph-executor) 派发执行，非主会话内联。Agent 内部调 `maestro run next` 获取 skill prompt 并执行，结果通过 task-notification 回传主流程。
+> **执行模型**：每个 step 由 [@subagent] Agent(run-executor) 派发执行，非主会话内联。Agent 内部调 `maestro run next` 获取 Skill prompt 并执行，结果通过 task-notification 回传主流程。
 
 | Stage | Skill | Decision after | quality_mode |
 |-------|-------|----------------|--------------|
@@ -459,7 +459,7 @@ Generate steps from `session.lifecycle_position` to `session-seal`（`session.se
 8. **占位符**：`{session}` `{intent}` 由 A_STEP_RESOLVE_ARGS 运行时替换
 9. **skill 名预校验**（每个执行 step，decision 节点跳过；build 期一次性校验，不落 chain 字段）：
    - 取 skill 名（args 前的第一个 token）
-   - **预校验通过 `Bash("maestro ralph skills --platform claude --steps --json --quiet")`** 一次性拉取 claude 平台可用 commands + skills（global + project，project 覆盖 global）**加 `--steps` 步骤注册表**（prepare/workflows，`type:"step"`——生命周期 step 名 analyze/plan/execute/… 只在此注册表，与 `run next` 执行期 `resolveStepContent()` 同名字空间），匹配 skill 名：
+   - **预校验通过 `Bash("maestro skills --platform claude --steps --json --quiet")`** 一次性拉取 claude 平台可用 commands + Skills（global + project，project 覆盖 global）**加 `--steps` 步骤注册表**（prepare/workflows，`type:"step"`——生命周期 step 名 analyze/plan/execute/… 只在此注册表，与 `run next` 执行期 `resolveStepContent()` 同名字空间），匹配 Skill 名：
      - 命中（command、skill 或 step）→ 允许进 chain-file
      - 未命中 → A_CREATE_SESSION 报错 E006（缺失 skill 不进 chain-file）
    - **不在 build 阶段读取 .md 内容**；step 内容加载（含 `<required_reading>` / `<deferred_reading>`）由 `maestro run next` CLI 在执行期完成
@@ -587,7 +587,7 @@ if goal:
 
 ```
 [@subagent] Agent({
-  subagent_type: "ralph-executor",
+  subagent_type: "run-executor",
   description: "执行 step {index}: {step.command} [{resolved_agent_name}]",
   prompt: `Session: {session_id}`
 })
@@ -864,7 +864,7 @@ CONSTRAINTS: 只评估不修改文件 | 置信度<60%倾向 fix | retry {n}/{max
 
 ### A_SHOW_STATUS
 
-1. `Bash("maestro ralph session")` 取当前 ralph session 概览（读 session.json orchestration；旧 session 兜底 ralph-meta）
+1. `Bash("maestro session status {session}")` 取 canonical Session 概览（直接读取 Session/Run/Artifact/Evidence Registry，不按 engine 分型）
 2. Display: Session, Status, Position（orchestration.position）, Progress, Current step
 3. List steps: [✓] sealed, [▸] running, [ ] pending, [◆] decision（decision_ref 非空）；执行 step 附 `command` + `stage`
 4. If `orchestration.decomposition.goals` present → 显示 sub-goals 进度（done/total）
@@ -1110,7 +1110,7 @@ Build rules 0.5-13 全部适用，包括 spec-setup 预检（rule 0.5）、grill
 
 | 场景 | subagent_type | 理由 |
 |------|--------------|------|
-| 执行 step（A_STEP_DISPATCH） | `"ralph-executor"` | 需加载 executor 行为定义（`.claude/agents/ralph-executor.md`） |
+| 执行 step（A_STEP_DISPATCH） | `"run-executor"` | 需加载 generic executor 行为定义（`.claude/agents/run-executor.md`） |
 | 评估/审计/保真/影响分析 | *(omit)* | generic agent，通过 prompt CONSTRAINTS 约束为只读 |
 
 **Codex V2 转换规则**：
@@ -1261,7 +1261,7 @@ Engine 模式新增（`--engine swarm|universal`，见 `<engines>`）：
 ### Success Criteria
 
 - [ ] ralph owns full step loop: locate → resolve → dispatch → wait task-notification → extract → drift → complete → next
-- [ ] One agent per step — `[@subagent] Agent({ subagent_type: "ralph-executor" })` 每步派发一个 unnamed executor
+- [ ] One agent per step — `[@subagent] Agent({ subagent_type: "run-executor" })` 每步派发一个 unnamed executor
 - [ ] Executor 内调 `maestro run next`（或主编排传入 run_id 走 `run brief`）获取 skill prompt 并执行，内部编排用 unnamed Agent（子结果回流 executor）
 - [ ] Executor 结果通过 task-notification `<result>` 自动回传主流程
 - [ ] 主流程调 `maestro run complete --verdict`（免 run-id）上报（非 agent 上报）

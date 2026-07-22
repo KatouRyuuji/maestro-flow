@@ -115,7 +115,8 @@
     {"name": "scholar-writing", "category": "scholar", "description": "端到端学术论文写作 — 从研究仓库到出版级 LaTeX 手稿", "source": "../scholar-writing/SKILL.md"}
   ],
   "agents": [
-    {"name": "ralph-executor", "description": "单步执行器 — ralph next + 内联 skill 执行，多 agent 编排的无名嵌套", "category": "workflow"},
+    {"name": "run-executor", "description": "通用单 Run 执行器 — run next/brief + 内联 Skill 执行", "category": "workflow"},
+    {"name": "ralph-executor", "description": "run-executor 的旧名兼容 alias", "category": "workflow"},
     {"name": "workflow-analyzer", "description": "多维度分析 — 证据评分和推荐", "category": "workflow"},
     {"name": "workflow-planner", "description": "任务分解和执行计划生成", "category": "workflow"},
     {"name": "workflow-executor", "description": "原子任务执行和验证", "category": "workflow"},

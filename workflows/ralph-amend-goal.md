@@ -152,7 +152,7 @@ GUARD: 用户选"应用并继续"
    {change_type} — {reason}
    Risk: {RISK_LEVEL} | Superseded: {n} | Added: {n} | Skipped steps: {n} | Inserted steps: {n}
    ```
-3. Handoff → 返回主流程 S_DISPATCH 继续执行循环（每步由 Agent(ralph-executor) 派发）
+3. Handoff → 返回主流程 S_DISPATCH 继续执行循环（每步由 Agent(run-executor) 派发）
 
 ---
 

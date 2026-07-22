@@ -10,7 +10,7 @@
 //   3. Assembles the executor prompt = session anchor + upstream/handoff birth
 //      sections + workflow body + run-mode + skill config + completion meta.
 //
-// The stdout structure the ralph-executor / maestro-ralph.md FSM depend on
+// The stdout structure the run-executor / maestro-ralph.md policy depends on
 // (completion meta comment format, exit codes, flags) is unchanged.
 //
 // Exit codes (unchanged, mirror runNextStep):

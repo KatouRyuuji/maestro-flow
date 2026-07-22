@@ -222,7 +222,7 @@ export function registerRalphCommand(program: Command): void {
   // ── ledger ──────────────────────────────────────────────────────────────
   ralph
     .command('ledger')
-    .description('Verification ledger interface for re-use and caching of verification findings')
+    .description('Legacy verification-cache interface; canonical evidence reads use maestro session evidence')
     .option('--session <id>', 'Session id (required)')
     .option('--action <action>', 'Action: query | add')
     .option('--authority <auth>', 'Authority (e.g. "execute-gate", "drift-check")')
@@ -243,6 +243,7 @@ export function registerRalphCommand(program: Command): void {
       concerns?: string;
       riskCeiling?: string;
     }) => {
+      console.error('[ralph ledger] legacy cache — canonical Run evidence is available through "maestro session evidence".');
       if (!opts.session) {
         console.error('[ralph ledger] error: --session <id> is required');
         process.exit(2);

@@ -71,6 +71,7 @@ describe('maestro session create', () => {
       'chain',
       'check',
       'create',
+      'evidence',
       'list',
       'meta',
       'migrate',
@@ -184,6 +185,9 @@ describe('maestro session create', () => {
       warnings: 0,
       findings: [],
     });
+
+    await run('evidence', sessionId, '--workflow-root', root);
+    expect(lastJson()).toEqual({ session_id: sessionId, registry_revision: 0, count: 0, records: [] });
   });
 
   it('rejects an invalid --engine', async () => {

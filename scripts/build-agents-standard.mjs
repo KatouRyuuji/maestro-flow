@@ -61,8 +61,8 @@ const AGENTS_AGENTS = join(AGENTS_DIR, 'agents');
 //   Tier B: UNAMBIGUOUS CamelCase tool names — bare-word safe.
 //   Tier A: AMBIGUOUS names that overlap English verbs — call-site only.
 const BODY_REPLACEMENTS = [
-  // Platform-specific: rewrite ralph skills --platform claude → --platform agent
-  [/ralph skills --platform claude\b/g, 'ralph skills --platform agent'],
+  // Platform-specific: rewrite maestro skills --platform claude → --platform agent
+  [/maestro skills --platform claude\b/g, 'maestro skills --platform agent'],
   // Tier B — bare unambiguous CamelCase
   [/\bAskUserQuestion\b/g, 'ask_user'],
   [/\bSendMessage\b/g, 'send_message'],

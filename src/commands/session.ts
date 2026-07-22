@@ -374,6 +374,51 @@ export function registerSessionCommand(program: Command): void {
     });
 
   session
+    .command('evidence [session-id]')
+    .description('Query the canonical Evidence Registry with resolved Artifact references')
+    .option('--kind <kind>', 'filter by evidence kind')
+    .option('--status <status>', 'filter by proposed|accepted|rejected|superseded')
+    .option('--run <run-id>', 'filter by producer Run ID')
+    .option('--point <point>', 'filter by decision/gate point')
+    .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
+    .action((sessionId: string | undefined, opts: {
+      kind?: string;
+      status?: string;
+      run?: string;
+      point?: string;
+      workflowRoot: string;
+    }) => {
+      try {
+        const resolved = resolveCompatibleSession(resolve(opts.workflowRoot), sessionId);
+        if (!resolved) throw new Error(sessionId ? `Session not found: ${sessionId}` : 'no compatible Session found');
+        if (opts.status && !['proposed', 'accepted', 'rejected', 'superseded'].includes(opts.status)) {
+          throw new Error(`invalid --status "${opts.status}"`);
+        }
+        const records = Object.entries(resolved.bundle.evidence.records)
+          .filter(([, record]) => !opts.kind || record.kind === opts.kind)
+          .filter(([, record]) => !opts.status || record.status === opts.status)
+          .filter(([, record]) => !opts.run || record.run_id === opts.run)
+          .filter(([, record]) => !opts.point || record.point === opts.point)
+          .map(([evidenceId, record]) => ({
+            evidence_id: evidenceId,
+            ...record,
+            artifacts: record.artifact_refs.map(artifactId => ({
+              artifact_id: artifactId,
+              ...(resolved.bundle.artifacts.artifacts[artifactId] ?? { missing: true }),
+            })),
+          }));
+        print({
+          session_id: resolved.sessionId,
+          registry_revision: resolved.bundle.evidence.revision,
+          count: records.length,
+          records,
+        });
+      } catch (error) {
+        reportError(error);
+      }
+    });
+
+  session
     .command('seal <session-id>')
     .description('Seal a Session after all Runs and gates are complete')
     .option('--summary <text>', 'human-readable seal summary', '')

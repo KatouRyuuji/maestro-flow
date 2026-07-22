@@ -33,7 +33,7 @@ export async function runLedger(opts: LedgerCmdOptions): Promise<number> {
   const projectRoot = workflowRoot();
   const resolved = resolveRalphSession(projectRoot, opts.sessionId);
   if (!resolved) {
-    console.error(`[ralph ledger] no ralph session found with id "${opts.sessionId}"`);
+    console.error(`[ralph ledger] no compatible session found with id "${opts.sessionId}"`);
     return 1;
   }
 

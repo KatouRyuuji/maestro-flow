@@ -720,7 +720,7 @@ function buildTree(
 
 const AGY_PROFILE: ConversionProfile = {
   bodyReplacements: [
-    [/ralph skills --platform claude\b/g, 'ralph skills --platform agy'],
+    [/maestro skills --platform claude\b/g, 'maestro skills --platform agy'],
     [/<task_tracking>[\s\S]*?<\/task_tracking>/g, ''],
     [/\bmaestro run (prepare|skill|brief)\b(?![^\n`]*--platform)/g, 'maestro run $1 --platform agy'],
     [/\bmcp__exa__web_search_exa\b/g, 'search_web'],
@@ -786,7 +786,7 @@ const CODEX_TASK_TRACKING_BLOCK = `<task_tracking>
 
 const CODEX_PROFILE: ConversionProfile = {
   bodyReplacements: [
-    [/ralph skills --platform claude\b/g, 'ralph skills --platform codex'],
+    [/maestro skills --platform claude\b/g, 'maestro skills --platform codex'],
     [/<task_tracking>[\s\S]*?<\/task_tracking>/g, CODEX_TASK_TRACKING_BLOCK],
     [/\bmaestro run (prepare|skill|brief)\b(?![^\n`]*--platform)/g, 'maestro run $1 --platform codex'],
     [/\bAskUserQuestion\b/g, 'request_user_input'],
@@ -863,7 +863,7 @@ const PI_HOST_MIRROR_BLOCK = `<host_mirror>
 
 const PI_PROFILE: ConversionProfile = {
   bodyReplacements: [
-    [/ralph skills --platform claude\b/g, 'ralph skills --platform pi'],
+    [/maestro skills --platform claude\b/g, 'maestro skills --platform pi'],
     [/<task_tracking>[\s\S]*?<\/task_tracking>/g, PI_HOST_MIRROR_BLOCK],
     [/\bmaestro run (prepare|skill|brief)\b(?![^\n`]*--platform)/g, 'maestro run $1 --platform pi'],
     [/\bTaskCreate\s*\(\s*\{([^}]*)\}\s*\)/g, (_m: string, params: string) => `todo({ action: "create", ${params.trim()} })`],
@@ -987,7 +987,7 @@ const STD_TASK_TRACKING_BLOCK = `<task_tracking>
 
 const AGENTS_STANDARD_PROFILE: ConversionProfile = {
   bodyReplacements: [
-    [/ralph skills --platform claude\b/g, 'ralph skills --platform agent'],
+    [/maestro skills --platform claude\b/g, 'maestro skills --platform agent'],
     [/<task_tracking>[\s\S]*?<\/task_tracking>/g, STD_TASK_TRACKING_BLOCK],
     [/\bmaestro run (prepare|skill|brief)\b(?![^\n`]*--platform)/g, 'maestro run $1 --platform agents-standard'],
     [/\bAskUserQuestion\b/g, 'ask_user'],

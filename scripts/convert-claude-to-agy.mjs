@@ -59,8 +59,8 @@ const AGY_AGENTS = join(AGY_DIR, 'agents');
 //   Tier B: UNAMBIGUOUS CamelCase tool names (SendMessage, AskUserQuestion,
 //           MCP-namespaced tools) — safe to rewrite bare-word everywhere.
 const BODY_REPLACEMENTS = [
-  // Platform-specific: rewrite ralph skills --platform claude → --platform agy
-  [/ralph skills --platform claude\b/g, 'ralph skills --platform agy'],
+  // Platform-specific: rewrite maestro skills --platform claude → --platform agy
+  [/maestro skills --platform claude\b/g, 'maestro skills --platform agy'],
   // Tier B — bare-word, unambiguous
   [/\bmcp__exa__web_search_exa\b/g, 'search_web'],
   [/\bSendMessage\b/g, 'send_message'],

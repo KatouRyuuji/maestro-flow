@@ -66,7 +66,7 @@ $ARGUMENTS — user intent text, or special keywords.
 3. **Auto flag pass-through** — 仅当用户传入 `-y` 时透传 `-y` 到 skill args
 4. **Decomposition contract — creator owns** — `source=="maestro"` 的 Session 由 Maestro 拥有初始分解契约（`decomposition_owner="maestro"`）：S_DECOMPOSE 产出 additive block (`boundary_contract`, `execution_criteria`, `task_decomposition`)，随 chain-file 的 `decomposition` 块建入 Session；任何后续 orchestrator/Skill 只消费不覆盖（当 `decomposition_owner == "maestro"` 时跳过二次提问，仅做 shape 校验 + 缺省字段补齐）
 5. **session.json orchestration 唯一真源** — 不生成外部状态清单；自动链变化只能由已校验 proposal 经 `run complete --chain-proposal` 原子提交。`session chain insert|skip|replace` 仅保留 operator/admin 兼容用途，本命令不以其复制 Skill 业务判断，也不直写 session.json
-6. **执行步骤统一通过 `maestro run next` 加载** — `command_scope`/`command_path` 由 `maestro ralph skills --platform claude --steps --json --quiet` 预校验（project 覆盖 global；command/skill 来自 `.claude/`，step 来自 prepare/workflows 步骤注册表）；decision 节点由主流程通过 [@subagent] Agent() 评估、经 `run decide` 落盘，不 handoff 到其他 skill
+6. **执行步骤统一通过 `maestro run next` 加载** — `command_scope`/`command_path` 由 `maestro skills --platform claude --steps --json --quiet` 预校验（project 覆盖 global；command/Skill 来自 `.claude/`，step 来自 prepare/workflows 步骤注册表）；decision 节点由主流程通过 [@subagent] Agent() 评估、经 `run decide` 落盘，不 handoff 到其他 Skill
 7. **Topology awareness** — chain catalog 含 grill / brainstorm / blueprint / analyze-macro / analyze / roadmap / plan(三路径) / execute / ...；scope_verdict 由链内 `post-analyze-scope` decision 节点落盘决定，本命令不预判
 8. **Grill `-y` 透传** — `-y` auto mode 透传 `-y` 到 grill args（grill 自身 Auto mode 用代码代答），不删除 grill stage；grill 仍产出 grill-report/terminology/context-package 供下游 brainstorm
 9. **D-007-S topic 解析与复用** — Session 仅作 topic grouping/index；normal routing 只接受唯一 running topic locator，同 Session 的 sealed Run outputs 仅经 canonical `upstream`/Artifact Registry 复用；historical similarity 始终只读且不产生 mutation action
@@ -248,7 +248,7 @@ Execute a saved workflow template through the canonical Session/Run chain runner
 2. **Bind context**: parse `--context k=v`; collect missing required variables via `[@ask] AskUserQuestion`; bind `{variable}` placeholders (leave `{N-xxx.field}` and `{prev_*}` for runtime resolution by ralph-execute).
 3. **Topological sort** (Kahn) template nodes → linear `steps[]` (parallel nodes share a batch index). Each step carries `command`/`args`/`type` (skill|cli|agent|checkpoint) resolved as in `A_CREATE_SESSION`; cli nodes run async via `Bash(run_in_background)` + STOP, checkpoints pause with resume via `-c`.
 4. **Create session**: 组装统一 chain-file JSON（`intent`/`engine: coordinator`/topologically-ordered `steps[]`/`position`；legacy `decision_points` 默认空），调 `maestro session create maestro-{slug} --intent "..." --engine coordinator --chain-file -`（stdin）。`--dry-run` → display plan and END.
-5. 进入 S_DISPATCH → S_STEP_LOCATE 执行循环 — 每步派发 Agent(ralph-executor)，主流程管理 checkpoint、resume-safety、verdict 驱动的链推进。
+5. 进入 S_DISPATCH → S_STEP_LOCATE 执行循环 — 每步派发 Agent(run-executor)，主流程管理 checkpoint、resume-safety、verdict 驱动的链推进。
 
 ### A_CLASSIFY_INTENT
 
@@ -264,7 +264,7 @@ Execute a saved workflow template through the canonical Session/Run chain runner
    - session 上下文 → `analyze --session {session}` → `plan --session {session}` → `execute --session {session}` → quality pipeline
    - 已有 analyze artifact 想直达执行 → `plan --from analyze:{ANL_ID}` → execute → quality pipeline
    - 已有 blueprint artifact → `plan --from blueprint:{BLP_ID}` → execute → quality pipeline
-4. 执行 step：`Bash("maestro ralph skills --platform claude --steps --json --quiet")` 预校验 skill 名（命中 command、skill 或 step 任一即通过；生命周期 step 名 analyze/plan/execute/… 由 `--steps` 步骤注册表命中），命中记录到内存链的 step（未命中标 `missing`，建 chain-file 前阻断）；同时记 `stage` / `goal_ref` / `args`。decision 节点携 `decision_ref`，不预校验 command_path
+4. 执行 step：`Bash("maestro skills --platform claude --steps --json --quiet")` 预校验 Skill 名（命中 command、Skill 或 step 任一即通过；生命周期 step 名 analyze/plan/execute/… 由 `--steps` 步骤注册表命中），命中记录到内存链的 step（未命中标 `missing`，建 chain-file 前阻断）；同时记 `stage` / `goal_ref` / `args`。decision 节点携 `decision_ref`，不预校验 command_path
 
 ### A_ROUTE_COMPANION
 
@@ -306,7 +306,7 @@ Execute a saved workflow template through the canonical Session/Run chain runner
 
 ```
 [@subagent] Agent({
-  subagent_type: "ralph-executor",
+  subagent_type: "run-executor",
   description: "执行 step {index}: {step.command} [{resolved_agent_name}]",
   prompt: `Session: {session_id}`
 })
@@ -473,11 +473,11 @@ post-analyze-scope 触发：读 macro analyze artifact → 提取 scope_verdict 
 - [ ] Chain selected and confirmed (or auto-confirmed)
 - [ ] Session created via `session create --chain-file` before execution; decomposition 随 chain-file 建入
 - [ ] 执行 step 携 `command`/`args`/`stage`/`goal_ref`/`retry`；decision step 由 `decision_ref` 标识
-- [ ] skill 名由 `maestro ralph skills --platform claude --steps --json --quiet` 预校验（project 覆盖 global，含步骤注册表），缺失阻断建链
+- [ ] Skill 名由 `maestro skills --platform claude --steps --json --quiet` 预校验（project 覆盖 global，含步骤注册表），缺失阻断建链
 - [ ] Session schema 为 `session/1.3`、Run schema 为 `command-run/1.3`；旧版兼容读，contract v2 显式 opt-in
 - [ ] 用户传入 `-y` 时透传到 skill args
 - [ ] `agent|direct` 仅选择 Run executor，不改变 Session/chain 类型、Skill contract 或 proposal authority
-- [ ] `agent` 模式每步派发一个 unnamed Agent({ subagent_type: "ralph-executor" })；`direct` 模式由主 LLM 执行同一 Run
+- [ ] `agent` 模式每步派发一个 unnamed Agent({ subagent_type: "run-executor" })；`direct` 模式由主 LLM 执行同一 Run
 - [ ] Agent executor 结果通过 task-notification 回传主流程；direct executor 返回同构 completion signals
 - [ ] 主流程调 `maestro run complete --verdict`（免 run-id）上报（非 agent 上报）
 - [ ] Decision 节点通过 Agent 评估、经 `run decide` 落盘，不 handoff 到其他 skill

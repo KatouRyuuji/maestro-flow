@@ -94,7 +94,19 @@ function validatePrompt(path, kind) {
 }
 
 for (const file of readdirSync(commandDir).filter((name) => name.endsWith('.md'))) {
-  validatePrompt(join(commandDir, file), 'command');
+  const path = join(commandDir, file);
+  validatePrompt(path, 'command');
+  if (file === 'maestro.md' || file === 'maestro-ralph.md') {
+    const text = readFileSync(path, 'utf8');
+    for (const [pattern, message] of [
+      [/maestro ralph skills\b/, 'must use the canonical maestro skills namespace'],
+      [/\bralph-executor\b/, 'must dispatch the canonical run-executor'],
+      [/--engine\s+ralph\b|engine\s*={1,2}\s*["']ralph["']/, 'must not classify a Session by Ralph engine'],
+      [/(?:session_type|chain_mode|strategy)\s*[:=]\s*["']?(?:static|adaptive|maestro|ralph|fixed|dynamic)\b/i, 'must not persist a static/dynamic or Maestro/Ralph Session type'],
+    ]) {
+      if (pattern.test(text)) errors.push(`${relative(root, path)}: ${message}`);
+    }
+  }
 }
 
 for (const dir of readdirSync(skillDir)) {
@@ -245,12 +257,17 @@ else {
   }
 }
 
-const canonicalRunExecutor = join(root, '.claude', 'agents', 'ralph-executor.md');
-if (!existsSync(canonicalRunExecutor)) errors.push('.claude/agents/ralph-executor.md: missing canonical Run executor');
+const canonicalRunExecutor = join(root, '.claude', 'agents', 'run-executor.md');
+if (!existsSync(canonicalRunExecutor)) errors.push('.claude/agents/run-executor.md: missing canonical Run executor');
 else errors.push(...validateExecutorLifecycleBoundary(
   readFileSync(canonicalRunExecutor, 'utf8'),
-  '.claude/agents/ralph-executor.md',
+  '.claude/agents/run-executor.md',
 ));
+const legacyRunExecutor = join(root, '.claude', 'agents', 'ralph-executor.md');
+if (!existsSync(legacyRunExecutor)) errors.push('.claude/agents/ralph-executor.md: missing compatibility alias');
+else if (!readFileSync(legacyRunExecutor, 'utf8').includes('run-executor')) {
+  errors.push('.claude/agents/ralph-executor.md: compatibility alias must delegate to run-executor');
+}
 
 
 for (const dir of readdirSync(skillDir)) {
