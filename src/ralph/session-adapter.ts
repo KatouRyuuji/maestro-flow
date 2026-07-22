@@ -8,10 +8,11 @@
 // legacy carrier of verification_ledger (see verification-ledger.ts).
 // ---------------------------------------------------------------------------
 
-import { existsSync, readFileSync, writeFileSync, readdirSync, statSync, mkdirSync, renameSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import { SessionStore, type SessionBundle } from '../run/store.js';
+import { resolveCompatibleSession } from '../run/session-resolver.js';
 import type { OrchestrationLease, SessionState } from '../run/schemas.js';
 import { createChainSession, chainStepId } from '../run/chain-admin.js';
 // Chain navigation/mutation is engine-agnostic and canonical in src/run/chain.ts.
@@ -240,41 +241,14 @@ export function resolveRalphSession(
   sessionId?: string,
   opts: { requireRunning?: boolean } = {},
 ): ResolvedRalphSession | null {
-  const store = new SessionStore(projectRoot);
-  const sessionsRoot = store.sessionsRoot;
-
-  if (sessionId) {
-    if (!store.sessionExists(sessionId)) return null;
-    const bundle = store.readBundle(sessionId);
-    if (opts.requireRunning && bundle.session.status !== 'running') return null;
-    const sessionDir = store.sessionDir(sessionId);
-    const meta = bundle.session.ralph_authority?.canonical_complete ? defaultMeta() : readMeta(sessionDir);
-    return { sessionId, sessionDir, bundle, meta };
-  }
-
-  // Find latest compatible session (sorted by mtime DESC, engine-agnostic)
-  if (!existsSync(sessionsRoot)) return null;
-  const candidates: Array<{ id: string; mtimeMs: number }> = [];
-  for (const name of readdirSync(sessionsRoot)) {
-    const dir = join(sessionsRoot, name);
-    const sessionFile = join(dir, 'session.json');
-    try {
-      if (!statSync(dir).isDirectory()) continue;
-      if (!existsSync(sessionFile)) continue;
-      candidates.push({ id: name, mtimeMs: statSync(sessionFile).mtimeMs });
-    } catch { /* skip */ }
-  }
-  candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
-
-  for (const c of candidates) {
-    try {
-      const bundle = store.readBundle(c.id);
-      if (opts.requireRunning && bundle.session.status !== 'running') continue;
-      const sessionDir = store.sessionDir(c.id);
-      return { sessionId: c.id, sessionDir, bundle, meta: readMeta(sessionDir) };
-    } catch { /* skip corrupt */ }
-  }
-  return null;
+  const resolved = resolveCompatibleSession(projectRoot, sessionId, {
+    statuses: opts.requireRunning ? ['running'] : undefined,
+  });
+  if (!resolved) return null;
+  const meta = resolved.bundle.session.ralph_authority?.canonical_complete
+    ? defaultMeta()
+    : readMeta(resolved.sessionDir);
+  return { ...resolved, meta };
 }
 
 // ── Chain ↔ orchestration.chain mapping ──────────────────────────────────────

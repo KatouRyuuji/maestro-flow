@@ -69,6 +69,7 @@ describe('maestro session create', () => {
     expect(session?.description()).toContain('topic grouping/index');
     expect(session?.commands.map(c => c.name()).sort()).toEqual([
       'chain',
+      'check',
       'create',
       'list',
       'meta',
@@ -77,6 +78,7 @@ describe('maestro session create', () => {
       'resume',
       'seal',
       'show',
+      'status',
     ]);
     const chain = session?.commands.find(c => c.name() === 'chain');
     expect(chain?.commands.map(c => c.name()).sort()).toEqual(['insert', 'replace', 'skip']);
@@ -159,6 +161,29 @@ describe('maestro session create', () => {
     expect((out.chain as { total: number }).total).toBe(0);
     const store = new SessionStore(root);
     expect(store.readBundle(String(out.session_id)).session.orchestration.chain).toHaveLength(0);
+  });
+
+  it('reports engine-neutral canonical status and check results', async () => {
+    await run('create', 'neutral', '--intent', 'neutral', '--engine', 'manual', '--workflow-root', root);
+    const sessionId = String(lastJson().session_id);
+
+    await run('status', sessionId, '--workflow-root', root);
+    expect(lastJson()).toMatchObject({
+      session_id: sessionId,
+      status: 'running',
+      engine: 'manual',
+      progress: { terminal: 0, total: 0, pending: 0 },
+      registry: { artifacts: 0, evidence: 0, gates: 0 },
+    });
+
+    await run('check', sessionId, '--workflow-root', root);
+    expect(lastJson()).toEqual({
+      ok: true,
+      session_id: sessionId,
+      errors: 0,
+      warnings: 0,
+      findings: [],
+    });
   });
 
   it('rejects an invalid --engine', async () => {

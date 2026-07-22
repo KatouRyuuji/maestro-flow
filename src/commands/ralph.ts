@@ -20,7 +20,7 @@ import type { Command } from 'commander';
 
 // Lazy module loader — keeps cold start cheap and isolates ralph-only deps.
 async function loadSkillsCmd() {
-  return (await import('../ralph/cmd-skills.js')).runSkills;
+  return (await import('../skills/cmd-skills.js')).runSkills;
 }
 async function loadCheckCmd() {
   return (await import('../ralph/cmd-check.js')).runCheck;
@@ -64,16 +64,17 @@ export function registerRalphCommand(program: Command): void {
   // ── skills ──────────────────────────────────────────────────────────────
   ralph
     .command('skills')
-    .description('List effective commands + skills (project overrides global)')
+    .description('Compatibility alias for maestro skills')
     .option('--json', 'Machine-readable output (single JSON line per entry)')
     .option('--quiet', 'Suppress decorative output (for ralph build consumption)')
     .option('--platform <platform>', 'Filter by platform: claude | codex | agent | agy (recommended)')
     .option('--steps', 'Include step-registry names (prepare/ + workflows/) resolvable by `maestro run next`')
     .action(async (opts: { json?: boolean; quiet?: boolean; platform?: string; steps?: boolean }) => {
+      console.error('[ralph skills] deprecated — use "maestro skills".');
       const run = await loadSkillsCmd();
       const platform = opts.platform as ('claude' | 'codex' | 'agent' | 'agy' | undefined);
       const code = await run({ json: !!opts.json, quiet: !!opts.quiet, platform, steps: !!opts.steps });
-      process.exit(code);
+      process.exitCode = code;
     });
 
   // ── check ───────────────────────────────────────────────────────────────

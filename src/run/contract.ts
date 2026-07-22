@@ -590,7 +590,7 @@ export interface StepRegistryEntry {
 /**
  * Enumerate every step name `resolveStepContent` can resolve: prepare/workflow
  * basenames plus workflow frontmatter command aliases. This is the build-time
- * mirror of the run-time step registry — `ralph skills --steps` exposes it so
+ * mirror of the run-time step registry — `maestro skills --steps` exposes it so
  * chain-build prevalidation validates against the same name space `run next`
  * loads from.
  */

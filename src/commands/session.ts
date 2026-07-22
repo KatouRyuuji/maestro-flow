@@ -17,6 +17,9 @@ import {
   type ChainDefinition,
 } from '../run/chain-admin.js';
 import { resolveSession, resumeSession } from '../run/session-transition.js';
+import { resolveCompatibleSession } from '../run/session-resolver.js';
+import { summarizeSession } from '../run/session-status.js';
+import { checkResolvedSession, summarizeSessionCheck } from '../run/session-check.js';
 import {
   createRunResponseError,
   createRunResponseSuccess,
@@ -333,6 +336,38 @@ export function registerSessionCommand(program: Command): void {
       try {
         const store = new SessionStore(resolve(opts.workflowRoot));
         print(store.readBundle(sessionId).session);
+      } catch (error) {
+        reportError(error);
+      }
+    });
+
+  session
+    .command('status [session-id]')
+    .description('Show canonical status for an explicit or latest compatible Session')
+    .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
+    .action((sessionId: string | undefined, opts: { workflowRoot: string }) => {
+      try {
+        const resolved = resolveCompatibleSession(resolve(opts.workflowRoot), sessionId);
+        if (!resolved) throw new Error(sessionId ? `Session not found: ${sessionId}` : 'no compatible Session found');
+        print(summarizeSession(resolved));
+      } catch (error) {
+        reportError(error);
+      }
+    });
+
+  session
+    .command('check [session-id]')
+    .description('Validate canonical Session chain, Run bindings, and decision references')
+    .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
+    .action((sessionId: string | undefined, opts: { workflowRoot: string }) => {
+      try {
+        const root = resolve(opts.workflowRoot);
+        const resolved = resolveCompatibleSession(root, sessionId);
+        if (!resolved) throw new Error(sessionId ? `Session not found: ${sessionId}` : 'no compatible Session found');
+        const findings = checkResolvedSession(root, resolved);
+        const summary = summarizeSessionCheck(findings);
+        print({ ok: summary.errors === 0, session_id: resolved.sessionId, ...summary, findings });
+        if (summary.errors > 0) process.exitCode = 1;
       } catch (error) {
         reportError(error);
       }
