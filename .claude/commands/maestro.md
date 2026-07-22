@@ -1,8 +1,8 @@
 ---
 name: maestro
 disable-model-invocation: false
-description: "Multi-step orchestration engine with dual execution modes — ralph (Agent dispatch, decision gates, drift, auto-retry) and manual (per-step confirm, direct LLM execution). Triggered by /maestro-next routing or invoked directly"
-argument-hint: "<intent> [-y] [-c] [--engine manual|ralph] [--dry-run] [--super]"
+description: "Multi-step orchestration over the canonical Session/Run chain, with Skill-declared chain effects and optional agent or direct execution"
+argument-hint: "<intent> [-y] [-c] [--executor agent|direct] [--dry-run] [--super]"
 allowed-tools:
   - Read
   - Write
@@ -28,7 +28,7 @@ contract:
 </required_reading>
 
 <purpose>
-Multi-step closed-loop orchestration engine. Receives an intent (from `/maestro-next` routing or direct user invocation) and executes the full orchestration loop: select chain → resolve a topic-grouping Session → `session create --chain-file` → dispatch [@subagent] Agent(ralph-executor) per step → extract signals → drift check → `run complete --verdict` → explicit `run next` loop.
+Multi-step orchestration over one canonical Session/Run chain. Receives an intent (from `/maestro-next` routing or direct user invocation), selects the initial Skill chain, then loops through `run next` → `run brief` → one Skill execution → `run check` → proposal disposition → `run complete` → explicit `run next`. A Skill's contract/output—not the Session or command name—decides whether a step proposes adaptation.
 
 **Positioning in the command hierarchy:**
 - `/maestro-next` is the unified entry point that classifies intent and routes here when orchestrated multi-step execution is needed
@@ -53,29 +53,29 @@ $ARGUMENTS — user intent text, or special keywords.
 **Flags:**
 - `-y` / `--yes` — Auto mode: skip clarification, skip confirmation, auto-skip on errors
 - `-c` / `--continue` — Continue the previous active Run/topic group without invoking Session recovery commands. **`-c` is reserved for `--continue` across all maestro commands** — downstream skills MUST NOT redefine `-c` for other purposes to prevent collision via transparent forwarding.
-- `--engine <manual|ralph>` — Execution engine selection. `ralph` (default): Agent(ralph-executor) dispatch with decision gates, drift analysis, auto-retry. `manual`: per-step user confirmation, main LLM executes directly, no decision gates/drift/auto-retry. When routed from `/maestro-next` with engine hint, honor it.
+- `--executor <agent|direct>` — Select only who executes each already-allocated Run. `agent` (default) dispatches the single-Run executor; `direct` executes the same Resume Packet in the main LLM. This never changes Session type, chain semantics, or mutation authority. Legacy `--engine manual|ralph` is accepted only as `direct|agent` spelling and is never persisted as orchestration strategy.
 - `--dry-run` — Show chain without executing
 - `--super` — Read and follow `maestro-super.md`
 - `--compose [--edit <path>]` — Compose a reusable workflow template (NL → DAG) instead of running a live chain. Routes to `A_COMPOSE_TEMPLATE`.
-- `--play <template-slug|path> [--context k=v...] [--list] [--dry-run]` — Execute a saved workflow template through the ralph chain runner. Routes to `A_PLAY_TEMPLATE`.
+- `--play <template-slug|path> [--context k=v...] [--list] [--dry-run]` — Execute a saved workflow template through the canonical Session/Run chain runner. Routes to `A_PLAY_TEMPLATE`.
 </context>
 
 <invariants>
-1. **Engine-specific execution** — `ralph` engine: 每步派发一个 unnamed Agent(ralph-executor)，含 decision gates/drift/auto-retry。`manual` engine: 主 LLM 直接执行每步，逐步用户确认，无 decision gates/drift/auto-retry。两种引擎共享 chain 基础设施（session create --chain-file / run next / run complete --verdict）
+1. **One chain, executor-neutral** — 所有任务使用同一 Session/Run chain；`agent|direct` 只选择 executor，不产生静态/动态 Session 分型。是否改变后续链由当前 Skill 的 `orchestration.chain_effects` 与 `chain-proposal/1.0` 决定
 2. **Session before execution** — session.json created before any step runs（经 `session create --chain-file`）
 3. **Auto flag pass-through** — 仅当用户传入 `-y` 时透传 `-y` 到 skill args
-4. **Decomposition contract — maestro owns** — `source=="maestro"` 的 session 由 maestro 拥有分解契约（`decomposition_owner="maestro"`）：S_DECOMPOSE 产出 additive block (`boundary_contract`, `execution_criteria`, `task_decomposition`)，随 chain-file 的 `decomposition` 块建入 session；下游 ralph 只消费不覆盖（当 `decomposition_owner == "maestro"` 时跳过二次提问，仅做 shape 校验 + 缺省字段补齐）
-5. **session.json orchestration 唯一真源** — 不生成 `goal-checklist.md` 或外部清单；一切状态写入经 CLI 动词（`session create --chain-file` / `session chain insert|skip|replace` / `run next` / `run complete --verdict` / `run decide` / `session meta update`），本命令不直写 session.json
+4. **Decomposition contract — creator owns** — `source=="maestro"` 的 Session 由 Maestro 拥有初始分解契约（`decomposition_owner="maestro"`）：S_DECOMPOSE 产出 additive block (`boundary_contract`, `execution_criteria`, `task_decomposition`)，随 chain-file 的 `decomposition` 块建入 Session；任何后续 orchestrator/Skill 只消费不覆盖（当 `decomposition_owner == "maestro"` 时跳过二次提问，仅做 shape 校验 + 缺省字段补齐）
+5. **session.json orchestration 唯一真源** — 不生成外部状态清单；自动链变化只能由已校验 proposal 经 `run complete --chain-proposal` 原子提交。`session chain insert|skip|replace` 仅保留 operator/admin 兼容用途，本命令不以其复制 Skill 业务判断，也不直写 session.json
 6. **执行步骤统一通过 `maestro run next` 加载** — `command_scope`/`command_path` 由 `maestro ralph skills --platform claude --steps --json --quiet` 预校验（project 覆盖 global；command/skill 来自 `.claude/`，step 来自 prepare/workflows 步骤注册表）；decision 节点由主流程通过 [@subagent] Agent() 评估、经 `run decide` 落盘，不 handoff 到其他 skill
 7. **Topology awareness** — chain catalog 含 grill / brainstorm / blueprint / analyze-macro / analyze / roadmap / plan(三路径) / execute / ...；scope_verdict 由链内 `post-analyze-scope` decision 节点落盘决定，本命令不预判
 8. **Grill `-y` 透传** — `-y` auto mode 透传 `-y` 到 grill args（grill 自身 Auto mode 用代码代答），不删除 grill stage；grill 仍产出 grill-report/terminology/context-package 供下游 brainstorm
 9. **D-007-S topic 解析与复用** — Session 仅作 topic grouping/index；normal routing 只接受唯一 running topic locator，同 Session 的 sealed Run outputs 仅经 canonical `upstream`/Artifact Registry 复用；historical similarity 始终只读且不产生 mutation action
 10. **每个 step 由 verdict 驱动链推进** — 由 `maestro run complete --verdict done|done-with-concerns`（免 run-id）驱动 chain step 完成+推进
 11. **schema** — session.json 为 `session/1.3`、run.json 为 `command-run/1.3`；orchestration 单源，contract v2 仅显式 opt-in
-12. **Invariant violation = BLOCK** — 违反上述任一 invariant 即阻断当前操作，不可绕过。特别是 invariant 1（dispatch via Agent(ralph-executor)）和 invariant 2（session before execution）和 invariant 10（verdict 驱动链推进由 CLI 写入）为硬约束。
+12. **Invariant violation = BLOCK** — 违反上述任一 invariant 即阻断当前操作，不可绕过。特别是 invariant 1（one chain, executor-neutral）、invariant 2（session before execution）和 invariant 10（verdict 驱动链推进由 CLI 写入）为硬约束。
 13. **Classification evidence** — S_CLASSIFY 的 chain 选择决策 MUST 记录（匹配了哪个 pattern、排除了哪些备选、confidence level）作为分类留痕。无记录的分类不可进入 S_CREATE。
 14. **禁止以上下文消耗为由中断执行** — harness 自动处理 context compression，以"上下文不足"或"避免 context overflow"为由中断属于 invariant violation
-15. **控制权优先级（范式治理）** — maestro 拥有 **ralph 引擎** session 的完整 FSM 生命周期（step 排序 + cross-step decision 节点 + drift）；**manual 引擎** session 由 maestro 以简化循环管理（逐步确认，无 decision 节点/drift/auto-retry）；Pipeline（plan/execute/analyze）只拥有自身 artifact GATE，由 ralph dispatch 时 GATE 失败 → `complete BLOCKED|NEEDS_RETRY`、自身 GATE 全过 → DONE；Router（maestro-next）不得出现在 FSM step 内。
+15. **控制权优先级（范式治理）** — Maestro 拥有 initial chain 选择、proposal disposition、budget 与停止条件；Skill 拥有领域判断及可选 chain proposal；Runtime 独占 mutation authority。executor 只执行一个 Run，Router（maestro-next）不得出现在 chain step 内
 16. **模板输出边界（--compose）** — `A_COMPOSE_TEMPLATE` 的写入 MUST 限定 `~/.maestro/templates/workflows/`（模板 JSON + index.json）与 `.workflow/templates/design-drafts/`（草稿）；NEVER 修改源码或 `.claude/commands/`。`--play` 视模板为只读，运行态经 CLI 动词写 session.json。
 17. **Goal tracking 与 session 双写** — 主流程在 session 创建、step 派发、step 完成时同步创建/更新 goal，补充 session.json 的 UI 可见进度。
 18. **Compatibility commands are out of band** — 主流程禁止调用或推荐 `run recall-confirm|fork|import|new|rebind` 与 `session resolve|resume`；这些 deprecated admin-only CLI 不参与 topic resolution、output reuse 或 next-action routing，且无 force bypass。
@@ -97,15 +97,14 @@ S_DECOMPOSE     — 边界澄清、写执行准则+子目标清单       PERSIST
 S_CREATE        — `session create --chain-file`（stdin JSON）  PERSIST: session (全量, CLI 建)
 S_DRY_RUN       — 显示 chain 后结束                    PERSIST: —
 S_CONFIRM       — 用户确认（auto_mode 跳过）            PERSIST: —
-S_DISPATCH      — 进入执行循环（按 engine 分流）         PERSIST: —
+S_DISPATCH      — 进入统一 Session/Run 执行循环           PERSIST: —
 S_STEP_LOCATE   — 找下一个 pending step                  PERSIST: —
-S_STEP_DISPATCH — [ralph] 派发 unnamed executor agent（run next 建 Run + 出生包自源）  PERSIST: step.status = "running"（run next 落）
-S_MANUAL_STEP   — [manual] run next → 逐步确认 → 主 LLM 直接执行 → run complete --verdict  PERSIST: step.status 推进
-S_STEP_ANALYZE  — [ralph] 提取信号 + 组装 completion 参数        PERSIST: —
-S_STEP_DRIFT    — [ralph] 产物 vs 目标偏离分析                    PERSIST: step.drift_score（评估态）
+S_STEP_DISPATCH — run next 建 Run；按 executor policy 执行同一 Resume Packet  PERSIST: step.status = "running"（run next 落）
+S_STEP_ANALYZE  — 提取 handoff/check/proposal 信号                 PERSIST: —
+S_STEP_DRIFT    — 评估结果与 Session intent 对齐                   PERSIST: —
 S_STEP_COMPLETE — 调 `run complete --verdict` 上报        PERSIST: run.json handoff + chain 推进
 S_DECISION_EVAL — 启动分析 Agent 评估质量门            PERSIST: —
-S_APPLY_VERDICT — `run decide` 落盘裁决 + `session chain insert` 插步  PERSIST: decision_point + chain
+S_APPLY_VERDICT — 兼容处理既有 decision node；新链变化走 Skill proposal  PERSIST: decision receipt
 S_SESSION_DONE  — 所有 step 完成                      PERSIST: status
 S_HANDLE_FAIL   — 处理失败                            PERSIST: step.status
 S_FALLBACK      — 意图无法分类、请求输入                PERSIST: —
@@ -161,20 +160,14 @@ S_DISPATCH:
   → S_STEP_LOCATE
 
 S_STEP_LOCATE:
-  → S_STEP_DISPATCH WHEN: engine == ralph AND pending execution step found (step.decision == null)
-  → S_MANUAL_STEP   WHEN: engine == manual AND pending execution step found
-  → S_DECISION_EVAL WHEN: engine == ralph AND pending decision step found (step.decision != null)
+  → S_STEP_DISPATCH WHEN: pending execution step found (step.decision == null)
+  → S_DECISION_EVAL WHEN: legacy pending decision step found (step.decision != null)
   → S_SESSION_DONE  WHEN: no pending steps (all completed/skipped)
   → S_HANDLE_FAIL   WHEN: has failed step and no pending
 
 S_STEP_DISPATCH:
   → S_STEP_ANALYZE  WHEN: task-notification status=completed           DO: A_STEP_DISPATCH
   → S_HANDLE_FAIL   WHEN: task-notification status=failed              DO: mark BLOCKED
-
-S_MANUAL_STEP:
-  → S_MANUAL_STEP WHEN: step completed AND user confirms "Continue next step"   DO: A_MANUAL_STEP
-  → S_SESSION_DONE WHEN: chain exhausted (no pending steps)                      DO: A_MANUAL_STEP (final)
-  → END            WHEN: user stops / -y single step done                        DO: A_MANUAL_STEP (pause)
 
 S_STEP_ANALYZE:
   → S_STEP_DRIFT    WHEN: STATUS == DONE|DONE_WITH_CONCERNS   DO: A_STEP_EXTRACT
@@ -249,12 +242,12 @@ Compose a reusable workflow template (natural language → DAG). `--edit <path>`
 
 ### A_PLAY_TEMPLATE
 
-Execute a saved workflow template through the ralph chain runner. Flags: `--context k=v` (repeatable), `--list`, `--dry-run`.
+Execute a saved workflow template through the canonical Session/Run chain runner. Flags: `--context k=v` (repeatable), `--list`, `--dry-run`.
 
 1. **Resolve template**: absolute path → as-is; slug → `~/.maestro/templates/workflows/index.json` lookup. `--list` → display index and END. Read deferred `template-schema.md` to validate (`template_id`, `nodes`, `edges`, `context_schema` required).
 2. **Bind context**: parse `--context k=v`; collect missing required variables via `[@ask] AskUserQuestion`; bind `{variable}` placeholders (leave `{N-xxx.field}` and `{prev_*}` for runtime resolution by ralph-execute).
 3. **Topological sort** (Kahn) template nodes → linear `steps[]` (parallel nodes share a batch index). Each step carries `command`/`args`/`type` (skill|cli|agent|checkpoint) resolved as in `A_CREATE_SESSION`; cli nodes run async via `Bash(run_in_background)` + STOP, checkpoints pause with resume via `-c`.
-4. **Create session**: 组装 chain-file JSON（`intent`/`engine: ralph`/topologically-ordered `steps[]`/`decision_points`/`position`），调 `maestro session create maestro-{slug} --intent "..." --engine ralph --chain-file -`（stdin）。`--dry-run` → display plan and END.
+4. **Create session**: 组装统一 chain-file JSON（`intent`/`engine: coordinator`/topologically-ordered `steps[]`/`position`；legacy `decision_points` 默认空），调 `maestro session create maestro-{slug} --intent "..." --engine coordinator --chain-file -`（stdin）。`--dry-run` → display plan and END.
 5. 进入 S_DISPATCH → S_STEP_LOCATE 执行循环 — 每步派发 Agent(ralph-executor)，主流程管理 checkpoint、resume-safety、verdict 驱动的链推进。
 
 ### A_CLASSIFY_INTENT
@@ -290,7 +283,7 @@ Execute a saved workflow template through the ralph chain runner. Flags: `--cont
 2. broad/medium → `[@ask] AskUserQuestion` ≤3 轮：Scope / Constraints / Definition of Done
 3. 派生 `execution_criteria` + `task_decomposition`（每个 sub-goal 含 `done_when` + `evidence` + `lifecycle` + `completion_confirmed: false`）
 4. **session.json 唯一真源**：`boundary_contract` 随 `session create` 建入；`execution_criteria` / `task_decomposition` 装入 chain-file 的 `decomposition`（`execution_criteria` / `goals` / `changelog`）块；不生成 markdown 清单
-5. 在最后一个 evidence-producing stage（execute/review/test）之后追加 `decision:post-goal-audit`（session 终结审计节点）。ralph-execute 在该节点按需 `session chain insert` 动态生长
+5. 需要终结目标审计时，追加实际 audit/verify Skill step；它与普通 step 一样拥有 Run，并可按自身 contract 选择是否产出 chain proposal。新 chain 不追加 prompt 内联 decision/fix-loop 节点
 6. **输出 `/goal` 绑定提示词（不阻塞，用户可在执行过程中随时输入）：**
    ```
    📋 任务分解完成。可随时复制下面一行设定目标（执行过程中输入即可）：
@@ -304,7 +297,7 @@ Execute a saved workflow template through the ralph chain runner. Flags: `--cont
 
 ### A_STEP_DISPATCH
 
-派发 executor agent。executor 内部调 `maestro run next --session {session}` 建 Run + 拿出生包并内联执行。模型同 maestro-ralph 的 A_STEP_DISPATCH。
+按 `executor` 选择执行载体：`direct` 路由到 A_EXECUTOR_DIRECT；`agent` 派发 single-Run executor。两者都先经 `maestro run next --session {session}` 分配同一种 Run，并执行同一份 brief/check/proposal/complete lifecycle。
 
 > **单源上下文（不再手工拼装）**：`run next` 出生包单源提供上游产物、前一步 handoff、后续队列、handoff.next 推荐、按需参考与 goal；`run brief {run_id}` 为 skill 正文注入点。故不再读前序 completion_*、不再手工组装 `<goal_context>`。
 
@@ -322,26 +315,20 @@ Execute a saved workflow template through the ralph chain runner. Flags: `--cont
 3. Display: `[{index}/{total}] ⟶ {step.command} → {resolved_agent_name}`（仅日志标识，不落 session state）
 4. 等待 task-notification → agent_output
 
-### A_MANUAL_STEP
+### A_EXECUTOR_DIRECT（legacy A_MANUAL_STEP alias）
 
-[manual engine] 逐步确认执行。主 LLM 直接执行，无 Agent 派发、无 decision gates、无 drift 分析。
+`executor=direct` 只替换执行载体，不建立另一条 chain 或简化 lifecycle。
 
 1. `maestro run next --session {session_id} --workflow-root .` — 出生包携 `run_id` / `run_dir` / `upstream`。NEVER call `run create`（birth-packet red line）。
 2. Present step + chain progress (`step k/n`) → [@ask] AskUserQuestion:
    - **Execute** — 主 LLM 直接执行该步 workflow
-   - **Skip this step** (`maestro session chain skip`)
-   - **Modify step** (`maestro session chain replace`)
    - **Stop chain** — 暂停，后续可 `/maestro -c` 续接
-3. 执行 workflow（按需 `maestro run brief <run_id>` 加载 skill 正文），完成后 `maestro run complete <run_id> --verdict done --summary "..."` — chain step 原子推进。
+   - 用户明确提出 operator edit 时才可使用 admin `session chain skip|replace`
+3. 执行 workflow（按需 `maestro run brief <run_id>` 加载 Skill 正文），然后运行 `run check` 并按 A_STEP_COMPLETE 处置 proposal/complete。
 4. Pending steps remain → offer **Continue next step**（loop to 1）or stop with continuation hint（`/maestro -c` 续接）。With `-y`: execute current step only, then stop with hint — never walk chain unattended。
 5. No pending steps → chain completion summary（steps done/skipped, artifact paths）。
 
-**与 ralph 引擎的区别：**
-- 无 S_STEP_ANALYZE / S_STEP_DRIFT（不做信号提取和偏离分析）
-- 无 S_DECISION_EVAL / S_APPLY_VERDICT（不插入 decision 节点）
-- 无 Agent 派发（主 LLM 直接执行，节省 subagent 开销）
-- 无 auto-retry（失败时由用户决定 retry/skip/abort）
-- 共享 chain 基础设施：session create --chain-file / run next / run complete --verdict / session chain skip|replace
+direct 与 agent executor 读取相同 brief、执行相同 Skill contract，并走相同 check/proposal/complete/next 链。差异仅是是否派发 subagent。
 
 ### A_STEP_EXTRACT
 
@@ -370,10 +357,11 @@ Execute a saved workflow template through the ralph chain runner. Flags: `--cont
 
 ### A_STEP_COMPLETE
 
-1. 使用 A_STEP_EXTRACT 组装的参数调 `Bash("maestro run complete --session {session} --verdict done --summary \"...\" [--evidence ...] [--decision ...] [--note ...]")`（免 run-id，自动解析当前 running 步；verdict 驱动链推进）
-2. 上下文信号随 handoff 落 run.json，下一步 `run next` 出生包自源透出（不回写侧文件）
-3. Display: `[{index}/{total}] ✓ {step.command} → {SUMMARY}`
-4. Treat completion output as `suggest_only`; it does not allocate the next Run. Loop → S_STEP_LOCATE, where the next execution step is allocated only by the explicit `maestro run next --session {session}` call in A_STEP_DISPATCH.
+1. 先读取 `run check --json` 的 artifacts/errors 与 `run brief` 的 `execution_contract.orchestration.chain_effects`。无 `chain-proposal` 时正常 complete。
+2. 有已校验 proposal 时严格执行 `run-mode.md` 的 Chain Effects and Proposals：交互模式确认 accept/reject/revise；显式 `-y` 只按其中低风险规则自动接受，其余拒绝或暂停，不在 prompt 内重写 operations。
+3. accept 时调用 `Bash("maestro run complete --session {session} --verdict done --chain-proposal outputs/chain-proposal.json --summary \"...\" [--evidence ...] [--decision ...] [--note ...]")`；reject 时省略 `--chain-proposal` 并用 `--note` 记录原因；revise 时 re-attach 同一 run_id，由原 Skill 重写 proposal 后再次 check。
+4. 上下文信号随 handoff 落 run.json；completion 与 proposal mutation 是同一 transition。Treat completion output as `suggest_only`; only the next explicit `maestro run next --session {session}` allocates another Run.
+5. Display: `[{index}/{total}] ✓ {step.command} → {SUMMARY}`，若有 proposal 同时显示 `proposal_id` 与 applied/rejected disposition。
 
 ### A_AGENT_EVALUATE
 
@@ -409,14 +397,12 @@ post-analyze-scope 触发：读 macro analyze artifact → 提取 scope_verdict 
 
 ### A_APPLY_PROCEED / A_APPLY_FIX / A_APPLY_ESCALATE / A_APPLY_GOAL_FIX / A_APPLY_GOAL_DONE / A_APPLY_SCOPE_VERDICT
 
-裁决落盘统一经 `maestro run decide {point_id} --session {session} --verdict proceed|fix|escalate --confidence high|medium|low`；链改经 `session chain insert|skip|replace`；decomposition/position 改经 `session meta update`（同 maestro-ralph）：
+新建 chain 不再由 Maestro prompt 硬编码 fix-loop 或根据 gate 直接调用 `session chain insert|skip|replace`。review/test/verify/analyze 等领域判断属于对应 Skill；需要改变后续步骤时，Skill 通过 contract 允许的 `chain-proposal/1.0` 提出，由 A_STEP_COMPLETE 统一处置并原子提交。
 
-- **A_APPLY_PROCEED**: `run decide {point_id} --verdict proceed`（CLI 标 decision_point 完成并推进）
-- **A_APPLY_FIX**: `run decide {point_id} --verdict fix`（CLI 自带 retry 计数）+ `session chain insert ... --inserted-by {gate名}` 逐条插 fix-loop 步
-- **A_APPLY_ESCALATE**: `run decide {point_id} --verdict escalate` + `session chain insert --command debug --args "{gap}" --inserted-by {gate名}` + 插 decision 节点
-- **A_APPLY_GOAL_FIX**: 每个 unmet 子目标 `session chain insert`（plan --gaps + execute，`--goal-ref G{n}`），追加 post-goal-audit {retry+1}；`run decide post-goal-audit --verdict fix`
-- **A_APPLY_GOAL_DONE**: 重建整块 decomposition（`goals[*].status="done"`）提交 `session meta update --decomposition-file -`；`run decide post-goal-audit --verdict proceed`
-- **A_APPLY_SCOPE_VERDICT**: 依据 scope_verdict 经 `session chain skip|replace` 重塑下游链路（同 maestro-ralph）
+- 对历史 Session 中已经存在的 decision node，仅用 `maestro run decide ...` 完成兼容裁决；不得借兼容裁决再复制一套自动插步模板。
+- `proceed` 可直接落 decision receipt；`fix`/`escalate` 若需要改链，调度对应 repair/debug/audit Skill 产出 proposal，或暂停请求用户/operator 明确操作。
+- decomposition/position 的目标状态仍经 `session meta update` 管理，但它不授予 chain mutation；后续 chain 变化仍必须来自 Skill proposal。
+- `session chain insert|skip|replace` 只接受用户明确的 operator/admin 请求与 legacy recovery，不是自动编排正常路径。
 
 ### A_RETRY / A_PAUSE_SESSION / A_COMPLETE_SESSION
 
@@ -434,24 +420,23 @@ post-analyze-scope 触发：读 macro analyze artifact → 提取 scope_verdict 
 3. 组装 chain-file JSON（内存链 → schema；`{session}`/`{intent}` 占位符由 A_STEP_RESOLVE_ARGS 运行时替换或直接 inline 已知值）：
    ```json
    {
-     "intent": "{intent}", "engine": "{engine}",
+     "intent": "{intent}", "engine": "coordinator",
      "quality_mode": "standard", "auto_mode": {auto_mode},
      "steps": [
        { "command": "analyze", "args": "--session {session}", "stage": "analyze", "goal_ref": "G1", "retry_max": 2 },
-       { "command": "post-execute", "stage": "execute", "decision_ref": "post-execute" }
+       { "command": "review", "stage": "review", "retry_max": 2 }
      ],
-     "decision_points": [{ "point_id": "post-execute", "after_step_id": "step-001-execute", "max_retries": 2 }],
+     "decision_points": [],
      "position": { "lifecycle": "{lifecycle}", "phase": null, "milestone": "",
        "planning_mode": "unified", "passed_gates": [], "scope_verdict": "{scope_verdict}" },
      "decomposition": { "execution_criteria": [...], "goals": [...task_decomposition], "changelog": [] },
      "executor": { "platform": "claude", "cli_tool": "claude" }
    }
    ```
-   - `{engine}` = `--engine` flag 值（default `ralph`）。
-   - **manual engine 简化**：当 `engine == "manual"` 时，省略 `decision_points[]`、`decomposition` 块、step 中的 `decision_ref`/`retry_max`。steps 仅保留 `command`/`args`/`stage`。
-   - decision 节点（ralph only）：`step` 携 `decision_ref`（CLI 标为 decision node，不建 Run）；`decision_points[]` 声明重试预算。
+   - `engine: coordinator` 是兼容持久化字段，不是 Session 类型或策略；executor 选择不写入 chain topology。
+   - 新 chain 使用可执行 Skill step；`decision_points` 只为读取/继续 legacy Session 保留。
    - `boundary_contract` 随建入（decomposition_owner=maestro 语义由 orchestration.decomposition 承载；下游 ralph 见非空即只消费）。
-4. 调 `Bash("printf '%s' '{chain_json}' | maestro session create maestro-{slug} --intent \"{intent}\" --engine {engine} --chain-file -")`。返回 `session_id` + `next: maestro run next --session {id}`。
+4. 调 `Bash("printf '%s' '{chain_json}' | maestro session create maestro-{slug} --intent \"{intent}\" --engine coordinator --chain-file -")`。返回 `session_id` + `next: maestro run next --session {id}`。
 5. Initialize tracking via `TodoWrite`
 6. If `--super`: read `maestro-super.md`, follow it completely
 
@@ -491,9 +476,9 @@ post-analyze-scope 触发：读 macro analyze artifact → 提取 scope_verdict 
 - [ ] skill 名由 `maestro ralph skills --platform claude --steps --json --quiet` 预校验（project 覆盖 global，含步骤注册表），缺失阻断建链
 - [ ] Session schema 为 `session/1.3`、Run schema 为 `command-run/1.3`；旧版兼容读，contract v2 显式 opt-in
 - [ ] 用户传入 `-y` 时透传到 skill args
-- [ ] All chains dispatched via Agent(ralph-executor) — maestro 拥有完整执行循环
-- [ ] One agent per step — unnamed Agent({ subagent_type: "ralph-executor" }) 派发
-- [ ] Executor 结果通过 task-notification 回传主流程
+- [ ] `agent|direct` 仅选择 Run executor，不改变 Session/chain 类型、Skill contract 或 proposal authority
+- [ ] `agent` 模式每步派发一个 unnamed Agent({ subagent_type: "ralph-executor" })；`direct` 模式由主 LLM 执行同一 Run
+- [ ] Agent executor 结果通过 task-notification 回传主流程；direct executor 返回同构 completion signals
 - [ ] 主流程调 `maestro run complete --verdict`（免 run-id）上报（非 agent 上报）
 - [ ] Decision 节点通过 Agent 评估、经 `run decide` 落盘，不 handoff 到其他 skill
 - [ ] drift_score 分析：ALIGNED/MINOR_DRIFT → complete；MAJOR_DRIFT → needs-retry/done-with-concerns
@@ -501,6 +486,6 @@ post-analyze-scope 触发：读 macro analyze artifact → 提取 scope_verdict 
 - [ ] (super) Requirements validated before roadmap
 - [ ] (super) Each session scored >= 80%
 - [ ] (compose) `--compose` produces a validated template (≤20 nodes, acyclic, no orphans) written to `~/.maestro/templates/workflows/` + index; drafts preserved on abandon
-- [ ] (play) `--play <template>` binds context, topologically sorts nodes → chain-file steps（`session create --chain-file`）, and dispatches via Agent(ralph-executor) 执行循环; `--list`/`--dry-run` short-circuit
+- [ ] (play) `--play <template>` binds context, topologically sorts nodes → chain-file steps（`session create --chain-file`）, and executes through the selected canonical Run executor; `--list`/`--dry-run` short-circuit
 
 </appendix>

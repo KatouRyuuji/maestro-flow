@@ -1,7 +1,7 @@
 ---
 name: maestro-ralph
 disable-model-invocation: false
-description: "Adaptive lifecycle orchestrator for explicit Ralph lifecycle, continuation, or engine requests"
+description: "Closed-loop policy over the canonical Session/Run chain, compatible with Sessions created by Maestro or Ralph"
 argument-hint: "<intent>|status|continue [-y] [--amend] [--roadmap]"
 allowed-tools:
   - Read
@@ -28,9 +28,9 @@ contract:
 </required_reading>
 
 <purpose>
-Adaptive lifecycle orchestrator: locate a topic-grouping Session → locate step → resolve args → load same-Session sealed outputs from `run next`/`run brief` → dispatch [@subagent] Agent(ralph-executor) per step → extract signals → drift check → `run complete --verdict` → evaluate decision → explicit next step → loop.
+Closed-loop orchestration policy over the same canonical Session/Run chain used by `/maestro`: locate any compatible topic Session → explicit `run next` → `run brief` → dispatch one Skill Run → `run check` → evaluate optional Skill proposal under budget/confidence policy → atomic `run complete` → explicit next step → loop.
 
-Session: `.workflow/sessions/{id}/session.json`（topic grouping/index；engine=ralph 的 orchestration 含 chain/decision_points/position/decomposition/lease/executor）。执行、handoff、anchor 与 sealed outputs 归 Run。
+Session: `.workflow/sessions/{id}/session.json`（topic grouping/index；orchestration 含统一 chain/decision_points/position/decomposition/lease/executor）。`engine` 仅作兼容元数据，不决定 Session 能力；Maestro 或 Ralph 创建的 compatible Session 均可继续。执行、handoff、anchor 与 sealed outputs 归 Run。
 `{session_dir}` = `.workflow/sessions/{id}/`（标准 session 目录）。
 遗留 `ralph-meta.json` 仅作旧 session 的 legacy 读兜底，不再写入。
 </purpose>
@@ -69,7 +69,7 @@ Remaining      → intent (amend_mode 时为 change_request)
 
 **State files**:
 - `.workflow/state.json` — project projection only；不得作为 topic resolution 或 artifact reuse authority
-- `.workflow/sessions/{id}/session.json` — 唯一编排真相源（engine=ralph；orchestration.chain/decision_points/position/decomposition/lease/executor）
+- `.workflow/sessions/{id}/session.json` — 唯一编排真相源（不按 engine 分型；orchestration.chain/decision_points/position/decomposition/lease/executor）
 - `.workflow/sessions/{id}/runs/{run_id}/run.json` — 每步 Run 的 handoff/anchor（步进进度单源）
 - `.workflow/sessions/{id}/ralph-meta.json` — legacy 兜底（旧 session 未迁移时的读取源；新 session 不写）
 </context>
@@ -87,18 +87,18 @@ Remaining      → intent (amend_mode 时为 change_request)
 7. **Decision receipt single-source** — prompt 不直写 `decisions.ndjson`；评估摘要、置信度与 parse fallback 经 `run decide --summary/--evidence` 进入 transition receipt，由 runtime 重建 projection
 8. **Decision delegates read-only** — 评估 Agent 通过 prompt 中的 CONSTRAINTS 约束为只读
 9. **执行 step 通过 `maestro run next` CLI 加载并内联执行**（由 execute Agent 完成）
-10. **session.json orchestration 是唯一编排真相源** — 不生成 markdown 清单或侧文件；一切状态写入经 CLI 动词（`session create --chain-file` / `session chain insert|skip|replace` / `run next` / `run complete --verdict` / `run decide` / `session meta update`），prompt 层不得直写 session.json 或 ralph-meta.json
+10. **session.json orchestration 是唯一编排真相源** — 自动链变化只能由 Skill 的已校验 `chain-proposal/1.0` 经 `run complete --chain-proposal` 原子提交。`session chain insert|skip|replace` 仅为 operator/admin 与 legacy recovery 保留；prompt 层不得用它复制 Skill 判断，也不得直写 session.json/ralph-meta.json
 11. **每个 step 必须在 chain 中标记 sealed** — 由 `maestro run complete --verdict done`（或 `done-with-concerns`）驱动链推进；CLI 是唯一合法写入路径
 12. **step command 在 A_BUILD_STEPS 解析** — 通过 `maestro ralph skills --platform claude --steps --json --quiet` 预校验（`--steps` 引入 prepare/workflows 步骤注册表，覆盖生命周期 step 名）
 13. **执行 step 内容加载** — 由 `maestro run next` CLI 通过 `resolveStepContent()` 在执行期完成
 14. **Decomposition is outcome-oriented** — sub-goals 为可观测交付，禁止 lifecycle 复刻
 15. **Sessions are topic grouping/indexes** — Run 才是 execution/output 单元；skill args 统一用 `--session {session}` 模式，无 phase/milestone 占位符；后续 Run 仅经 canonical upstream 引用同 Session sealed outputs
-16. **task_decomposition 驱动 steps[] 动态生长** — `post-goal-audit` 按 unmet 子目标插入 scoped mini-loop
+16. **Skill output 驱动可选链变化** — task decomposition、review、drift 与 goal audit 只形成对应 Skill 的输入；是否插入 scoped mini-loop 由该 Skill 声明的 chain effects 与 proposal 决定
 17. **Invariant violation = BLOCK** — 违反上述任一 invariant 即阻断当前操作
 18. **Evaluate fallback 必须标记** — 评估 Agent 解析 verdict 失败时 fallback 为 "fix"，MUST 在 `run decide --summary` 记录 `parse_failed=true; confidence_score=0`
 19. **auto_confirm 单一来源** — `auto_confirm` 仅由用户 `-y` 标志设定
 20. **分解契约单一所有者** — `boundary_contract` / `task_decomposition` 由 session 创建者拥有
-21. **控制权优先级（范式治理）** — FSM 独占 session 生命周期 + step 排序 + retry/fix/escalate + cross-step decision 节点
+21. **控制权优先级（范式治理）** — Ralph policy 拥有 proposal 评价、budget、confidence、escalation 与停止条件；Skill 拥有领域判断/proposal；Runtime 独占 chain mutation authority。Ralph 不拥有私有 Session 类型
 22. **引擎只做并行加速，不做状态决策** — `--engine swarm|universal` 通过 Workflow 引擎并行执行单个 step，MUST NOT 修改 session state、MUST NOT 推进 step、MUST NOT 触碰 decision 节点；引擎产出写入该 step 的 Run output dir（格式兼容对应命令产物），由主流程照常 `run complete --verdict`。生成/固定脚本对引擎只读（`wf-*.js` 从不被编辑；`uwf-*.js` 仅由 universal 生成器按幂等命名覆盖）。
 23. **Task/Goal 仅作投影** — session.json/run.json 是权威；Task/Goal UI 由宿主投影或显式 goal-enabled step 管理，Ralph prompt 不手工双写中间进度。
 24. **Compatibility commands are out of band** — 正常 Ralph 路由禁止调用或推荐 `run recall-confirm|fork|import|new|rebind`；historical similarity 只读，deprecated admin-only CLI 不参与 topic resolution、output reuse 或 next routing，且无 force bypass。`session resolve|resume` 仅允许用于 paused Session 的 canonical audited recovery。
@@ -133,10 +133,10 @@ S_STEP_ANALYZE    — 提取信号 + 组装 completion 参数            PERSIST
 S_STEP_DRIFT      — 产物 vs 目标偏离分析                      PERSIST: step.drift_score（评估态，内存）
 S_STEP_COMPLETE   — 调 `run complete --verdict` 上报            PERSIST: run.json handoff + chain step 推进
 S_DECISION_EVAL   — 启动分析 Agent 评估质量门              PERSIST: —
-S_APPLY_VERDICT   — `run decide` 落盘裁决 + `session chain insert` 插步  PERSIST: decision_point 状态 + chain
+S_APPLY_VERDICT   — 评价 Skill proposal；legacy decision 仅 `run decide`  PERSIST: decision receipt / completion transition
 S_SESSION_DONE    — 所有 step 完成                        PERSIST: session.status
 S_HANDLE_FAIL     — 处理失败                              PERSIST: step.status
-S_AMEND_GOAL      — 修改 running session 目标              PERSIST: session meta update (decomposition/position) + session chain skip|insert|replace
+S_AMEND_GOAL      — 修改 running session 目标              PERSIST: session meta update + 后续 Skill proposal
 S_FALLBACK        — 请求用户输入                           PERSIST: —
 </states>
 
@@ -453,7 +453,7 @@ Generate steps from `session.lifecycle_position` to `session-seal`（`session.se
    - 从第 3 个执行 step 起每隔 3 个插入 decision step `decision_ref: post-reground`（对应 `decision_points` 条目 `max_retries: 0`）
    - 不在最后一个执行 step 后插入（由 goal-audit 覆盖）
    - 不与已有 quality-gate decision 节点相邻（顺延到下一个 3-step 边界）
-   - fix-loop 动态插入的 step **纳入**计数（从插入点起重新计算 3-step 间隔）
+   - accepted Skill proposal 插入的 execution step **纳入**计数（从插入点起重新计算 3-step 间隔）；插入原因与内容归对应 Skill，Ralph 仅重算 policy cadence
 6. **终点硬约束**：`session.session_id` 存在时 chain 以 `session-seal`（decision:post-session）结尾；`session.session_id=null`（standalone）时跳过 `session-seal` stage，chain 以最后一个质量门 stage 结尾
 7. **goal_ref 传播**：`task_decomposition` 存在时，每个 step 按 `step.stage ∈ g.lifecycle` 匹配 `step.goal_ref = g.id`（多匹配取字典序最小）；decision 节点不打 goal_ref
 8. **占位符**：`{session}` `{intent}` 由 A_STEP_RESOLVE_ARGS 运行时替换
@@ -485,7 +485,7 @@ Generate steps from `session.lifecycle_position` to `session-seal`（`session.se
 3. 组装 chain-file JSON（A_BUILD_STEPS 产出的内存链 → schema）：
    ```json
    {
-     "intent": "{session.intent}", "engine": "ralph",
+     "intent": "{session.intent}", "engine": "coordinator",
      "quality_mode": "{session.quality_mode}", "auto_mode": {auto_confirm},
      "boundary_contract": {
        "in_scope": [...], "out_of_scope": [...], "constraints": [...],
@@ -504,7 +504,7 @@ Generate steps from `session.lifecycle_position` to `session-seal`（`session.se
    ```
    - decision 节点：`step` 携 `decision_ref`（CLI 据此标记为 decision node，不建 Run）；`decision_points[]` 声明重试预算。
    - 执行 step 的 `retry_max` 缺省 2（对齐现行 ralph 行为）。
-4. 用 Write 将 chain definition 写入 `.workflow/tmp/ralph-chain-{slug}-{timestamp}.json`，再调 `Bash("maestro session create {slug} --intent \"{session.intent}\" --engine ralph --chain-file .workflow/tmp/ralph-chain-{slug}-{timestamp}.json")`，成功后删除临时 definition。禁止把未转义的 intent/JSON 内联进 shell。返回 `session_id` + `next: maestro run next --session {id}`。
+4. 用 Write 将 chain definition 写入 `.workflow/tmp/ralph-chain-{slug}-{timestamp}.json`，再调 `Bash("maestro session create {slug} --intent \"{session.intent}\" --engine coordinator --chain-file .workflow/tmp/ralph-chain-{slug}-{timestamp}.json")`，成功后删除临时 definition。`engine` 是兼容元数据而非 Ralph Session 类型。禁止把未转义的 intent/JSON 内联进 shell。返回 `session_id` + `next: maestro run next --session {id}`。
 5. Step mode/role/rule 由各 stage 的 skill 自身约束（执行 Agent 始终拥有完整工具集）。
 
 ### A_STEP_RESOLVE_ARGS
@@ -558,7 +558,7 @@ if goal:
   → 传递给 A_STEP_DISPATCH 注入 agent prompt
 ```
 
-**5. Write** 仅将 placeholder/skill 参数补全结果经 `maestro session chain replace --session {session} --step {step_id} --args "{enriched}"` 写回 pending step。Artifact source 不进入 args 或侧文件；其 provenance 只存在于 Run input/upstream authority。
+**5. Bind** 不改写 pending chain step；将解析后的参数通过本次 `maestro run next --session {session} --arg "{enriched}"` 交给即将分配的 Run。Artifact source 不进入 args 或侧文件；其 provenance 只存在于 Run input/upstream authority。
 
 ### A_STEP_DISPATCH
 
@@ -698,11 +698,14 @@ if goal:
 
 ### A_STEP_COMPLETE
 
-调 `run complete --verdict --json` 上报；仅在响应确认 `run_sealed=true` 后循环。
+调 `run complete --verdict --json` 上报；仅在响应确认 `run_sealed=true` 后循环。proposal 交接以 `run-mode.md` 的 Chain Effects and Proposals 为唯一协议。
 
-1. 使用 A_STEP_EXTRACT 组装的参数调用 `run complete`（免 run-id，自动解析当前 running 步的 Run）:
+1. 先读取 `run check --json` 的 artifacts/errors 与 `run brief` 的 `execution_contract.orchestration.chain_effects`。无 proposal 时正常 complete；有 proposal 时由 Ralph policy 作 accept/reject/revise，禁止直接执行 `session chain` 动词。
+2. 非 `-y`：向用户展示 proposal reason/operations/confidence 并确认。显式 `-y`：仅当 Runtime 校验 clean、operations 在 pending tail、未越 budget 且 intent aligned 时自动接受；`decide` 仅允许非 escalate 且 confidence 满足当前 gate 阈值，escalate/低置信/边界歧义一律暂停或拒绝。
+3. accept 时给同一次 completion 加 `--chain-proposal outputs/chain-proposal.json`；reject 时省略并以 `--note` 记录；revise 时 re-attach 同一 run_id，由原 Skill 重写后再次 check。
+4. 使用 A_STEP_EXTRACT 组装的参数调用 `run complete`（免 run-id，自动解析当前 running 步的 Run）:
    ```
-   Bash("maestro run complete --session {session} --verdict done --summary \"{SUMMARY}\" [--evidence <path>]... [--decision \"<text>\"]... [--note \"<text>\"]... --json")
+   Bash("maestro run complete --session {session} --verdict done [--chain-proposal outputs/chain-proposal.json] --summary \"{SUMMARY}\" [--evidence <path>]... [--decision \"<text>\"]... [--note \"<text>\"]... --json")
    ```
    **verdict + 信号参数映射**（旧 ralph → 新面）：
 
@@ -868,33 +871,27 @@ CONSTRAINTS: 只评估不修改文件 | 置信度<60%倾向 fix | retry {n}/{max
 
 ### A_APPLY_PROCEED / A_APPLY_FIX / A_APPLY_ESCALATE
 
-裁决落盘统一经 `maestro run decide {point_id} --session {session} --verdict proceed|fix|escalate --confidence high|medium|low [--summary "<text>"] [--evidence <path>]`（评估已由 A_AGENT_EVALUATE 做，此处仅落盘 + 按 verdict 推进）：
+新 Session 的 fix/review/goal/drift 业务判断由对应可执行 Skill 产生 typed proposal，Ralph 只评价 proposal，不在此处维护 Fix-Loop Templates 或直接改链。
 
-- **A_APPLY_PROCEED**: 普通 gate 调 `run decide {point_id} --verdict proceed`。`post-session` 必须先 `run decide post-session --verdict proceed` 使 decision node terminal，再调 `maestro run seal-session {session}`；seal 成功后仅返回 dep-ready Session 的 `suggest_only`，不在已 sealed Session 上插步。
-- **A_APPLY_FIX**: 先 `run decide {point_id} --verdict fix`（原 decision node 保持 pending，CLI 自带 retry 计数）。找到当前 decision node 的前一 execution step 作为 `cursor`，按 Fix-Loop Templates 顺序插入：每次 `--after {cursor}`，并把 cursor 更新为刚插入的 step_id。repair steps 因而位于原 decision node 之前；**复用原 decision node 复评，禁止插入相同 decision_ref 的新节点**。
-- **A_APPLY_ESCALATE**: `run decide {point_id} --verdict escalate`，随后 `session chain insert --after {step_id} --command debug --args "{gap_summary}" --inserted-by {gate名}` + 插入 `decision:post-debug-escalate` 节点（`session chain insert ... --command post-debug-escalate --decision-ref post-debug-escalate`）
-
-> 插步不再手工 reindex：`session chain insert` 在活动位之后的 pending 尾部插入并自动定 step_id。
+- **A_APPLY_PROCEED**：历史 decision node 可用 `run decide ... --verdict proceed` 完成 receipt；`post-session` terminal 后才能 `seal-session`。
+- **A_APPLY_FIX**：安排 repair/debug/review Skill Run 生成 proposal，或暂停等待用户；不得在 prompt 中展开并逐条插入 repair steps。
+- **A_APPLY_ESCALATE**：使用 `run decide ... --verdict escalate` 暂停 Session，返回人工恢复建议；不得在 paused Session 上自行插入 debug/decision 节点。
+- 旧 Session 已持久化的 decision node 继续兼容读取与 `run decide`，但兼容路径不授权新自动 chain mutation。
 
 ### A_APPLY_SCOPE_VERDICT
 
-依据 `session.scope_verdict` + `session.wants_roadmap` 重塑下游链路（改链经 `session chain skip`/`insert`/`replace`，不直写）：
-
-1. 路径 A（`large` 且 `wants_roadmap`）：保持 roadmap+analyze，`plan` 选 session 列（如需改 args 用 `session chain replace --step {plan_step_id} --args ...`）
-2. 路径 B（`medium`/`small`，或 `large` 非 `wants_roadmap`）：`session chain skip --step {roadmap_step_id}` + `--step {analyze_step_id}`（跳未完成的 roadmap/analyze），`plan` 改为 `session chain replace --step {plan_step_id} --args "--from analyze:{ANL_ID}"`
-3. 路径 C（`unknown`）：非 auto_confirm → [@ask] AskUserQuestion；auto_confirm → 默认路径 B
-4. 标 decision completed：`run decide post-analyze-scope --verdict proceed --confidence {n}`
+scope analysis 作为 Skill Run 产出 findings，并在需要改变 pending tail 时同时产出允许的 proposal。Ralph 按 A_STEP_COMPLETE 评价/提交；`unknown` 或边界歧义必须询问用户，不能由 `-y` 猜测。历史 `post-analyze-scope` decision 只用 `run decide` 收口。
 
 ### A_APPLY_GOAL_FIX / A_APPLY_GOAL_DONE
 
-- **A_APPLY_GOAL_FIX**: `run decide post-goal-audit --verdict fix` 后，从原 decision 前一 step 开始维护移动 cursor；对每个 unmet 子目标依次插入 plan + execute，全部位于原 `post-goal-audit` decision 前。复用原 decision node，禁止追加同名 decision。
+- **A_APPLY_GOAL_FIX**: goal-audit Skill 对 unmet 子目标产出 scoped proposal；Ralph 评价 budget/confidence 后通过当前 Run completion 原子提交，不维护移动 cursor 或手写 plan+execute 模板。
 - **A_APPLY_GOAL_DONE**: 重建整块 decomposition（`goals[*].status="done"`, `completion_confirmed=true`）提交 `maestro session meta update --session {session} --decomposition-file -`（stdin 传整块 JSON）；`run decide post-goal-audit --verdict proceed`
 
 ### A_ADVANCE_SESSION
 
 1. Update position：重建 position 块（reset passed_gates）提交 `maestro session meta update --session {session} --position-file -`
-2. 为下一 session 插入完整 lifecycle steps：逐条 `session chain insert --inserted-by post-session`
-3. 无手工 reindex（CLI 定 step_id）
+2. 需要继续下一阶段时调度 lifecycle planning Skill 产出 proposal；Ralph 不逐条插入固定 lifecycle template
+3. proposal 仍由产生它的 Run 在 completion transition 中提交；若当前已 sealed，则只返回 suggest-only，不再改链
 
 ### A_REGROUND_HALT / A_PAUSE_ESCALATE
 
@@ -921,7 +918,7 @@ CONSTRAINTS: 只评估不修改文件 | 置信度<60%倾向 fix | retry {n}/{max
 | 2. 解析 | `change_request` 非空 → 直接用；为空 → [@ask] AskUserQuestion（修改/新增/移除/调整边界） | `change_type` + `change_request` |
 | 3. Mini Grill | Agent 评估影响 | RISK_LEVEL + AFFECTED_GOALS + INVALIDATED_STEPS + NEW_GAPS |
 | 4. 确认 | [@ask] AskUserQuestion：应用并继续 / 仅改目标 / 取消 | 用户选择 |
-| 5. 应用 | 重建整块 decomposition（旧目标 `superseded` + 新目标 `origin: CHG-xxx` + changelog 追加）提交 `session meta update --decomposition-file -`；受影响 pending steps 用 `session chain skip`/`insert`/`replace` 重塑 | re-dispatch |
+| 5. 应用 | 重建整块 decomposition（旧目标 `superseded` + 新目标 `origin: CHG-xxx` + changelog 追加）提交 `session meta update --decomposition-file -`；调度 planning Skill 依据新目标产出 pending-tail proposal | re-dispatch |
 
 **Phase 3 Agent prompt:**
 ```
@@ -965,14 +962,14 @@ GUARD: 已完成（`status: "done"`）的目标不可 supersede（skip + warn）
 
 <engines>
 
-Ralph 是自适应编排器；其顺序链默认以 `--engine sequential`（当前行为）执行。`--engine swarm` 与 `--engine universal` 是叠加在链之上的**执行引擎模式**，为单个 step 增加*并行、对抗式*执行，但不拥有 session 状态。
+Ralph 是同一 Session/Run 协议上的闭环 policy；其 Run 默认以 `--engine sequential`（当前行为）执行。`--engine swarm` 与 `--engine universal` 只是单个 Run 内的**执行载体模式**，增加*并行、对抗式*执行，但不定义 Session/chain 类型，也不拥有协议状态。
 
 | Engine mode | 脚本源 | 增加什么 | ralph 何时选它 |
 |-------------|--------|----------|---------------|
-| `--engine swarm`（fixed） | `swarm/wf-*.js` | 将 step intent 路由到预建 Workflow 脚本（`wf-*.js`）执行多 agent 并发 + 对抗门 | 标准 stage（analyze/brainstorm/review/verify/plan/execute/grill/milestone-audit）需要多维并行 + 交叉验证时 |
-| `--engine universal`（dynamic） | `dynamic/uwf-*.js` | 扫描脚本库匹配；无匹配则按 depth 选定对抗模式**动态生成**任务专属 Workflow 脚本，持久化到 `dynamic/`，再执行 | 非标准任务 / 无匹配 fixed 脚本的新领域 |
+| `--engine swarm`（prebuilt script） | `swarm/wf-*.js` | 将 Run intent 路由到预建 Workflow 脚本（`wf-*.js`）执行多 agent 并发 + 对抗门 | 标准 stage（analyze/brainstorm/review/verify/plan/execute/grill/milestone-audit）需要多维并行 + 交叉验证时 |
+| `--engine universal`（generated script） | `dynamic/uwf-*.js` | 扫描脚本库匹配；无匹配则按 depth 选定对抗模式生成任务专属 Workflow 脚本，持久化到 `dynamic/`，再执行 | 非标准任务 / 无匹配 prebuilt script 的新领域 |
 
-**控制权边界**：两个引擎均为**并行加速器，非状态决策者** —— 从不修改 ralph session state、从不推进 step。FSM 保留 session 生命周期 + step 排序的所有权（invariant 21 控制权优先级）。引擎调用 `Workflow` 工具在 step 内部并行执行，结果回填该 step 的产物目录，仍由主流程 A_STEP_COMPLETE 调 `run complete --verdict` 上报。
+**控制权边界**：两个引擎均为**并行加速器，非状态决策者** —— 从不修改 canonical Session state、从不推进 step。Ralph policy 保留 proposal disposition、budget、confidence、escalation 与停止条件；Skill 决定领域结果及可选 proposal，Runtime 独占 mutation authority。引擎调用 `Workflow` 工具在 Run 内并行执行，结果回填该 Run 的产物目录，仍由主流程 A_STEP_COMPLETE 调 `run complete --verdict` 上报。
 
 **Ralph integration hook**：一个 step 的 `command` 为引擎模式时携带 `args: "--engine swarm --script wf-analyze --session {session}"`；executor agent 通过 `maestro run next` 正常加载/执行，引擎在内部调用 `Workflow`。
 
@@ -1015,7 +1012,7 @@ Multi-match within a priority → `[@ask] AskUserQuestion`。Cross-priority → 
 6. Show `Resume: --engine swarm --resume {runId}`。
 
 **Invariants:**
-- Parallel-accelerate only —— 从不修改 ralph session state，从不推进 step。
+- Parallel-accelerate only —— 从不修改 canonical Session state，从不推进 step；prebuilt/generated 仅描述脚本来源，不描述 chain 行为。
 - args pre-compiled —— 所有 FS 读取在 assembly step 完成；script 内部 agent 通过工具自读。
 - Output 格式与对应命令产物兼容。
 - `resumeFromRunId` 直接透传给 Workflow 工具（内置缓存）。
@@ -1028,11 +1025,11 @@ Multi-match within a priority → `[@ask] AskUserQuestion`。Cross-priority → 
 |-----------|------|
 | 需多维并行 + 对抗交叉验证 | swarm |
 | 需对话式 / interview_protocol | sequential（swarm agent 不能交互） |
-| 必须写 state.json / 推进 ralph step | sequential（swarm 承诺不碰状态） |
+| 必须推进 Session step | 仍由外层 Ralph policy + Runtime 完成（任何 engine 都不碰状态） |
 | 时间预算充足、精度优先 | swarm |
 | 上下文受限、快速单视图即可 | sequential |
 
-### Engine: universal (dynamic scripts)
+### Engine: universal (generated scripts)
 
 **Library**：fixed `~/.maestro/workflows/swarm/wf-*.js` + dynamic `~/.maestro/workflows/dynamic/uwf-*.js`。
 
@@ -1122,7 +1119,7 @@ Build rules 0.5-13 全部适用，包括 spec-setup 预检（rule 0.5）、grill
 
 ### Session Schema
 
-**session.json** (`session/1.3`，engine=ralph；orchestration 为唯一编排真相源，原 ralph-meta 字段已归位)。**由 CLI 建/写，prompt 层不直写**：
+**session.json** (`session/1.3`；所有 compatible engine metadata 共享同一 orchestration 能力，原 ralph-meta 字段已归位)。**由 CLI 建/写，prompt 层不直写**：
 
 ```json
 {
@@ -1133,7 +1130,7 @@ Build rules 0.5-13 全部适用，包括 spec-setup 预检（rule 0.5）、grill
     "in_scope": [], "out_of_scope": [], "constraints": [], "definition_of_done": ""
   },
   "orchestration": {
-    "engine": "ralph",
+    "engine": "coordinator",
     "quality_mode": "standard",
     "auto_mode": false,
     "chain": [{
@@ -1187,7 +1184,9 @@ Build rules 0.5-13 全部适用，包括 spec-setup 预检（rule 0.5）、grill
 
 **legacy `ralph-meta.json`**：旧 session（`session/1.0` + ralph-meta）未迁移前，评估/审计 prompt 可兜底读其 `task_decomposition`/`context`/`goal_changelog`；新 session 一律走上面 `session/1.3` 形态，`ralph-meta.json` 不再写。迁移经 `maestro session migrate [--session <id>]`（幂等，拒迁有 running step 的 session）。
 
-### Fix-Loop Templates
+### Legacy Fix-Loop Templates（read-only compatibility）
+
+以下模板只用于解释旧 Session 已持久化 chain 的来源，不得由 Ralph prompt 展开执行。新 fix-loop 必须由对应 Skill 以 `chain-proposal/1.0` 产出，并随该 Run completion 原子提交。
 
 下面每行是一条 ordered repair step。首步插在原 decision 前一 execution step 后；后续每步插在刚创建的 step_id 后（移动 cursor），保证顺序稳定且全部位于原 pending decision 之前。复用原 decision node 复评，禁止追加同名 `decision_ref`。执行 step 按 A_BUILD_STEPS 规则 9 预校验 skill 名，由 A_STEP_DISPATCH 派发。
 
@@ -1291,12 +1290,12 @@ Engine 模式新增（`--engine swarm|universal`，见 `<engines>`）：
 - [ ] spec-setup 预检（build rule 0.5）
 - [ ] post-session：mark session sealed（`maestro run seal-session`，含 clear active_session_id）先于 DAG 推进；seal 失败 → END + 提示 `/maestro-session-seal`；adhoc 无依赖图 → END
 - [ ] post-reground + drifted + confidence < 60 → A_APPLY_PROCEED (LOW CONFIDENCE)
-- [ ] Fix-loop 插入的 step 通过 A_STEP_DISPATCH 逐步执行
+- [ ] Skill proposal 原子插入的 step 通过 A_STEP_DISPATCH 逐步执行；prompt 不直接展开 Fix-Loop Templates
 - [ ] re-grounding 3-step 插入规则（build rule 5.5）不变
 - [ ] A_REGROUND_HALT 漂移熔断（auto_confirm 不跳过）不变
 - [ ] `--engine swarm [--script wf-*]` 路由 intent → 运行 fixed Workflow 脚本 → ingest 对抗摘要 + 写 ralph-compatible artifacts
 - [ ] `--engine universal [--depth ...] [--from ...] [--dry-run]` 扫描库，无匹配时 generate+validate 动态脚本，经 scriptPath 执行，持久化到 `dynamic/`
-- [ ] 两引擎均不修改 ralph session state 或推进 step（控制权优先级 invariant 21 不变）
+- [ ] 两引擎均不修改 canonical Session state 或推进 step；prebuilt/generated 脚本来源不形成 static/dynamic Session 或 chain 类型
 - [ ] 引擎结果回填 step 产物目录，仍由主流程 A_STEP_COMPLETE 调 `run complete --verdict` 上报
 
 </appendix>

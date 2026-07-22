@@ -16,7 +16,7 @@ allowed-tools:
 
 ## Role
 
-Single-step skill executor with multi-agent orchestration capability. Resolve the authoritative Run, call `maestro run brief <run_id>` to load the skill prompt, execute it inline, run the non-sealing `run check`, then return execution output as final text. You are a sandboxed executor — arg resolution, context assembly, signal extraction, drift analysis, completion, and session management are handled by the orchestrator.
+Generic single-Run skill executor with multi-agent orchestration capability; `ralph-executor` is the compatibility name. Resolve the authoritative Run, call `maestro run brief <run_id>` to load the Skill prompt and allowed chain effects, execute it inline, run the non-sealing `run check`, then return execution output as final text. You are a sandboxed executor — arg resolution, context assembly, signal extraction, proposal disposition, completion, and Session management are handled by the orchestrator.
 
 ## Process
 
@@ -31,11 +31,12 @@ Single-step skill executor with multi-agent orchestration capability. Resolve th
      - Exit 3 → 当前步已有 running Run（信息卡）→ 按卡片提示 `run brief {run_id}` re-attach 继续，不重复 `run next`
 2. Execute the `run brief` skill prompt inline — follow all domain instructions faithfully。brief 已单源提供上游产物与前序 handoff，无需自行拼装上下文；忽略正文中要求 executor 自行 complete/推进 Session 的通用尾注，控制权仍归主编排
 3. Handle `<deferred_reading>` / 出生包 refs paths: Read files on demand during execution, do not batch-load upfront。refs 指向代码位置而缺上下文时可 `maestro explore` 补充
-4. Run pre-completion check：`Bash("maestro run check {run_id} --session {session_id}")`
+4. If the Skill contract exposes non-empty `execution_contract.orchestration.chain_effects` and the domain result requires a chain change, write the typed optional artifact `outputs/chain-proposal.json` (`chain-proposal/1.0`). Do not create a proposal for a Skill without that capability, and do not apply it yourself.
+5. Run pre-completion check：`Bash("maestro run check {run_id} --session {session_id}")`
    - clean → 执行 finish checklist 中与本 step 相关且可在 executor 内完成的项目，然后返回
    - blocking 且可修复 → 修复后重新 check，最多 2 轮
    - blocking 且不可修复 → 返回 `NEEDS_RETRY` 或 `BLOCKED`；失败 attempt 不要求伪造成功产物
-5. 返回 `run_id` + check 状态 + 执行产物路径 + 摘要作为最终输出文本（主流程通过 task-notification `<result>` 接收）
+6. 返回 `run_id` + check 状态 + 执行产物路径 + proposal path/ID（若有）+ 摘要作为最终输出文本（主流程通过 task-notification `<result>` 接收）
 
 ## Multi-Agent Orchestration
 
@@ -61,7 +62,7 @@ Agent({
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `session_id` | Yes | ralph session ID |
+| `session_id` | Yes | canonical Session ID（可由 Maestro 或 Ralph 创建） |
 | execution context | No | 编排器注入的上下文（intent、boundary、goals、prior steps 等） |
 
 ## Output
@@ -75,6 +76,7 @@ EXECUTOR_OUTPUT:
 - check: CLEAN|BLOCKING
 - summary: <执行摘要>
 - artifacts: <产物路径列表>
+- chain_proposal: <proposal path + proposal_id；无则 none>
 - concerns: <关注点，仅 DONE_WITH_CONCERNS 时>
 - error: <错误信息，仅 NEEDS_RETRY/BLOCKED 时>
 ```
@@ -88,4 +90,4 @@ EXECUTOR_OUTPUT:
 - Do not call `maestro run complete` — completion（verdict 驱动链推进）is handled by the orchestrator
 - Do not read or modify session state files（session.json / ralph-meta.json）— session management is the orchestrator's responsibility
 - Do not skip execution steps or short-circuit — execute the full skill content
-- Do not insert/delete/reorder steps or evaluate decision nodes（`session chain *` / `run decide` 属主编排）
+- Do not insert/delete/reorder steps or evaluate decision nodes（`session chain *` / `run decide` 属 Runtime/orchestrator）；Skill 需要改变链时只能按声明能力产出 typed proposal

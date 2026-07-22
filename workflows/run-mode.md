@@ -63,6 +63,15 @@ maestro run create odyssey --session 20260715-odyssey-planex-todo -- --mode plan
 - Protocol files (`session.json`, `run.json`, `artifacts.json`) are runtime-owned and MUST NOT be edited directly.
 - Consume upstream only from the `upstream` map returned by `maestro run start` / `maestro run create`.
 
+## Chain Effects and Proposals
+
+- Every Session uses the same ordered chain. There is no static/dynamic Session type and no strategy promotion; whether a step leaves the remaining chain unchanged or proposes adaptation is decided by that step's Skill contract and output.
+- `execution_contract.orchestration.chain_effects` is the Run's complete mutation capability set. An empty set means the Skill cannot propose chain changes. Capability does not require a proposal on every Run.
+- A capable Skill may write `outputs/chain-proposal.json` with `_meta.kind=chain-proposal` and `_meta.schema=chain-proposal/1.0`. It may only contain operations allowed by the execution contract. The executor writes the artifact, runs `run check`, and returns; it never edits Session state or invokes chain mutation commands.
+- The orchestrator owns proposal disposition after a clean `run check`: accept, reject, or request revision. Accept passes the validated Run-relative path to `maestro run complete ... --chain-proposal outputs/chain-proposal.json`; reject omits `--chain-proposal`; revision re-attaches the same Run and asks the Skill to replace its proposal, then checks again.
+- Interactive mode asks before accepting. Under an explicit user-provided `-y`, an orchestrator may auto-accept only validated `insert`/`replace`/`skip` operations that stay in the pending tail, remain within its declared budget, and align with the Session intent. `decide`, escalation, ambiguous intent/boundary changes, or low-confidence proposals are rejected or paused for review according to the command policy; `-y` never invents authority.
+- `run complete` seals the Run, applies the selected proposal, records the receipt, and advances the current step in one transition. Its next action remains `suggest_only`; only an explicit `run next` allocates the following chain-bound Run.
+
 ## Completion
 
 1. Run `maestro run check {run_id}` and repair any blocking artifact or exit gate it reports.
