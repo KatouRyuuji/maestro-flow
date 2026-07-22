@@ -39,6 +39,18 @@ export function validateCompanionRunCreate(text, label) {
     .map(token => `${label}: missing ${token}`);
 }
 
+export function validateExecutorLifecycleBoundary(text, label) {
+  const required = [
+    'maestro run brief',
+    'maestro run check',
+    'Do not call `maestro run complete`',
+    'handled by the orchestrator',
+  ];
+  return required
+    .filter(token => !text.includes(token))
+    .map(token => `${label}: missing ${token}`);
+}
+
 function field(text, name) {
   return text.match(new RegExp(`^${name}:\\s*([^\\r\\n]+)`, 'm'))?.[1]?.trim() ?? null;
 }
@@ -232,6 +244,13 @@ else {
     if (!text.includes(token)) errors.push(`.claude/agents/team-worker.md: missing ${token}`);
   }
 }
+
+const canonicalRunExecutor = join(root, '.claude', 'agents', 'ralph-executor.md');
+if (!existsSync(canonicalRunExecutor)) errors.push('.claude/agents/ralph-executor.md: missing canonical Run executor');
+else errors.push(...validateExecutorLifecycleBoundary(
+  readFileSync(canonicalRunExecutor, 'utf8'),
+  '.claude/agents/ralph-executor.md',
+));
 
 
 for (const dir of readdirSync(skillDir)) {

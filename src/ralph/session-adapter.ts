@@ -246,14 +246,13 @@ export function resolveRalphSession(
   if (sessionId) {
     if (!store.sessionExists(sessionId)) return null;
     const bundle = store.readBundle(sessionId);
-    if (bundle.session.orchestration.engine !== 'ralph') return null;
     if (opts.requireRunning && bundle.session.status !== 'running') return null;
     const sessionDir = store.sessionDir(sessionId);
     const meta = bundle.session.ralph_authority?.canonical_complete ? defaultMeta() : readMeta(sessionDir);
     return { sessionId, sessionDir, bundle, meta };
   }
 
-  // Find latest ralph-engine session (sorted by mtime DESC)
+  // Find latest compatible session (sorted by mtime DESC, engine-agnostic)
   if (!existsSync(sessionsRoot)) return null;
   const candidates: Array<{ id: string; mtimeMs: number }> = [];
   for (const name of readdirSync(sessionsRoot)) {
@@ -270,7 +269,6 @@ export function resolveRalphSession(
   for (const c of candidates) {
     try {
       const bundle = store.readBundle(c.id);
-      if (bundle.session.orchestration.engine !== 'ralph') continue;
       if (opts.requireRunning && bundle.session.status !== 'running') continue;
       const sessionDir = store.sessionDir(c.id);
       return { sessionId: c.id, sessionDir, bundle, meta: readMeta(sessionDir) };

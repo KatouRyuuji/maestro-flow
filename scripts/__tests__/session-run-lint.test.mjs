@@ -12,6 +12,7 @@ import {
 import { lintSessionRunMirrors } from '../lint-session-run-mirrors.mjs';
 import {
   validateCompanionRunCreate,
+  validateExecutorLifecycleBoundary,
   validateRunCreateArgumentChannels,
 } from '../lint-session-run-prompts.mjs';
 
@@ -67,6 +68,22 @@ test('Companion creation lint requires intent in both metadata and command args'
     'fixture.md',
   );
   assert.ok(missing.includes('fixture.md: missing --arg "<intent>"'));
+});
+
+test('Run executor lint keeps completion ownership with the orchestrator', () => {
+  const complete = [
+    'maestro run brief <run-id>',
+    'maestro run check <run-id>',
+    'Do not call `maestro run complete` — completion is handled by the orchestrator',
+  ].join('\n');
+  assert.deepEqual(validateExecutorLifecycleBoundary(complete, 'executor.md'), []);
+
+  const missing = validateExecutorLifecycleBoundary(
+    'maestro run brief <run-id>\nmaestro run check <run-id>',
+    'executor.md',
+  );
+  assert.ok(missing.includes('executor.md: missing Do not call `maestro run complete`'));
+  assert.ok(missing.includes('executor.md: missing handled by the orchestrator'));
 });
 
 test('mirror lint reports a deterministic missing-root diagnostic', () => {

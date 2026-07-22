@@ -71,7 +71,7 @@ $ARGUMENTS — user intent text, or special keywords.
 8. **Grill `-y` 透传** — `-y` auto mode 透传 `-y` 到 grill args（grill 自身 Auto mode 用代码代答），不删除 grill stage；grill 仍产出 grill-report/terminology/context-package 供下游 brainstorm
 9. **D-007-S topic 解析与复用** — Session 仅作 topic grouping/index；normal routing 只接受唯一 running topic locator，同 Session 的 sealed Run outputs 仅经 canonical `upstream`/Artifact Registry 复用；historical similarity 始终只读且不产生 mutation action
 10. **每个 step 由 verdict 驱动链推进** — 由 `maestro run complete --verdict done|done-with-concerns`（免 run-id）驱动 chain step 完成+推进
-11. **schema** — session.json 为 `session/1.2`、run.json 为 `command-run/1.2`；orchestration 单源，contract v2 仅显式 opt-in
+11. **schema** — session.json 为 `session/1.3`、run.json 为 `command-run/1.3`；orchestration 单源，contract v2 仅显式 opt-in
 12. **Invariant violation = BLOCK** — 违反上述任一 invariant 即阻断当前操作，不可绕过。特别是 invariant 1（dispatch via Agent(ralph-executor)）和 invariant 2（session before execution）和 invariant 10（verdict 驱动链推进由 CLI 写入）为硬约束。
 13. **Classification evidence** — S_CLASSIFY 的 chain 选择决策 MUST 记录（匹配了哪个 pattern、排除了哪些备选、confidence level）作为分类留痕。无记录的分类不可进入 S_CREATE。
 14. **禁止以上下文消耗为由中断执行** — harness 自动处理 context compression，以"上下文不足"或"避免 context overflow"为由中断属于 invariant violation
@@ -489,7 +489,7 @@ post-analyze-scope 触发：读 macro analyze artifact → 提取 scope_verdict 
 - [ ] Session created via `session create --chain-file` before execution; decomposition 随 chain-file 建入
 - [ ] 执行 step 携 `command`/`args`/`stage`/`goal_ref`/`retry`；decision step 由 `decision_ref` 标识
 - [ ] skill 名由 `maestro ralph skills --platform claude --steps --json --quiet` 预校验（project 覆盖 global，含步骤注册表），缺失阻断建链
-- [ ] Session schema 为 `session/1.2`、Run schema 为 `command-run/1.2`；旧版兼容读，contract v2 显式 opt-in
+- [ ] Session schema 为 `session/1.3`、Run schema 为 `command-run/1.3`；旧版兼容读，contract v2 显式 opt-in
 - [ ] 用户传入 `-y` 时透传到 skill args
 - [ ] All chains dispatched via Agent(ralph-executor) — maestro 拥有完整执行循环
 - [ ] One agent per step — unnamed Agent({ subagent_type: "ralph-executor" }) 派发

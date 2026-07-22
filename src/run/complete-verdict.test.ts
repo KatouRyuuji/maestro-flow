@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import { completeRunWithVerdict, createRun } from './runtime.js';
+import { runNextStep } from './next.js';
 import { resolveRunningRun, runningChainStep } from './resolve.js';
 import { checkLease } from './lease.js';
 import { updateChainStepStatus } from './chain.js';
@@ -625,6 +626,14 @@ describe('run complete — next pointer', () => {
     expect(result.next.preconditions).toContain('active_run_id=null');
     expect(readdirSync(runsDir)).toEqual(beforeRuns);
     expect(chainOf(projectRoot, 's')[1]).toMatchObject({ status: 'pending', run_id: null });
+
+    const dispatched = runNextStep(projectRoot, { sessionId: 's' });
+    expect(dispatched.exitCode, dispatched.message).toBe(0);
+    expect(dispatched.result?.run_id).not.toBe(runId);
+    expect(readdirSync(runsDir)).toHaveLength(beforeRuns.length + 1);
+    expect(chainOf(projectRoot, 's')[1]).toMatchObject({
+      status: 'running', run_id: dispatched.result?.run_id,
+    });
   });
 
   it('points at run next (decision) when the next node is a decision', () => {
