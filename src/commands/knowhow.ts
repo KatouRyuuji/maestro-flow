@@ -7,18 +7,27 @@
  */
 
 import type { Command } from 'commander';
-import { readFileSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { readdirSync } from 'node:fs';
 import {
   KNOWHOW_CATEGORIES as CATEGORIES,
   KNOWHOW_PREFIX_MAP as PREFIX_MAP,
   slugify,
-  escapeYamlValue,
   parseFrontmatter,
   getKnowhowDir,
   knowhowFileToWikiId,
 } from '../utils/frontmatter.js';
+import { getProjectRoot } from '../utils/path-validator.js';
+import { handler as storeKnowhow } from '../tools/store-knowhow.js';
+import {
+  createKnowhowLifecycleSnapshot,
+  getKnowhowEvolutionChain,
+  recoverKnowhowLifecycleIntent,
+  restoreKnowhowLifecycleSnapshot,
+  sealKnowhowLifecycleSnapshot,
+  supersedeKnowhowEntry,
+} from '../tools/knowhow-lifecycle.js';
 
 export function registerKnowhowCommand(program: Command): void {
   const knowhow = program
@@ -32,8 +41,10 @@ export function registerKnowhowCommand(program: Command): void {
     .description('Create a new knowhow entry')
     .requiredOption('--type <type>', 'session|tip|template|recipe|reference|decision|document')
     .requiredOption('--title <title>', 'Entry title')
-    .requiredOption('--body <text>', 'Entry body (markdown)')
+    .option('--body <text>', 'Entry body (markdown)')
     .option('--body-file <path>', 'Read body from file')
+    .option('--id <stable-stem>', 'Stable explicit id (<prefix>-YYYYMMDD-<kebab-slug>)')
+    .option('--description <text>', 'One-line description')
     .option('--keywords <csv>', 'Comma-separated keywords')
     .option('--lang <lang>', '[template] Programming language')
     .option('--source <url>', '[reference] Original URL')
@@ -43,81 +54,221 @@ export function registerKnowhowCommand(program: Command): void {
     .option('--category <category>', 'Spec category for agent discovery (coding, arch, test, debug, review, learning)')
     .option('--spec-category <cat>', 'Spec category for agent injection (coding|arch|debug|test|review|learning|ui)')
     .option('--tool', 'Mark this knowhow entry as a tool')
+    .option('--json', 'Output as JSON')
     .action(async (opts) => {
+      const hasBody = opts.body !== undefined;
+      const hasBodyFile = opts.bodyFile !== undefined;
+      if (hasBody === hasBodyFile) {
+        console.error('Exactly one of --body or --body-file is required');
+        process.exitCode = 1;
+        return;
+      }
+
       const type = opts.type as string;
       if (!CATEGORIES.includes(type as any)) {
         console.error(`Unknown type: ${type}. Must be one of: ${CATEGORIES.join(', ')}`);
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
 
       // Validate type-specific flags
       if (opts.lang && type !== 'template') {
         console.error('--lang is only valid for type "template"');
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       if (opts.source && type !== 'reference') {
         console.error('--source is only valid for type "reference"');
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       if (opts.status && type !== 'decision') {
         console.error('--status is only valid for type "decision"');
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       if (opts.assetType && type !== 'asset') {
         console.error('--asset-type is only valid for type "asset"');
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       if (opts.codePaths && type !== 'blueprint' && type !== 'asset') {
         console.error('--code-paths is only valid for type "asset" or "blueprint"');
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       const validSpecCategories = ['coding', 'arch', 'debug', 'test', 'review', 'learning', 'ui'];
       if (opts.specCategory && !validSpecCategories.includes(opts.specCategory)) {
         console.error(`Invalid --spec-category: ${opts.specCategory}. Must be one of: ${validSpecCategories.join(', ')}`);
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
 
       const body = opts.bodyFile ? readFileSync(opts.bodyFile, 'utf-8') : opts.body;
-      const tags = opts.keywords ? opts.keywords.split(',').map((s: string) => s.trim()).filter(Boolean) : [];
-
-      const dir = getKnowhowDir();
-      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-
-      const now = new Date();
-      const pad = (n: number) => String(n).padStart(2, '0');
-      const ts = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
-      const prefix = PREFIX_MAP[type];
-      const slug = opts.title ? slugify(opts.title).slice(0, 40) : '';
-      const filename = slug
-        ? `${prefix}-${ts}-${slug}.md`
-        : `${prefix}-${ts}-${pad(now.getHours())}${pad(now.getMinutes())}.md`;
-
-      const { writeFileSync } = await import('node:fs');
-      const fmLines = ['---', `title: ${escapeYamlValue(opts.title)}`, `type: ${type}`, `created: ${now.toISOString()}`];
-      if (tags.length > 0) {
-        fmLines.push('keywords:');
-        for (const t of tags) fmLines.push(`  - ${t}`);
+      const keywords = opts.keywords
+        ? opts.keywords.split(',').map((item: string) => item.trim()).filter(Boolean)
+        : undefined;
+      const codePaths = opts.codePaths
+        ? opts.codePaths.split(',').map((item: string) => item.trim()).filter(Boolean)
+        : undefined;
+      const response = await storeKnowhow({
+        operation: 'add',
+        id: opts.id,
+        type,
+        title: opts.title,
+        description: opts.description,
+        body,
+        keywords,
+        lang: opts.lang,
+        source: opts.source,
+        status: opts.status,
+        assetType: opts.assetType,
+        codePaths,
+        category: opts.category,
+        specCategory: opts.specCategory,
+        tool: opts.tool,
+      });
+      if (!response.success) {
+        console.error(response.error);
+        process.exitCode = 1;
+        return;
       }
-      if (opts.lang) fmLines.push(`lang: ${opts.lang}`);
-      if (opts.source) fmLines.push(`source: ${opts.source}`);
-      if (opts.status) fmLines.push(`status: ${opts.status}`);
-      if (opts.category) fmLines.push(`category: ${opts.category}`);
-      if (opts.specCategory) fmLines.push(`specCategory: ${opts.specCategory}`);
-      if (opts.assetType) fmLines.push(`assetType: ${opts.assetType}`);
-      if (opts.codePaths) {
-        const paths = opts.codePaths.split(',').map((s: string) => s.trim()).filter(Boolean);
-        fmLines.push('codePaths:');
-        for (const p of paths) fmLines.push(`  - ${p}`);
+      const result = response.result as Record<string, unknown>;
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
       }
-      if (opts.tool) {
-        fmLines.push('tool: true');
-      }
-      fmLines.push('---', '', body);
+      console.log(`${result.replayed ? 'Replayed' : 'Created'}: ${result.id}`);
+      console.log(`  Type: ${result.type}`);
+      console.log(`  File: ${result.path}`);
+    });
 
-      writeFileSync(join(dir, filename), fmLines.join('\n'), 'utf-8');
-      console.log(`Created: ${knowhowFileToWikiId(filename)}`);
-      console.log(`  Type: ${type}`);
-      console.log(`  File: knowhow/${filename}`);
+  // ── supersede ───────────────────────────────────────────────────────
+  knowhow
+    .command('supersede <oldId>')
+    .description('Deprecate a knowhow entry in favor of its successor')
+    .requiredOption('--by <newId>', 'Replacement knowhow id')
+    .option('--json', 'Output as JSON')
+    .action((oldId: string, opts) => {
+      const result = supersedeKnowhowEntry(getProjectRoot(), oldId, opts.by);
+      if (!result.success) {
+        console.error(result.error);
+        process.exitCode = 1;
+        return;
+      }
+      if (opts.json) console.log(JSON.stringify(result, null, 2));
+      else console.log(`${result.replayed ? 'Replayed' : 'Superseded'}: ${oldId} -> ${opts.by}`);
+    });
+
+  // ── history ─────────────────────────────────────────────────────────
+  knowhow
+    .command('history <id>')
+    .description('Show the evolution chain containing a knowhow entry')
+    .option('--json', 'Output as JSON')
+    .action((id: string, opts) => {
+      try {
+        const entries = getKnowhowEvolutionChain(getProjectRoot(), id);
+        const result = {
+          schema_version: 'knowhow-history-result/1.0',
+          operation: 'history',
+          id,
+          entries,
+        };
+        if (opts.json) console.log(JSON.stringify(result, null, 2));
+        else {
+          console.log(`Knowhow history (${entries.length})`);
+          for (const entry of entries) {
+            console.log(`  ${entry.current ? '*' : '-'} ${entry.id}${entry.broken ? ' [broken]' : ''}`);
+          }
+        }
+      } catch (error) {
+        console.error((error as Error).message);
+        process.exitCode = 1;
+      }
+    });
+
+  // ── recover ─────────────────────────────────────────────────────────
+  knowhow
+    .command('recover')
+    .description('Explicitly recover a pending knowhow lifecycle intent')
+    .option('--json', 'Output as JSON')
+    .action((opts) => {
+      const result = recoverKnowhowLifecycleIntent(getProjectRoot());
+      if (opts.json) console.log(JSON.stringify(result, null, 2));
+      else if (result.success) {
+        console.log(result.replayed
+          ? 'Recovered pending knowhow lifecycle intent'
+          : 'No pending knowhow lifecycle intent');
+      } else {
+        console.error(result.error);
+      }
+      if (!result.success) process.exitCode = 1;
+    });
+
+  // ── snapshot ────────────────────────────────────────────────────────
+  const snapshot = knowhow
+    .command('snapshot')
+    .description('Create and seal hash-fenced knowhow lifecycle snapshots');
+
+  snapshot
+    .command('create')
+    .requiredOption('--old <id>', 'Existing knowhow id')
+    .requiredOption('--new <id>', 'New knowhow id')
+    .requiredOption('--new-path <path>', 'Expected new file path relative to the project')
+    .option('--include-relative <path...>', 'Additional project-relative paths')
+    .requiredOption('--out <path>', 'Snapshot output path')
+    .option('--json', 'Output as JSON')
+    .action((opts) => {
+      try {
+        const result = createKnowhowLifecycleSnapshot(getProjectRoot(), {
+          oldId: opts.old,
+          newId: opts.new,
+          newPath: opts.newPath,
+          includeRelative: opts.includeRelative,
+          out: opts.out,
+        });
+        if (opts.json) console.log(JSON.stringify(result, null, 2));
+        else console.log(`Snapshot created: ${opts.out}`);
+      } catch (error) {
+        console.error((error as Error).message);
+        process.exitCode = 1;
+      }
+    });
+
+  snapshot
+    .command('seal')
+    .requiredOption('--snapshot <path>', 'Snapshot path')
+    .option('--json', 'Output as JSON')
+    .action((opts) => {
+      try {
+        const result = sealKnowhowLifecycleSnapshot(getProjectRoot(), opts.snapshot);
+        if (opts.json) console.log(JSON.stringify(result, null, 2));
+        else console.log(`Snapshot sealed: ${opts.snapshot}`);
+      } catch (error) {
+        console.error((error as Error).message);
+        process.exitCode = 1;
+      }
+    });
+
+  // ── restore ─────────────────────────────────────────────────────────
+  knowhow
+    .command('restore')
+    .description('Restore a sealed knowhow lifecycle snapshot')
+    .requiredOption('--snapshot <path>', 'Snapshot path')
+    .option('--json', 'Output as JSON')
+    .action((opts) => {
+      const result = restoreKnowhowLifecycleSnapshot(
+        getProjectRoot(),
+        opts.snapshot,
+      );
+      if (!result.success) {
+        if (opts.json) console.log(JSON.stringify(result, null, 2));
+        else console.error(result.error);
+        process.exitCode = 1;
+        return;
+      }
+      if (opts.json) console.log(JSON.stringify(result, null, 2));
+      else console.log(`Restored snapshot: ${opts.snapshot}`);
     });
 
   // ── list ───────────────────────────────────────────────────────────

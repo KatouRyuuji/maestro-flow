@@ -8,6 +8,8 @@ import {
   scorePathRelevance,
   nameMatchBonus,
   computeScore,
+  compareNodeTie,
+  compareScoredNodes,
 } from '../query/scoring.js';
 
 describe('removeStopWords', () => {
@@ -123,6 +125,10 @@ describe('nameMatchBonus', () => {
     expect(nameMatchBonus('getUserById', 'user')).toBe(60);
   });
 
+  it('full exact token coverage → +80', () => {
+    expect(nameMatchBonus('LinkedTokenCache', 'linked token cache')).toBe(80);
+  });
+
   it('full token containment → +15', () => {
     // query token 'cde' is a substring of the single name token 'abcdefgh'.
     expect(nameMatchBonus('abcdefgh', 'cde')).toBe(15);
@@ -157,5 +163,33 @@ describe('computeScore', () => {
     const full = computeScore(baseNode, 'login');
     const half = computeScore(baseNode, 'login', 0.5);
     expect(half).toBeCloseTo(full * 0.5, 5);
+  });
+
+  it('ranks an exact symbol above a partial token match', () => {
+    const exact = computeScore({ ...baseNode, name: 'AuthTokenValidator' }, 'AuthTokenValidator');
+    const token = computeScore({ ...baseNode, name: 'LegacyAuthTokenValidator' }, 'AuthTokenValidator');
+    expect(exact).toBeGreaterThan(token);
+  });
+});
+
+describe('deterministic score ordering', () => {
+  it('breaks node ties by kind, name, then id', () => {
+    const nodes = [
+      { id: 'b', kind: 'function' as const, name: 'alpha' },
+      { id: 'a', kind: 'function' as const, name: 'alpha' },
+      { id: 'z', kind: 'class' as const, name: 'omega' },
+      { id: 'c', kind: 'function' as const, name: 'beta' },
+    ];
+    expect([...nodes].sort(compareNodeTie).map(node => node.id)).toEqual(['z', 'a', 'b', 'c']);
+  });
+
+  it('sorts by score before applying the deterministic node tie', () => {
+    const results = [
+      { node: { id: 'b', kind: 'function' as const, name: 'same' }, score: 10 },
+      { node: { id: 'a', kind: 'function' as const, name: 'same' }, score: 10 },
+      { node: { id: 'c', kind: 'function' as const, name: 'same' }, score: 11 },
+    ];
+    expect([...results].sort(compareScoredNodes).map(result => result.node.id))
+      .toEqual(['c', 'a', 'b']);
   });
 });

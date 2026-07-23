@@ -1,0 +1,243 @@
+{
+  "schema_version": "search-ranking-corpus/1.0",
+  "documents": [
+    {
+      "id": "code:function:auth-token-validator",
+      "kind": "code-symbol",
+      "title": "AuthTokenValidator",
+      "summary": "Validates authentication tokens before request dispatch.",
+      "tags": ["typescript", "authentication", "validator"],
+      "body": "export function AuthTokenValidator validates signed bearer tokens",
+      "status": "active",
+      "workspace": "local",
+      "authorized": true,
+      "provenance": { "source": "codegraph", "path": "src/auth/token-validator.ts" }
+    },
+    {
+      "id": "code:function:search-unified",
+      "kind": "code-symbol",
+      "title": "searchUnified",
+      "summary": "Unified search over code and knowledge documents.",
+      "tags": ["typescript", "search", "mixed"],
+      "body": "searchUnified combines code symbols and knowledge results",
+      "status": "active",
+      "workspace": "local",
+      "authorized": true,
+      "provenance": { "source": "codegraph", "path": "src/graph/kg/query/search.ts" }
+    },
+    {
+      "id": "code:class:wiki-indexer",
+      "kind": "code-symbol",
+      "title": "WikiIndexer",
+      "summary": "Builds the canonical Wiki entry index.",
+      "tags": ["typescript", "wiki", "index"],
+      "body": "WikiIndexer projects workflow artifacts into searchable entries",
+      "status": "active",
+      "workspace": "local",
+      "authorized": true,
+      "provenance": { "source": "codegraph", "path": "dashboard/src/server/wiki/wiki-indexer.ts" }
+    },
+    {
+      "id": "wiki:architecture-overview",
+      "kind": "wiki",
+      "title": "Wiki architecture",
+      "summary": "Overview of Wiki indexing, projection, and query boundaries.",
+      "tags": ["wiki", "architecture"],
+      "body": "The architecture keeps indexing separate from ranking and rendering.",
+      "status": "active",
+      "workspace": "local",
+      "authorized": true,
+      "provenance": { "source": "wiki", "path": ".workflow/project.md" }
+    },
+    {
+      "id": "wiki:cache-invalidation",
+      "kind": "wiki",
+      "title": "Cache invalidation",
+      "summary": "Nested workflow changes invalidate the Wiki search cache.",
+      "tags": ["wiki", "cache", "invalidation"],
+      "body": "The cache snapshot tracks nested artifacts and refreshes changed entries.",
+      "status": "active",
+      "workspace": "local",
+      "authorized": true,
+      "provenance": { "source": "wiki", "path": ".workflow/specs/cache.md" }
+    },
+    {
+      "id": "wiki:backlink-graph",
+      "kind": "wiki",
+      "title": "Backlink graph",
+      "summary": "Wiki references produce forward links and backlinks.",
+      "tags": ["wiki", "backlink", "graph"],
+      "body": "Resolved entry IDs preserve the backlink graph after projection.",
+      "status": "active",
+      "workspace": "local",
+      "authorized": true,
+      "provenance": { "source": "wiki", "path": ".workflow/specs/links.md" }
+    },
+    {
+      "id": "knowhow:recoverable-restore",
+      "kind": "knowhow",
+      "title": "Recoverable restore receipts",
+      "summary": "Crash-safe restore uses durable intent and completion receipts.",
+      "tags": ["restore", "receipt", "recovery"],
+      "body": "A recoverable restore records intent before mutation and a receipt after success.",
+      "status": "active",
+      "workspace": "local",
+      "authorized": true,
+      "provenance": { "source": "knowhow", "path": ".workflow/knowhow/DCS-recoverable-restore.md" }
+    },
+    {
+      "id": "spec:qrels-hash-fence",
+      "kind": "spec",
+      "title": "Qrels hash fence",
+      "summary": "Ranking comparisons verify the frozen qrels SHA-256 first.",
+      "tags": ["qrels", "hash", "ranking"],
+      "body": "Metric deltas are forbidden until the qrels hash fence matches the baseline.",
+      "status": "active",
+      "workspace": "local",
+      "authorized": true,
+      "provenance": { "source": "spec", "path": ".workflow/specs/search-ranking.md" }
+    },
+    {
+      "id": "domain:reciprocal-rank",
+      "kind": "domain-term",
+      "title": "Reciprocal rank metric",
+      "summary": "MRR measures the reciprocal position of the first relevant result.",
+      "tags": ["ranking", "metric", "mrr"],
+      "body": "Mean reciprocal rank at ten averages the first relevant reciprocal rank.",
+      "status": "active",
+      "workspace": "local",
+      "authorized": true,
+      "provenance": { "source": "domain", "path": ".workflow/domain/search.md" }
+    },
+    {
+      "id": "knowhow:authentication-troubleshooting",
+      "kind": "knowhow",
+      "title": "Authentication troubleshooting",
+      "summary": "Diagnose token validation and authentication failures.",
+      "tags": ["authentication", "troubleshooting", "token"],
+      "body": "Inspect the validator, token claims, and request authentication path.",
+      "status": "active",
+      "workspace": "local",
+      "authorized": true,
+      "provenance": { "source": "knowhow", "path": ".workflow/knowhow/TIP-auth-troubleshooting.md" }
+    },
+    {
+      "id": "spec:search-ranking-design",
+      "kind": "spec",
+      "title": "Search ranking design",
+      "summary": "Defines deterministic candidate scoring and stable result ordering.",
+      "tags": ["search", "ranking", "design"],
+      "body": "Search ranking design combines lexical signals and stable ID tie breaking.",
+      "status": "active",
+      "workspace": "local",
+      "authorized": true,
+      "provenance": { "source": "spec", "path": ".workflow/specs/ranking-design.md" }
+    },
+    {
+      "id": "wiki:session-lifecycle",
+      "kind": "wiki",
+      "title": "Session lifecycle restore",
+      "summary": "Session lifecycle transitions include restore and recovery.",
+      "tags": ["session", "lifecycle", "restore"],
+      "body": "A sealed session can be restored through the verified lifecycle.",
+      "status": "active",
+      "workspace": "local",
+      "authorized": true,
+      "provenance": { "source": "wiki", "path": ".workflow/sessions/README.md" }
+    },
+    {
+      "id": "linked:peer:payment-service",
+      "kind": "code-symbol",
+      "title": "PeerPaymentService",
+      "summary": "Authorized peer payment service implementation.",
+      "tags": ["peer", "payment", "service"],
+      "body": "The linked peer payment service coordinates authorized transactions.",
+      "status": "active",
+      "workspace": "peer",
+      "authorized": true,
+      "provenance": { "source": "linked-codegraph", "path": "peer/src/payment-service.ts" }
+    },
+    {
+      "id": "linked:peer:token-cache",
+      "kind": "code-symbol",
+      "title": "LinkedTokenCache",
+      "summary": "Authorized linked workspace token cache.",
+      "tags": ["linked", "token", "cache"],
+      "body": "The linked token cache shares safe cache metadata.",
+      "status": "active",
+      "workspace": "peer",
+      "authorized": true,
+      "provenance": { "source": "linked-codegraph", "path": "peer/src/token-cache.ts" }
+    },
+    {
+      "id": "linked:peer:ranking-utilities",
+      "kind": "code-symbol",
+      "title": "SharedRankingUtilities",
+      "summary": "Authorized shared ranking utilities from a linked workspace.",
+      "tags": ["shared", "ranking", "utilities"],
+      "body": "Shared ranking utilities normalize and compare candidate scores.",
+      "status": "active",
+      "workspace": "peer",
+      "authorized": true,
+      "provenance": { "source": "linked-codegraph", "path": "peer/src/ranking-utils.ts" }
+    },
+    {
+      "id": "linked:secret:payment-service",
+      "kind": "code-symbol",
+      "title": "Peer payment service secret",
+      "summary": "Unauthorized workspace payment implementation.",
+      "tags": ["peer", "payment", "service", "secret"],
+      "body": "This document must never appear in authorized linked search.",
+      "status": "active",
+      "workspace": "secret",
+      "authorized": false,
+      "provenance": { "source": "linked-codegraph", "path": "secret/src/payment-service.ts" }
+    },
+    {
+      "id": "knowhow:deprecated-ranking-rule",
+      "kind": "knowhow",
+      "title": "Deprecated search ranking design",
+      "summary": "An obsolete query-specific ranking rule.",
+      "tags": ["search", "ranking", "deprecated"],
+      "body": "This deprecated entry must not leak into active search results.",
+      "status": "deprecated",
+      "workspace": "local",
+      "authorized": true,
+      "provenance": { "source": "knowhow", "path": ".workflow/knowhow/DCS-old-ranking.md" }
+    },
+    {
+      "id": "wiki:unrelated-release-notes",
+      "kind": "wiki",
+      "title": "Release notes",
+      "summary": "A deterministic unrelated document used as a distractor.",
+      "tags": ["release", "notes"],
+      "body": "Package publication and changelog details.",
+      "status": "active",
+      "workspace": "local",
+      "authorized": true,
+      "provenance": { "source": "wiki", "path": ".workflow/releases/latest.md" }
+    }
+  ],
+  "latencyCorpus": {
+    "size": 2000,
+    "idPrefix": "latency-noise",
+    "vocabulary": [
+      "alpha",
+      "bravo",
+      "charlie",
+      "delta",
+      "echo",
+      "foxtrot",
+      "golf",
+      "hotel",
+      "india",
+      "juliet",
+      "kilo",
+      "lima"
+    ]
+  },
+  "absoluteQueries": [
+    { "id": "absolute-canonical-search", "query": "canonical search contract" },
+    { "id": "absolute-deterministic-ranking", "query": "deterministic ranking contract" }
+  ]
+}

@@ -1,0 +1,112 @@
+{
+  "schema_version": "search-ranking-baseline/1.0",
+  "qrelsSha256": "2510d2d641784640ef8fc373f20989d85d50d654a5957d03bb6de7f431566f6f",
+  "sourceRevision": "TASK-001-pre-change-known-order-v1",
+  "knownOrder": {
+    "exact-auth-token-validator": [
+      "wiki:unrelated-release-notes",
+      "code:function:auth-token-validator"
+    ],
+    "exact-search-unified": [
+      "wiki:unrelated-release-notes",
+      "code:function:search-unified"
+    ],
+    "exact-wiki-indexer": [
+      "wiki:unrelated-release-notes",
+      "code:class:wiki-indexer"
+    ],
+    "wiki-architecture": [
+      "wiki:unrelated-release-notes",
+      "wiki:architecture-overview"
+    ],
+    "wiki-cache": [
+      "wiki:unrelated-release-notes",
+      "wiki:cache-invalidation"
+    ],
+    "wiki-backlink": [
+      "wiki:unrelated-release-notes",
+      "wiki:backlink-graph"
+    ],
+    "knowledge-restore": [
+      "wiki:unrelated-release-notes",
+      "knowhow:recoverable-restore",
+      "wiki:session-lifecycle"
+    ],
+    "knowledge-qrels": [
+      "wiki:unrelated-release-notes",
+      "spec:qrels-hash-fence"
+    ],
+    "knowledge-mrr": [
+      "wiki:unrelated-release-notes",
+      "domain:reciprocal-rank"
+    ],
+    "mixed-auth": [
+      "wiki:unrelated-release-notes",
+      "knowhow:authentication-troubleshooting",
+      "code:function:auth-token-validator"
+    ],
+    "mixed-search": [
+      "wiki:unrelated-release-notes",
+      "spec:search-ranking-design",
+      "code:function:search-unified"
+    ],
+    "mixed-lifecycle": [
+      "wiki:unrelated-release-notes",
+      "wiki:session-lifecycle",
+      "knowhow:recoverable-restore"
+    ],
+    "linked-payment": [
+      "wiki:unrelated-release-notes",
+      "linked:peer:payment-service"
+    ],
+    "linked-cache": [
+      "wiki:unrelated-release-notes",
+      "linked:peer:token-cache"
+    ],
+    "linked-ranking": [
+      "wiki:unrelated-release-notes",
+      "linked:peer:ranking-utilities"
+    ]
+  },
+  "metrics": {
+    "overall": {
+      "ndcgAt10": 0.6386973302411959,
+      "mrrAt10": 0.5,
+      "recallAt20": 1
+    },
+    "categories": {
+      "exact-symbol": {
+        "ndcgAt10": 0.6309297535714575,
+        "mrrAt10": 0.5,
+        "recallAt20": 1
+      },
+      "wiki-short": {
+        "ndcgAt10": 0.6309297535714575,
+        "mrrAt10": 0.5,
+        "recallAt20": 1
+      },
+      "knowledge": {
+        "ndcgAt10": 0.6353821444486659,
+        "mrrAt10": 0.5,
+        "recallAt20": 1
+      },
+      "mixed": {
+        "ndcgAt10": 0.6653152460429406,
+        "mrrAt10": 0.5,
+        "recallAt20": 1
+      },
+      "linked-scope": {
+        "ndcgAt10": 0.6309297535714575,
+        "mrrAt10": 0.5,
+        "recallAt20": 1
+      }
+    }
+  },
+  "protocol": {
+    "qualityRuns": 5,
+    "topK": 20,
+    "warmups": 20,
+    "measuredSamples": 100,
+    "corpusSize": 2000
+  }
+}

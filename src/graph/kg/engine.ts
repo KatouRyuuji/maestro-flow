@@ -63,6 +63,22 @@ export class MaestroGraph {
     return mg;
   }
 
+  /**
+   * 以隔离只读方式打开现有 canonical MaestroGraph 数据库。
+   * 此路径显式跳过 migration、sync 与 embedding lifecycle。
+   */
+  static async openReadOnly(projectRoot: string): Promise<MaestroGraph> {
+    const mg = new MaestroGraph(projectRoot);
+    const dbPath = getKgDatabasePath(projectRoot);
+    if (!existsSync(dbPath)) {
+      throw new Error(`MaestroGraph not initialized. Expected: ${dbPath}`);
+    }
+    mg.conn = new KgDatabaseConnection();
+    mg.conn.openReadOnly(dbPath);
+    mg.queries = new KgQueryBuilder(mg.conn);
+    return mg;
+  }
+
   static isInitialized(projectRoot: string): boolean {
     return existsSync(getKgDatabasePath(projectRoot));
   }

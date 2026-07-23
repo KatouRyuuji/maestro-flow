@@ -677,17 +677,8 @@ export function searchBM25Planned(
   const terms = tokenize(query);
   if (terms.length === 0 || index.totalDocs === 0) return [];
 
-  if (terms.length <= 3) {
-    return searchBM25(index, query, limit, credibilityFactors);
-  }
-
   const plan = buildQueryPlan(query, index);
-
-  if (plan.groups.length <= 1) {
-    return searchBM25(index, query, limit, credibilityFactors);
-  }
-
-  const fetchLimit = limit * 3;
+  const internalLimit = Math.min(500, Math.max(limit * 3, 60));
   const coverageOpts: CoveragePenaltyOptions = {
     coreTerms: plan.coreCoverageTerms,
     baseFactor: 0.65,
@@ -702,7 +693,7 @@ export function searchBM25Planned(
   });
 
   const groupResults = taggedGroups.map(g =>
-    searchBM25FWithCoverage(index, g.weightedTerms, fetchLimit, coverageOpts),
+    searchBM25FWithCoverage(index, g.weightedTerms, internalLimit, coverageOpts),
   );
 
   // Hybrid group fusion: 0.3 * rrfNorm + 0.7 * bm25Norm

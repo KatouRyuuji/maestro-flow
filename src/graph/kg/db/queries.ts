@@ -9,7 +9,11 @@ import type {
   SourceType, EdgeProvenance, UnifiedGraphStats, Visibility,
 } from './types.js';
 import { tokenize as camelTokenize } from '../resolution/name-matcher.js';
-import { computeScore } from '../query/scoring.js';
+import {
+  compareNodeTie,
+  computeScore,
+  type CandidateScoreMetadata,
+} from '../query/scoring.js';
 
 // ---------------------------------------------------------------------------
 // Row ↔ Object mappers
@@ -536,7 +540,7 @@ export class KgQueryBuilder {
 
   // ── Search — FTS5 统一搜索 (D1.5: 输入消毒) ───────────────────────
 
-  searchCodeFTS(query: string, opts: { limit?: number; kinds?: string[]; languages?: string[]; pathFilters?: string[] }): Array<UnifiedNode & { _bm25Score?: number }> {
+  searchCodeFTS(query: string, opts: { limit?: number; kinds?: string[]; languages?: string[]; pathFilters?: string[] }): Array<UnifiedNode & CandidateScoreMetadata> {
     if (hasCjkChars(query)) {
       return this.searchNodesLike(query, opts);
     }
@@ -557,7 +561,7 @@ export class KgQueryBuilder {
     return this.searchNodesLike(query, opts);
   }
 
-  private runCodeFtsQuery(matchExpr: string, opts: { limit?: number; kinds?: string[]; languages?: string[] }): Array<UnifiedNode & { _bm25Score?: number }> {
+  private runCodeFtsQuery(matchExpr: string, opts: { limit?: number; kinds?: string[]; languages?: string[] }): Array<UnifiedNode & CandidateScoreMetadata> {
     try {
       let sql = `
         SELECT n.*, bm25(code_fts, 0, 20, 5, 1, 2, 10) AS score
@@ -578,7 +582,7 @@ export class KgQueryBuilder {
 
       const rows = this.db.prepare(sql).all(...params) as unknown as Array<NodeRow & { score?: number }>;
       return rows.map(r => {
-        const node = rowToNode(r) as UnifiedNode & { _bm25Score?: number };
+        const node = rowToNode(r) as UnifiedNode & CandidateScoreMetadata;
         if (typeof r.score === 'number') node._bm25Score = -r.score;
         return node;
       });
@@ -622,7 +626,7 @@ export class KgQueryBuilder {
     }
   }
 
-  searchKnowledgeFTS(query: string, opts: { limit?: number; sourceTypes?: SourceType[] }): Array<UnifiedNode & { _bm25Score?: number }> {
+  searchKnowledgeFTS(query: string, opts: { limit?: number; sourceTypes?: SourceType[] }): Array<UnifiedNode & CandidateScoreMetadata> {
     const isCjkShort = /^[㐀-䶿一-鿿぀-ヿ가-힯]{1,2}$/.test(query.trim());
     if (isCjkShort) {
       return this.searchKnowledgeLike(query, opts);
@@ -631,19 +635,24 @@ export class KgQueryBuilder {
     if (!sanitized) return [];
 
     const results = this.runKnowledgeFtsQuery(sanitized, opts);
-    if (results.length > 0) return results;
-
     const tokens = sanitized.match(/"[^"]+"/g);
     if (tokens && tokens.length > 1) {
       const orQuery = tokens.join(' OR ');
       const orResults = this.runKnowledgeFtsQuery(orQuery, opts);
-      if (orResults.length > 0) return orResults;
+      if (orResults.length > 0) {
+        const byId = new Map(results.map(node => [node.id, node]));
+        for (const node of orResults) {
+          if (!byId.has(node.id)) byId.set(node.id, node);
+        }
+        return [...byId.values()].slice(0, clampQueryLimit(opts.limit, 20, 500));
+      }
     }
 
+    if (results.length > 0) return results;
     return this.searchKnowledgeLike(query, opts);
   }
 
-  private runKnowledgeFtsQuery(matchExpr: string, opts: { limit?: number; sourceTypes?: SourceType[] }): Array<UnifiedNode & { _bm25Score?: number }> {
+  private runKnowledgeFtsQuery(matchExpr: string, opts: { limit?: number; sourceTypes?: SourceType[] }): Array<UnifiedNode & CandidateScoreMetadata> {
     try {
       let sql = `
         SELECT n.*, bm25(knowledge_fts, 0, 20, 10, 1, 15, 10) AS score
@@ -661,7 +670,7 @@ export class KgQueryBuilder {
 
       const rows = this.db.prepare(sql).all(...params) as unknown as Array<NodeRow & { score?: number }>;
       return rows.map(r => {
-        const node = rowToNode(r) as UnifiedNode & { _bm25Score?: number };
+        const node = rowToNode(r) as UnifiedNode & CandidateScoreMetadata;
         if (typeof r.score === 'number') node._bm25Score = -r.score;
         return node;
       });
@@ -711,7 +720,7 @@ export class KgQueryBuilder {
     return [...codeResults, ...knowledgeResults];
   }
 
-  private searchNodesLike(query: string, opts: { limit?: number; kinds?: string[]; languages?: string[] }): Array<UnifiedNode & { _bm25Score?: number }> {
+  private searchNodesLike(query: string, opts: { limit?: number; kinds?: string[]; languages?: string[] }): Array<UnifiedNode & CandidateScoreMetadata> {
     const words = query.split(/\s+/).filter(w => w.length > 0);
     const FIELDS = ['name', 'qualified_name', 'docstring', 'signature'] as const;
 
@@ -750,15 +759,16 @@ export class KgQueryBuilder {
     params.push(Math.min(requested * 3, 500));
     const rows = this.db.prepare(sql).all(...params) as unknown as NodeRow[];
     const scored = rows.map(r => {
-      const node = rowToNode(r) as UnifiedNode & { _bm25Score?: number };
-      node._bm25Score = computeScore(node, query);
+      const node = rowToNode(r) as UnifiedNode & CandidateScoreMetadata;
+      node._computedScore = computeScore(node, query);
       return node;
     });
-    scored.sort((a, b) => (b._bm25Score ?? 0) - (a._bm25Score ?? 0));
+    scored.sort((a, b) => (b._computedScore ?? 0) - (a._computedScore ?? 0)
+      || compareNodeTie(a, b));
     return scored.slice(0, requested);
   }
 
-  private searchKnowledgeLike(query: string, opts: { limit?: number; sourceTypes?: SourceType[] }): UnifiedNode[] {
+  private searchKnowledgeLike(query: string, opts: { limit?: number; sourceTypes?: SourceType[] }): Array<UnifiedNode & CandidateScoreMetadata> {
     const words = query.split(/\s+/).filter(w => w.length > 0);
     const FIELDS = ['name', 'definition', 'aliases', 'keywords', 'body'] as const;
 
@@ -786,10 +796,18 @@ export class KgQueryBuilder {
       sql += ` AND source_type IN (${sourceTypes.map(() => '?').join(',')})`;
       params.push(...sourceTypes);
     }
+    const requested = clampQueryLimit(opts.limit, 20, 500);
     sql += ` ORDER BY name LIMIT ?`;
-    params.push(clampQueryLimit(opts.limit, 20, 500));
+    params.push(Math.min(requested * 3, 500));
     const rows = this.db.prepare(sql).all(...params) as unknown as NodeRow[];
-    return rows.map(rowToNode);
+    const scored = rows.map(row => {
+      const node = rowToNode(row) as UnifiedNode & CandidateScoreMetadata;
+      node._computedScore = computeScore(node, query);
+      return node;
+    });
+    scored.sort((a, b) => (b._computedScore ?? 0) - (a._computedScore ?? 0)
+      || compareNodeTie(a, b));
+    return scored.slice(0, requested);
   }
 }
 

@@ -225,7 +225,10 @@ export function nameMatchBonus(name: string, query: string): number {
   // 精确匹配: +80
   if (nameLower === queryLower) return 80;
 
-  // 令牌精确: +60
+  // 全令牌精确覆盖: +80
+  if (queryTokens.length > 1 && queryTokens.every(qt => nameTokens.includes(qt))) return 80;
+
+  // 单令牌精确: +60
   if (nameTokens.some(nt => queryTokens.includes(nt))) return 60;
 
   // 前缀匹配: +10~40 (按长度比例)
@@ -251,8 +254,22 @@ export interface ScoredResult {
   score: number;
 }
 
+export interface CandidateScoreMetadata {
+  /** FTS retrieval signal 已转换为正向相关度。 */
+  _bm25Score?: number;
+  /** LIKE fallback 已计算完成的最终综合分。 */
+  _computedScore?: number;
+}
+
+export type ScoreCandidateNode = {
+  id: string;
+  kind: UnifiedNodeKind;
+  name: string;
+  filePath: string;
+} & CandidateScoreMetadata;
+
 export function computeScore(
-  node: { id: string; kind: UnifiedNodeKind; name: string; filePath: string; _bm25Score?: number },
+  node: ScoreCandidateNode,
   query: string,
   credibilityFactor?: number,
 ): number {
@@ -272,4 +289,26 @@ export function computeScore(
   }
 
   return score;
+}
+
+function compareStableText(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
+export function compareNodeTie(
+  left: Pick<ScoreCandidateNode, 'kind' | 'name' | 'id'>,
+  right: Pick<ScoreCandidateNode, 'kind' | 'name' | 'id'>,
+): number {
+  return compareStableText(left.kind, right.kind)
+    || compareStableText(left.name, right.name)
+    || compareStableText(left.id, right.id);
+}
+
+export function compareScoredNodes(
+  left: { node: Pick<ScoreCandidateNode, 'kind' | 'name' | 'id'>; score: number },
+  right: { node: Pick<ScoreCandidateNode, 'kind' | 'name' | 'id'>; score: number },
+): number {
+  return right.score - left.score || compareNodeTie(left.node, right.node);
 }

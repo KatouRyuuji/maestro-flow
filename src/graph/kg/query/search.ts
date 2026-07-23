@@ -5,7 +5,15 @@ import type { KgQueryBuilder } from '../db/queries.js';
 import type { UnifiedNode, UnifiedSearchResult, SourceType } from '../db/types.js';
 import type { VectorSearchResult } from '../embedding/code-embedding.js';
 import { sanitizeFtsQuery } from '../db/queries.js';
-import { computeScore, extractSearchTerms, removeStopWords, expandCodeQuery, getStemVariants } from './scoring.js';
+import {
+  compareScoredNodes,
+  computeScore,
+  extractSearchTerms,
+  removeStopWords,
+  expandCodeQuery,
+  getStemVariants,
+  type CandidateScoreMetadata,
+} from './scoring.js';
 
 // ---------------------------------------------------------------------------
 // 搜索选项
@@ -43,6 +51,19 @@ export interface UnifiedSearchOutput {
   };
 }
 
+type SearchCandidateNode = UnifiedNode & CandidateScoreMetadata;
+
+interface PendingCandidate {
+  node: SearchCandidateNode;
+  scoreMultiplier: number;
+}
+
+export function scoreCandidate(node: SearchCandidateNode, query: string): number {
+  return typeof node._computedScore === 'number'
+    ? node._computedScore
+    : computeScore(node, query);
+}
+
 /**
  * 统一搜索 — 跨代码 + 知识层查询
  *
@@ -65,12 +86,21 @@ export function searchUnified(
   const meaningfulTerms = removeStopWords(searchTerms);
   const effectiveQuery = meaningfulTerms.length > 0 ? meaningfulTerms.join(' ') : query;
 
-  const allResults: UnifiedSearchResult[] = [];
+  const candidatesById = new Map<string, PendingCandidate>();
+  const addCandidates = (
+    nodes: SearchCandidateNode[],
+    scoreMultiplier = 1,
+  ): void => {
+    for (const node of nodes) {
+      if (!candidatesById.has(node.id)) {
+        candidatesById.set(node.id, { node, scoreMultiplier });
+      }
+    }
+  };
 
   // 代码 FTS5 搜索 — 双策略: 原始查询 + camelCase 分词
   if (includeCode) {
     const codeKinds = options?.kinds as string[] | undefined;
-    const seenIds = new Set<string>();
 
     // 策略 1: 原始查询（精确匹配 camelCase 符号名）
     const exactResults = queries.searchCodeFTS(query, {
@@ -78,15 +108,7 @@ export function searchUnified(
       kinds: codeKinds,
       languages: options?.languages,
     });
-    for (const node of exactResults) {
-      if (seenIds.has(node.id)) continue;
-      seenIds.add(node.id);
-      allResults.push({
-        node,
-        score: computeScore(node, query),
-        matchReason: { kind: 'direct', field: 'name' },
-      });
-    }
+    addCandidates(exactResults);
 
     // 策略 2: 分词后查询（覆盖多词搜索场景）
     if (effectiveQuery !== query) {
@@ -95,15 +117,7 @@ export function searchUnified(
         kinds: codeKinds,
         languages: options?.languages,
       });
-      for (const node of tokenResults) {
-        if (seenIds.has(node.id)) continue;
-        seenIds.add(node.id);
-        allResults.push({
-          node,
-          score: computeScore(node, query),
-          matchReason: { kind: 'direct', field: 'name' },
-        });
-      }
+      addCandidates(tokenResults);
     }
 
     // 策略 3: 代码同义词扩展查询（auth→authentication 等缩写映射 + 词干变体）
@@ -114,19 +128,11 @@ export function searchUnified(
         kinds: codeKinds,
         languages: options?.languages,
       });
-      for (const node of expandedResults) {
-        if (seenIds.has(node.id)) continue;
-        seenIds.add(node.id);
-        allResults.push({
-          node,
-          score: computeScore(node, query),
-          matchReason: { kind: 'direct', field: 'name' },
-        });
-      }
+      addCandidates(expandedResults);
     }
 
     // 策略 4: 词干变体独立搜索 — 覆盖 morphological variants (e.g. "validate" → "valid")
-    if (allResults.length < limit) {
+    if (candidatesById.size < limit) {
       const stemTerms = new Set<string>();
       for (const term of meaningfulTerms) {
         for (const stem of getStemVariants(term)) {
@@ -140,20 +146,12 @@ export function searchUnified(
           kinds: codeKinds,
           languages: options?.languages,
         });
-        for (const node of stemResults) {
-          if (seenIds.has(node.id)) continue;
-          seenIds.add(node.id);
-          allResults.push({
-            node,
-            score: computeScore(node, query) * 0.8,
-            matchReason: { kind: 'direct', field: 'name' },
-          });
-        }
+        addCandidates(stemResults, 0.8);
       }
     }
   }
 
-  // 知识 FTS5 搜索 (P2: _bm25Score 透传给 computeScore)
+  // 知识 FTS5 搜索
   if (includeKnowledge) {
     const knowledgeResults = queries.searchKnowledgeFTS(effectiveQuery, {
       limit: limit * 2,
@@ -161,18 +159,19 @@ export function searchUnified(
     });
 
     const kindFilter = options?.kinds;
-    for (const node of knowledgeResults) {
-      if (kindFilter && kindFilter.length > 0 && !kindFilter.includes(node.kind)) continue;
-      allResults.push({
-        node,
-        score: computeScore(node, query),
-        matchReason: { kind: 'direct', field: 'name' },
-      });
-    }
+    addCandidates(knowledgeResults.filter(node => (
+      !kindFilter || kindFilter.length === 0 || kindFilter.includes(node.kind)
+    )));
   }
 
-  // 按综合评分排序, 取 top N
-  allResults.sort((a, b) => b.score - a.score);
+  // 所有来源共享同一去重、评分和稳定排序路径。
+  const allResults: UnifiedSearchResult[] = [...candidatesById.values()]
+    .map(({ node, scoreMultiplier }) => ({
+      node,
+      score: scoreCandidate(node, query) * scoreMultiplier,
+      matchReason: { kind: 'direct' as const, field: 'name' as const },
+    }))
+    .sort(compareScoredNodes);
   const directMatches = allResults.slice(0, limit);
   // Code symbols often outscore knowledge text. Preserve at least one matching
   // knowledge result so a unified query cannot silently become code-only.

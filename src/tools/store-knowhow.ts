@@ -31,8 +31,12 @@ import {
   escapeYamlValue,
   getKnowhowDir as _getKnowhowDir,
   generateKnowhowFilename as generateId,
+  normalizeKnowhowBody,
+  normalizeKnowhowReplayPayload,
+  parseFrontmatter,
 } from '../utils/frontmatter.js';
 import { updateFileAtomic } from '../utils/atomic-write.js';
+import { runKnowhowLifecycleAsync } from './knowhow-lifecycle-async.js';
 
 const DECISION_STATUSES = ['proposed', 'accepted', 'superseded'] as const;
 
@@ -44,15 +48,17 @@ function getKnowhowDir(): string {
 
 // --- Zod Schema ---
 
-const OperationEnum = z.enum(['add', 'search']);
+const OperationEnum = z.enum(['add', 'search', 'supersede', 'history', 'recover']);
 
 const ParamsSchema = z.object({
   operation: OperationEnum,
   // add params
+  id: z.string().optional(),
   type: z.enum(CATEGORIES).optional(),
   title: z.string().optional(),
   description: z.string().optional(), // one-line summary for search results
   body: z.string().optional(),
+  keywords: z.array(z.string()).optional(),
   tags: z.array(z.string()).optional(),
   // type-specific fields (persisted to frontmatter)
   lang: z.string().optional(),       // template: programming language
@@ -60,11 +66,14 @@ const ParamsSchema = z.object({
   status: z.enum(DECISION_STATUSES).optional(), // decision: lifecycle status
   assetType: z.string().optional(),  // asset: asset subtype
   codePaths: z.array(z.string()).optional(), // asset/blueprint: related code paths
+  tool: z.boolean().optional(),
   category: z.string().optional(),  // spec category for tool discovery (coding, arch, test, etc.)
   specCategory: z.enum(['coding', 'arch', 'debug', 'test', 'review', 'learning', 'ui']).optional(),
   // search params
   query: z.string().optional(),
   limit: z.number().optional().default(20),
+  oldId: z.string().optional(),
+  newId: z.string().optional(),
 });
 
 type Params = z.infer<typeof ParamsSchema>;
@@ -73,8 +82,85 @@ type Params = z.infer<typeof ParamsSchema>;
 
 // --- Operations ---
 
-function executeAdd(params: Params): CcwToolResult {
-  const { type, title, description, body, tags, lang, source, status, assetType, codePaths, category, specCategory } = params;
+export interface KnowhowAddResult {
+  schema_version: 'knowhow-add-result/1.0';
+  operation: 'add';
+  id: string;
+  filename: string;
+  path: string;
+  created: string;
+  replayed: boolean;
+  type: KnowHowCategory;
+  message: string;
+}
+
+function renderKnowhowDocument(
+  params: Params & { type: KnowHowCategory; title: string; body: string },
+  created: string,
+  explicitId: string | null,
+): string {
+  const {
+    type, title, description, body, keywords, tags, lang, source, status,
+    assetType, codePaths, tool, category, specCategory,
+  } = params;
+  const fmLines = ['---'];
+  fmLines.push(`title: ${escapeYamlValue(title)}`);
+  if (description) fmLines.push(`description: ${escapeYamlValue(description)}`);
+  fmLines.push(`type: ${type}`);
+  if (category) fmLines.push(`category: ${escapeYamlValue(category)}`);
+  if (explicitId) fmLines.push(`explicitId: ${explicitId}`);
+  fmLines.push(`created: ${created}`);
+  if (keywords && keywords.length > 0) {
+    fmLines.push('keywords:');
+    for (const keyword of keywords) fmLines.push(`  - ${keyword}`);
+  }
+  if (tags && tags.length > 0) {
+    fmLines.push('tags:');
+    for (const tag of tags) fmLines.push(`  - ${tag}`);
+  }
+  if (lang) fmLines.push(`lang: ${lang}`);
+  if (source) fmLines.push(`source: ${escapeYamlValue(source)}`);
+  if (status) fmLines.push(`status: ${status}`);
+  if (specCategory) fmLines.push(`specCategory: ${specCategory}`);
+  if (assetType) fmLines.push(`assetType: ${escapeYamlValue(assetType)}`);
+  if (codePaths && codePaths.length > 0) {
+    fmLines.push('codePaths:');
+    for (const path of codePaths) fmLines.push(`  - ${path}`);
+  }
+  if (tool) fmLines.push('tool: true');
+  const normalizedBody = normalizeKnowhowBody(body)!;
+  return `${fmLines.join('\n')}\n---\n\n${normalizedBody}`;
+}
+
+function bodyFromDocument(parsedBody: string): string {
+  return parsedBody.replace(/^\r?\n(?:\r?\n)?/, '');
+}
+
+function addResult(
+  type: KnowHowCategory,
+  id: string,
+  filename: string,
+  created: string,
+  replayed: boolean,
+): KnowhowAddResult {
+  return {
+    schema_version: 'knowhow-add-result/1.0',
+    operation: 'add',
+    id,
+    filename,
+    path: `knowhow/${filename}`,
+    created,
+    replayed,
+    type,
+    message: replayed ? `Replayed ${type} entry: ${id}` : `Created ${type} entry: ${id}`,
+  };
+}
+
+export function executeAdd(params: Params): CcwToolResult {
+  const {
+    id: explicitIdInput, type, title, description, body, keywords, tags, lang,
+    source, status, assetType, codePaths, category, specCategory,
+  } = params;
 
   if (!type) return { success: false, error: 'Parameter "type" is required for add operation' };
   if (!title) return { success: false, error: 'Parameter "title" is required for add operation' };
@@ -100,52 +186,132 @@ function executeAdd(params: Params): CcwToolResult {
   const dir = getKnowhowDir();
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
-  const { id, filename } = generateId(type, title);
+  const { id, filename, explicitId } = generateId(type, title, explicitIdInput);
   const filePath = join(dir, filename);
-
-  // Build YAML frontmatter with type-specific fields
   const now = new Date().toISOString();
-  const fmLines = ['---'];
-  fmLines.push(`title: ${escapeYamlValue(title)}`);
-  if (description) fmLines.push(`description: ${escapeYamlValue(description)}`);
-  fmLines.push(`type: ${type}`);
-  fmLines.push(`created: ${now}`);
-  if (tags && tags.length > 0) {
-    fmLines.push(`tags:`);
-    for (const t of tags) fmLines.push(`  - ${t}`);
-  }
-  // Type-specific frontmatter fields
-  if (lang) fmLines.push(`lang: ${lang}`);
-  if (source) fmLines.push(`source: ${escapeYamlValue(source)}`);
-  if (status) fmLines.push(`status: ${status}`);
-  if (category) fmLines.push(`category: ${category}`);
-  if (specCategory) fmLines.push(`specCategory: ${specCategory}`);
-  if (assetType) fmLines.push(`assetType: ${escapeYamlValue(assetType)}`);
-  if (codePaths && codePaths.length > 0) {
-    fmLines.push('codePaths:');
-    for (const p of codePaths) fmLines.push(`  - ${p}`);
-  }
-  fmLines.push('---', '', body);
-
-  const document = fmLines.join('\n');
+  const replayPayload = explicitId
+    ? normalizeKnowhowReplayPayload({
+      type,
+      category,
+      title,
+      description,
+      keywords,
+      tags,
+      body,
+      explicitId,
+    })
+    : null;
+  const document = renderKnowhowDocument(
+    {
+      ...params,
+      type,
+      title,
+      body,
+      keywords,
+      tags,
+      category,
+      description,
+      lang,
+      source,
+      status,
+      assetType,
+      codePaths,
+      specCategory,
+    },
+    now,
+    explicitId,
+  );
+  let created = now;
+  let replayed = false;
   updateFileAtomic(filePath, current => {
-    if (current !== null) {
+    if (current === null) return document;
+    if (!explicitId || !replayPayload) {
       throw new Error(`Knowhow entry already exists: ${filename}`);
     }
-    return document;
+
+    const parsed = parseFrontmatter(current);
+    const existingCreated = parsed.data.created;
+    if (typeof existingCreated !== 'string' || !existingCreated) {
+      throw new Error(`CALLER_PAYLOAD_CONFLICT: existing entry has no valid created metadata: ${id}`);
+    }
+    const existingPayload = normalizeKnowhowReplayPayload({
+      type: parsed.data.type,
+      category: parsed.data.category,
+      title: parsed.data.title,
+      description: parsed.data.description,
+      keywords: parsed.data.keywords,
+      tags: parsed.data.tags,
+      body: bodyFromDocument(parsed.body),
+      explicitId: parsed.data.explicitId ?? explicitId,
+    });
+    if (existingPayload.sha256 !== replayPayload.sha256
+      || existingPayload.canonical !== replayPayload.canonical) {
+      throw new Error(`CALLER_PAYLOAD_CONFLICT: divergent existing explicit id ${id}`);
+    }
+    created = existingCreated;
+    replayed = true;
+    return current;
   });
 
   return {
     success: true,
+    result: addResult(type, id, filename, created, replayed),
+  };
+}
+
+async function executeSupersede(params: Params): Promise<CcwToolResult> {
+  if (!params.oldId) return { success: false, error: 'Parameter "oldId" is required for supersede operation' };
+  if (!params.newId) return { success: false, error: 'Parameter "newId" is required for supersede operation' };
+  const response = await runKnowhowLifecycleAsync({
+    operation: 'supersede',
+    projectRoot: getProjectRoot(),
+    oldId: params.oldId,
+    newId: params.newId,
+  });
+  if (response.operation !== 'supersede') {
+    throw new Error('Knowhow lifecycle worker returned a mismatched operation');
+  }
+  const result = response.result;
+  return result.success
+    ? { success: true, result }
+    : { success: false, error: result.error ?? 'Knowhow supersede failed' };
+}
+
+async function executeHistory(params: Params): Promise<CcwToolResult> {
+  if (!params.id) return { success: false, error: 'Parameter "id" is required for history operation' };
+  const response = await runKnowhowLifecycleAsync({
+    operation: 'history',
+    projectRoot: getProjectRoot(),
+    id: params.id,
+  });
+  if (response.operation !== 'history') {
+    throw new Error('Knowhow lifecycle worker returned a mismatched operation');
+  }
+  return {
+    success: true,
     result: {
-      operation: 'add',
-      id,
-      filename,
-      type,
-      path: `knowhow/${filename}`,
-      message: `Created ${type} entry: ${id}`,
+      schema_version: 'knowhow-history-result/1.0',
+      operation: 'history',
+      id: params.id,
+      entries: response.entries,
     },
   };
+}
+
+async function executeRecover(): Promise<CcwToolResult> {
+  const response = await runKnowhowLifecycleAsync({
+    operation: 'recover',
+    projectRoot: getProjectRoot(),
+  });
+  if (response.operation !== 'recover') {
+    throw new Error('Knowhow lifecycle worker returned a mismatched operation');
+  }
+  return response.result.success
+    ? { success: true, result: response.result }
+    : {
+      success: false,
+      error: response.result.error ?? 'Knowhow lifecycle recovery failed',
+    };
 }
 
 // Cached WikiIndexer instance per project root. Lazy-initialized so the
@@ -238,6 +404,14 @@ export const schema: ToolSchema = {
     Required: query
     Optional: limit (default: 20)
 
+*   **supersede** — Link two knowhow entries bidirectionally.
+    Required: oldId, newId
+
+*   **history** — Read the evolution chain containing an entry.
+    Required: id
+
+*   **recover** — Explicitly recover a pending lifecycle intent.
+
 **Types & prefixes:**
   session    → KNW-{ts}.md   session state recovery
   tip        → TIP-{ts}.md   quick note / reminder
@@ -255,13 +429,17 @@ Entries are automatically indexed by WikiIndexer (type=knowhow, category={type})
     properties: {
       operation: {
         type: 'string',
-        enum: ['add', 'search'],
+        enum: ['add', 'search', 'supersede', 'history', 'recover'],
         description: 'Operation to perform',
       },
       type: {
         type: 'string',
         enum: CATEGORIES,
         description: 'Knowhow content type. Required for add.',
+      },
+      id: {
+        type: 'string',
+        description: 'Stable explicit id for add, or the entry id for history.',
       },
       title: {
         type: 'string',
@@ -274,6 +452,11 @@ Entries are automatically indexed by WikiIndexer (type=knowhow, category={type})
       body: {
         type: 'string',
         description: 'Entry body in markdown. Required for add.',
+      },
+      keywords: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Caller-owned semantic keywords.',
       },
       tags: {
         type: 'array',
@@ -321,6 +504,18 @@ Entries are automatically indexed by WikiIndexer (type=knowhow, category={type})
         type: 'number',
         description: 'Max search results (default: 20).',
       },
+      tool: {
+        type: 'boolean',
+        description: 'Mark the entry as a reusable tool.',
+      },
+      oldId: {
+        type: 'string',
+        description: 'Existing knowhow id to deprecate.',
+      },
+      newId: {
+        type: 'string',
+        description: 'Replacement knowhow id.',
+      },
     },
     required: ['operation'],
   },
@@ -340,6 +535,12 @@ export async function handler(params: Record<string, unknown>): Promise<CcwToolR
         return executeAdd(parsed.data);
       case 'search':
         return executeSearch(parsed.data);
+      case 'supersede':
+        return await executeSupersede(parsed.data);
+      case 'history':
+        return await executeHistory(parsed.data);
+      case 'recover':
+        return await executeRecover();
       default:
         return { success: false, error: `Unknown operation: ${parsed.data.operation}` };
     }

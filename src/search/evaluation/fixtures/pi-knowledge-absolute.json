@@ -1,0 +1,27 @@
+{
+  "schema_version": "pi-knowledge-absolute/1.0",
+  "canonicalId": "knowhow-rcp-20260723-pi-skills-canonical-generation",
+  "legacyId": "knowhow-rcp-20260716-pi-maestro-flow-cli",
+  "thresholds": {
+    "topK": 5,
+    "recallAt": 20,
+    "minRecall": 0.9,
+    "maxDeprecatedLeakCount": 0
+  },
+  "queries": [
+    {
+      "id": "pi-canonical-generation-primary",
+      "query": "Pi skills canonical generation",
+      "targetIds": [
+        "knowhow-rcp-20260723-pi-skills-canonical-generation"
+      ]
+    },
+    {
+      "id": "pi-source-build-output-primary",
+      "query": ".claude buildPiSkills buildPiAgents generated .pi",
+      "targetIds": [
+        "knowhow-rcp-20260723-pi-skills-canonical-generation"
+      ]
+    }
+  ]
+}

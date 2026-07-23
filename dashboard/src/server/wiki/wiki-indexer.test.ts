@@ -1,6 +1,7 @@
-import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -70,6 +71,109 @@ describe('WikiIndexer', () => {
     expect(index.byId['knowhow-tip-dead'].ext.status).toBe('deprecated');
     expect(index.byId['knowhow-dcs-old'].status).toBe('deprecated');
     expect(index.byId['knowhow-dcs-old'].ext.status).toBe('deprecated');
+  });
+
+  it('prefers canonical MaestroGraph data and falls back to the legacy graph', async () => {
+    await mkdir(join(tmpRoot, 'kg'), { recursive: true });
+    await write('codebase/knowledge-graph.json', JSON.stringify({
+      nodes: [{ id: 'legacy', type: 'class', name: 'Legacy Only', summary: '', tags: [] }],
+      edges: [],
+    }));
+    const db = new DatabaseSync(join(tmpRoot, 'kg', 'maestro.db'));
+    db.exec(`
+      CREATE TABLE nodes (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        name TEXT NOT NULL,
+        file_path TEXT,
+        source_type TEXT NOT NULL,
+        definition TEXT,
+        body TEXT,
+        category TEXT,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE edges (source TEXT NOT NULL, target TEXT NOT NULL, kind TEXT NOT NULL);
+      INSERT INTO nodes VALUES (
+        'domain:canonical', 'domain_term', 'Canonical Node', NULL,
+        'domain', 'from sqlite', NULL, NULL, 1
+      );
+    `);
+    db.close();
+
+    const canonical = await new WikiIndexer({ workflowRoot: tmpRoot }).get();
+    expect(canonical.entries.some(entry => entry.title === 'Canonical Node')).toBe(true);
+    expect(canonical.entries.some(entry => entry.title === 'Legacy Only')).toBe(false);
+
+    await rm(join(tmpRoot, 'kg', 'maestro.db'));
+    const fallback = await new WikiIndexer({ workflowRoot: tmpRoot }).get();
+    expect(fallback.entries.some(entry => entry.title === 'Legacy Only')).toBe(true);
+  });
+
+  it('fills the result limit after deprecated filtering and parent caps', async () => {
+    for (let index = 0; index < 6; index++) {
+      await write(
+        `specs/shared-${index}.md`,
+        `---\ntitle: Ranking shared ${index}\nparent: shared-parent\n---\n` +
+        `# Ranking shared ${index}\nRanking ranking ranking shared candidate.`,
+      );
+    }
+    for (let index = 0; index < 4; index++) {
+      await write(
+        `specs/distinct-${index}.md`,
+        `---\ntitle: Ranking distinct ${index}\nparent: distinct-parent-${index}\n---\n` +
+        `# Ranking distinct ${index}\nRanking candidate.`,
+      );
+    }
+    await write(
+      'specs/deprecated.md',
+      '---\ntitle: Ranking deprecated\nstatus: deprecated\n---\n' +
+      '# Ranking deprecated\nRanking ranking ranking ranking ranking.',
+    );
+    const indexer = new WikiIndexer({ workflowRoot: tmpRoot });
+
+    const first = await indexer.searchWithMeta('ranking', 5, { skipEmbedding: true });
+    const second = await indexer.searchWithMeta('ranking', 5, { skipEmbedding: true });
+    const ids = first.results.map(result => result.entry.id);
+    const shared = first.results.filter(result => result.entry.parent === 'shared-parent');
+
+    expect(first.results).toHaveLength(5);
+    expect(shared).toHaveLength(2);
+    expect(ids).not.toContain('spec:project:deprecated');
+    expect(second.results.map(result => result.entry.id)).toEqual(ids);
+  });
+
+  it('keeps memory-only search independent from filesystem caches and indexes', async () => {
+    await write(
+      'specs/memory-only.md',
+      '---\ntitle: Memory only sentinel\n---\n# Memory only sentinel\nHermetic in memory search.',
+    );
+    const staleArtifacts = [
+      'search-cache.json',
+      'wiki-index.json',
+      'embedding-index.json',
+      'embedding-index.bin',
+    ];
+    for (const path of staleArtifacts) await write(path, `stale:${path}`);
+    const before = Object.fromEntries(await Promise.all(staleArtifacts.map(async path => {
+      const info = await stat(join(tmpRoot, path));
+      return [path, { bytes: await readFile(join(tmpRoot, path)), mtimeMs: info.mtimeMs }];
+    })));
+
+    const indexer = new WikiIndexer({
+      workflowRoot: tmpRoot,
+      persistence: 'memory-only',
+    });
+    const result = await indexer.searchWithMeta('memory sentinel', 5);
+
+    expect(result.results.map(item => item.entry.id)).toContain('spec:project:memory-only');
+    expect(result.embeddingUsed).toBe(false);
+    for (const path of staleArtifacts) {
+      const info = await stat(join(tmpRoot, path));
+      expect(await readFile(join(tmpRoot, path))).toEqual(before[path].bytes);
+      expect(info.mtimeMs).toBe(before[path].mtimeMs);
+    }
+    await expect(readFile(join(tmpRoot, 'search-cache.json.tmp'))).rejects.toThrow();
+    await expect(readFile(join(tmpRoot, 'embedding-index.db'))).rejects.toThrow();
   });
 });
 

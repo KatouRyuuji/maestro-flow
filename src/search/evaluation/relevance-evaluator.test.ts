@@ -1,0 +1,388 @@
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import {
+  assertNoQuerySpecialCases,
+  assertStableTopK,
+  computeKnownOrderBaselineMetrics,
+  computeRankingMetrics,
+  evaluateRanking,
+  lexicalFixtureRanker,
+  loadRankingFixture,
+  RankingEvaluationError,
+  scanQuerySpecialCases,
+  sha256File,
+  type RankingBaselineFixture,
+  type RankingProvider,
+  type RankingQrelsFixture,
+  type RankingCorpusFixture,
+} from './relevance-evaluator.js';
+import { runBuiltSearchAdapter } from './built-search-adapter.js';
+
+const fixturesRoot = fileURLToPath(new URL('./fixtures/', import.meta.url));
+const corpusPath = join(fixturesRoot, 'search-ranking-corpus.json');
+const qrelsPath = join(fixturesRoot, 'search-ranking-qrels.json');
+const baselinePath = join(fixturesRoot, 'search-ranking-baseline.json');
+const holdoutsPath = join(fixturesRoot, 'search-ranking-holdouts.json');
+
+let testRoot: string;
+
+async function write(relativePath: string, body: string): Promise<string> {
+  const path = join(testRoot, relativePath);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, body, 'utf8');
+  return path;
+}
+
+beforeEach(async () => {
+  testRoot = await mkdtemp(join(tmpdir(), 'search-ranking-evaluator-'));
+});
+
+afterEach(async () => {
+  await rm(testRoot, { recursive: true, force: true, maxRetries: 3 });
+});
+
+describe('ranking metric goldens', () => {
+  it('returns exact ones for a perfect order', () => {
+    const metrics = computeRankingMetrics(
+      ['doc-3', 'doc-2', 'doc-1'],
+      { 'doc-3': 3, 'doc-2': 2, 'doc-1': 1 },
+    );
+
+    expect(metrics).toEqual({ ndcgAt10: 1, mrrAt10: 1, recallAt20: 1 });
+  });
+
+  it('matches a hand-calculated known order', () => {
+    const metrics = computeRankingMetrics(
+      ['doc-2', 'irrelevant', 'doc-3', 'doc-1'],
+      { 'doc-3': 3, 'doc-2': 2, 'doc-1': 1 },
+    );
+    const dcg = 3 + 7 / Math.log2(4) + 1 / Math.log2(5);
+    const idcg = 7 + 3 / Math.log2(3) + 1 / Math.log2(4);
+
+    expect(metrics.ndcgAt10).toBeCloseTo(dcg / idcg, 12);
+    expect(metrics.mrrAt10).toBe(1);
+    expect(metrics.recallAt20).toBe(1);
+  });
+});
+
+describe('hash-fenced hermetic evaluator', () => {
+  it('recomputes the frozen pre-change known-order baseline', async () => {
+    const baseline = await loadRankingFixture<RankingBaselineFixture>(baselinePath);
+    const qrels = await loadRankingFixture<RankingQrelsFixture>(qrelsPath);
+    const recomputed = computeKnownOrderBaselineMetrics(qrels, baseline.knownOrder);
+
+    expect(recomputed).toEqual(baseline.metrics);
+    expect(recomputed.overall).toEqual({
+      ndcgAt10: 0.6386973302411959,
+      mrrAt10: 0.5,
+      recallAt20: 1,
+    });
+    expect(recomputed.categories).toMatchObject({
+      'exact-symbol': { ndcgAt10: 0.6309297535714575 },
+      knowledge: { ndcgAt10: 0.6353821444486659 },
+      'linked-scope': { ndcgAt10: 0.6309297535714575 },
+      mixed: { ndcgAt10: 0.6653152460429406 },
+      'wiki-short': { ndcgAt10: 0.6309297535714575 },
+    });
+  });
+
+  it('emits stable machine JSON from a 2000-document temporary workspace', async () => {
+    const productionPath = await write('production/search.ts', 'export const stableRanking = true;\n');
+    const report = await evaluateRanking({
+      workspaceRoot: join(testRoot, 'workspace'),
+      corpusPath,
+      qrelsPath,
+      baselinePath,
+      holdoutsPath,
+      runs: 5,
+      productionPaths: [productionPath],
+    });
+
+    expect(report.schema_version).toBe('search-ranking-report/1.0');
+    expect(report.qrelsSha256).toBe(await sha256File(qrelsPath));
+    expect(report.qrelsSha256Match).toBe(true);
+    expect(report.overallNdcgGain).toBeCloseTo(0.3613026697588041, 12);
+    expect(report.maxCategoryNdcgDrop).toBe(0);
+    expect(report.categoryNdcgDeltas).toMatchObject({
+      'exact-symbol': 0.36907024642854247,
+      knowledge: 0.3646178555513341,
+      'linked-scope': 0.36907024642854247,
+      mixed: 0.33468475395705943,
+      'wiki-short': 0.36907024642854247,
+    });
+    expect(report.qualityGate).toEqual({
+      minOverallNdcgGain: 0.1,
+      maxCategoryNdcgDrop: 0.02,
+      pass: true,
+    });
+    expect(Object.keys(report.metrics.categories).sort()).toEqual([
+      'exact-symbol',
+      'knowledge',
+      'linked-scope',
+      'mixed',
+      'wiki-short',
+    ]);
+    expect(report.stability.runs).toBe(5);
+    expect(report.stability.stableTop20).toBe(true);
+    expect(report.stability.queries.every(query => query.top20Runs.length === 5)).toBe(true);
+    expect(report.latency).toMatchObject({
+      warmups: 20,
+      measuredSamples: 100,
+      corpusSize: 2000,
+    });
+    expect(report.latency.p50Ms).toBeGreaterThanOrEqual(0);
+    expect(report.latency.p95Ms).toBeGreaterThanOrEqual(report.latency.p50Ms);
+    expect(report.latency.maxMs).toBeGreaterThanOrEqual(report.latency.p95Ms);
+    expect(report.latency.runner.node).toBe(process.version);
+    expect(report.scanner.querySpecialCaseHits).toBe(0);
+    expect(report.integrity).toEqual({
+      deprecatedLeakCount: 0,
+      unauthorizedWorkspaceHitCount: 0,
+      provenanceLossCount: 0,
+      holdoutOverlapCount: 0,
+    });
+    expect(report.workspace.root.startsWith(join(testRoot, 'workspace'))).toBe(true);
+    expect(report.workspace.maestroGraphPath).toBe(
+      join(testRoot, 'workspace', '.workflow', 'kg', 'maestro.db'),
+    );
+  });
+
+  it('normalizes equal scores with the stable ID tie-break', async () => {
+    let reverse = false;
+    const tiedRanker: RankingProvider = async (query, documents, limit) => {
+      reverse = !reverse;
+      const ranked = [...await lexicalFixtureRanker(query, documents, limit)];
+      const tiedTail = documents
+        .filter(document => document.kind === 'latency-noise')
+        .slice(0, 2)
+        .map(document => ({ id: document.id, score: -1 }));
+      return [...ranked, ...(reverse ? tiedTail.reverse() : tiedTail)];
+    };
+
+    const report = await evaluateRanking({
+      workspaceRoot: join(testRoot, 'tied-workspace'),
+      corpusPath,
+      qrelsPath,
+      baselinePath,
+      holdoutsPath,
+      runs: 5,
+      ranker: tiedRanker,
+    });
+
+    const firstQueryRuns = report.stability.queries[0].top20Runs;
+    expect(firstQueryRuns.every(run => JSON.stringify(run) === JSON.stringify(firstQueryRuns[0]))).toBe(true);
+    expect(firstQueryRuns[0].slice(-2)).toEqual(
+      [...firstQueryRuns[0].slice(-2)].sort((left, right) => left.localeCompare(right)),
+    );
+  });
+
+  it('hard-fails a deterministic candidate with no overall NDCG gain', async () => {
+    const baseline = await loadRankingFixture<RankingBaselineFixture>(baselinePath);
+    const qrels = await loadRankingFixture<RankingQrelsFixture>(qrelsPath);
+    const queryIdByText = new Map(qrels.queries.map(query => [query.query, query.id]));
+    const preChangeRanker: RankingProvider = query => {
+      const queryId = queryIdByText.get(query);
+      if (!queryId) return [];
+      const order = baseline.knownOrder[queryId];
+      return order.map((id, index) => ({ id, score: order.length - index }));
+    };
+
+    await expect(evaluateRanking({
+      workspaceRoot: join(testRoot, 'no-gain-workspace'),
+      corpusPath,
+      qrelsPath,
+      baselinePath,
+      holdoutsPath,
+      runs: 5,
+      ranker: preChangeRanker,
+    })).rejects.toThrow(/ranking quality gate failed/);
+  });
+
+  it('hard-fails a candidate whose category NDCG drops by more than two percent', async () => {
+    const qrels = await loadRankingFixture<RankingQrelsFixture>(qrelsPath);
+    const regressedQueries = new Set(
+      qrels.queries.filter(query => query.category === 'wiki-short').slice(0, 2)
+        .map(query => query.query),
+    );
+    const categoryRegressionRanker: RankingProvider = async (query, documents, limit) => (
+      regressedQueries.has(query) ? [] : lexicalFixtureRanker(query, documents, limit)
+    );
+
+    let caught: unknown;
+    try {
+      await evaluateRanking({
+        workspaceRoot: join(testRoot, 'category-drop-workspace'),
+        corpusPath,
+        qrelsPath,
+        baselinePath,
+        holdoutsPath,
+        runs: 5,
+        ranker: categoryRegressionRanker,
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(RankingEvaluationError);
+    const failure = JSON.parse((caught as Error).message) as {
+      code: string;
+      details: { overallNdcgGain: number; maxCategoryNdcgDrop: number };
+    };
+    expect(failure.code).toBe('RANKING_QUALITY_GATE');
+    expect(failure.details.overallNdcgGain).toBeGreaterThanOrEqual(0.1);
+    expect(failure.details.maxCategoryNdcgDrop).toBeGreaterThan(0.02);
+  });
+
+  it('fails on one-byte qrels drift before building a workspace or calculating deltas', async () => {
+    const driftedQrels = join(testRoot, 'drifted-qrels.json');
+    const frozen = await readFile(qrelsPath, 'utf8');
+    await writeFile(
+      driftedQrels,
+      frozen.replace('"AuthTokenValidator"', '"AuthTokenValidatoR"'),
+      'utf8',
+    );
+    const workspaceRoot = join(testRoot, 'must-not-exist');
+
+    let caught: unknown;
+    try {
+      await evaluateRanking({
+        workspaceRoot,
+        corpusPath,
+        qrelsPath: driftedQrels,
+        baselinePath,
+        holdoutsPath,
+        runs: 5,
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(RankingEvaluationError);
+    expect((caught as Error).message).toContain('qrels hash mismatch');
+    expect(JSON.parse((caught as Error).message)).toMatchObject({
+      schema_version: 'search-ranking-failure/1.0',
+      ok: false,
+      code: 'QRELS_HASH_MISMATCH',
+    });
+    await expect(readFile(join(workspaceRoot, '.workflow', 'kg', 'maestro.db'))).rejects.toThrow();
+  });
+});
+
+describe('stability and anti-special-case guards', () => {
+  it('fails closed when a Top-20 run changes', () => {
+    expect(() => assertStableTopK(
+      [['doc-a', 'doc-b'], ['doc-b', 'doc-a']],
+      'unstable-query',
+    )).toThrow(/Top-20 ranking is unstable/);
+  });
+
+  it('keeps holdouts outside relative and absolute fixture query sets', async () => {
+    const qrels = JSON.parse(await readFile(qrelsPath, 'utf8')) as {
+      queries: Array<{ query: string }>;
+    };
+    const corpus = JSON.parse(await readFile(corpusPath, 'utf8')) as {
+      absoluteQueries: Array<{ query: string }>;
+    };
+    const holdouts = JSON.parse(await readFile(holdoutsPath, 'utf8')) as {
+      queries: Array<{ query: string; category: string }>;
+    };
+    const frozen = new Set(
+      [...qrels.queries, ...corpus.absoluteQueries].map(item => item.query.toLowerCase()),
+    );
+
+    expect(holdouts.queries.some(item => frozen.has(item.query.toLowerCase()))).toBe(false);
+    expect(holdouts.queries.filter(item => item.category === 'pi')).toHaveLength(2);
+  });
+
+  it('detects exact query literals and Pi ranking branches in production sources', async () => {
+    const literalPath = await write(
+      'faults/literal.ts',
+      "export const preferredQuery = 'AuthTokenValidator';\n",
+    );
+    const branchPath = await write(
+      'faults/branch.ts',
+      "export function rank(query: string): number {\n  if (query.toLowerCase().includes('pi')) return 100;\n  return 0;\n}\n",
+    );
+    const scan = await scanQuerySpecialCases({
+      queryFiles: [qrelsPath, holdoutsPath],
+      productionPaths: [literalPath, branchPath],
+    });
+
+    expect(scan.hits.map(hit => hit.kind)).toEqual(
+      expect.arrayContaining(['query-literal', 'pi-branch']),
+    );
+    await expect(assertNoQuerySpecialCases({
+      queryFiles: [qrelsPath, holdoutsPath],
+      productionPaths: [literalPath],
+    })).rejects.toThrow(/production query special cases detected/);
+    await expect(assertNoQuerySpecialCases({
+      queryFiles: [qrelsPath, holdoutsPath],
+      productionPaths: [branchPath],
+    })).rejects.toThrow(/production query special cases detected/);
+  });
+
+  it('excludes tests, fixtures, and knowhow content from production scanning', async () => {
+    await write('scan/search.test.ts', "export const query = 'AuthTokenValidator';\n");
+    await write('scan/fixtures/query.ts', "export const query = 'AuthTokenValidator';\n");
+    await write('scan/.workflow/knowhow/pi.ts', "if (query.includes('pi')) return 1;\n");
+    await write(
+      'scan/search.ts',
+      'export class WikiIndexer {}\nexport function searchUnified(): boolean { return true; }\n',
+    );
+
+    const scan = await assertNoQuerySpecialCases({
+      queryFiles: [qrelsPath, holdoutsPath],
+      productionPaths: [join(testRoot, 'scan')],
+    });
+
+    expect(scan.querySpecialCaseHits).toBe(0);
+    expect(scan.scannedFiles).toBe(1);
+  });
+});
+
+describe('compiled production ranking adapter', () => {
+  it('fails built verdict when a production provider regresses', async () => {
+    const corpus = await loadRankingFixture<RankingCorpusFixture>(corpusPath);
+    const qrels = await loadRankingFixture<RankingQrelsFixture>(qrelsPath);
+    for (const judgment of qrels.queries) {
+      const ids = (await lexicalFixtureRanker(judgment.query, corpus.documents, 20))
+        .map(item => item.id);
+      expect(ids.some(id => (judgment.relevance[id] ?? 0) > 0)).toBe(true);
+    }
+
+    await expect(runBuiltSearchAdapter({
+      workspaceRoot: join(testRoot, 'provider-fault-workspace'),
+      corpusPath,
+      qrelsPath,
+      baselinePath,
+      holdoutsPath,
+      faultProvider: 'wiki',
+    })).rejects.toThrow(/compiled production provider ranking gate failed/);
+  });
+
+  it('derives built latency from real compiled operations', async () => {
+    const adapterSource = await readFile(
+      join(fixturesRoot, '..', 'built-search-adapter.ts'),
+      'utf8',
+    );
+    expect(adapterSource).toMatch(
+      /for \(let index = 0; index < LATENCY_WARMUPS; index \+= 1\) await operation\(\)/,
+    );
+    expect(adapterSource).toMatch(
+      /for \(let index = 0; index < LATENCY_SAMPLES; index \+= 1\)/,
+    );
+    expect(adapterSource).toContain('graph.searchUnified(latencyJudgment.query, { limit: 20 })');
+    expect(adapterSource).toContain(
+      'wikiIndexer.searchWithMeta(wikiLatencyJudgment.query, 20, { skipEmbedding: true })',
+    );
+    expect(adapterSource).toContain('indexMeasurementIndexer.getSearchIndex()');
+    expect(adapterSource).not.toMatch(
+      /rankPrepared|measurePreparedLatency|measureWikiLatency/,
+    );
+  });
+});

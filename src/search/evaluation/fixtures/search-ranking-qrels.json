@@ -1,0 +1,107 @@
+{
+  "schema_version": "search-ranking-qrels/1.0",
+  "queries": [
+    {
+      "id": "exact-auth-token-validator",
+      "query": "AuthTokenValidator",
+      "category": "exact-symbol",
+      "relevance": { "code:function:auth-token-validator": 3 }
+    },
+    {
+      "id": "exact-search-unified",
+      "query": "searchUnified",
+      "category": "exact-symbol",
+      "relevance": { "code:function:search-unified": 3 }
+    },
+    {
+      "id": "exact-wiki-indexer",
+      "query": "WikiIndexer",
+      "category": "exact-symbol",
+      "relevance": { "code:class:wiki-indexer": 3 }
+    },
+    {
+      "id": "wiki-architecture",
+      "query": "wiki architecture",
+      "category": "wiki-short",
+      "relevance": { "wiki:architecture-overview": 3 }
+    },
+    {
+      "id": "wiki-cache",
+      "query": "cache invalidation",
+      "category": "wiki-short",
+      "relevance": { "wiki:cache-invalidation": 3 }
+    },
+    {
+      "id": "wiki-backlink",
+      "query": "backlink graph",
+      "category": "wiki-short",
+      "relevance": { "wiki:backlink-graph": 3 }
+    },
+    {
+      "id": "knowledge-restore",
+      "query": "recoverable restore receipts",
+      "category": "knowledge",
+      "relevance": {
+        "knowhow:recoverable-restore": 3,
+        "wiki:session-lifecycle": 1
+      }
+    },
+    {
+      "id": "knowledge-qrels",
+      "query": "qrels hash fence",
+      "category": "knowledge",
+      "relevance": { "spec:qrels-hash-fence": 3 }
+    },
+    {
+      "id": "knowledge-mrr",
+      "query": "reciprocal rank metric",
+      "category": "knowledge",
+      "relevance": { "domain:reciprocal-rank": 3 }
+    },
+    {
+      "id": "mixed-auth",
+      "query": "authentication troubleshooting",
+      "category": "mixed",
+      "relevance": {
+        "knowhow:authentication-troubleshooting": 3,
+        "code:function:auth-token-validator": 2
+      }
+    },
+    {
+      "id": "mixed-search",
+      "query": "search ranking design",
+      "category": "mixed",
+      "relevance": {
+        "spec:search-ranking-design": 3,
+        "code:function:search-unified": 2
+      }
+    },
+    {
+      "id": "mixed-lifecycle",
+      "query": "session lifecycle restore",
+      "category": "mixed",
+      "relevance": {
+        "wiki:session-lifecycle": 3,
+        "knowhow:recoverable-restore": 2
+      }
+    },
+    {
+      "id": "linked-payment",
+      "query": "peer payment service",
+      "category": "linked-scope",
+      "relevance": { "linked:peer:payment-service": 3 }
+    },
+    {
+      "id": "linked-cache",
+      "query": "linked token cache",
+      "category": "linked-scope",
+      "relevance": { "linked:peer:token-cache": 3 }
+    },
+    {
+      "id": "linked-ranking",
+      "query": "shared ranking utilities",
+      "category": "linked-scope",
+      "relevance": { "linked:peer:ranking-utilities": 3 }
+    }
+  ]
+}

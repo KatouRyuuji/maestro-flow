@@ -1,0 +1,29 @@
+{
+  "schema_version": "search-ranking-holdouts/1.0",
+  "queries": [
+    {
+      "id": "pi-paraphrase-canonical",
+      "query": "canonical generation workflow for Pi skills",
+      "targetIds": ["knowhow-rcp-20260723-pi-skills-canonical-generation"],
+      "category": "pi"
+    },
+    {
+      "id": "pi-word-order",
+      "query": "skills for Pi generated from canonical source",
+      "targetIds": ["knowhow-rcp-20260723-pi-skills-canonical-generation"],
+      "category": "pi"
+    },
+    {
+      "id": "wiki-paraphrase",
+      "query": "how workflow pages become searchable",
+      "targetIds": ["wiki:architecture-overview"],
+      "category": "wiki"
+    },
+    {
+      "id": "kg-word-order",
+      "query": "symbols and knowledge search together",
+      "targetIds": ["code:function:search-unified"],
+      "category": "kg"
+    }
+  ]
+}

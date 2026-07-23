@@ -61,15 +61,31 @@ export interface CodeSearchResult {
   line: number | null;
   score: number | null;
   signature?: string;
+  /** Linked workspace provenance；本地 CodeGraph 结果不设置。 */
+  workspace?: string;
+  /** Linked 结果的稳定 workspace 边界。 */
+  workspaceFence?: string;
 }
 
 /** Availability of the codegraph index backing code search. */
 export type CodeIndexStatus = 'ok' | 'not-initialized' | 'empty' | 'error';
+export type SearchExecutionMode = 'default' | 'read-only-probe';
 
 /** Code search results plus index availability for actionable feedback. */
 export interface CodeSearchOutcome {
   results: CodeSearchResult[];
   status: CodeIndexStatus;
+  linkedFailures?: LinkedCodeSearchFailure[];
+}
+
+export interface LinkedCodeSearchFailure {
+  workspace: string;
+  message: string;
+}
+
+export interface LinkedCodeSearchOutcome {
+  results: CodeSearchResult[];
+  failures: LinkedCodeSearchFailure[];
 }
 
 /** Actionable hint for a degraded code index, or null when healthy. */
@@ -94,6 +110,10 @@ export interface UnifiedSearchOptions {
   keyword?: string;
   workspace?: string;
   limit: number;
+  /** 显式包含已授权的 linked CodeGraph 数据库；默认 false。 */
+  includeLinkedCode?: boolean;
+  /** Internal evaluation mode that forbids daemon, persistence, embeddings, and hit writes. */
+  executionMode?: SearchExecutionMode;
   /** Include entries with status="deprecated" (superseded). Default: excluded. */
   includeDeprecated?: boolean;
 }
@@ -101,11 +121,35 @@ export interface UnifiedSearchOptions {
 // ── Lazy offline client ────────────────────────────────────────────────
 
 let _indexer: InstanceType<typeof import('#maestro-dashboard/wiki/wiki-indexer.js').WikiIndexer> | null = null;
+let _probeIndexer: {
+  workflowRoot: string;
+  indexer: InstanceType<typeof import('#maestro-dashboard/wiki/wiki-indexer.js').WikiIndexer>;
+} | null = null;
 
-async function getIndexer(): Promise<WikiIndexer> {
+async function getIndexer(executionMode: SearchExecutionMode = 'default'): Promise<WikiIndexer> {
+  const workflowRoot = resolve('.workflow');
+  if (executionMode === 'read-only-probe') {
+    if (!_probeIndexer || _probeIndexer.workflowRoot !== workflowRoot) {
+      const { WikiIndexer: Cls } = await import('#maestro-dashboard/wiki/wiki-indexer.js');
+      const projectPath = process.cwd();
+      const wsConfig = loadWorkspaceConfig(projectPath);
+      const resolved = resolveWorkspaceLinks(projectPath, wsConfig);
+      const linkedWorkspaces = resolved
+        .filter(lw => lw.valid)
+        .map(lw => ({ name: lw.name, workflowRoot: lw.workflowRoot, shareTypes: lw.share }));
+      _probeIndexer = {
+        workflowRoot,
+        indexer: new Cls({
+          workflowRoot,
+          linkedWorkspaces,
+          persistence: 'memory-only',
+        }),
+      };
+    }
+    return _probeIndexer.indexer;
+  }
   if (!_indexer) {
     const { WikiIndexer: Cls } = await import('#maestro-dashboard/wiki/wiki-indexer.js');
-    const workflowRoot = resolve('.workflow');
     const projectPath = process.cwd();
     const wsConfig = loadWorkspaceConfig(projectPath);
     const resolved = resolveWorkspaceLinks(projectPath, wsConfig);
@@ -134,6 +178,8 @@ let _daemonFallbackNoted = false;
 
 export async function runUnifiedSearch(q: string, opts: UnifiedSearchOptions & { skipEmbedding?: boolean }): Promise<SearchResult[]> {
   const limit = opts.limit > 0 ? opts.limit : 20;
+  const executionMode = opts.executionMode ?? 'default';
+  const readOnlyProbe = executionMode === 'read-only-probe';
   // Facet filters run after candidate truncation — widen the pool when any
   // facet is active so narrow queries don't starve to 0 results (G-C3).
   const hasFacet = Boolean(opts.type || opts.category || opts.tag || opts.keyword || opts.workspace);
@@ -141,28 +187,30 @@ export async function runUnifiedSearch(q: string, opts: UnifiedSearchOptions & {
 
   // Try daemon first (warm ONNX model, no cold-start penalty)
   const workflowRoot = resolve('.workflow');
-  const daemonResult = await tryDaemonSearch(workflowRoot, q, candidateLimit, opts.skipEmbedding);
+  const daemonResult = readOnlyProbe
+    ? null
+    : await tryDaemonSearch(workflowRoot, q, candidateLimit, opts.skipEmbedding);
   let scored: Array<{ entry: WikiEntry; score: number }>;
   let embeddingUsed: boolean;
   let embeddingDocs: number;
 
-  if (daemonResult?.ok && daemonResult.results) {
+  if (!readOnlyProbe && daemonResult?.ok && daemonResult.results) {
     scored = daemonResult.results;
     embeddingUsed = daemonResult.embeddingUsed ?? false;
     embeddingDocs = daemonResult.embeddingDocs ?? 0;
   } else {
     // Daemon unavailable — use BM25-only to avoid ONNX cold-start (~1800ms).
     // Spawn daemon in background so future searches get embedding.
-    if (daemonResult === null && !_daemonFallbackNoted && readDaemonInfo(workflowRoot)) {
+    if (!readOnlyProbe && daemonResult === null && !_daemonFallbackNoted && readDaemonInfo(workflowRoot)) {
       _daemonFallbackNoted = true;
       console.error('Note: search daemon unreachable — falling back to BM25-only (embedding disabled)');
     }
-    const indexer = await getIndexer();
+    const indexer = await getIndexer(executionMode);
     const result = await indexer.searchWithMeta(q, candidateLimit, { skipEmbedding: true });
     scored = result.results;
     embeddingUsed = result.embeddingUsed;
     embeddingDocs = result.embeddingDocs;
-    spawnDaemon(workflowRoot).catch(() => {});
+    if (!readOnlyProbe) spawnDaemon(workflowRoot).catch(() => {});
   }
   _lastSearchMeta = { embeddingUsed, embeddingDocs };
 
@@ -255,7 +303,7 @@ export async function runUnifiedSearch(q: string, opts: UnifiedSearchOptions & {
   }));
 
   // Async credibility search_hits increment (best-effort, never blocks)
-  if (results.length > 0) {
+  if (!readOnlyProbe && results.length > 0) {
     incrementSearchHitsAsync(results.map(result => ({ id: result.id, sourceRef: result.sourceRef })));
   }
 
@@ -358,14 +406,22 @@ function mapCodeNodes(nodes: Array<{ id: string; kind: string; name: string; fil
  * Uses hybrid (vector + FTS fusion) search when the code embedding index is
  * available; degrades to FTS-only otherwise (G-C4).
  */
-async function runCodeSearch(q: string, limit: number, skipEmbedding?: boolean): Promise<CodeSearchOutcome> {
+async function runLocalCodeSearch(
+  q: string,
+  limit: number,
+  skipEmbedding: boolean | undefined,
+  projectRoot: string,
+  executionMode: SearchExecutionMode,
+): Promise<CodeSearchOutcome> {
   try {
     const { MaestroGraph } = await import('../graph/kg/engine.js');
-    if (!MaestroGraph.isInitialized(resolve('.'))) return { results: [], status: 'not-initialized' };
-    const mg = await MaestroGraph.open(resolve('.'));
+    if (!MaestroGraph.isInitialized(projectRoot)) return { results: [], status: 'not-initialized' };
+    const mg = executionMode === 'read-only-probe'
+      ? await MaestroGraph.openReadOnly(projectRoot)
+      : await MaestroGraph.open(projectRoot);
     try {
       let results: CodeSearchResult[] | null = null;
-      if (!skipEmbedding) {
+      if (!skipEmbedding && executionMode === 'default') {
         try {
           // sourceTypes: ['codegraph'] restricts the FTS side to code nodes.
           const hybrid = await mg.searchHybrid(q, { limit, sourceTypes: ['codegraph'] });
@@ -399,6 +455,160 @@ async function runCodeSearch(q: string, limit: number, skipEmbedding?: boolean):
   }
 }
 
+/**
+ * 以确定性、单句柄生命周期搜索显式共享的 linked CodeGraph 数据库。
+ * 每个数据库独立隔离。
+ */
+export async function runLinkedCodeSearch(
+  q: string,
+  limit: number,
+  projectRoot: string = resolve('.'),
+): Promise<LinkedCodeSearchOutcome> {
+  const { MaestroGraph } = await import('../graph/kg/engine.js');
+  const linkedWorkspaces = resolveWorkspaceLinks(projectRoot, loadWorkspaceConfig(projectRoot))
+    .filter(workspace => workspace.valid && workspace.share.includes('codebase'))
+    .sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+  const results: CodeSearchResult[] = [];
+  const failures: LinkedCodeSearchFailure[] = [];
+
+  for (const workspace of linkedWorkspaces) {
+    let graph: InstanceType<typeof MaestroGraph> | null = null;
+    try {
+      graph = await MaestroGraph.openReadOnly(workspace.resolvedPath);
+      const workspaceFence = `linked:${workspace.name}`;
+      results.push(...mapCodeNodes(graph.searchCode(q, { limit })).map(result => ({
+        ...result,
+        id: `ws:${workspace.name}:${result.id}`,
+        workspace: workspace.name,
+        workspaceFence,
+      })));
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      failures.push({ workspace: workspace.name, message });
+      if (process.env.MAESTRO_DEBUG === '1') {
+        console.error(`[search] linked code search failed for workspace "${workspace.name}": ${message}`);
+      }
+    } finally {
+      graph?.close();
+    }
+  }
+
+  return { results, failures };
+}
+
+export async function runCodeSearch(
+  q: string,
+  limit: number,
+  skipEmbedding?: boolean,
+  includeLinkedCode = false,
+  projectRoot: string = resolve('.'),
+  executionMode: SearchExecutionMode = 'default',
+): Promise<CodeSearchOutcome> {
+  const local = await runLocalCodeSearch(q, limit, skipEmbedding, projectRoot, executionMode);
+  if (!includeLinkedCode) return local;
+
+  const linked = await runLinkedCodeSearch(q, limit, projectRoot);
+  const results = interleaveCodeProviders(local.results, linked.results, limit);
+  return {
+    results,
+    status: results.length > 0 ? 'ok' : local.status,
+    ...(linked.failures.length > 0 ? { linkedFailures: linked.failures } : {}),
+  };
+}
+
+/**
+ * 在互不校准 raw score 的 CodeGraph providers 之间按 ordinal 公平取样。
+ * provider 顺序固定为 local，其后为 workspace name 升序的 linked groups。
+ */
+export function interleaveCodeProviders(
+  localResults: CodeSearchResult[],
+  linkedResults: CodeSearchResult[],
+  limit: number,
+): CodeSearchResult[] {
+  const resultLimit = Math.max(0, Math.trunc(limit));
+  if (resultLimit === 0) return [];
+
+  const linkedByWorkspace = new Map<string, CodeSearchResult[]>();
+  for (const result of linkedResults) {
+    const workspace = result.workspace ?? '';
+    const group = linkedByWorkspace.get(workspace) ?? [];
+    group.push(result);
+    linkedByWorkspace.set(workspace, group);
+  }
+  const providers = [
+    localResults,
+    ...[...linkedByWorkspace.entries()]
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+      .map(([, results]) => results),
+  ];
+
+  const selected: CodeSearchResult[] = [];
+  for (let ordinal = 0; selected.length < resultLimit; ordinal++) {
+    let foundCandidate = false;
+    for (const provider of providers) {
+      const candidate = provider[ordinal];
+      if (!candidate) continue;
+      foundCandidate = true;
+      selected.push(candidate);
+      if (selected.length >= resultLimit) return selected;
+    }
+    if (!foundCandidate) break;
+  }
+  return selected;
+}
+
+export interface MixedSearchOutcome {
+  candidateLimit: number;
+  wikiResults: SearchResult[];
+  codeOutcome: CodeSearchOutcome;
+  results: MergedResult[];
+}
+
+export interface MixedSearchDependencies {
+  wikiSearch: typeof runUnifiedSearch;
+  codeSearch: typeof runCodeSearch;
+  merge: typeof mergeAndNormalize;
+}
+
+/**
+ * 扩大 mixed 搜索的源内候选池，但只在 legacy rank fusion 后按用户 limit 截断。
+ */
+export async function runMixedSearch(
+  q: string,
+  options: UnifiedSearchOptions & { skipEmbedding?: boolean },
+  dependencies: Partial<MixedSearchDependencies> = {},
+): Promise<MixedSearchOutcome> {
+  const limit = options.limit > 0 ? options.limit : 20;
+  const candidateLimit = Math.min(500, Math.max(limit * 3, 60));
+  const wikiSearch = dependencies.wikiSearch ?? runUnifiedSearch;
+  const codeSearch = dependencies.codeSearch ?? runCodeSearch;
+  const merge = dependencies.merge ?? mergeAndNormalize;
+  const { includeLinkedCode = false, ...wikiOptions } = options;
+  const executionMode = options.executionMode ?? 'default';
+
+  const codePromise = executionMode === 'default'
+    ? codeSearch(q, candidateLimit, options.skipEmbedding, includeLinkedCode)
+    : codeSearch(
+      q,
+      candidateLimit,
+      true,
+      includeLinkedCode,
+      resolve('.'),
+      executionMode,
+    );
+  const [wikiResults, codeOutcome] = await Promise.all([
+    wikiSearch(q, { ...wikiOptions, limit: candidateLimit, executionMode }),
+    codePromise,
+  ]);
+
+  return {
+    candidateLimit,
+    wikiResults,
+    codeOutcome,
+    results: merge(wikiResults, codeOutcome.results, limit, q),
+  };
+}
+
 export function registerSearchCommand(program: Command): void {
   program
     .command('search <query...>')
@@ -413,6 +623,8 @@ export function registerSearchCommand(program: Command): void {
     .option('--all', 'Alias for default mixed mode (backward compat)')
     .option('--wiki-only', 'Search wiki only, skip code results')
     .option('--workspace <name>', 'Filter results to a specific linked workspace')
+    .option('--include-linked-code', 'Include explicitly shared linked CodeGraph results')
+    .option('--read-only-probe', 'Run a hermetic no-daemon, no-persistence search probe')
     .option('--include-deprecated', 'Include superseded/deprecated spec entries (hidden by default)')
     .option('--no-emb', 'Skip embedding, use BM25 only')
     .option('--limit <n>', 'Max results', '20')
@@ -477,11 +689,44 @@ export function registerSearchCommand(program: Command): void {
         return;
       }
 
-      // Parallel: wiki + code search (skip irrelevant source based on flags)
-      const [wikiResults, codeOutcome] = await Promise.all([
-        codeOnly ? [] : runUnifiedSearch(q, { type: opts.type, category: opts.category, tag: resolvedTag, keyword: opts.keyword, workspace: opts.workspace, limit, skipEmbedding, includeDeprecated: opts.includeDeprecated === true }),
-        wikiOnly ? { results: [], status: 'ok' as CodeIndexStatus } : runCodeSearch(q, limit, skipEmbedding),
-      ]);
+      const searchOptions = {
+        type: opts.type,
+        category: opts.category,
+        tag: resolvedTag,
+        keyword: opts.keyword,
+        workspace: opts.workspace,
+        limit,
+        skipEmbedding,
+        includeLinkedCode: opts.includeLinkedCode === true,
+        executionMode: opts.readOnlyProbe === true
+          ? 'read-only-probe' as const
+          : 'default' as const,
+        includeDeprecated: opts.includeDeprecated === true,
+      };
+      let wikiResults: SearchResult[];
+      let codeOutcome: CodeSearchOutcome;
+      let mixedResults: MergedResult[] | null = null;
+
+      if (!codeOnly && !wikiOnly) {
+        const mixed = await runMixedSearch(q, searchOptions);
+        wikiResults = mixed.wikiResults;
+        codeOutcome = mixed.codeOutcome;
+        mixedResults = mixed.results;
+      } else {
+        [wikiResults, codeOutcome] = await Promise.all([
+          codeOnly ? [] : runUnifiedSearch(q, searchOptions),
+          wikiOnly
+            ? { results: [], status: 'ok' as CodeIndexStatus }
+            : runCodeSearch(
+              q,
+              limit,
+              skipEmbedding,
+              opts.includeLinkedCode === true,
+              resolve('.'),
+              searchOptions.executionMode,
+            ),
+        ]);
+      }
       const codeResults = codeOutcome.results;
       const codeHint = wikiOnly ? null : codeIndexHint(codeOutcome.status);
 
@@ -513,7 +758,7 @@ export function registerSearchCommand(program: Command): void {
       }
 
       // Default / --all / --wiki-only: mixed interleaved results
-      const merged = mergeAndNormalize(wikiResults, codeResults, limit, q);
+      const merged = mixedResults ?? mergeAndNormalize(wikiResults, codeResults, limit, q);
       const wikiCount = merged.filter(r => r.source === 'wiki').length;
       const codeCount = merged.filter(r => r.source === 'code').length;
 
@@ -591,7 +836,8 @@ export function registerSearchCommand(program: Command): void {
           }
         } else {
           const sigTag = r.signature ? `  ${truncate(r.signature, 60)}` : '';
-          console.log(`  [code:${r.kind}]  ${name}  ${r.detail}${sigTag}${scoreTag}`);
+          const workspaceTag = r.workspace ? `  @${r.workspace} (${r.workspaceFence})` : '';
+          console.log(`  [code:${r.kind}]  ${name}  ${r.detail}${sigTag}${workspaceTag}${scoreTag}`);
         }
       }
     });
@@ -813,7 +1059,8 @@ function printCodeResult(r: CodeSearchResult, indent: string, isTTY: boolean, qT
   const scoreTag = r.score !== null ? `  (${r.score.toFixed(4)})` : '';
   const name = isTTY ? highlightTerms(r.name, qTerms) : r.name;
   const sigTag = r.signature ? `  ${truncate(r.signature, 60)}` : '';
-  console.log(`${indent}[${r.kind}] ${name}  ${codeLocation(r)}${sigTag}${scoreTag}`);
+  const workspaceTag = r.workspace ? `  @${r.workspace} (${r.workspaceFence})` : '';
+  console.log(`${indent}[${r.kind}] ${name}  ${codeLocation(r)}${sigTag}${workspaceTag}${scoreTag}`);
 }
 
 /** file:line reference — directly consumable by Read/editor jumps. */
@@ -842,6 +1089,8 @@ export interface MergedResult {
   snippet?: string;
   summary?: string;
   signature?: string;
+  workspace?: string;
+  workspaceFence?: string;
   category?: string;
   confidence?: string;
   /** Session/Run topology — present only on run-mode session and run entries. */
@@ -932,7 +1181,7 @@ function rankNormalize(items: Array<{ index: number; score: number }>): number[]
   return result;
 }
 
-function mergeAndNormalize(wiki: SearchResult[], code: CodeSearchResult[], limit: number, query?: string): MergedResult[] {
+export function mergeAndNormalize(wiki: SearchResult[], code: CodeSearchResult[], limit: number, query?: string): MergedResult[] {
   const q = query ?? '';
   const isIdQuery = isCodeIdentifier(q);
   const hasStrongCodeMatch = code.length > 0 && code.some(r =>
@@ -1005,9 +1254,16 @@ function mergeAndNormalize(wiki: SearchResult[], code: CodeSearchResult[], limit
       rank: codeRanks[i] * CODE_WEIGHT,
       score: maxCodeFinal > 0 ? r.finalScore / maxCodeFinal : 0,
       signature: r.signature,
+      workspace: r.workspace,
+      workspaceFence: r.workspaceFence,
     });
   }
 
-  merged.sort((a, b) => b.rank - a.rank);
+  merged.sort((a, b) => {
+    const rankOrder = b.rank - a.rank;
+    if (rankOrder !== 0) return rankOrder;
+    if (a.source !== b.source) return a.source === 'wiki' ? -1 : 1;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
   return merged.slice(0, limit);
 }
