@@ -192,8 +192,9 @@ describe('ralph next — adapter', () => {
 
     // Completion meta format is byte-stable.
     expect(out).toMatch(/<!-- maestro ralph: step \[0\/1\] command=demo-plan session=sess-anchor run=\S+ -->/);
-    expect(out).toContain('maestro ralph complete 0 --session sess-anchor --status DONE --summary');
-    expect(out).toContain('maestro ralph retry 0 --session sess-anchor');
+    expect(out).toContain('maestro run done');
+    expect(out).toContain('--session sess-anchor --verdict done --summary');
+    expect(out).toContain('--verdict needs-retry');
   });
 
   it('prefers Session 1.1 lease, args, position and decomposition over stale ralph-meta', async () => {

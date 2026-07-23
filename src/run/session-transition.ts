@@ -159,7 +159,7 @@ export function resolveSession(
     schema_version: 'session-transition/1.0', operation: 'resolve', session_id: sessionId,
     transition_id: evaluated.outcome.transition_id, request_id: request.request_id,
     before: request.preconditions, after: evaluated.outcome.postconditions, replayed: evaluated.replayed,
-    next: { suggest_only: true, command: `maestro session resume --session ${sessionId}`, reason: 'target resolved; Session remains paused until explicit resume' },
+    next: { suggest_only: true, command: `maestro run recover --resume --session ${sessionId}`, reason: 'target resolved; Session remains paused until explicit resume' },
   });
 }
 

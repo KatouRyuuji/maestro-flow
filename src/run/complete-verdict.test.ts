@@ -818,6 +818,22 @@ describe('run complete CLI — verdict + 免参 + lease', () => {
     expect(chainOf(projectRoot, 's').map(step => step.command)).toEqual(['adaptive', 'verify']);
   });
 
+  it('applies the single discovered proposal without a path argument', async () => {
+    const projectRoot = root();
+    proposalCommand(projectRoot, 'adaptive', ['insert']);
+    seedSession(projectRoot, 's', [{ command: 'adaptive' }], { active: true });
+    const runId = startStep(projectRoot, 's', 0);
+    writeChainProposal(projectRoot, 's', runId, 'adaptive', [
+      { op: 'insert', after: 'step-000-adaptive', command: 'verify' },
+    ]);
+
+    const out = (await runCompleteCli(projectRoot, [
+      runId, '--session', 's', '--verdict', 'done', '--apply-proposal',
+    ])) as { seal?: { chain_proposal?: { proposal_id: string } } };
+    expect(out?.seal?.chain_proposal?.proposal_id).toBe('cp-atomic-1');
+    expect(chainOf(projectRoot, 's').map(step => step.command)).toEqual(['adaptive', 'verify']);
+  });
+
   it('免参 done resolves the active step and seals it', async () => {
     const projectRoot = root();
     stepCommand(projectRoot, 'demo');

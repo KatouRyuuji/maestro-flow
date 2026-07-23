@@ -202,7 +202,7 @@ function addMutationOptions(command: Command): Command {
 
 export function registerSessionCommand(program: Command): void {
   const session = program
-    .command('session')
+    .command('session', { hidden: true })
     .description('Session topic grouping/index, canonical paused recovery, and chain administration');
 
   const addTransitionOptions = (command: Command): Command => command

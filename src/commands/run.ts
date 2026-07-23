@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { Command } from 'commander';
 import {
@@ -16,7 +17,17 @@ import {
 } from '../run/runtime.js';
 import { runNextStep } from '../run/next.js';
 import { resolveRunningRun } from '../run/resolve.js';
-import { createChainSession, insertChainStep, replaceChainStep, skipChainStep, type ChainDefinition } from '../run/chain-admin.js';
+import {
+  chainDefinitionSchema,
+  createChainSession,
+  insertChainStep,
+  parseDecompositionInput,
+  parsePositionInput,
+  replaceChainStep,
+  skipChainStep,
+  updateSessionMeta,
+  type ChainDefinition,
+} from '../run/chain-admin.js';
 import { runDecide, type DecisionConfidence, type DecisionVerdict } from '../run/decide.js';
 import { checkLease } from '../run/lease.js';
 import { SessionStore } from '../run/store.js';
@@ -33,6 +44,9 @@ import {
 import { recallRuns } from '../run/recall.js';
 import { issueRecallConfirmation } from '../run/recall-confirmation.js';
 import { executeRecallAction } from '../run/recall-actions.js';
+import { resolveCompatibleSession } from '../run/session-resolver.js';
+import { summarizeSession } from '../run/session-status.js';
+import { resolveSession, resumeSession } from '../run/session-transition.js';
 
 const VALID_VERDICTS: CompletionVerdict[] = ['done', 'done-with-concerns', 'needs-retry', 'blocked'];
 
@@ -47,6 +61,15 @@ const VALID_PLATFORMS: TargetPlatform[] = ['claude', 'codex', 'agy', 'agents-sta
 
 function collect(value: string, previous: string[]): string[] {
   return [...previous, value];
+}
+
+function readJsonInput(pathOrStdin: string, label: string): unknown {
+  const raw = readFileSync(pathOrStdin === '-' ? 0 : resolve(pathOrStdin), 'utf8');
+  try {
+    return JSON.parse(raw.replace(/^\uFEFF/, ''));
+  } catch (error) {
+    throw new Error(`invalid ${label} JSON: ${(error as Error).message}`);
+  }
 }
 function print(value: unknown): void {
   console.log(JSON.stringify(value, null, 2));
@@ -196,6 +219,7 @@ export function registerRunCommand(program: Command): void {
     .description('Start a single Run or a simple command-chain Session')
     .option('--cmd <command>', 'single-run command to create')
     .option('--chain <commands...>', 'simple command chain, e.g. --chain learn odyssey-planex odyssey-review')
+    .option('--chain-file <path>', 'advanced chain definition JSON; "-" reads stdin')
     .option('--id <slug>', 'explicit Session ID/slug when creating a chain Session')
     .option('--session <id>', 'explicit Session ID for a single Run')
     .option('--topic <text>', 'command-independent Session topic; defaults to intent')
@@ -206,6 +230,7 @@ export function registerRunCommand(program: Command): void {
     .action((intentParts: string[], opts: {
       cmd?: string;
       chain?: string[];
+      chainFile?: string;
       id?: string;
       session?: string;
       topic?: string;
@@ -216,21 +241,29 @@ export function registerRunCommand(program: Command): void {
     }) => {
       try {
         const projectRoot = resolve(opts.workflowRoot);
-        const intent = intentParts.join(' ').trim() || opts.topic || opts.cmd || opts.chain?.join(' -> ') || '';
-        if (!intent) throw new Error('run start requires an intent, --cmd, or --chain');
+        const fileDefinition = opts.chainFile
+          ? chainDefinitionSchema.parse(readJsonInput(opts.chainFile, 'chain-file'))
+          : undefined;
+        if (fileDefinition && (opts.chain?.length ?? 0) > 0) throw new Error('use either --chain or --chain-file, not both');
+        const intent = intentParts.join(' ').trim() || fileDefinition?.intent || opts.topic || opts.cmd || opts.chain?.join(' -> ') || '';
+        if (!intent) throw new Error('run start requires an intent, --cmd, --chain, or --chain-file');
         const platform = opts.platform as TargetPlatform | undefined;
         if (platform && !VALID_PLATFORMS.includes(platform)) {
           throw new Error(`unknown platform "${platform}", valid: ${VALID_PLATFORMS.join(', ')}`);
         }
-        if ((opts.chain?.length ?? 0) > 0) {
+        if ((opts.chain?.length ?? 0) > 0 || fileDefinition) {
           if (opts.cmd) throw new Error('use either --cmd or --chain, not both');
           if (opts.session) throw new Error('--session is for single Run start; use run edit to add steps to an existing Session');
-          const definition = chainDefinitionFromCommands(intent, opts.chain ?? []);
+          const definition = fileDefinition ?? chainDefinitionFromCommands(intent, opts.chain ?? []);
           const fallbackSlug = slugifySessionTopic(definition.steps.map(step => step.command).join('-'));
           const sessionSlug = opts.id ?? slugifySessionTopic(intent, fallbackSlug);
           const created = createChainSession(projectRoot, sessionSlug, {
             intent,
             definition,
+            engine: definition.engine,
+            qualityMode: definition.quality_mode,
+            autoMode: definition.auto_mode,
+            boundaryContract: definition.boundary_contract,
             executor: platform ? { platform, cli_tool: platform } : undefined,
           });
           const result: Record<string, unknown> = {
@@ -265,6 +298,80 @@ export function registerRunCommand(program: Command): void {
     });
 
   run
+    .command('status [session-id]')
+    .description('Show canonical Session/Run chain status')
+    .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
+    .action((sessionId: string | undefined, opts: { workflowRoot: string }) => {
+      try {
+        const resolved = resolveCompatibleSession(resolve(opts.workflowRoot), sessionId);
+        if (!resolved) throw new Error(sessionId ? `session not found: ${sessionId}` : 'no compatible Session found');
+        print(summarizeSession(resolved));
+      } catch (error) {
+        reportError(error);
+      }
+    });
+
+  run
+    .command('recover')
+    .description('Resolve one paused blocker or resume a cleared Session')
+    .requiredOption('--session <id>', 'exact Session ID')
+    .requiredOption('--request-id <id>', 'idempotent transition ID')
+    .requiredOption('--actor <name>', 'authorized actor')
+    .requiredOption('--reason <text>', 'audit reason')
+    .requiredOption('--evidence <ref>', 'evidence reference (repeatable)', collect)
+    .requiredOption('--expected-identity-revision <n>', 'expected identity revision', Number.parseInt)
+    .requiredOption('--expected-activity-revision <n>', 'expected activity revision', Number.parseInt)
+    .option('--decision <id>', 'resolve an escalated decision point')
+    .option('--step <id>', 'resolve a failed chain step')
+    .option('--disposition <value>', 'decision: proceed|retry; step: retry|skip')
+    .option('--resume', 'resume after every blocker has been resolved')
+    .option('--execution-owner <owner>', 'lease owner')
+    .option('--owner-epoch <n>', 'lease epoch', Number.parseInt)
+    .option('--lease-id <id>', 'lease ID')
+    .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
+    .action((opts: any) => {
+      try {
+        const projectRoot = resolve(opts.workflowRoot);
+        const common = {
+          requestId: opts.requestId,
+          actor: opts.actor,
+          reason: opts.reason,
+          evidence: opts.evidence,
+          expectedIdentityRevision: opts.expectedIdentityRevision,
+          expectedActivityRevision: opts.expectedActivityRevision,
+          leaseClaim: {
+            executionOwner: opts.executionOwner,
+            ownerEpoch: opts.ownerEpoch,
+            leaseId: opts.leaseId,
+          },
+        };
+        if (opts.resume) {
+          if (opts.decision || opts.step || opts.disposition) {
+            throw new Error('--resume cannot be combined with --decision, --step, or --disposition');
+          }
+          print(resumeSession(projectRoot, opts.session, common));
+          return;
+        }
+        if (Boolean(opts.decision) === Boolean(opts.step)) {
+          throw new Error('exactly one of --decision or --step is required unless --resume is used');
+        }
+        if (!opts.disposition) throw new Error('--disposition is required when resolving a blocker');
+        const target = opts.decision
+          ? { kind: 'decision' as const, id: opts.decision, disposition: opts.disposition }
+          : { kind: 'step' as const, id: opts.step, disposition: opts.disposition };
+        if (target.kind === 'decision' && !['proceed', 'retry'].includes(target.disposition)) {
+          throw new Error('decision disposition must be proceed|retry');
+        }
+        if (target.kind === 'step' && !['retry', 'skip'].includes(target.disposition)) {
+          throw new Error('step disposition must be retry|skip');
+        }
+        print(resolveSession(projectRoot, opts.session, { ...common, target }));
+      } catch (error) {
+        reportError(error);
+      }
+    });
+
+  run
     .command('done [run-id]')
     .description('Check and complete the current Run (friendly alias for run complete --verdict)')
     .option('--session <id>', 'explicit Session ID')
@@ -276,6 +383,7 @@ export function registerRunCommand(program: Command): void {
     .option('--evidence <path>', 'run-relative evidence path registered as an artifact (repeatable)', collect, [])
     .option('--artifact <path>', 'run-relative path registered as evidence beyond the outputs scan (repeatable)', collect, [])
     .option('--chain-proposal <path>', 'run-relative chain-proposal artifact applied atomically with completion')
+    .option('--apply-proposal', 'apply the single validated chain-proposal discovered in this Run')
     .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
     .action((runIdArg: string | undefined, opts: {
       session?: string;
@@ -287,6 +395,7 @@ export function registerRunCommand(program: Command): void {
       evidence: string[];
       artifact: string[];
       chainProposal?: string;
+      applyProposal?: boolean;
       workflowRoot: string;
     }) => {
       try {
@@ -320,6 +429,7 @@ export function registerRunCommand(program: Command): void {
           summaryFallback: opts.summary,
           reason: opts.reason,
           chainProposal: opts.chainProposal,
+          applyChainProposal: opts.applyProposal,
         });
         print(result);
         process.stderr.write(`next: ${result.next.command}\n      ${result.next.reason}\n`);
@@ -339,6 +449,8 @@ export function registerRunCommand(program: Command): void {
     .option('--args <text>', 'step args string (only with one command)')
     .option('--stage <name>', 'stage label')
     .option('--goal-ref <id>', 'goal reference id')
+    .option('--position-file <path>', 'replace orchestration.position from JSON; "-" reads stdin')
+    .option('--decomposition-file <path>', 'replace orchestration.decomposition from JSON; "-" reads stdin')
     .option('--inserted-by <actor>', 'who inserted the step', 'manual')
     .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
     .action((commands: string[], opts: {
@@ -349,6 +461,8 @@ export function registerRunCommand(program: Command): void {
       args?: string;
       stage?: string;
       goalRef?: string;
+      positionFile?: string;
+      decompositionFile?: string;
       insertedBy: string;
       workflowRoot: string;
     }) => {
@@ -357,6 +471,9 @@ export function registerRunCommand(program: Command): void {
         const store = new SessionStore(projectRoot);
         const selectedCommands = commands.map(command => command.trim()).filter(Boolean);
         if (opts.replace && opts.remove) throw new Error('use either --replace or --remove, not both');
+        if (opts.positionFile === '-' && opts.decompositionFile === '-') {
+          throw new Error('only one metadata input may read from stdin');
+        }
         const resolveSessionId = (): string => {
           if (opts.session) {
             if (!store.sessionExists(opts.session)) throw new Error(`session not found: ${opts.session}`);
@@ -367,6 +484,21 @@ export function registerRunCommand(program: Command): void {
           throw new Error(`${resolved.message}; pass --session <id>`);
         };
         const sessionId = resolveSessionId();
+        if (opts.positionFile || opts.decompositionFile) {
+          if (selectedCommands.length > 0 || opts.replace || opts.remove) {
+            throw new Error('metadata replacement cannot be combined with chain edits');
+          }
+          const update: {
+            position?: ReturnType<typeof parsePositionInput>;
+            decomposition?: ReturnType<typeof parseDecompositionInput>;
+          } = {};
+          if (opts.positionFile) update.position = parsePositionInput(readJsonInput(opts.positionFile, 'position-file'));
+          if (opts.decompositionFile) {
+            update.decomposition = parseDecompositionInput(readJsonInput(opts.decompositionFile, 'decomposition-file'));
+          }
+          print(updateSessionMeta(projectRoot, sessionId, update));
+          return;
+        }
         if (opts.remove) {
           if (selectedCommands.length > 0) throw new Error('--remove does not accept commands');
           const skipped = skipChainStep(projectRoot, sessionId, opts.remove);
@@ -384,7 +516,9 @@ export function registerRunCommand(program: Command): void {
           print({ session_id: sessionId, replaced });
           return;
         }
-        if (selectedCommands.length === 0) throw new Error('run edit requires commands, --replace, or --remove');
+        if (selectedCommands.length === 0) {
+          throw new Error('run edit requires commands, --replace, --remove, --position-file, or --decomposition-file');
+        }
         if (opts.args && selectedCommands.length !== 1) throw new Error('--args can only be used when inserting one command');
         const resolveAfter = (): string => {
           const selector = opts.after.trim().toLowerCase();
@@ -604,6 +738,7 @@ Compatibility boundary:
     .option('--evidence <path>', 'run-relative evidence path registered as an artifact (repeatable)', collect, [])
     .option('--artifact <path>', 'run-relative path registered as evidence beyond the outputs scan (repeatable)', collect, [])
     .option('--chain-proposal <path>', 'run-relative chain-proposal artifact applied atomically with completion')
+    .option('--apply-proposal', 'apply the single validated chain-proposal discovered in this Run')
     .option('--execution-owner <owner>', 'lease execution owner (checked against session.orchestration.lease)')
     .option('--owner-epoch <epoch>', 'lease owner epoch', Number.parseInt)
     .option('--lease-id <id>', 'lease identifier for concurrency safety')
@@ -622,6 +757,7 @@ Compatibility boundary:
       evidence: string[];
       artifact: string[];
       chainProposal?: string;
+      applyProposal?: boolean;
       executionOwner?: string;
       ownerEpoch?: number;
       leaseId?: string;
@@ -637,6 +773,7 @@ Compatibility boundary:
         const verbless = !opts.verdict && (opts.decision?.length ?? 0) === 0
           && (opts.evidence?.length ?? 0) === 0 && !opts.reason
           && !opts.chainProposal
+          && !opts.applyProposal
           && !opts.executionOwner && !opts.leaseId && opts.ownerEpoch === undefined;
         if (runIdArg && verbless) {
           const result = completeRun(projectRoot, runIdArg, opts.session, {
@@ -706,6 +843,7 @@ Compatibility boundary:
           summaryFallback: opts.summary,
           reason: opts.reason,
           chainProposal: opts.chainProposal,
+          applyChainProposal: opts.applyProposal,
           leaseClaim: {
             executionOwner: opts.executionOwner,
             ownerEpoch: opts.ownerEpoch,

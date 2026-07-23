@@ -262,7 +262,7 @@ describe('canonical paused recovery transitions', () => {
     expect(transition.replayed).toBe(false);
     expect(transition.next).toMatchObject({
       suggest_only: true,
-      command: 'maestro session resume --session s',
+      command: 'maestro run recover --resume --session s',
     });
     expect(after.status).toBe('paused');
     expect(after.active_run_id).toBeNull();

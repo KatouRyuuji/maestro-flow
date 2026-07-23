@@ -121,9 +121,7 @@ export async function runNext(opts: NextCmdOptions): Promise<number> {
  */
 function rebrand(message: string): string {
   return message
-    .replace(/\[run next\]/g, '[ralph next]')
-    .replace(/maestro run complete (\S+) --session (\S+)/g, 'maestro ralph complete $1 --session $2')
-    .replace('not via run next', 'not via ralph next');
+    .replace(/\[run next\]/g, '[ralph next]');
 }
 
 /** Args of the next pending execution step, read from ralph-meta step_details. */
@@ -196,10 +194,10 @@ function emitPrompt(
     '',
     `<!-- maestro ralph: step [${stepIndex}/${total}] command=${command}${argsLine} session=${sessionId} run=${runId} -->`,
     '<!-- On finish, run exactly one of:',
-    `       maestro ralph complete ${stepIndex} --session ${sessionId} --status DONE --summary "..." [--evidence <path>] [--decisions "..."] [--caveats "..."] [--deferred "..."]`,
-    `       maestro ralph complete ${stepIndex} --session ${sessionId} --status DONE_WITH_CONCERNS --summary "..." --concerns "..."`,
-    `       maestro ralph retry ${stepIndex} --session ${sessionId}`,
-    `       maestro ralph complete ${stepIndex} --session ${sessionId} --status BLOCKED --reason "<external blocker>"`,
+    `       maestro run done ${runId} --session ${sessionId} --verdict done --summary "..." [--evidence <path>]`,
+    `       maestro run done ${runId} --session ${sessionId} --verdict done-with-concerns --summary "..." --note "..."`,
+    `       maestro run done ${runId} --session ${sessionId} --verdict needs-retry --summary "..."`,
+    `       maestro run done ${runId} --session ${sessionId} --verdict blocked --reason "<external blocker>"`,
     '     --summary is REQUIRED for DONE/DONE_WITH_CONCERNS (verb-led, ≤100 chars, core outcome). -->',
   ].join('\n');
 
@@ -275,7 +273,7 @@ function buildSessionAnchor(
   // Criteria) are built here from ralph-meta.
   return buildEnvelope({
     sessionId,
-    completionVerb: (n) => `maestro ralph complete ${n} --session ${sessionId}`,
+    completionVerb: () => `maestro run done ${chainStep.run_id ?? '<run-id>'} --session ${sessionId}`,
     sections: [
       intentSection,
       buildScopeSection(position),

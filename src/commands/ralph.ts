@@ -58,7 +58,7 @@ function deprecationNotice(verb: 'next' | 'complete' | 'retry'): void {
 
 export function registerRalphCommand(program: Command): void {
   const ralph = program
-    .command('ralph')
+    .command('ralph', { hidden: true })
     .description('Ralph step loader & standard session driver');
 
   // ── skills ──────────────────────────────────────────────────────────────

@@ -115,6 +115,31 @@ describe('maestro run durable context CLI', () => {
     expect(session.orchestration.executor).toEqual({ platform: 'codex', cli_tool: 'codex' });
   });
 
+  it('owns advanced Session creation, status, and metadata updates under run', async () => {
+    const chainFile = join(projectRoot, 'chain.json');
+    writeFileSync(chainFile, JSON.stringify({
+      intent: 'advanced run chain',
+      position: { lifecycle: 'analyze', planning_mode: 'unified', passed_gates: [] },
+      decomposition: { execution_criteria: [], goals: [], changelog: [] },
+      steps: [{ command: 'cli-context', stage: 'analyze' }],
+    }));
+    await run('start', '--id', 'advanced', '--chain-file', chainFile, '--no-dispatch', '--workflow-root', projectRoot);
+    const sessionId = String((JSON.parse(logs.at(-1)!) as any).session_id);
+
+    await run('status', sessionId, '--workflow-root', projectRoot);
+    expect(JSON.parse(logs.at(-1)!)).toMatchObject({ session_id: sessionId, status: 'running' });
+
+    const decompositionFile = join(projectRoot, 'decomposition.json');
+    writeFileSync(decompositionFile, JSON.stringify({
+      execution_criteria: ['tests pass'],
+      goals: [],
+      changelog: [],
+    }));
+    await run('edit', '--session', sessionId, '--decomposition-file', decompositionFile, '--workflow-root', projectRoot);
+    expect(new SessionStore(projectRoot).readBundle(sessionId).session.orchestration.decomposition.execution_criteria)
+      .toEqual(['tests pass']);
+  });
+
   it('run done completes an explicit Run without requiring the legacy complete spelling', async () => {
     await run(
       'start',

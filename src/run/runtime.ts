@@ -373,6 +373,8 @@ export interface CompleteRunOptions {
   chainVerdict?: CompletionVerdict;
   /** Run-relative chain-proposal artifact selected for atomic application. */
   chainProposal?: string;
+  /** Apply the single validated chain-proposal discovered in this Run. */
+  applyChainProposal?: boolean;
   /** Audited retry/revision/lease authority for completion. */
   transition?: Partial<TransitionMutationOptions>;
 }
@@ -2602,8 +2604,17 @@ export function prepareCompleteInputs(
       scan,
       { preflight: replayRecord === undefined },
     );
+    if (options.chainProposal && options.applyChainProposal) {
+      throw new Error('use either chainProposal or applyChainProposal, not both');
+    }
     if (options.chainProposal) chainProposal = selectChainProposal(runDir, options.chainProposal, proposals);
-  } else if (options.chainProposal) {
+    if (options.applyChainProposal) {
+      if (proposals.length !== 1) {
+        throw new Error(`--apply-proposal requires exactly one valid chain proposal (found ${proposals.length})`);
+      }
+      chainProposal = proposals[0];
+    }
+  } else if (options.chainProposal || options.applyChainProposal) {
     throw new Error('chain proposal cannot be applied with needs-retry or blocked verdict');
   }
   const extraArtifacts = discoverExtraArtifacts(runDir, sessionDir, options.extraArtifacts ?? []);
@@ -2943,6 +2954,7 @@ export function completeRunWithVerdict(
     leaseClaim: options.leaseClaim,
     chainVerdict: verdict,
     chainProposal: options.chainProposal,
+    applyChainProposal: options.applyChainProposal,
     transition: options.transition,
   });
 

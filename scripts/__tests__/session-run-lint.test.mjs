@@ -168,16 +168,23 @@ test('source lint accepts alias-free Odyssey workflows while enforcing prepare a
   assert.doesNotMatch(full, /same normalized intent/);
 
   const maestro = readFileSync(join(repoRoot, '.claude', 'commands', 'maestro.md'), 'utf8');
+  assert.match(maestro, /argument-hint: "<intent> \[-y\] \[-c\] \[--amend\]"/);
   assert.match(maestro, /Compatibility commands are out of band/);
   assert.match(maestro, /Historical similarity remains read-only evidence/);
   assert.doesNotMatch(maestro, /resolved paused Session.*maestro session resume/);
   assert.doesNotMatch(maestro, /offer confirmation-token fork\/import/);
 
   const ralph = readFileSync(join(repoRoot, '.claude', 'commands', 'maestro-ralph.md'), 'utf8');
+  assert.match(ralph, /argument-hint: "<intent> \[-y\] \[-c\] \[--amend\]"/);
   assert.match(ralph, /Sessions are topic grouping\/indexes/);
   assert.match(ralph, /Compatibility commands are out of band/);
   assert.match(ralph, /canonical upstream map/);
   assert.doesNotMatch(ralph, /Read state\.json\.artifacts/);
+  for (const prompt of [maestro, ralph]) {
+    assert.doesNotMatch(prompt, /maestro ralph\s/);
+    assert.doesNotMatch(prompt, /maestro session\s/);
+    assert.doesNotMatch(prompt, /maestro skills\s/);
+  }
 });
 
 test('package release gate orders source lint, generation, freshness, then parity', () => {
