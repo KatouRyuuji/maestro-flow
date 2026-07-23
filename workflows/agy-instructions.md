@@ -85,7 +85,7 @@ Always `run_in_background: true`. Full guide: `cat ~/.maestro/workflows/delegate
 
 ## Explore
 
-Route code search by the Query Rules table (Knowledge System below) — it is the single source for tool selection. `maestro explore` is the default for usage sweeps and pattern scans: prefer it over Glob and broad Grep/Read, call it and stop to wait for results.
+Route code search by the Query Rules table (Knowledge System below) — it is the single source for tool selection. Use `maestro explore` only when the entry point is uncertain or a cross-file relationship needs evidence-backed synthesis. For exact text, regex, known files, or exhaustive call-site scans, use `rg`/Grep directly. When using `maestro explore`, call it and stop to wait for results.
 
 ```bash
 maestro explore "FIND: <target + condition>\nSCOPE: <paths>" [more prompts...] [options]
@@ -191,8 +191,9 @@ Separate concepts from symbols. Add `--kg` for full-source.
 | Known symbol → definition/signature | `maestro search "<Symbol>" --code` (file:line, no agent cost) |
 | Concept / knowledge / conventions | `maestro search "<keywords>"` |
 | Debug symptoms / review lessons (sealed artifacts) | `maestro search "<keywords>" --tag diagnosis` / `--tag lessons` |
-| Usage sweep / pattern scan | `maestro explore` |
-| Exact regex / line content | Grep |
+| Exact text / regex / known-file search | `rg` / Grep |
+| Exhaustive usage sweep with a known symbol or syntax pattern | `rg` / Grep |
+| Unknown entry point / cross-file data flow / pattern needing an evidence-backed synthesis | `maestro explore` |
 
 **Association follow-through** — after a hit, walk one hop along relations instead of re-issuing broad queries:
 
