@@ -123,6 +123,21 @@ describe('maestro session create', () => {
     expect(session.orchestration.chain).toHaveLength(2);
   });
 
+  it('accepts a UTF-8 BOM in chain-file JSON', async () => {
+    const chainFile = join(root, 'bom-chain.json');
+    writeFileSync(
+      chainFile,
+      `\uFEFF${JSON.stringify({ intent: 'bom input', steps: [{ command: 'analyze' }] })}`,
+      'utf8',
+    );
+
+    await run('create', 'bom-chain', '--id', 'bom-chain', '--chain-file', chainFile, '--workflow-root', root);
+
+    const out = lastJson() as { session_id: string };
+    expect(new SessionStore(root).readBundle(out.session_id).session.orchestration.chain[0].command)
+      .toBe('analyze');
+  });
+
   it('creates a simple chain session from command names and lists/shows it', async () => {
     await run(
       'create',
@@ -154,6 +169,25 @@ describe('maestro session create', () => {
 
     await run('show', sessionId, '--workflow-root', root);
     expect(lastJson()).toMatchObject({ session_id: sessionId, intent: '统一 run session' });
+  });
+
+  it('persists an explicit executor platform for a simple chain', async () => {
+    await run(
+      'create',
+      'codex chain',
+      '--id',
+      'codex-chain',
+      '--platform',
+      'codex',
+      '--workflow-root',
+      root,
+      '--chain',
+      'analyze',
+    );
+
+    const sessionId = String(lastJson().session_id);
+    const session = new SessionStore(root).readBundle(sessionId).session;
+    expect(session.orchestration.executor).toEqual({ platform: 'codex', cli_tool: 'codex' });
   });
 
   it('creates an empty-chain session with no --chain-file', async () => {

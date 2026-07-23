@@ -228,7 +228,11 @@ export function registerRunCommand(program: Command): void {
           const definition = chainDefinitionFromCommands(intent, opts.chain ?? []);
           const fallbackSlug = slugifySessionTopic(definition.steps.map(step => step.command).join('-'));
           const sessionSlug = opts.id ?? slugifySessionTopic(intent, fallbackSlug);
-          const created = createChainSession(projectRoot, sessionSlug, { intent, definition });
+          const created = createChainSession(projectRoot, sessionSlug, {
+            intent,
+            definition,
+            executor: platform ? { platform, cli_tool: platform } : undefined,
+          });
           const result: Record<string, unknown> = {
             session_id: created.sessionId,
             session_dir: created.sessionDir,

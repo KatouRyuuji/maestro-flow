@@ -76,6 +76,8 @@ describe('maestro run durable context CLI', () => {
       '统一 run session',
       '--id',
       'unified',
+      '--platform',
+      'codex',
       '--workflow-root',
       projectRoot,
       '--no-dispatch',
@@ -110,6 +112,7 @@ describe('maestro run durable context CLI', () => {
       'cli-context',
       'cli-context',
     ]);
+    expect(session.orchestration.executor).toEqual({ platform: 'codex', cli_tool: 'codex' });
   });
 
   it('run done completes an explicit Run without requiring the legacy complete spelling', async () => {

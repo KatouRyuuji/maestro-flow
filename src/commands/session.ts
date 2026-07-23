@@ -4,7 +4,7 @@ import type { Command } from 'commander';
 import { migrateAllSessions, migrateSession } from '../run/migrate.js';
 import { SessionStore } from '../run/store.js';
 import { sealSession } from '../run/runtime.js';
-import type { SessionState } from '../run/schemas.js';
+import { targetPlatformSchema, type SessionState } from '../run/schemas.js';
 import {
   chainDefinitionSchema,
   createChainSession,
@@ -113,26 +113,24 @@ async function readStdin(): Promise<string> {
   });
 }
 
+function parseJsonText(raw: string, label: string): unknown {
+  try {
+    return JSON.parse(raw.replace(/^\uFEFF/, ''));
+  } catch (error) {
+    throw new Error(`invalid ${label} JSON: ${(error as Error).message}`);
+  }
+}
+
 /** Load + validate a chain definition from a file path, or `-` for stdin. */
 async function loadChainDefinition(chainFile: string): Promise<ChainDefinition> {
   const raw = chainFile === '-' ? await readStdin() : readFileSync(resolve(chainFile), 'utf-8');
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (error) {
-    throw new Error(`invalid chain-file JSON: ${(error as Error).message}`);
-  }
-  return chainDefinitionSchema.parse(parsed);
+  return chainDefinitionSchema.parse(parseJsonText(raw, 'chain-file'));
 }
 
 /** Read + JSON-parse a file path (or `-` for stdin). Throws on malformed JSON. */
 async function readJson(pathOrStdin: string, label: string): Promise<unknown> {
   const raw = pathOrStdin === '-' ? await readStdin() : readFileSync(resolve(pathOrStdin), 'utf-8');
-  try {
-    return JSON.parse(raw);
-  } catch (error) {
-    throw new Error(`invalid ${label} JSON: ${(error as Error).message}`);
-  }
+  return parseJsonText(raw, label);
 }
 
 function chainSummary(steps: ChainDefinition['steps']): { total: number; steps: Array<{ command: string; decision: boolean }> } {
@@ -438,6 +436,7 @@ export function registerSessionCommand(program: Command): void {
     .option('--id <slug>', 'explicit Session ID/slug; defaults to slugified <topic>')
     .option('--chain <commands...>', 'simple chain command names, e.g. --chain learn odyssey-planex odyssey-review')
     .option('--chain-file <path>', 'advanced chain definition JSON file; "-" reads stdin')
+    .option('--platform <name>', 'target platform persisted for chain Runs')
     .option('--engine <name>', 'orchestration engine: ralph|coordinator|manual')
     .option('--quality <mode>', 'quality mode: quick|standard|full')
     .option('--auto', 'enable auto mode')
@@ -447,6 +446,7 @@ export function registerSessionCommand(program: Command): void {
       id?: string;
       chain?: string[];
       chainFile?: string;
+      platform?: string;
       engine?: string;
       quality?: string;
       auto?: boolean;
@@ -460,6 +460,7 @@ export function registerSessionCommand(program: Command): void {
         if (opts.quality && !['quick', 'standard', 'full'].includes(opts.quality)) {
           throw new Error(`invalid --quality "${opts.quality}" (quick|standard|full)`);
         }
+        const platform = opts.platform ? targetPlatformSchema.parse(opts.platform) : undefined;
         if (opts.chainFile && (opts.chain?.length ?? 0) > 0) {
           throw new Error('use either --chain or --chain-file, not both');
         }
@@ -474,6 +475,7 @@ export function registerSessionCommand(program: Command): void {
           engine: opts.engine as 'ralph' | 'coordinator' | 'manual' | undefined,
           qualityMode: opts.quality as 'quick' | 'standard' | 'full' | undefined,
           autoMode: opts.auto,
+          executor: platform ? { platform, cli_tool: platform } : undefined,
           definition,
         });
         print({

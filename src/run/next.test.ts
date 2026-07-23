@@ -401,6 +401,29 @@ describe('run next — atomic chain binding', () => {
     expect(readChain(projectRoot, 's')[0].status).toBe('pending');
   });
 
+  it.each(['sealed', 'archived'] as const)(
+    'reports a %s Session as terminal instead of recommending resume',
+    (status) => {
+      const projectRoot = root();
+      stepCommand(projectRoot, 'demo-plan', PLAN_CONTRACT);
+      seedSession(projectRoot, 's', `${status} authority`, [{ command: 'demo-plan', status: 'sealed' }], { active: true });
+      const store = new SessionStore(projectRoot);
+      store.update('s', draft => {
+        draft.session.status = status;
+        return null;
+      });
+
+      const outcome = runNextStep(projectRoot, { sessionId: 's' });
+      expect(outcome.exitCode).toBe(2);
+      expect(outcome.reasonCode).toBe('CHAIN_COMPLETE');
+      expect(outcome.message).toContain(`session is "${status}"`);
+      expect(outcome.message).toContain('no Run was allocated');
+      expect(outcome.message).not.toMatch(/resume|blocker|escalation/i);
+      expect(store.readBundle('s').session.active_run_id).toBeNull();
+      expect(readChain(projectRoot, 's')[0].status).toBe('sealed');
+    },
+  );
+
   it('allocates only after an explicit run next following resume', () => {
     const projectRoot = root();
     stepCommand(projectRoot, 'demo-plan', PLAN_CONTRACT);

@@ -130,6 +130,7 @@ export interface CreateChainSessionOpts {
   qualityMode?: 'quick' | 'standard' | 'full';
   autoMode?: boolean;
   boundaryContract?: SessionState['boundary_contract'];
+  executor?: NonNullable<SessionState['orchestration']['executor']>;
   definition?: ChainDefinition;
 }
 
@@ -266,8 +267,9 @@ export function createChainSession(
       o.decision_points = buildDecisionPoints(def);
       o.position = buildPosition(def);
       o.decomposition = buildDecomposition(def);
-      if (def.executor) o.executor = { platform: def.executor.platform, cli_tool: def.executor.cli_tool };
     }
+    const executor = opts.executor ?? def?.executor;
+    if (executor) o.executor = { platform: executor.platform, cli_tool: executor.cli_tool };
     return null;
   });
 

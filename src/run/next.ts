@@ -544,6 +544,15 @@ export function runNextStep(projectRoot: string, opts: NextCmdOptions = {}): Nex
     return { exitCode: 1, reasonCode: 'LEASE_CONFLICT', result: null, message: `[run next] ${conflict}` };
   }
 
+  if (session.status === 'sealed' || session.status === 'archived') {
+    return {
+      exitCode: 2,
+      reasonCode: 'CHAIN_COMPLETE',
+      result: null,
+      message: `[run next] session is "${session.status}"; dispatch is permanently closed and no Run was allocated.`,
+    };
+  }
+
   if (session.status !== 'running') {
     const escalated = session.orchestration.decision_points
       .filter(point => point.status === 'escalated')
