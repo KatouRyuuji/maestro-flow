@@ -15,7 +15,7 @@
 //   fix      → decision_point.retry_count++, status stays 'pending' (待决). The CLI
 //              does not cap — the retry ceiling is a prompt-layer FSM decision —
 //              but reports `exhausted` when count reaches max_retries and points
-//              at `maestro session chain insert` for the fix step.
+//              through a typed proposal owned by an execution Run.
 //   escalate → decision_point.status = 'escalated'; session status → 'paused'
 //              (aligns FSM A_PAUSE_ESCALATE). The chain decision node stays pending
 //              so resuming the session re-surfaces it.
@@ -103,7 +103,7 @@ function chainDecisionNodeIndex(session: SessionState, pointId: string): number 
 
 /**
  * The next-step pointer after a decision is recorded. An escalation points at
- * the first phase of canonical recovery; otherwise `run next` continues the chain.
+ * canonical Run recovery; otherwise `run next` continues the chain.
  */
 function decideNextPointer(
   session: SessionState,
@@ -114,8 +114,8 @@ function decideNextPointer(
     return {
       suggest_only: true,
       action: 'resolve_session',
-      command: `maestro session resolve --session ${sessionId} --request-id <request-id> --actor <actor> --reason <reason> --evidence <ref> --expected-identity-revision <n> --expected-activity-revision <n> --decision <point-id> --disposition <proceed|retry>`,
-      reason: 'session paused by escalation — canonical recovery is explicit resolve, then resume, then run next',
+      command: `maestro run recover --session ${sessionId} --request-id <request-id> --actor <actor> --reason <reason> --evidence <ref> --expected-identity-revision <n> --expected-activity-revision <n> --decision <point-id> --disposition <proceed|retry>`,
+      reason: 'session paused by escalation — canonical recovery is run recover, then recover --resume, then run next',
       preconditions: [
         'resolve the escalated decision; the Session remains paused',
         'resume only after every blocker and concurrency guard is clear',
@@ -127,9 +127,9 @@ function decideNextPointer(
     return {
       suggest_only: true,
       action: 'insert_fix',
-      command: `maestro session chain insert --session ${sessionId} --after <step_id|index> --command <fix-command>`,
-      reason: 'fix verdict — insert repair step(s), then advance with maestro run next',
-      preconditions: ['fix scope is approved', 'inserted step is bound to this Session'],
+      command: null,
+      reason: 'fix verdict — a repair Skill must emit a typed chain proposal before the decision can advance',
+      preconditions: ['fix scope is approved', 'proposal changes only the pending tail'],
     };
   }
   return {

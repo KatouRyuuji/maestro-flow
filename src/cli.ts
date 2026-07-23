@@ -144,7 +144,7 @@ if (requestedCommand && requestedCommand in commandLoaders) {
   console.error('    Codex:        $maestro "your intent"');
   console.error();
   console.error('  Or use a CLI subcommand directly:');
-  console.error('    maestro ralph next|complete|skills|check|session');
+  console.error('    maestro run start|status|next|brief|check|done');
   console.error('    maestro delegate "prompt" --to <tool>');
   console.error('    maestro explore "prompt"');
   console.error();

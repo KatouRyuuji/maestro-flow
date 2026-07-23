@@ -114,6 +114,8 @@ describe('Session/Run runtime', () => {
     const run = program.commands.find(command => command.name() === 'run');
     expect(run?.commands.map(command => command.name())).toEqual([
       'start',
+      'status',
+      'recover',
       'done',
       'edit',
       'prepare',
@@ -1054,7 +1056,7 @@ gates:
       current_step: null,
       open_decisions: [],
       next: {
-        command: `maestro session seal ${planRun.session_id}`,
+        command: `maestro run seal-session ${planRun.session_id}`,
         reason: 'chain has no pending execution steps',
       },
     });

@@ -216,7 +216,7 @@ export function registerRunCommand(program: Command): void {
 
   run
     .command('start [intent...]')
-    .description('Start a single Run or a simple command-chain Session')
+    .description('Start a single Run or a command-chain Session')
     .option('--cmd <command>', 'single-run command to create')
     .option('--chain <commands...>', 'simple command chain, e.g. --chain learn odyssey-planex odyssey-review')
     .option('--chain-file <path>', 'advanced chain definition JSON; "-" reads stdin')
@@ -252,7 +252,7 @@ export function registerRunCommand(program: Command): void {
           throw new Error(`unknown platform "${platform}", valid: ${VALID_PLATFORMS.join(', ')}`);
         }
         if ((opts.chain?.length ?? 0) > 0 || fileDefinition) {
-          if (opts.cmd) throw new Error('use either --cmd or --chain, not both');
+          if (opts.cmd) throw new Error('use --cmd, --chain, or --chain-file; only one may be provided');
           if (opts.session) throw new Error('--session is for single Run start; use run edit to add steps to an existing Session');
           const definition = fileDefinition ?? chainDefinitionFromCommands(intent, opts.chain ?? []);
           const fallbackSlug = slugifySessionTopic(definition.steps.map(step => step.command).join('-'));

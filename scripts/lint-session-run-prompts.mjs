@@ -229,6 +229,7 @@ else {
   }
   errors.push(...validateRunCreateArgumentChannels(text, 'workflows/run-mode.md'));
   if (text.includes('same normalized intent')) errors.push('workflows/run-mode.md: obsolete intent-only Session routing remains');
+  if (/maestro ralph\s|maestro session\s|\bralph next\b/.test(text)) errors.push('workflows/run-mode.md: normal lifecycle must use only maestro run');
 }
 
 const canonicalRunModeLite = join(root, 'workflows', 'run-mode-lite.md');
@@ -239,6 +240,7 @@ else {
     if (!text.includes(token)) errors.push(`workflows/run-mode-lite.md: missing ${token}`);
   }
   errors.push(...validateRunCreateArgumentChannels(text, 'workflows/run-mode-lite.md'));
+  if (/maestro ralph\s|maestro session\s|\bralph next\b/.test(text)) errors.push('workflows/run-mode-lite.md: normal lifecycle must use only maestro run');
 }
 
 const canonicalCompanion = join(commandDir, 'maestro-companion.md');

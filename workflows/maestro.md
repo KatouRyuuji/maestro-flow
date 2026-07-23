@@ -6,7 +6,7 @@
 # Workflow: maestro — Chain Catalog
 
 > 本文件是 `/maestro` 命令体（A_CLASSIFY_INTENT）消费的**语义目录**：意图 → task_type → chain。
-> 执行流程（状态机、Session 创建、`Agent(run-executor)` 派发、决策评估、compose/play 模板系统）全部在命令体内定义，本文件不含执行语义。
+> 执行流程由 `orchestrator-run-loop.md` 与 Run Runtime 定义，本文件只提供初始意图分类和 chain reference，不含 lifecycle 或 mutation 语义。
 >
 > **cmd 记法**：裸名称（`plan`、`execute`、`review`…）= first-tier step；`maestro-*` 与 `quality-refactor` = 独立 command 名。`team-*` 与 `maestro-odyssey` 是用户手动入口，明确排除在本目录的分类和 chain routing 之外。
 
@@ -53,8 +53,6 @@ Directly match user intent to the best `task_type` (maps to chain in chainMap). 
 | `learn` | Capture insights, record learnings |
 | `fork` | Create worktree for parallel dev |
 | `merge` | Merge worktree back |
-| `compose` | Design/compose reusable workflows *(handled by command body A_COMPOSE_TEMPLATE — no chain)* |
-| `play` | Run a saved workflow template *(handled by command body A_PLAY_TEMPLATE — no chain)* |
 | `overlay` | Create/edit command overlays |
 | `update` | Update maestro itself |
 | `harvest` | Extract knowledge from artifacts |
@@ -73,7 +71,7 @@ Directly match user intent to the best `task_type` (maps to chain in chainMap). 
 | `full-lifecycle` | Complete phase: plan→execute→review→test→session-seal |
 | `grill` | Stress-test a plan/idea against codebase reality (Socratic; `-y` → Auto mode code-answers, stage NOT skipped) |
 | `blueprint` | Formal spec package — 7-phase spec-generate |
-| `analyze-macro` | Broad/medium intent, no numeric phase — produces scope_verdict for ralph `post-analyze-scope` |
+| `analyze-macro` | Broad/medium intent, no numeric phase — produces scope evidence for a later decision node |
 | `brainstorm-driven` | Start from exploration/brainstorm |
 | `spec-driven` | From spec/requirements (heavy, with init) |
 | `roadmap-driven` | From requirements (light, with init) |
@@ -162,7 +160,7 @@ const chainMap = {
   'learn':              [{ cmd: 'maestro-manage knowledge capture', args: '"{description}"' }],
   'sync':               [{ cmd: 'maestro-manage sync codebase' }],
   'milestone_close':    [{ cmd: 'maestro-session-seal' }],
-  'milestone_audit':    [{ cmd: 'maestro-ralph', args: '"{description}" --engine swarm --script wf-milestone-audit' }],
+  'milestone_audit':    [{ cmd: 'review', args: '"{description}"' }],
   'milestone_complete': [{ cmd: 'maestro-session-seal' }],
   'codebase_rebuild':   [{ cmd: 'maestro-manage sync rebuild' }],
   'codebase_refresh':   [{ cmd: 'maestro-manage sync codebase' }],

@@ -23,7 +23,7 @@
 // its chain position (head or --pick) — it must be adjudicated via `run decide`
 // before any later step may start.
 //
-// Exit codes mirror `maestro ralph next`:
+// Exit codes preserve the historical step-driver contract:
 //   0 — printed a step birth packet
 //   2 — no dispatchable step (decision node gates the chain, or all complete)
 //   3 — refused: a step is already running (complete it first)

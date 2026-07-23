@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // Injection Builder — assembles the framed prompt block emitted when a Run is
-// dispatched (currently by `maestro ralph next`; `maestro run next` in P1).
+// dispatched by `maestro run next`.
 //
 // The builder separates two families of sections:
 //   - core sections   — grounded in SessionState + per-step details only

@@ -23,7 +23,7 @@ Human-facing usage should prefer `run start`, `run done`, and `run edit`. The lo
 
 ## Start or Continue a Run
 
-> **Dispatched by an orchestrator?** When `ralph next` or `maestro run next` invokes you, the Run is already created and its `run_id` / `run_dir` / `upstream` are injected in the birth packet — use them directly and do **NOT** call `maestro run create` (a second create mints an empty duplicate Run). The steps below apply only to a command starting a Run on its own.
+> **Dispatched by an orchestrator?** When `maestro run next` invokes you, the Run is already created and its `run_id` / `run_dir` / `upstream` are injected in the birth packet — use them directly and do **NOT** call `maestro run create` (a second create mints an empty duplicate Run). The steps below apply only to a command starting a Run on its own.
 
 1. Read the caller frontmatter `name` as `<command-name>`.
 2. **Compose a session slug** — `YYYYMMDD-{command}-{topic}` where `{topic}` is a 1–3 word ASCII-only slug derived from the intent (e.g. `20260715-odyssey-jwt-auth`). NEVER let the runtime auto-generate from a Chinese or long intent string.
@@ -68,7 +68,7 @@ maestro run create odyssey --session 20260715-odyssey-planex-todo -- --mode plan
 - Every Session uses the same ordered chain. There is no static/dynamic Session type and no strategy promotion; whether a step leaves the remaining chain unchanged or proposes adaptation is decided by that step's Skill contract and output.
 - `execution_contract.orchestration.chain_effects` is the Run's complete mutation capability set. An empty set means the Skill cannot propose chain changes. Capability does not require a proposal on every Run.
 - A capable Skill may write `outputs/chain-proposal.json` with `_meta.kind=chain-proposal` and `_meta.schema=chain-proposal/1.0`. It may only contain operations allowed by the execution contract. The executor writes the artifact, runs `run check`, and returns; it never edits Session state or invokes chain mutation commands.
-- The orchestrator owns proposal disposition after a clean `run check`: accept, reject, or request revision. Accept passes the validated Run-relative path to `maestro run complete ... --chain-proposal outputs/chain-proposal.json`; reject omits `--chain-proposal`; revision re-attaches the same Run and asks the Skill to replace its proposal, then checks again.
+- The orchestrator owns proposal disposition after a clean `run check`: accept, reject, or request revision. Accept calls `maestro run done ... --apply-proposal`, which applies the single discovered valid proposal atomically with completion; reject omits `--apply-proposal`; revision re-attaches the same Run and asks the Skill to replace its proposal, then checks again. The path-based `--chain-proposal` option is legacy compatibility only.
 - Interactive mode asks before accepting. Under an explicit user-provided `-y`, an orchestrator may auto-accept only validated `insert`/`replace`/`skip` operations that stay in the pending tail, remain within its declared budget, and align with the Session intent. `decide`, escalation, ambiguous intent/boundary changes, or low-confidence proposals are rejected or paused for review according to the command policy; `-y` never invents authority.
 - `run complete` seals the Run, applies the selected proposal, records the receipt, and advances the current step in one transition. Its next action remains `suggest_only`; only an explicit `run next` allocates the following chain-bound Run.
 
@@ -86,7 +86,7 @@ maestro run create odyssey --session 20260715-odyssey-planex-todo -- --mode plan
 
 `maestro run recall-confirm`, `run fork`, `run import`, `run new`, and `run rebind` are deprecated admin-only compatibility commands. They may remain callable while legacy records exist, but normal topic resolution, output reuse, recall recommendations, and next-action routing MUST NOT invoke or recommend them. They provide no force bypass; durability and recovery internals remain runtime-owned.
 
-`maestro session resolve` and `maestro session resume` are the canonical audited recovery path for a paused Session: resolve each exact escalated decision/failed step, then resume, then explicitly invoke `run next`. They are not normal topic-resolution or artifact-reuse operations.
+`maestro run recover` is the canonical audited recovery path for a paused Session: resolve each exact escalated decision/failed step, then call `run recover --resume`, then explicitly invoke `run next`. Recovery is not normal topic resolution or artifact reuse.
 
 **Workflow-specific finish norms**: declare a `finish:` list in the workflow file's YAML frontmatter; each entry is one norm line appended to the `run check` finish checklist.
 
@@ -102,6 +102,6 @@ finish:
 
 ## Team Skills and FSM Chains
 
-`team-*` skills are independent user entry points — invoked directly by the user with `/team-*`, never dispatched as a step inside a `ralph next` / `maestro run next` FSM chain. They do not appear in any chain catalog or Stage Mapping.
+`team-*` skills are independent user entry points — invoked directly by the user with `/team-*`, never dispatched as a step inside a `maestro run next` chain. They do not appear in any chain catalog or Stage Mapping.
 
 A team skill owns its own Run lifecycle: its coordinator resolves and completes the Run under the `run-mode-lite.md` contract. The FSM chain contract above governs only lifecycle steps dispatched by the orchestrators.

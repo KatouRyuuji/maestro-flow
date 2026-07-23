@@ -185,6 +185,23 @@ test('source lint accepts alias-free Odyssey workflows while enforcing prepare a
     assert.doesNotMatch(prompt, /maestro session\s/);
     assert.doesNotMatch(prompt, /maestro skills\s/);
   }
+
+  const codexMaestro = readFileSync(join(repoRoot, '.codex', 'skills', 'Maestro', 'SKILL.md'), 'utf8');
+  const codexRalph = readFileSync(join(repoRoot, '.codex', 'skills', 'maestro-ralph', 'SKILL.md'), 'utf8');
+  for (const prompt of [codexMaestro, codexRalph]) {
+    assert.match(prompt, /argument-hint: <intent> \[-y\] \[-c\] \[--amend\]/);
+    assert.doesNotMatch(prompt, /maestro ralph\s/);
+    assert.doesNotMatch(prompt, /maestro session\s/);
+    assert.doesNotMatch(prompt, /maestro skills\s/);
+  }
+
+  const orchestratorLoop = readFileSync(join(repoRoot, 'workflows', 'orchestrator-run-loop.md'), 'utf8');
+  const amendFlow = readFileSync(join(repoRoot, 'workflows', 'ralph-amend-goal.md'), 'utf8');
+  for (const workflow of [full, lite, orchestratorLoop, amendFlow]) {
+    assert.doesNotMatch(workflow, /maestro ralph\s/);
+    assert.doesNotMatch(workflow, /maestro session\s/);
+    assert.doesNotMatch(workflow, /\bralph next\b/);
+  }
 });
 
 test('package release gate orders source lint, generation, freshness, then parity', () => {

@@ -3190,7 +3190,7 @@ function prepareSessionGuidance(
   } else {
     reminders.push('No pending chain execution step remains; seal the Session when handoff and knowledge capture are complete.');
     next = {
-      command: `maestro session seal ${session.session_id}`,
+      command: `maestro run seal-session ${session.session_id}`,
       reason: 'chain has no pending execution steps',
     };
   }

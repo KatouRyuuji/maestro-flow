@@ -30,7 +30,7 @@ Maestro 与 Ralph 共享这一执行循环。它只调用 `maestro run ...`；Se
 
    `maestro run start "{intent}" --id {slug} --chain-file {path} --no-dispatch`
 
-4. Runtime resolver 在 `run start` / `run next` 校验 command、Skill 和 lifecycle step；prompt 不调用独立 catalog CLI。
+4. Runtime resolver 在 `run next` 分配 Run 前校验 command、Skill 和 lifecycle step；prompt 不调用独立 catalog CLI。
 
 ### 2. Locate and allocate
 
