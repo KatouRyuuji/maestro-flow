@@ -80,6 +80,7 @@ maestro run create odyssey --session 20260715-odyssey-planex-todo -- --mode plan
    - `done` / `done-with-concerns` enforce required success artifacts and exit gates.
    - `needs-retry` / `blocked` close the failed attempt without requiring success artifacts; missing/invalid outputs remain diagnostic evidence, not a blocker to retrying or pausing the chain.
 4. The caller explicitly invokes `maestro run next --session {session_id}` only after accepting the suggestion and its preconditions. `run next` is the sole normal allocator for the next chain-bound Run.
+   - `suggest_only` describes Runtime passivity; it is not an implicit user-confirmation gate. For an already confirmed Session, the orchestrator accepts `continuation.authority=automatic` itself, executes the command in the same turn, and reads the next receipt.
 5. Report success only when the Run is completed. Completed artifacts are immutable; later Runs in the same Session reuse eligible sealed outputs through `upstream` rather than copying them.
 
 ## Legacy/Admin Compatibility

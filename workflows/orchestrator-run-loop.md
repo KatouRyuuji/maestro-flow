@@ -20,6 +20,56 @@ Maestro 与 Ralph 共享这一执行循环。它只调用 `maestro run ...`；Se
 - Skill 决定领域结果及可选 `chain-proposal/1.0`；orchestrator 决定 accept/reject/revise；Runtime 独占 chain mutation。
 - historical similarity 只读；同 Session sealed outputs 只经 birth packet 的 canonical `upstream` 复用。
 
+## Continuation Router
+
+所有 `--json` machine response 优先读取 `continuation`。它是 Session/Run 权威状态的只读投影，不是第二状态源。旧 Runtime 没有该字段时，才回退到 `next`、`result.next_action` 与稳定 error code。
+
+`suggest_only` 只表示 CLI 不自行执行；它不表示每一步都要询问用户。Session 已确认后：
+
+- `authority=automatic`：立即执行 `command`，读取新回执并继续本循环。
+- `authority=auto_mode_only`：仅当 Session 持久化 `auto_mode=true` 且该动作满足下述 `-y` 白名单时执行；否则询问用户。
+- `authority=user_required`：停止自动动作，报告精确 blocker、hash、reason code 与所需证据。
+
+**Turn 终止不变量**：只要 Session 为 `running` 且存在可满足 preconditions 的 `automatic` 动作，不得结束当前 turn、报告整体完成或仅把命令推荐给用户。每执行一条 continuation command 都重新读取回执；不得根据旧状态连续猜测多条命令。
+
+| continuation.action | Prompt 行为 |
+|---|---|
+| `load_run` | 调用同一 `run_id` 的 `run brief --json`，禁止创建重复 Run |
+| `execute_run` | 执行已加载的 Resume Packet，随后调用 directive 中的 check/complete command |
+| `repair_run` | 重新附着同一 Run，修复 gate/scan error，再 check |
+| `dispatch_next` | 校验 preconditions 后立即 `run next --json`；尤其是 `complete` 或 `decide` 后不得只展示命令 |
+| `evaluate_decision` | `command` 非空时只执行一次以读取 decision card；`reason_code=DECISION_CARD_READY` 时不得再次 `run next`，直接派发只读 evaluator，再调用 `run decide` |
+| `accept_reuse` | 按下述正式 reuse 流程处理 exact assessment |
+| `recover_session` | 只走 audited `run recover`；不得隐式 resume |
+| `seal_session` | 校验 Runs、decisions、goals 与 Session gates 后 seal |
+| `offer_recommendations` | 只展示 chain 外建议；不得隐式创建新 Run |
+| `repair_chain` / `stop` | 停止续跑并报告结构化原因，不绕过 authority |
+
+### REVIEW reuse
+
+`REUSE` 直接使用 canonical upstream；`REJECT` 与 `CONFLICT` 永不接受。`REVIEW` 只有 exact acceptance receipt 才能打开 required consume gate：
+
+`maestro run accept-reuse {run_id} --session {session_id} --assessment-hash {assessment_hash} --request-id {stable_request_id} --actor {actor} --reason "{reason}" --evidence {evidence} --expected-identity-revision {identity_revision} --expected-activity-revision {activity_revision} --json`
+
+接受后必须重新调用同一 Run 的 `brief --json`。`assessment.decision=REVIEW` 仍可保留作为原始判断；以 `assessment.acceptance_status=accepted` 为已处理依据，不得重复接受。
+
+### `-y` policy
+
+正常生命周期续跑不依赖 `-y`。`-y` 只扩大低风险裁量：
+
+- 可自动：pending-tail 内已验证且 intent-aligned 的 proposal；仅含 `QUALITY_MEDIUM`、同 Session、producer/artifact sealed、hash/fence/current revision 完整且有 evidence 的 REVIEW。
+- 必须停：`QUALITY_LOW`、`REJECT`、`CONFLICT`、hash mismatch、source fence/freshness/supersession unknown、边界变化、高风险、低置信度、retry exhausted、paused recovery 或外部 blocker。
+- `-c` 继承 `session.orchestration.auto_mode`；不要求用户重复输入 `-y`。
+
+链内 pending command 是已确认工作，`dispatch_next` 自动继续。handoff `next[]` 只是 chain 外 recommendation；若要在同一 Session 自动续跑，产生它的 Run 必须提交并原子应用有效 `chain-proposal/1.0`。
+
+### `complete` / `decide` 闭环
+
+- `run complete|done --json` 返回 `dispatch_next` 时，当前 turn 必须立即执行其 command。
+- 若下一节点是 decision，执行 `run next --json` 取得 canonical decision card；decision 不创建 Run，必须通过 `run decide` 提交 verdict。
+- `run decide --json` 与 `complete` 使用同一 Continuation Router：`proceed` 后可继续到下一 Run、下一 decision 或 Session seal；`escalate` 转 audited recovery；`fix` 在获得新的 repair evidence 前不得重复 decide。
+- `run next` 成功后，birth packet 中的 `run_already_created=true` 是严格约束：立即加载该 exact `run_id` 的 brief，只执行其 command/args/goal/canonical upstream，禁止再次 `run create`，并在仍有 automatic continuation 时保持当前 turn。
+
 ## Lifecycle
 
 ### 1. Resolve or create
@@ -70,7 +120,7 @@ Drift policy：
 
 `maestro run done {run_id} --session {session_id} --verdict {verdict} --summary "{summary}" [--evidence ...] [--decision ...] [--note ...]`
 
-Runtime 返回的 next 仅为 `suggest_only`；orchestrator 明确接受后才再次调用 `run next`。
+Runtime 返回的 next 仅为 `suggest_only`，因此 Runtime 自身不执行它；canonical `continuation.authority=automatic` 已代表 orchestrator authority，必须在同一 turn 调用 `run next`，无需再次询问用户。
 
 ### 5. Chain proposal
 
@@ -88,9 +138,9 @@ Runtime 返回的 next 仅为 `suggest_only`；orchestrator 明确接受后才�
 2. 严格解析 `proceed|fix|escalate`；解析失败降级为 `fix`，confidence=low，并在 summary 标记 `parse_failed=true`。
 3. 调用：
 
-   `maestro run decide {point_id} --session {session_id} --verdict {verdict} [--confidence high|medium|low] [--summary "..."] [--evidence ...]`
+   `maestro run decide {point_id} --session {session_id} --verdict {verdict} --confidence {high|medium|low} [--summary "..."] [--evidence ...] --json`
 
-4. `fix` 需要改变 pending tail 时，必须由 repair Skill 产生 proposal；prompt 不直接复制 fix-loop template。
+4. 读取 `run decide --json` 的 continuation 并留在同一闭环；`proceed` 立即继续，`escalate` 停在 recovery，`fix` 需要改变 pending tail 时必须由 repair Skill 产生 proposal，prompt 不直接复制 fix-loop template，也不得无新证据重复 decide。
 
 ### 7. Recovery and amend
 

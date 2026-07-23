@@ -4,6 +4,7 @@ import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseSkillInvocation, evaluateSkillContext } from '../skill-context.js';
+import { createChainSession } from '../../run/chain-admin.js';
 
 // ---------------------------------------------------------------------------
 // Test project setup
@@ -40,6 +41,22 @@ function setupWorkflow(): void {
 
 function cleanup(): void {
   if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true, force: true });
+}
+
+function setupCanonicalManualWorkflow(autoMode = false): string {
+  mkdirSync(TEST_DIR, { recursive: true });
+  const created = createChainSession(TEST_DIR, 'manual-resume', {
+    intent: 'Continue a manual Session',
+    engine: 'manual',
+    autoMode,
+    definition: { steps: [{ command: 'plan' }] },
+  });
+  writeFileSync(join(TEST_DIR, '.workflow', 'state.json'), JSON.stringify({
+    version: '2.0',
+    active_session_id: created.sessionId,
+    sessions: [{ session_id: created.sessionId, intent: 'Continue a manual Session', status: 'running' }],
+  }));
+  return created.sessionId;
 }
 
 // ---------------------------------------------------------------------------
@@ -127,6 +144,25 @@ describe('evaluateSkillContext', () => {
     const result = evaluateSkillContext({ user_prompt: '/maestro-ralph continue', cwd: TEST_DIR });
     assert.ok(result);
     assert.strictEqual(result.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
+  });
+
+  it('injects a canonical continuation card for an exact continue prompt', () => {
+    const sessionId = setupCanonicalManualWorkflow(true);
+    const result = evaluateSkillContext({ user_prompt: '继续', cwd: TEST_DIR });
+    assert.ok(result);
+    const ctx = result.hookSpecificOutput.additionalContext;
+    assert.ok(ctx.includes('Canonical Run Continuation'));
+    assert.ok(ctx.includes(sessionId));
+    assert.ok(ctx.includes('Action: dispatch_next'));
+    assert.ok(ctx.includes('Auto: true'));
+  });
+
+  it('does not let an unrelated prompt resume a live Session', () => {
+    setupCanonicalManualWorkflow();
+    assert.strictEqual(
+      evaluateSkillContext({ user_prompt: '解释这个函数', cwd: TEST_DIR }),
+      null,
+    );
   });
 
 });

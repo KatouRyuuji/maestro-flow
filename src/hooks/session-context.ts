@@ -13,6 +13,8 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { resolveWorkspace } from './workspace.js';
+import { inspectSessionContinuation } from '../run/continuation.js';
+import { SessionStore } from '../run/store.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -65,27 +67,31 @@ export function evaluateSessionContext(data: SessionContextInput): HookOutput | 
   const workflowSection = workspaceRoot ? buildWorkflowSection(workspaceRoot) : null;
   if (workflowSection) sections.push(workflowSection);
 
-  // 2. Project summary from project.md
+  // 2. Advisory pointer to a unique active canonical Session.
+  const continuationSection = workspaceRoot ? buildActiveContinuationSection(workspaceRoot) : null;
+  if (continuationSection) sections.push(continuationSection);
+
+  // 3. Project summary from project.md
   const projectSection = workspaceRoot ? buildProjectSummarySection(workspaceRoot) : null;
   if (projectSection) sections.push(projectSection);
 
-  // 3. Source tree from state.json.source_roots
+  // 4. Source tree from state.json.source_roots
   const sourceTreeSection = workspaceRoot ? buildSourceTreeSection(workspaceRoot) : null;
   if (sourceTreeSection) sections.push(sourceTreeSection);
 
-  // 4. Recent canonical Sessions
+  // 5. Recent canonical Sessions
   const sessionsSection = workspaceRoot ? buildRecentSessionsSection(workspaceRoot) : null;
   if (sessionsSection) sections.push(sessionsSection);
 
-  // 5. Available specs (use workspace root if found)
+  // 6. Available specs (use workspace root if found)
   const specsSection = workspaceRoot ? buildSpecsSection(workspaceRoot) : null;
   if (specsSection) sections.push(specsSection);
 
-  // 6. Explore availability
+  // 7. Explore availability
   const exploreSection = buildExploreSection();
   if (exploreSection) sections.push(exploreSection);
 
-  // 7. Git context (lightweight)
+  // 8. Git context (lightweight)
   const gitSection = buildGitSection(cwd);
   if (gitSection) sections.push(gitSection);
 
@@ -102,6 +108,33 @@ export function evaluateSessionContext(data: SessionContextInput): HookOutput | 
 // ---------------------------------------------------------------------------
 // Section builders
 // ---------------------------------------------------------------------------
+
+function buildActiveContinuationSection(cwd: string): string | null {
+  try {
+    const store = new SessionStore(cwd);
+    const statePath = join(cwd, '.workflow', 'state.json');
+    let sessionId: string | null = null;
+    if (existsSync(statePath)) {
+      const state = JSON.parse(readFileSync(statePath, 'utf8')) as { active_session_id?: unknown };
+      if (typeof state.active_session_id === 'string') sessionId = state.active_session_id;
+    }
+    if (!sessionId) {
+      const candidates = store.listSessions({ statuses: ['running', 'paused'] }).candidates;
+      if (candidates.length !== 1) return null;
+      sessionId = candidates[0].sessionId;
+    }
+    const continuation = inspectSessionContinuation(cwd, sessionId);
+    return [
+      '## Active Canonical Run',
+      `Session: ${sessionId} | Action: ${continuation.action} | Authority: ${continuation.authority}`,
+      `Resume: /maestro -c`,
+      `Next: ${continuation.command ?? continuation.reason}`,
+      'This is advisory startup context; do not resume it unless the current user intent requests continuation.',
+    ].join('\n');
+  } catch {
+    return null;
+  }
+}
 
 function buildWorkflowSection(cwd: string): string | null {
   const statePath = join(cwd, '.workflow', 'state.json');

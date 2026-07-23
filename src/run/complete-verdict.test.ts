@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
-import { completeRunWithVerdict, createRun } from './runtime.js';
+import { checkRun, completeRunWithVerdict, createRun } from './runtime.js';
 import { runNextStep } from './next.js';
 import { resolveRunningRun, runningChainStep } from './resolve.js';
 import { checkLease } from './lease.js';
@@ -301,6 +301,8 @@ describe('run complete — completion gate integrity', () => {
     const projectRoot = root();
     proposalCommand(projectRoot, 'adaptive', ['insert', 'replace', 'skip']);
     stepCommand(projectRoot, 'execute');
+    stepCommand(projectRoot, 'verify');
+    stepCommand(projectRoot, 'debug');
     seedSession(projectRoot, 's', [
       { command: 'adaptive' }, { command: 'execute' }, { command: 'cleanup' },
     ]);
@@ -386,6 +388,25 @@ describe('run complete — completion gate integrity', () => {
       ['adaptive', 'running'],
     ]);
     expect(new SessionStore(projectRoot).readRun('s', runId).status).not.toBe('sealed');
+  });
+
+  it('rejects an undispatchable proposed command before mutating the pending tail', () => {
+    const projectRoot = root();
+    proposalCommand(projectRoot, 'adaptive', ['insert']);
+    seedSession(projectRoot, 's', [{ command: 'adaptive' }]);
+    const runId = startStep(projectRoot, 's', 0);
+    const proposalPath = writeChainProposal(projectRoot, 's', runId, 'adaptive', [
+      { op: 'insert', after: 'step-000-adaptive', command: 'not-registered' },
+    ]);
+
+    expect(checkRun(projectRoot, runId, 's').errors).toEqual([
+      expect.stringMatching(/not-registered.*no prepare or workflow content/),
+    ]);
+    expect(() => completeRunWithVerdict(projectRoot, runId, 's', {
+      verdict: 'done',
+      chainProposal: proposalPath,
+    })).toThrow(/chain proposal is missing or invalid/);
+    expect(chainOf(projectRoot, 's').map(step => step.command)).toEqual(['adaptive']);
   });
 
   it('commits complete authority and receipt in one StoreTransaction', () => {
@@ -805,6 +826,7 @@ describe('run complete CLI — verdict + 免参 + lease', () => {
   it('applies --chain-proposal through the canonical complete path', async () => {
     const projectRoot = root();
     proposalCommand(projectRoot, 'adaptive', ['insert']);
+    stepCommand(projectRoot, 'verify');
     seedSession(projectRoot, 's', [{ command: 'adaptive' }], { active: true });
     const runId = startStep(projectRoot, 's', 0);
     const proposalPath = writeChainProposal(projectRoot, 's', runId, 'adaptive', [
@@ -821,6 +843,7 @@ describe('run complete CLI — verdict + 免参 + lease', () => {
   it('applies the single discovered proposal without a path argument', async () => {
     const projectRoot = root();
     proposalCommand(projectRoot, 'adaptive', ['insert']);
+    stepCommand(projectRoot, 'verify');
     seedSession(projectRoot, 's', [{ command: 'adaptive' }], { active: true });
     const runId = startStep(projectRoot, 's', 0);
     writeChainProposal(projectRoot, 's', runId, 'adaptive', [

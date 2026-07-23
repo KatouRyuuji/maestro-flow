@@ -175,7 +175,10 @@ export function validateChainProposalArtifacts(
   run: CommandRun,
   contract: CommandContract,
   scan: ArtifactScanResult,
-  options: { preflight?: boolean } = {},
+  options: {
+    preflight?: boolean;
+    validateCommand?: (command: string, args: string[]) => void;
+  } = {},
 ): ValidatedChainProposal[] {
   const proposals = scan.artifacts.filter(artifact => (
     artifact.kind === 'chain-proposal'
@@ -201,9 +204,30 @@ export function validateChainProposalArtifacts(
       if (proposal.source.skill !== run.command.name) {
         throw new Error(`source.skill ${proposal.source.skill} does not match ${run.command.name}`);
       }
-      for (const operation of proposal.operations) {
+      for (const [index, operation] of proposal.operations.entries()) {
         const effect = operationEffect(operation);
         if (!allowed.has(effect)) throw new Error(`operation ${effect} is not allowed by contract orchestration.chain_effects`);
+        if (!options.validateCommand) continue;
+        if (operation.op === 'insert') {
+          if (!operation.decision_ref) {
+            try {
+              options.validateCommand(operation.command, operation.args === undefined ? [] : [operation.args]);
+            } catch (error) {
+              throw new Error(`operations[${index}] insert command ${operation.command}: ${(error as Error).message}`);
+            }
+          }
+        } else if (operation.op === 'replace') {
+          const target = bundle.session.orchestration.chain.find(step => step.step_id === operation.step_id);
+          if (target && !target.decision_ref) {
+            const command = operation.command ?? target.command;
+            const args = operation.args ?? target.args;
+            try {
+              options.validateCommand(command, args === undefined ? [] : [args]);
+            } catch (error) {
+              throw new Error(`operations[${index}] replace command ${command}: ${(error as Error).message}`);
+            }
+          }
+        }
       }
       if (options.preflight !== false) applyChainProposal(structuredClone(bundle), proposal);
       validated.push({ proposal, artifact, path: label });

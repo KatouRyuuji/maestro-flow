@@ -1,4 +1,6 @@
 import { activeStepIndex } from './chain.js';
+import { inspectSessionContinuation } from './continuation.js';
+import type { ContinuationDirective } from './protocol-schemas.js';
 import type { ResolvedSession } from './session-resolver.js';
 import { listRecoveryBlockers, nextRecoveryAction, type RecoveryBlocker, type RecoveryNext } from './session-transition.js';
 
@@ -27,9 +29,10 @@ export interface SessionStatusSummary {
   position: ResolvedSession['bundle']['session']['orchestration']['position'];
   decomposition: ResolvedSession['bundle']['session']['orchestration']['decomposition'];
   registry: { artifacts: number; evidence: number; gates: number };
+  continuation: ContinuationDirective;
 }
 
-export function summarizeSession(resolved: ResolvedSession): SessionStatusSummary {
+export function summarizeSession(projectRoot: string, resolved: ResolvedSession): SessionStatusSummary {
   const { session, artifacts, evidence, gates } = resolved.bundle;
   const chain = session.orchestration.chain;
   const active = activeStepIndex(session);
@@ -69,5 +72,6 @@ export function summarizeSession(resolved: ResolvedSession): SessionStatusSummar
       evidence: Object.keys(evidence.records).length,
       gates: Object.keys(gates.gates).length,
     },
+    continuation: inspectSessionContinuation(projectRoot, resolved.sessionId),
   };
 }

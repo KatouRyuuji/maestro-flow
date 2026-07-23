@@ -82,6 +82,7 @@ describe('run-response/1.0', () => {
         message: `${operation} failed`,
       });
       expect(runResponseSchema.parse(success)).toMatchObject({ operation, ok: true, exit_code: 0 });
+      expect(success.continuation).toBeNull();
       expect(runResponseSchema.parse(failure)).toMatchObject({ operation, ok: false, exit_code: 1 });
     }
   });

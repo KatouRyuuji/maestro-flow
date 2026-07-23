@@ -14,7 +14,8 @@ import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { resolveWorkspace } from './workspace.js';
-import { readCoordBridge, buildNextStepHint, type CoordBridgeData } from './coordinator-tracker.js';
+import { inspectSessionContinuation, renderContinuationCard } from '../run/continuation.js';
+import { SessionStore } from '../run/store.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -223,22 +224,15 @@ export function evaluateSkillContext(data: SkillContextInput): HookOutput | null
   const cwd = resolveWorkspace(data);
 
   // --- Layer 1: Canonical Session/Run context ---
-  const skill = parseSkillInvocation(prompt);
+  const skill = parseSkillInvocation(prompt)
+    ?? (/^(继续|继续执行|continue|resume)[。.!！]?\s*$/i.test(prompt.trim())
+      ? { skill: 'maestro', raw: prompt.trim() }
+      : null);
   if (skill && cwd) {
     const statePath = join(cwd, '.workflow', 'state.json');
     if (existsSync(statePath)) {
       try {
         const state: WorkflowState = JSON.parse(readFileSync(statePath, 'utf8'));
-
-        // Section 0: Coordinator session context
-        const COORDINATOR_SKILLS = ['maestro', 'maestro-ralph'];
-        if (COORDINATOR_SKILLS.includes(skill.skill) && data.session_id) {
-          const coordBridge = readCoordBridge(data.session_id);
-          if (coordBridge) {
-            const hint = buildNextStepHint(coordBridge);
-            if (hint) sections.push(hint);
-          }
-        }
 
         const sessionSection = buildCanonicalSessionSection(cwd, state, skill);
         if (sessionSection) sections.push(sessionSection);
@@ -265,7 +259,17 @@ export function evaluateSkillContext(data: SkillContextInput): HookOutput | null
   };
 }
 function buildCanonicalSessionSection(cwd: string, state: WorkflowState, skill: SkillMatch): string | null {
-  const sessionId = state.active_session_id;
+  let sessionId = state.active_session_id;
+  if (!sessionId) {
+    try {
+      const candidates = new SessionStore(cwd)
+        .listSessions({ statuses: ['running', 'paused'] })
+        .candidates;
+      if (candidates.length === 1) sessionId = candidates[0].sessionId;
+    } catch {
+      return null;
+    }
+  }
   if (!sessionId) return null;
   const sessionDir = join(cwd, '.workflow', 'sessions', sessionId);
   try {
@@ -289,6 +293,11 @@ function buildCanonicalSessionSection(cwd: string, state: WorkflowState, skill: 
         if (!artifact) continue;
         lines.push(`- ${alias} → ${id} | ${artifact.kind ?? 'artifact'} | ${artifact.status ?? 'unknown'} | ${artifact.relative_path ?? ''}`);
       }
+    }
+    try {
+      lines.push('', renderContinuationCard(inspectSessionContinuation(cwd, sessionId)));
+    } catch {
+      // Legacy or partially initialized Session: keep the basic context only.
     }
     return lines.join('\n');
   } catch {

@@ -86,6 +86,28 @@ describe('readMaestroSession', () => {
     mkdirSync(join(TEST_DIR, '.workflow', '.maestro', 'empty'), { recursive: true });
     assert.strictEqual(readMaestroSession(TEST_DIR), null);
   });
+
+  it('reads a live manual canonical Session for auto-mode fallback', () => {
+    const sessionDir = join(TEST_DIR, '.workflow', 'sessions', 'manual-live');
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(join(sessionDir, 'session.json'), JSON.stringify({
+      session_id: 'manual-live',
+      intent: 'continue manual',
+      status: 'running',
+      orchestration: {
+        engine: 'manual',
+        quality_mode: 'standard',
+        auto_mode: true,
+        chain: [{ step_id: 'step-000-plan', command: 'plan', status: 'pending', run_id: null, decision_ref: null }],
+      },
+    }));
+
+    const result = readMaestroSession(TEST_DIR);
+    assert.ok(result);
+    assert.strictEqual(result.coordinator, 'maestro');
+    assert.strictEqual(result.maestro_session_id, 'manual-live');
+    assert.strictEqual(result.auto_mode, true);
+  });
 });
 
 // ---------------------------------------------------------------------------

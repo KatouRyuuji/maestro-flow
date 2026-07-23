@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { acceptRunReuse, checkRun, completeRun, createRun } from './runtime.js';
+import { inspectSessionContinuation } from './continuation.js';
 import { SessionStore } from './store.js';
 import { runResponseSchema } from './protocol-schemas.js';
 
@@ -109,6 +110,15 @@ describe('explicit REVIEW reuse acceptance', () => {
     expect(beforeRun.input.consumes).toEqual([]);
     expect(execute.entry_gates.blocking).toHaveLength(1);
     expect(beforeRun.status).toBe('blocked');
+    expect(inspectSessionContinuation(projectRoot, 's')).toMatchObject({
+      action: 'accept_reuse',
+      authority: 'auto_mode_only',
+      reason_code: 'QUALITY_MEDIUM',
+      assessment: {
+        assessment_hash: review!.assessment_hash,
+        acceptance_status: 'pending_review',
+      },
+    });
 
     const beforeSession = store.readBundle('s').session;
     const transition = {
@@ -126,6 +136,15 @@ describe('explicit REVIEW reuse acceptance', () => {
     expect(replay.transition.transition_id).toBe(first.transition.transition_id);
     expect(store.readRun('s', execute.run_id).input.consumes).toEqual([review!.source_fence.artifact_id]);
     expect(first.entry_gates.blocking).toEqual([]);
+    expect(inspectSessionContinuation(projectRoot, 's')).toMatchObject({
+      action: 'load_run',
+      authority: 'automatic',
+      reason_code: 'RUN_ACTIVE',
+      assessment: {
+        assessment_hash: review!.assessment_hash,
+        acceptance_status: 'accepted',
+      },
+    });
     const acceptanceRecord = store.readBundle('s').session.requests.find(item => item.request_id === transition.requestId) as any;
     expect(acceptanceRecord.payload.payload).toMatchObject({
       actor: 'reviewer', reason: 'reviewed exact source fence', evidence: ['outputs/review.json'],

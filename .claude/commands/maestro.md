@@ -58,6 +58,7 @@ All other text is intent. Unknown flags are not silently reinterpreted. Executor
 8. **Compatibility commands are out of band** — normal orchestration calls only `maestro run ...`.
 9. **Auto is bounded** — `-y` never bypasses high risk, low confidence, ambiguity, failed gates or drift escalation.
 10. **Router is not a step** — `/maestro-next` may route here but never appears inside the chain.
+11. **Running means continue** — while canonical continuation authority is `automatic`, execute it and re-read the receipt in the same turn; `suggest_only` is Runtime passivity, not a reason to end the turn.
 </invariants>
 
 <state_machine>
@@ -140,7 +141,7 @@ Goals describe outcomes, not lifecycle stages.
 
 ### A_CREATE
 
-Build a chain definition with execution steps and optional legacy decision nodes. Write it to a temporary JSON file and call:
+Build a chain definition with execution steps and formal decision nodes whenever the selected Ralph policy requires quality/goal/scope or reground evaluation. Every Ralph-created chain has at least one decision node before Session seal. Write it to a temporary JSON file and call:
 
 `maestro run start "{intent}" --id maestro-{slug} --chain-file {path} --no-dispatch`
 

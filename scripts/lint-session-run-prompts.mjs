@@ -243,6 +243,44 @@ else {
   if (/maestro ralph\s|maestro session\s|\bralph next\b/.test(text)) errors.push('workflows/run-mode-lite.md: normal lifecycle must use only maestro run');
 }
 
+const canonicalOrchestratorLoop = join(root, 'workflows', 'orchestrator-run-loop.md');
+if (!existsSync(canonicalOrchestratorLoop)) {
+  errors.push('workflows/orchestrator-run-loop.md: missing canonical orchestrator loop');
+} else {
+  const text = readFileSync(canonicalOrchestratorLoop, 'utf8');
+  for (const token of [
+    '## Continuation Router',
+    'Turn 终止不变量',
+    'authority=automatic',
+    'authority=auto_mode_only',
+    'authority=user_required',
+    'assessment.acceptance_status=accepted',
+    '`QUALITY_MEDIUM`',
+    '`REJECT`',
+    '`CONFLICT`',
+    'handoff `next[]`',
+    '### `complete` / `decide` 闭环',
+    'run_already_created=true',
+    'run decide --json',
+    'reason_code=DECISION_CARD_READY',
+  ]) {
+    if (!text.includes(token)) errors.push(`workflows/orchestrator-run-loop.md: missing ${token}`);
+  }
+}
+
+const canonicalRalphCommand = join(commandDir, 'maestro-ralph.md');
+if (existsSync(canonicalRalphCommand)) {
+  const text = readFileSync(canonicalRalphCommand, 'utf8');
+  for (const token of [
+    'Decision is mandatory',
+    'every Ralph-created chain',
+    'run decide ... --json',
+    'run complete|done --json',
+  ]) {
+    if (!text.includes(token)) errors.push(`.claude/commands/maestro-ralph.md: missing ${token}`);
+  }
+}
+
 const canonicalCompanion = join(commandDir, 'maestro-companion.md');
 if (!existsSync(canonicalCompanion)) errors.push('.claude/commands/maestro-companion.md: missing canonical Companion command');
 else errors.push(...validateCompanionRunCreate(

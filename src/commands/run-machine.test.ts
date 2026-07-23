@@ -63,6 +63,15 @@ describe('built-bin run-response/1.0', () => {
     const complete = invoke(root, ['run', 'next', '--session', emptyId, '--json']);
     for (const item of [ok, running, missing, complete]) { expect(item.lines).toHaveLength(1); expect(item.stderr).toBe(''); expect(item.body?.exit_code).toBe(item.status); }
     expect([ok.status, missing.status, complete.status, running.status], JSON.stringify({ ok: ok.body, running: running.body })).toEqual([0, 1, 2, 3]);
+    expect(ok.body?.continuation).toMatchObject({
+      action: 'load_run', authority: 'automatic', reason_code: 'RUN_ACTIVE',
+    });
+    expect(running.body?.continuation).toMatchObject({
+      action: 'load_run', run_id: (ok.body as any).result.run_id,
+    });
+    expect(complete.body?.continuation).toMatchObject({
+      action: 'seal_session', authority: 'automatic', reason_code: 'CHAIN_COMPLETE',
+    });
   });
 
   it('captures Commander missing arguments and invalid platform in machine mode', () => {
@@ -91,6 +100,12 @@ describe('built-bin run-response/1.0', () => {
       },
     });
     expect((brief.body as any).next).toEqual((brief.body as any).result.recovery.next);
+    expect(brief.body?.continuation).toMatchObject({
+      action: 'execute_run',
+      authority: 'automatic',
+      reason_code: 'RUN_BRIEF_LOADED',
+      command: `maestro run check ${locator.run_id}`,
+    });
     for (const removed of ['args', 'argument_requirements', 'reuse_assessments', 'gates', 'outputs']) {
       expect((brief.body as any).result).not.toHaveProperty(removed);
     }
@@ -138,6 +153,7 @@ describe('built-bin run-response/1.0', () => {
 
     expect(applied.body).toMatchObject({
       operation: 'complete', ok: true, request_id: 'req-complete-machine', replay: { status: 'applied' },
+      continuation: { action: 'seal_session', authority: 'automatic', reason_code: 'CHAIN_COMPLETE' },
     });
     expect(replayed.body).toMatchObject({
       operation: 'complete', ok: true, request_id: 'req-complete-machine', replay: { status: 'replayed' },
@@ -145,6 +161,93 @@ describe('built-bin run-response/1.0', () => {
     expect(replayed.body?.replay?.transition_id).toBe(applied.body?.replay?.transition_id);
     expect(applied.stderr).toBe('');
     expect(replayed.stderr).toBe('');
+  });
+
+  it('continues complete through decide and injects strict constraints into the next Run', () => {
+    const { root } = fixture();
+    const chain = join(root, 'complete-decide-next.json');
+    writeFileSync(chain, JSON.stringify({
+      steps: [
+        { command: 'demo' },
+        { command: 'quality-gate', decision_ref: 'DP-quality' },
+        { command: 'demo', args: '--final' },
+      ],
+      decision_points: [
+        { point_id: 'DP-quality', after_step_id: 'step-000-demo', max_retries: 2 },
+      ],
+    }));
+    const created = spawnSync(process.execPath, [
+      resolve('bin/maestro.js'), 'session', 'create', 'complete-decide-next',
+      '--intent', 'complete decide next', '--chain-file', chain, '--workflow-root', root,
+    ], { encoding: 'utf8' });
+    expect(created.status, created.stderr).toBe(0);
+    const sessionId = JSON.parse(created.stdout).session_id as string;
+
+    const first = invoke(root, ['run', 'next', '--session', sessionId, '--json']);
+    const firstRunId = (first.body as any).result.run_id as string;
+    const completed = invoke(root, [
+      'run', 'complete', firstRunId, '--session', sessionId, '--verdict', 'done', '--json',
+    ]);
+    expect(completed.body?.continuation).toMatchObject({
+      action: 'evaluate_decision',
+      authority: 'automatic',
+      reason_code: 'DECISION_REQUIRED',
+      command: `maestro run next --session ${sessionId} --json`,
+    });
+
+    const decisionCard = invoke(root, ['run', 'next', '--session', sessionId, '--json']);
+    expect(decisionCard.body).toMatchObject({
+      operation: 'next',
+      ok: false,
+      error: { code: 'DECISION_REQUIRED' },
+      continuation: {
+        action: 'evaluate_decision',
+        authority: 'automatic',
+        reason_code: 'DECISION_CARD_READY',
+        command: null,
+        preconditions: expect.arrayContaining([
+          'decision_point=DP-quality',
+          'do not call run next again for this decision card',
+        ]),
+      },
+    });
+
+    const decided = invoke(root, [
+      'run', 'decide', 'DP-quality', '--session', sessionId,
+      '--verdict', 'proceed', '--confidence', 'high', '--json',
+    ]);
+    expect(decided.body?.continuation).toMatchObject({
+      action: 'dispatch_next',
+      authority: 'automatic',
+      reason_code: 'MORE_STEPS',
+      command: `maestro run next --session ${sessionId} --json`,
+    });
+
+    const second = invoke(root, ['run', 'next', '--session', sessionId, '--json']);
+    const secondResult = (second.body as any).result as {
+      run_id: string;
+      run_already_created: boolean;
+      step: { command: string };
+      args: string[];
+    };
+    expect(secondResult).toMatchObject({
+      run_already_created: true,
+      step: { command: 'demo' },
+      args: ['--final'],
+    });
+    expect(secondResult.run_id).not.toBe(firstRunId);
+    expect(second.body?.continuation).toMatchObject({
+      action: 'load_run',
+      authority: 'automatic',
+      run_id: secondResult.run_id,
+      preconditions: expect.arrayContaining([
+        `run_already_created=${secondResult.run_id}`,
+        'execute_command=demo',
+        'execute_args=["--final"]',
+        'session_goal="complete decide next"',
+        'do not call run create or allocate another Run',
+      ]),
+    });
   });
 
   it('keeps a paused topic Session outside automatic read-only routing', () => {
@@ -241,8 +344,12 @@ describe('built-bin run-response/1.0', () => {
     expect(checkMissing.body).toMatchObject({ operation: 'check', ok: false, exit_code: 1, error: { code: 'RUN_NOT_FOUND' } });
     expect(decide.body).toMatchObject({
       operation: 'decide', ok: true, replay: { status: 'applied' }, request_id: 'req-decide-machine',
+      continuation: { action: 'seal_session', authority: 'automatic', reason_code: 'CHAIN_COMPLETE' },
     });
-    expect(decideReplay.body).toMatchObject({ operation: 'decide', ok: true, replay: { status: 'replayed' } });
+    expect(decideReplay.body).toMatchObject({
+      operation: 'decide', ok: true, replay: { status: 'replayed' },
+      continuation: { action: 'seal_session', authority: 'automatic', reason_code: 'CHAIN_COMPLETE' },
+    });
     expect(decideMissing.body).toMatchObject({ operation: 'decide', ok: false, error: { code: 'SESSION_NOT_FOUND' } });
     expect(seal.body).toMatchObject({ operation: 'seal-session', ok: true, result: { status: 'sealed' } });
     expect(sealBlocked.body).toMatchObject({ operation: 'seal-session', ok: false, error: { code: 'SESSION_SEAL_BLOCKED' } });

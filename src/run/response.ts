@@ -10,6 +10,7 @@ export interface RunResponseBaseInput {
   request_id?: string | null;
   locator?: RunResponse['locator'];
   next?: RunResponse['next'];
+  continuation?: RunResponse['continuation'];
   replay?: RunResponse['replay'];
 }
 
@@ -56,6 +57,7 @@ export function createRunResponseSuccess(
     locator: input.locator ?? null,
     result: input.result,
     next: input.next ?? null,
+    continuation: input.continuation ?? null,
     error: null,
     replay: input.replay ?? null,
   });
@@ -78,6 +80,7 @@ export function createRunResponseError(
     locator: input.locator ?? null,
     result: null,
     next: input.next ?? null,
+    continuation: input.continuation ?? null,
     error: {
       code: input.code,
       message: input.message,

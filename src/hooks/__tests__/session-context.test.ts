@@ -4,6 +4,7 @@ import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { evaluateSessionContext } from '../session-context.js';
+import { createChainSession } from '../../run/chain-admin.js';
 
 // ---------------------------------------------------------------------------
 // Test project setup
@@ -198,5 +199,26 @@ describe('evaluateSessionContext', () => {
     if (result) {
       assert.ok(!result.hookSpecificOutput.additionalContext.includes('Source Tree'));
     }
+  });
+
+  it('advertises but does not auto-resume a unique manual Session on startup', () => {
+    mkdirSync(TEST_DIR, { recursive: true });
+    const created = createChainSession(TEST_DIR, 'manual-startup', {
+      intent: 'Continue after restart',
+      engine: 'manual',
+      definition: { steps: [{ command: 'execute' }] },
+    });
+    writeFileSync(join(TEST_DIR, '.workflow', 'state.json'), JSON.stringify({
+      version: '2.0',
+      active_session_id: created.sessionId,
+      sessions: [{ session_id: created.sessionId, intent: 'Continue after restart', status: 'running' }],
+    }));
+
+    const result = evaluateSessionContext({ cwd: TEST_DIR });
+    assert.ok(result);
+    const ctx = result.hookSpecificOutput.additionalContext;
+    assert.ok(ctx.includes('Active Canonical Run'));
+    assert.ok(ctx.includes('Resume: /maestro -c'));
+    assert.ok(ctx.includes('advisory startup context'));
   });
 });

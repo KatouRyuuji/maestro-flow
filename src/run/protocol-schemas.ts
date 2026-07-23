@@ -357,6 +357,51 @@ const briefNextSchema = z.object({
   command: z.string().nullable(),
   reason: nonEmptyString,
 }).strict();
+
+export const continuationActionSchema = z.enum([
+  'load_run',
+  'execute_run',
+  'accept_reuse',
+  'repair_run',
+  'dispatch_next',
+  'evaluate_decision',
+  'recover_session',
+  'seal_session',
+  'offer_recommendations',
+  'repair_chain',
+  'stop',
+]);
+
+export const continuationAuthoritySchema = z.enum([
+  'automatic',
+  'auto_mode_only',
+  'user_required',
+]);
+
+export const continuationDirectiveSchema = z.object({
+  schema_version: z.literal('run-continuation/1.0'),
+  action: continuationActionSchema,
+  authority: continuationAuthoritySchema,
+  reason_code: nonEmptyString,
+  command: z.string().nullable(),
+  reason: nonEmptyString,
+  preconditions: z.array(z.string()),
+  auto_mode: z.boolean(),
+  session_id: nonEmptyString,
+  run_id: z.string().min(1).nullable(),
+  assessment: z.object({
+    assessment_hash: sha256Schema,
+    artifact_id: nonEmptyString,
+    decision: z.enum(['REUSE', 'REVIEW', 'CONFLICT', 'REJECT']),
+    reason_codes: z.array(nonEmptyString),
+    acceptance_status: z.enum(['not_required', 'pending_review', 'accepted', 'invalidated']),
+  }).strict().nullable(),
+  recommendations: z.array(z.object({
+    command: nonEmptyString,
+    reason: z.string(),
+    needs: z.array(z.string()),
+  }).strict()),
+}).strict();
 const briefPrevHandoffSchema = z.object({
   run_id: nonEmptyString,
   command: nonEmptyString,
@@ -643,6 +688,7 @@ const responseCommonSchema = z.object({
   request_id: z.string().min(1).nullable(),
   locator: z.object({ session_id: z.string().nullable(), run_id: z.string().nullable() }).strict().nullable(),
   next: briefNextSchema.nullable(),
+  continuation: continuationDirectiveSchema.nullable().optional().default(null),
   replay: z.object({ status: z.enum(['applied', 'replayed']), transition_id: nonEmptyString }).strict().nullable(),
 });
 
@@ -747,5 +793,8 @@ export type RecallConfirmationRecord = z.infer<typeof recallConfirmationRecordSc
 export type RecallConfirmationRegistry = z.infer<typeof recallConfirmationRegistrySchema>;
 export type RunResponse = z.infer<typeof runResponseSchema>;
 export type RunResponseErrorCode = z.infer<typeof runErrorCodeSchema>;
+export type ContinuationAction = z.infer<typeof continuationActionSchema>;
+export type ContinuationAuthority = z.infer<typeof continuationAuthoritySchema>;
+export type ContinuationDirective = z.infer<typeof continuationDirectiveSchema>;
 export type SessionTransition = z.infer<typeof sessionTransitionSchema>;
 export type ImportManifest = z.infer<typeof importManifestSchema>;

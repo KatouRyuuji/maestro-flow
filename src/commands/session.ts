@@ -345,9 +345,10 @@ export function registerSessionCommand(program: Command): void {
     .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
     .action((sessionId: string | undefined, opts: { workflowRoot: string }) => {
       try {
-        const resolved = resolveCompatibleSession(resolve(opts.workflowRoot), sessionId);
+        const projectRoot = resolve(opts.workflowRoot);
+        const resolved = resolveCompatibleSession(projectRoot, sessionId);
         if (!resolved) throw new Error(sessionId ? `Session not found: ${sessionId}` : 'no compatible Session found');
-        print(summarizeSession(resolved));
+        print(summarizeSession(projectRoot, resolved));
       } catch (error) {
         reportError(error);
       }

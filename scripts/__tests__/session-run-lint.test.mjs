@@ -196,6 +196,26 @@ test('source lint accepts alias-free Odyssey workflows while enforcing prepare a
   }
 
   const orchestratorLoop = readFileSync(join(repoRoot, 'workflows', 'orchestrator-run-loop.md'), 'utf8');
+  for (const token of [
+    '## Continuation Router',
+    'Turn 终止不变量',
+    'authority=automatic',
+    'authority=auto_mode_only',
+    'authority=user_required',
+    'assessment.acceptance_status=accepted',
+    '`QUALITY_MEDIUM`',
+    'handoff `next[]`',
+    '### `complete` / `decide` 闭环',
+    'run_already_created=true',
+    'run decide --json',
+    'reason_code=DECISION_CARD_READY',
+  ]) {
+    assert.match(orchestratorLoop, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
+  assert.match(ralph, /Decision is mandatory/);
+  assert.match(ralph, /every Ralph-created chain/);
+  assert.match(ralph, /run decide \.\.\. --json/);
+  assert.match(ralph, /run complete\|done --json/);
   const amendFlow = readFileSync(join(repoRoot, 'workflows', 'ralph-amend-goal.md'), 'utf8');
   assert.match(amendFlow, /maestro run edit --session \{session_id\} --decomposition-file -/);
   assert.doesNotMatch(amendFlow, /maestro run edit \{session_id\} --decomposition-file -/);

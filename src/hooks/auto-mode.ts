@@ -22,7 +22,7 @@ export function isAutoMode(data: AutoModeInput): boolean {
   // Fast path: bridge file (written by coordinator-tracker on previous Stop)
   if (data.session_id) {
     const bridge = readCoordBridge(data.session_id);
-    if (bridge?.auto_mode) return true;
+    if (bridge) return bridge.auto_mode ?? false;
   }
 
   // Fallback: scan status.json directly (works on first turn before Stop fires)

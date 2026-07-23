@@ -2,7 +2,7 @@
  * Coordinator Tracker — Unified progress tracking for maestro coordinators
  *
  * Tracks session state across three coordinator types:
- *   A) ralph — reads .workflow/sessions/{id}/session.json (engine=ralph) + ralph-meta.json
+ *   A) canonical — reads .workflow/sessions/{id}/session.json for every engine
  *      maestro (legacy) — reads .workflow/.maestro/status.json
  *   B) maestro-link-coordinate — captures coord session_id from Bash output,
  *      reads .workflow/.maestro/walker-state.json
@@ -122,13 +122,13 @@ interface StandardSessionJson {
 }
 
 /**
- * Read the most recent ralph/maestro session.
- * Checks standard `.workflow/sessions/` first (engine=ralph),
+ * Read the most recent canonical/legacy maestro session.
+ * Checks standard `.workflow/sessions/` first (all engines),
  * then falls back to legacy `.workflow/.maestro/` (maestro static chain).
  */
 export function readMaestroSession(workspaceRoot: string): CoordBridgeData | null {
-  // 1. Try standard sessions (engine=ralph)
-  const standardResult = readStandardRalphSession(workspaceRoot);
+  // 1. Try canonical Sessions (engine=manual|coordinator|ralph)
+  const standardResult = readStandardSession(workspaceRoot);
   // 2. Try legacy .maestro/ sessions
   const legacyResult = readLegacyMaestroSession(workspaceRoot);
 
@@ -138,7 +138,7 @@ export function readMaestroSession(workspaceRoot: string): CoordBridgeData | nul
   return standardResult.updated_at >= legacyResult.updated_at ? standardResult : legacyResult;
 }
 
-function readStandardRalphSession(workspaceRoot: string): CoordBridgeData | null {
+function readStandardSession(workspaceRoot: string): CoordBridgeData | null {
   const sessionsDir = join(workspaceRoot, '.workflow', 'sessions');
   if (!existsSync(sessionsDir)) return null;
 
@@ -157,7 +157,8 @@ function readStandardRalphSession(workspaceRoot: string): CoordBridgeData | null
     for (const s of sessions) {
       try {
         const raw: StandardSessionJson = JSON.parse(readFileSync(s.path, 'utf8'));
-        if (raw.orchestration?.engine !== 'ralph') continue;
+        if (!raw.orchestration?.engine) continue;
+        if (raw.status !== 'running' && raw.status !== 'paused') continue;
         return parseStandardSession(raw, s.mtime, s.name, workspaceRoot);
       } catch { /* skip corrupt */ }
     }
@@ -227,8 +228,8 @@ function parseStandardSession(
   return {
     session_id: '',
     maestro_session_id: raw.session_id ?? dirName,
-    coordinator: 'ralph',
-    source: 'ralph',
+    coordinator: raw.orchestration?.engine === 'ralph' ? 'ralph' : 'maestro',
+    source: raw.orchestration?.engine === 'ralph' ? 'ralph' : 'maestro',
     chain_name: '',
     intent: raw.intent ?? '',
     phase,

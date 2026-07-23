@@ -89,6 +89,7 @@ import {
   type TransitionMutationReceipt,
 } from './transition-receipts.js';
 import { validateSessionId } from './ids.js';
+import { reuseAcceptanceStatus } from './continuation.js';
 import {
   ensureSessionProjection,
   localISO,
@@ -869,24 +870,6 @@ interface RevalidatedRunReuse {
   blockers: string[];
 }
 
-function hasAcceptedReviewReceipt(
-  bundle: SessionBundle,
-  run: CommandRun,
-  assessment: ReuseAssessment,
-): boolean {
-  return bundle.session.requests.some(item => {
-    if (item.type !== 'transition' || !('outcome' in item)
-      || item.outcome.operation !== 'accept-reuse' || item.outcome.status !== 'applied') return false;
-    const acceptance = item.outcome.result.acceptance;
-    if (!acceptance || typeof acceptance !== 'object' || Array.isArray(acceptance)) return false;
-    const raw = acceptance as Record<string, unknown>;
-    return raw.run_id === run.run_id
-      && raw.assessment_hash === assessment.assessment_hash
-      && raw.artifact_id === assessment.source_fence.artifact_id
-      && stableJsonUtf8(raw.source_fence) === stableJsonUtf8(assessment.source_fence);
-  });
-}
-
 function revalidateRunReuse(
   projectRoot: string,
   store: SessionStore,
@@ -934,7 +917,7 @@ function revalidateRunReuse(
       && refreshed.assessment_hash === original.assessment_hash
       && stableJsonUtf8(refreshed.source_fence) === stableJsonUtf8(original.source_fence)
       && sourceFenceCurrent
-      && hasAcceptedReviewReceipt(bundle, run, original);
+      && reuseAcceptanceStatus(bundle.session, run, original) === 'accepted';
     if (!originalReuseCurrent && !acceptedReviewCurrent) {
       const assessment: ReuseAssessment = refreshed
         ? {
@@ -1167,6 +1150,20 @@ export function resolveArgumentRequirements(
       ...(missing ? { question: strict?.question ?? `Provide required argument ${definition.name}` } : {}),
     };
   });
+}
+
+function assertDispatchableCommand(projectRoot: string, command: string, args: string[]): void {
+  const content = resolveStepContent(projectRoot, command);
+  if (!content.prepare && !content.workflow) {
+    throw new Error('no prepare or workflow content');
+  }
+  const missing = resolveArgumentRequirements(projectRoot, command, args)
+    .filter(item => item.required && item.missing);
+  if (missing.length > 0) {
+    throw new Error(
+      `missing required arguments: ${missing.map(item => `${item.name}: ${item.question}`).join('; ')}`,
+    );
+  }
 }
 
 /** Compact a full Handoff into the shared PrevHandoff summary shape. */
@@ -2076,7 +2073,10 @@ export function checkRun(projectRoot: string, runId: string, sessionId?: string)
     located.run,
     resolvedContract.contract,
     scan,
-    { preflight: located.run.status !== 'sealed' },
+    {
+      preflight: located.run.status !== 'sealed',
+      validateCommand: (command, args) => assertDispatchableCommand(projectRoot, command, args),
+    },
   );
   scan.errors.push(...reuse.blockers);
   if (resolvedContract.warning) scan.warnings.unshift(resolvedContract.warning);
@@ -2602,7 +2602,10 @@ export function prepareCompleteInputs(
       located.run,
       resolved.contract,
       scan,
-      { preflight: replayRecord === undefined },
+      {
+        preflight: replayRecord === undefined,
+        validateCommand: (command, args) => assertDispatchableCommand(projectRoot, command, args),
+      },
     );
     if (options.chainProposal && options.applyChainProposal) {
       throw new Error('use either chainProposal or applyChainProposal, not both');

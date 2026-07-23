@@ -47,6 +47,13 @@ import { executeRecallAction } from '../run/recall-actions.js';
 import { resolveCompatibleSession } from '../run/session-resolver.js';
 import { summarizeSession } from '../run/session-status.js';
 import { resolveSession, resumeSession } from '../run/session-transition.js';
+import {
+  continuationAfterDecide,
+  continuationAfterBrief,
+  continuationAfterCheck,
+  continuationForNextFailure,
+  inspectSessionContinuation,
+} from '../run/continuation.js';
 
 const VALID_VERDICTS: CompletionVerdict[] = ['done', 'done-with-concerns', 'needs-retry', 'blocked'];
 
@@ -173,8 +180,11 @@ function machineSuccess(
   replay?: { status: 'applied' | 'replayed'; transition_id: string },
   requestId?: string | null,
   next?: RunResponse['next'],
+  continuation?: RunResponse['continuation'],
 ): void {
-  emitRunResponse(createRunResponseSuccess({ operation, result, locator, replay, request_id: requestId, next }));
+  emitRunResponse(createRunResponseSuccess({
+    operation, result, locator, replay, request_id: requestId, next, continuation,
+  }));
 }
 
 type RunRecallResult = Awaited<ReturnType<typeof recallRuns>>;
@@ -303,9 +313,10 @@ export function registerRunCommand(program: Command): void {
     .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
     .action((sessionId: string | undefined, opts: { workflowRoot: string }) => {
       try {
-        const resolved = resolveCompatibleSession(resolve(opts.workflowRoot), sessionId);
+        const projectRoot = resolve(opts.workflowRoot);
+        const resolved = resolveCompatibleSession(projectRoot, sessionId);
         if (!resolved) throw new Error(sessionId ? `session not found: ${sessionId}` : 'no compatible Session found');
-        print(summarizeSession(resolved));
+        print(summarizeSession(projectRoot, resolved));
       } catch (error) {
         reportError(error);
       }
@@ -605,8 +616,9 @@ export function registerRunCommand(program: Command): void {
       leaseId?: string;
       workflowRoot: string;
     }) => {
+      const projectRoot = resolve(opts.workflowRoot);
       try {
-        const outcome = runNextStep(resolve(opts.workflowRoot), {
+        const outcome = runNextStep(projectRoot, {
           sessionId: opts.session,
           pick: opts.pick,
           json: opts.json,
@@ -616,9 +628,29 @@ export function registerRunCommand(program: Command): void {
         });
         if (opts.json) {
           if (outcome.exitCode === 0 && outcome.result) {
-            machineSuccess('next', outcome.result, { session_id: outcome.result.session_id, run_id: outcome.result.run_id });
+            machineSuccess(
+              'next',
+              outcome.result,
+              { session_id: outcome.result.session_id, run_id: outcome.result.run_id },
+              undefined,
+              undefined,
+              undefined,
+              inspectSessionContinuation(projectRoot, outcome.result.session_id, { runId: outcome.result.run_id }),
+            );
           } else {
-            emitRunResponse(createRunResponseError({ operation: 'next', exit_code: outcome.exitCode as 1 | 2 | 3, code: outcome.reasonCode as RunResponseErrorCode, message: outcome.message, details: { reason_code: outcome.reasonCode } }));
+            emitRunResponse(createRunResponseError({
+              operation: 'next',
+              exit_code: outcome.exitCode as 1 | 2 | 3,
+              code: outcome.reasonCode as RunResponseErrorCode,
+              message: outcome.message,
+              details: { reason_code: outcome.reasonCode },
+              continuation: continuationForNextFailure(
+                projectRoot,
+                opts.session,
+                outcome.reasonCode,
+                outcome.message,
+              ),
+            }));
           }
         } else {
           const stream = outcome.exitCode === 0 ? process.stdout : process.stderr;
@@ -680,16 +712,29 @@ export function registerRunCommand(program: Command): void {
     .option('--json', 'emit one run-response/1.0 envelope on stdout')
     .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
     .action((runId: string, opts: { session?: string; json?: boolean; workflowRoot: string }) => {
+      const projectRoot = resolve(opts.workflowRoot);
       try {
-        const result = checkRun(resolve(opts.workflowRoot), runId, opts.session);
+        const result = checkRun(projectRoot, runId, opts.session);
         if (opts.json) {
+          const next = result.next
+            ? { suggest_only: true as const, command: result.next.command, reason: result.next.reason }
+            : null;
           machineSuccess(
             'check',
             result,
             { session_id: result.session_id, run_id: result.run_id },
             undefined,
             null,
-            result.next ? { suggest_only: true, command: result.next.command, reason: result.next.reason } : null,
+            next,
+            result.next
+              ? continuationAfterCheck(
+                  projectRoot,
+                  result.session_id,
+                  result.run_id,
+                  result.gates.blocking.length === 0 && result.errors.length === 0,
+                  result.next,
+                )
+              : inspectSessionContinuation(projectRoot, result.session_id, { runId: result.run_id }),
           );
         } else {
           print(result);
@@ -789,8 +834,23 @@ Compatibility boundary:
               { session_id: result.session_id, run_id: result.run_id },
               { status: result.transition.status, transition_id: result.transition.transition_id },
               result.transition.request_id,
+              result.next_action
+                ? {
+                    suggest_only: true,
+                    command: result.next_action.command,
+                    reason: result.next_action.reason,
+                  }
+                : undefined,
+              inspectSessionContinuation(projectRoot, result.session_id, { runId: result.run_id }),
             );
-            else emitRunResponse(createRunResponseError({ operation: 'complete', exit_code: 1, code: 'RUN_GATES_BLOCKING', message: 'Run gates are blocking completion', details: { result } }));
+            else emitRunResponse(createRunResponseError({
+              operation: 'complete',
+              exit_code: 1,
+              code: 'RUN_GATES_BLOCKING',
+              message: 'Run gates are blocking completion',
+              details: { result },
+              continuation: inspectSessionContinuation(projectRoot, result.session_id, { runId: result.run_id }),
+            }));
           } else { print(result); if (!result.sealed) process.exitCode = 1; }
           return;
         }
@@ -858,8 +918,22 @@ Compatibility boundary:
             { session_id: result.session_id, run_id: result.run_id },
             { status: result.seal.transition.status, transition_id: result.seal.transition.transition_id },
             result.seal.transition.request_id,
+            {
+              suggest_only: true,
+              command: result.next.command,
+              reason: result.next.reason,
+            },
+            inspectSessionContinuation(projectRoot, result.session_id),
           );
-          else emitRunResponse(createRunResponseError({ operation: 'complete', exit_code: 1, code: 'RUN_GATES_BLOCKING', message: 'Run gates are blocking completion', details: { result }, next: { suggest_only: true, command: result.next.command, reason: result.next.reason } }));
+          else emitRunResponse(createRunResponseError({
+            operation: 'complete',
+            exit_code: 1,
+            code: 'RUN_GATES_BLOCKING',
+            message: 'Run gates are blocking completion',
+            details: { result },
+            next: { suggest_only: true, command: result.next.command, reason: result.next.reason },
+            continuation: inspectSessionContinuation(projectRoot, result.session_id, { runId: result.run_id }),
+          }));
         } else { print(result); process.stderr.write(`next: ${result.next.command}\n      ${result.next.reason}\n`); if (!result.run_sealed) process.exitCode = 1; }
       } catch (error) {
         if (opts.json) machineError('complete', error); else reportError(error);
@@ -874,12 +948,13 @@ Compatibility boundary:
     .option('--json', 'emit one run-response/1.0 envelope on stdout')
     .option('--workflow-root <path>', 'project root', process.cwd())
     .action((runId: string, opts: { session?: string; platform?: string; workflowRoot: string; json?: boolean }) => {
+      const projectRoot = resolve(opts.workflowRoot);
       try {
         const platform = opts.platform as TargetPlatform | undefined;
         if (platform && !VALID_PLATFORMS.includes(platform)) {
           throw new Error(`unknown platform "${platform}", valid: ${VALID_PLATFORMS.join(', ')}`);
         }
-        const result = briefRun(resolve(opts.workflowRoot), runId, opts.session, platform);
+        const result = briefRun(projectRoot, runId, opts.session, platform);
         if (opts.json) {
           machineSuccess(
             'brief',
@@ -888,6 +963,12 @@ Compatibility boundary:
             undefined,
             undefined,
             result.recovery.next,
+            continuationAfterBrief(
+              projectRoot,
+              result.session.session_id,
+              result.run.run_id,
+              result.recovery.next,
+            ),
           );
         } else print(result);
       } catch (error) {
@@ -925,6 +1006,8 @@ Compatibility boundary:
             'accept-reuse', result, { session_id: result.session_id, run_id: result.run_id },
             { status: result.transition.status, transition_id: result.transition.transition_id },
             result.transition.request_id,
+            undefined,
+            inspectSessionContinuation(resolve(opts.workflowRoot), result.session_id, { runId: result.run_id }),
           );
         } else print(result);
       } catch (error) {
@@ -1096,6 +1179,13 @@ Compatibility boundary:
             { status: result.transition.status, transition_id: result.transition.transition_id },
             result.transition.request_id,
             { suggest_only: true, command: result.next.command, reason: result.next.reason },
+            continuationAfterDecide(
+              resolve(opts.workflowRoot),
+              result.session_id,
+              result.point_id,
+              result.verdict,
+              result.retry,
+            ),
           );
         } else {
           print(result);

@@ -26,8 +26,10 @@ export function isMaestroWorkspace(dir: string): boolean {
   try {
     const state = JSON.parse(readFileSync(statePath, 'utf8'));
     return state.version !== undefined
-      && (Array.isArray(state.sessions) || typeof state.active_session_id === 'string'
-        || existsSync(join(dir, '.workflow', 'sessions')));
+      && (typeof state.phases_summary === 'object'
+        || Array.isArray(state.sessions) || typeof state.active_session_id === 'string'
+        || existsSync(join(dir, '.workflow', 'sessions'))
+        || existsSync(join(dir, '.workflow', '.maestro')));
   } catch {
     return false;
   }
