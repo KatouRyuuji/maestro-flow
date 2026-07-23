@@ -140,6 +140,72 @@ describe('maestro run durable context CLI', () => {
       .toEqual(['tests pass']);
   });
 
+  it('projects paused recovery blockers and accepts repeatable evidence for resume', async () => {
+    const store = new SessionStore(projectRoot);
+    store.createSession('paused-status', 'paused recovery', { ifExists: 'error' });
+    store.update('paused-status', draft => {
+      draft.session.status = 'paused';
+      draft.session.orchestration.chain = [{
+        step_id: 'step-000-failed', command: 'cli-context', status: 'failed', run_id: 'run-failed',
+        inserted_by: 'test', decision_ref: null,
+      }];
+      draft.session.orchestration.decision_points = [{
+        point_id: 'DP-escalated', after_step_id: null, status: 'escalated', retry_count: 0,
+        max_retries: 2, evidence_ref: null,
+      }];
+      return null;
+    });
+
+    await run('status', 'paused-status', '--workflow-root', projectRoot);
+    const status = JSON.parse(logs.at(-1)!) as any;
+    expect(status.revisions).toEqual(expect.objectContaining({
+      identity: expect.any(Number),
+      activity: expect.any(Number),
+    }));
+    expect(status.recovery.blockers).toEqual([
+      expect.objectContaining({ kind: 'decision', id: 'DP-escalated', dispositions: ['proceed', 'retry'] }),
+      expect.objectContaining({ kind: 'step', id: 'step-000-failed', dispositions: ['retry', 'skip'] }),
+    ]);
+    expect(status.recovery.next.command).toContain('--decision DP-escalated');
+    expect(status.recovery.next.command).toContain(`--expected-identity-revision ${status.revisions.identity}`);
+    expect(status.recovery.next.command).toContain(`--expected-activity-revision ${status.revisions.activity}`);
+
+    store.update('paused-status', draft => {
+      draft.session.orchestration.chain[0].status = 'skipped';
+      draft.session.orchestration.decision_points[0].status = 'passed';
+      return null;
+    });
+    const beforeResume = store.readBundle('paused-status').session;
+    await run(
+      'recover', '--session', 'paused-status', '--resume',
+      '--request-id', 'req-cli-resume', '--actor', 'test', '--reason', 'blockers cleared',
+      '--evidence', 'evidence/one.json', '--evidence', 'evidence/two.json',
+      '--expected-identity-revision', String(beforeResume.identity_revision),
+      '--expected-activity-revision', String(beforeResume.activity_revision),
+      '--workflow-root', projectRoot,
+    );
+    expect(store.readBundle('paused-status').session.status).toBe('running');
+    expect(JSON.parse(logs.at(-1)!)).toMatchObject({ operation: 'resume', session_id: 'paused-status' });
+  });
+
+  it('rejects malformed nested chain input before allocating a Session', async () => {
+    const chainFile = join(projectRoot, 'invalid-chain.json');
+    writeFileSync(chainFile, JSON.stringify({
+      intent: 'invalid nested decomposition',
+      steps: [{ command: 'cli-context' }],
+      decomposition: { goals: [{}] },
+    }));
+    const sessionId = 'invalid-chain-20260723-000000';
+
+    await run(
+      'start', '--id', sessionId, '--chain-file', chainFile, '--no-dispatch',
+      '--workflow-root', projectRoot,
+    );
+
+    expect(process.exitCode).toBe(1);
+    expect(new SessionStore(projectRoot).sessionExists(sessionId)).toBe(false);
+  });
+
   it('run done completes an explicit Run without requiring the legacy complete spelling', async () => {
     await run(
       'start',

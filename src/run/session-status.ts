@@ -1,5 +1,6 @@
 import { activeStepIndex } from './chain.js';
 import type { ResolvedSession } from './session-resolver.js';
+import { listRecoveryBlockers, nextRecoveryAction, type RecoveryBlocker, type RecoveryNext } from './session-transition.js';
 
 export interface SessionStatusSummary {
   session_id: string;
@@ -17,6 +18,12 @@ export interface SessionStatusSummary {
   };
   active_run_id: string | null;
   latest_completed_run_id: string | null;
+  revisions: { identity: number; activity: number };
+  recovery: {
+    blockers: RecoveryBlocker[];
+    can_resume: boolean;
+    next: RecoveryNext;
+  };
   position: ResolvedSession['bundle']['session']['orchestration']['position'];
   decomposition: ResolvedSession['bundle']['session']['orchestration']['decomposition'];
   registry: { artifacts: number; evidence: number; gates: number };
@@ -32,6 +39,7 @@ export function summarizeSession(resolved: ResolvedSession): SessionStatusSummar
     index: active,
     step: chain[active],
   };
+  const blockers = listRecoveryBlockers(session);
   return {
     session_id: resolved.sessionId,
     status: session.status,
@@ -48,6 +56,12 @@ export function summarizeSession(resolved: ResolvedSession): SessionStatusSummar
     } : null,
     active_run_id: session.active_run_id,
     latest_completed_run_id: session.latest_completed_run_id,
+    revisions: { identity: session.identity_revision, activity: session.activity_revision },
+    recovery: {
+      blockers,
+      can_resume: session.status === 'paused' && blockers.length === 0,
+      next: nextRecoveryAction(session),
+    },
     position: session.orchestration.position,
     decomposition: session.orchestration.decomposition,
     registry: {

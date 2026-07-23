@@ -197,6 +197,8 @@ test('source lint accepts alias-free Odyssey workflows while enforcing prepare a
 
   const orchestratorLoop = readFileSync(join(repoRoot, 'workflows', 'orchestrator-run-loop.md'), 'utf8');
   const amendFlow = readFileSync(join(repoRoot, 'workflows', 'ralph-amend-goal.md'), 'utf8');
+  assert.match(amendFlow, /maestro run edit --session \{session_id\} --decomposition-file -/);
+  assert.doesNotMatch(amendFlow, /maestro run edit \{session_id\} --decomposition-file -/);
   for (const workflow of [full, lite, orchestratorLoop, amendFlow]) {
     assert.doesNotMatch(workflow, /maestro ralph\s/);
     assert.doesNotMatch(workflow, /maestro session\s/);

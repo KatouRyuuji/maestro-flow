@@ -157,6 +157,19 @@ describe('createChainSession — predefined chain', () => {
     const projectRoot = root();
     expect(() => createChainSession(projectRoot, 'noi', {})).toThrow(/intent is required/);
   });
+
+  it('validates nested decomposition before allocating the explicit Session ID', () => {
+    const projectRoot = root();
+    const sessionId = 'invalid-nested-20260723-000000';
+    expect(() => createChainSession(projectRoot, sessionId, {
+      definition: {
+        intent: 'invalid nested goal',
+        steps: [{ command: 'plan' }],
+        decomposition: { goals: [{}] },
+      } as any,
+    })).toThrow();
+    expect(new SessionStore(projectRoot).sessionExists(sessionId)).toBe(false);
+  });
 });
 
 describe('chainDefinitionSchema — input validation', () => {

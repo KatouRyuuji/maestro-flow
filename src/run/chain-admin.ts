@@ -82,8 +82,8 @@ const chainDefBoundaryContractSchema = z.object({
 
 const chainDefDecompositionSchema = z.object({
   execution_criteria: z.array(z.string()).optional(),
-  goals: z.array(z.unknown()).optional(),
-  changelog: z.array(z.unknown()).optional(),
+  goals: decompositionSchema.shape.goals.optional(),
+  changelog: decompositionSchema.shape.changelog.optional(),
 }).strict();
 
 const chainDefExecutorSchema = z.object({
@@ -195,15 +195,12 @@ function buildPosition(def: ChainDefinition): SessionState['orchestration']['pos
 
 function buildDecomposition(def: ChainDefinition): OrchestrationDecomposition | null {
   if (!def.decomposition) return null;
-  // The container is shaped here; store.update() re-parses the whole draft
-  // against sessionStateSchema, so a malformed goals/changelog entry is rejected
-  // there rather than silently persisted.
   const d = def.decomposition;
-  return {
+  return decompositionSchema.parse({
     execution_criteria: d.execution_criteria ?? [],
-    goals: (d.goals ?? []) as OrchestrationDecomposition['goals'],
-    changelog: (d.changelog ?? []) as OrchestrationDecomposition['changelog'],
-  };
+    goals: d.goals ?? [],
+    changelog: d.changelog ?? [],
+  });
 }
 
 function timestampId(): string {
@@ -245,6 +242,15 @@ export function createChainSession(
     throw new Error('intent is required (pass opts.intent or definition.intent)');
   }
 
+  // Materialize every nested persisted block before Session allocation. Any
+  // schema failure must leave no authority shell or occupied Session ID.
+  const materialized = def ? {
+    chain: buildChain(def.steps),
+    decisionPoints: buildDecisionPoints(def),
+    position: buildPosition(def),
+    decomposition: buildDecomposition(def),
+  } : null;
+
   const sessionId = deriveSessionId(slug);
   const store = new SessionStore(projectRoot);
   store.createSession(sessionId, intent, { ifExists: 'error' });
@@ -262,11 +268,11 @@ export function createChainSession(
     if (boundaryContract) {
       draft.session.boundary_contract = boundaryContract;
     }
-    if (def) {
-      o.chain = buildChain(def.steps);
-      o.decision_points = buildDecisionPoints(def);
-      o.position = buildPosition(def);
-      o.decomposition = buildDecomposition(def);
+    if (materialized) {
+      o.chain = materialized.chain;
+      o.decision_points = materialized.decisionPoints;
+      o.position = materialized.position;
+      o.decomposition = materialized.decomposition;
     }
     const executor = opts.executor ?? def?.executor;
     if (executor) o.executor = { platform: executor.platform, cli_tool: executor.cli_tool };

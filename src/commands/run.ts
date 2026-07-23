@@ -59,7 +59,7 @@ function parseVerdict(raw: string | undefined): CompletionVerdict | null {
 
 const VALID_PLATFORMS: TargetPlatform[] = ['claude', 'codex', 'agy', 'agents-standard', 'pi'];
 
-function collect(value: string, previous: string[]): string[] {
+function collect(value: string, previous: string[] = []): string[] {
   return [...previous, value];
 }
 

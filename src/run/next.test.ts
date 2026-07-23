@@ -445,7 +445,11 @@ describe('run next — atomic chain binding', () => {
       expectedActivityRevision: paused.activity_revision,
       target: { kind: 'decision', id: 'DP-recovery', disposition: 'proceed' },
     });
-    expect(resolved.next.command).toBe('maestro run recover --resume --session s');
+    expect(resolved.next.command).toContain('maestro run recover --session s');
+    expect(resolved.next.command).toContain('--resume');
+    expect(resolved.next.command).toContain('--request-id <request-id>');
+    expect(resolved.next.command).toContain(`--expected-identity-revision ${store.readBundle('s').session.identity_revision}`);
+    expect(resolved.next.command).toContain(`--expected-activity-revision ${store.readBundle('s').session.activity_revision}`);
     expect(store.readBundle('s').session).toMatchObject({ status: 'paused', active_run_id: null });
 
     const afterResolve = store.readBundle('s').session;

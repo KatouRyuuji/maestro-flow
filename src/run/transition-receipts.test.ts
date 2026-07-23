@@ -262,8 +262,12 @@ describe('canonical paused recovery transitions', () => {
     expect(transition.replayed).toBe(false);
     expect(transition.next).toMatchObject({
       suggest_only: true,
-      command: 'maestro run recover --resume --session s',
+      command: expect.stringContaining('maestro run recover --session s'),
     });
+    expect(transition.next.command).toContain('--step step-001-failed');
+    expect(transition.next.command).toContain('--disposition <retry|skip>');
+    expect(transition.next.command).toContain(`--expected-identity-revision ${after.identity_revision}`);
+    expect(transition.next.command).toContain(`--expected-activity-revision ${after.activity_revision}`);
     expect(after.status).toBe('paused');
     expect(after.active_run_id).toBeNull();
     expect(after.orchestration.decision_points[0]).toMatchObject({
