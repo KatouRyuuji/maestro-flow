@@ -74,7 +74,7 @@ Skip if `--skip-knowledge`. Otherwise:
 
 ### Step 3: Seal Session
 
-1. Call `maestro run seal-session {session_id}`
+1. Call `maestro session seal {session_id}`
 2. CLI writes `session.json.lifecycle.sealed_at` and `seal_summary`
 3. CLI updates `state.json.sessions[].status` to `sealed`
 

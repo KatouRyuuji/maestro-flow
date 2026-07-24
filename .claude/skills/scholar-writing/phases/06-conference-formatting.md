@@ -257,10 +257,10 @@ Close the Run before declaring completion (see run-mode.md):
 
 ```bash
 maestro run check {run_id}     # repair any reported gate
-maestro run complete {run_id}
+maestro session done {run_id}
 ```
 
-Report completion only after `run complete` succeeds. The user then has:
+Report completion only after `session done` succeeds. The user then has:
 1. A complete LaTeX manuscript formatted for their target conference
 2. A verified bibliography
 3. A list of any remaining action items

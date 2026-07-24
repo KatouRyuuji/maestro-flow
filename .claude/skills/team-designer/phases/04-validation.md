@@ -174,8 +174,8 @@ function validateCoordinatorRunLifecycle(teamConfig) {
     results.errors.push('coordinator/role.md missing Run Lifecycle Integration (maestro run create)');
   }
   // Run complete on finish
-  if (!coordinatorMd.includes('maestro run complete')) {
-    results.errors.push('coordinator/role.md missing run completion (maestro run complete)');
+  if (!coordinatorMd.includes('maestro session done')) {
+    results.errors.push('coordinator/role.md missing run completion (maestro session done)');
   }
 
   return results;

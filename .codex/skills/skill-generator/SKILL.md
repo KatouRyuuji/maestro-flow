@@ -249,7 +249,7 @@ Phase 5: Validation & Documentation
    - Generate: README.md (usage instructions)
    - Generate: validation-report.json (completeness check)
    - Output: Final documentation
-   - Close the Run: `maestro run check {run_id}` → repair any reported gate → `maestro run complete {run_id}`. Report success only after completion.
+   - Close the Run: `maestro run check {run_id}` → repair any reported gate → `maestro session done {run_id}`. Report success only after completion.
 ```
 
 **Execution Protocol**:

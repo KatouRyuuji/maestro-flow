@@ -276,10 +276,10 @@ maestro run brief <run_id> --workflow-root .
 # 5. LLM executes the workflow (core process)
 
 # 6. Complete the run
-maestro run complete <run_id> --workflow-root .
+maestro session done <run_id> --workflow-root .
 ```
 
-After `run complete`: re-infer lifecycle and surface the natural next step as a continuation hint — stepwise multi-step work proceeds by re-invoking `/maestro-next` or `/maestro -c`.
+After `session done`: re-infer lifecycle and surface the natural next step as a continuation hint — stepwise multi-step work proceeds by re-invoking `/maestro-next` or `/maestro -c`.
 
 For retained commands, output the exact slash command as a suggest-only result. Do not execute it, including under `-y`; the user invokes it explicitly in a subsequent message.
 

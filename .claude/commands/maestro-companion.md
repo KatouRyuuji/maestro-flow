@@ -24,7 +24,7 @@ contract:
 </required_reading>
 
 <purpose>
-Minimal-run execution channel. Full LLM capability with minimal protocol: one `run start` + one `run done`, evidence appended to `{run_dir}/evidence/companion-log.md`.
+Minimal-run execution channel. Full LLM capability with minimal protocol: one `session start` + one `session done`, evidence appended to `{run_dir}/evidence/companion-log.md`.
 
 Use when:
 - Intent is mechanically clear (no design decisions needed; file count irrelevant)
@@ -46,7 +46,7 @@ Mode detection: `--note` → note | `--log` → log | `--promote` → promote | 
 </context>
 
 <invariants>
-1. Only `run start` + `run done` — no prepare/brief/check/gates
+1. Only `session start` + `session done` — no prepare/brief/check/gates
 2. Evidence is append-only, non-formal (never enters gates or artifact registry)
 3. `--promote` delegates to `maestro-spec add` / knowhow capture, never writes directly
 4. No auto-orchestration — executes directly, never creates chains
@@ -61,7 +61,7 @@ Linear: create → explore → confirm → do → seal.
 ### 1. Create
 
 ```bash
-maestro run start "<intent>" --cmd companion --session YYYYMMDD-companion-<topic> --arg "<intent>" --workflow-root .
+maestro session start "<intent>" --chain companion --session YYYYMMDD-companion-<topic> --arg "<intent>" --workflow-root .
 ```
 
 Compatibility spelling for older callers: `maestro run create companion --session YYYYMMDD-companion-<topic> --intent "<intent>" --arg "<intent>" --workflow-root .`. The intent is Session metadata only; pass the same text with `--arg` because it is the required command arguments payload.
@@ -122,7 +122,7 @@ Append outcome:
 ```
 
 ```bash
-maestro run done <run_id> --verdict done --workflow-root .
+maestro session done <run_id> --verdict done --workflow-root .
 ```
 
 Display: `Companion done. Run: {run_id} | Evidence: {path}`

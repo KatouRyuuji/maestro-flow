@@ -5,7 +5,7 @@ This file is the single Session/Run lifecycle contract for every command, workfl
 
 Lifecycle verbs: **prepare → start/create → brief → check → done/complete**.
 
-Human-facing usage should prefer `session create`, `session done`, and `session chain edit`. The lower-level `run create` / `run complete` verbs remain the stable machine protocol and advanced compatibility surface.
+Human-facing usage should prefer `session create`, `session done`, and `session chain edit`. The lower-level `run create` / `session done` verbs remain the stable machine protocol and advanced compatibility surface.
 
 ## Authority and Reuse
 
@@ -78,7 +78,7 @@ maestro run create odyssey --session 20260715-odyssey-planex-todo -- --mode plan
 
 1. Run `maestro run check {run_id}` and repair any blocking artifact or exit gate it reports.
 2. When every gate is clean, `run check` emits a `finish` checklist — handoff frontmatter, knowledge record, conflict marking (supersede / contest stale spec-knowhow entries), verdict choice, plus norms declared by the workflow. Work through it before completing; it is prompt-layer guidance, never a blocking gate.
-3. Run `maestro session done {run_id} --session {session_id}`. The artifact gate is derived from the Run contract and evaluated automatically. Completion may return a structured `suggest_only` next action, but it never executes that action or creates another Run. `maestro run complete {run_id}` remains the machine-compatible spelling.
+3. Run `maestro session done {run_id} --session {session_id}`. The artifact gate is derived from the Run contract and evaluated automatically. Completion may return a structured `suggest_only` next action, but it never executes that action or creates another Run. `maestro session done {run_id}` remains the machine-compatible spelling.
    - `done` / `done-with-concerns` enforce required success artifacts and exit gates.
    - `needs-retry` / `blocked` close the failed attempt without requiring success artifacts; missing/invalid outputs remain diagnostic evidence, not a blocker to retrying or pausing the chain.
 4. The caller explicitly invokes `maestro session next --session {session_id}` only after accepting the suggestion and its preconditions. `session next` is the sole normal allocator for the next chain-bound Run.

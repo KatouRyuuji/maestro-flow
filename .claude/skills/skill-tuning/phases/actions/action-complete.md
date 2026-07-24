@@ -125,8 +125,8 @@ cp -r "${state.backup_dir}/${targetSkill.name}-backup"/* "${targetSkill.path}/"
 
   // Close the Run before declaring completion (see run-mode.md):
   //   maestro run check {run_id}     → repair any reported gate
-  //   maestro run complete {run_id}
-  // Mark status 'completed' only after `run complete` succeeds.
+  //   maestro session done {run_id}
+  // Mark status 'completed' only after `session done` succeeds.
 
   // Update final state
   return {

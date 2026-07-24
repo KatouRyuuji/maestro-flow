@@ -69,7 +69,7 @@ $ARGUMENTS — Parse tier and scope:
 
 **GATE 3: Report → Completion**
 - REQUIRED: Severity matrix produced with file:line references and remediation.
-- REQUIRED: Declared typed output registered by `maestro run complete`.
+- REQUIRED: Declared typed output registered by `maestro session done`.
 - BLOCKED if missing: do not emit completion status without severity matrix.
 
 **Phase 1: Reconnaissance**
@@ -179,7 +179,7 @@ Summary: {total} findings ({critical} critical, {high} high, {medium} medium, {l
 
 **Register artifact on completion:**
 
-Write the declared security findings under `{run_dir}/outputs/` and the human summary to `{run_dir}/report.md`. `maestro run complete` performs registration automatically; the model never edits an artifact registry.
+Write the declared security findings under `{run_dir}/outputs/` and the human summary to `{run_dir}/report.md`. `maestro session done` performs registration automatically; the model never edits an artifact registry.
 </execution>
 
 <completion>
@@ -200,7 +200,7 @@ Status mapping:
 
 End the step by calling the CLI (no text block output):
 ```
-maestro run complete --session {session_id} --verdict {VERDICT} [--evidence {path}]
+maestro session done --session {session_id} --verdict {VERDICT} [--evidence {path}]
 ```
 (run-id 可省略 — 自动解析当前 running 步)
 

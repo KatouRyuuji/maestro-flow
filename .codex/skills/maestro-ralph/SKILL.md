@@ -43,7 +43,7 @@ Only `-y`, `-c`, and `--amend` are accepted. All remaining text is intent. Execu
 <invariants>
 1. Session is a topic grouping/index; execution and immutable outputs belong to Runs.
 2. `session.json.orchestration` is the only chain/goal/decision authority; never edit protocol files directly.
-3. Each execution step allocates one Run via `run next`, loads it via `run brief`, executes and checks it, then the orchestrator completes it.
+3. Each execution step allocates one Run via `session next`, loads it via `run brief`, executes and checks it, then the orchestrator completes it.
 4. Skill proposes `chain-proposal/1.0`; Ralph evaluates; Runtime applies it atomically with the producing Run.
 5. Same-Session sealed outputs enter only through the canonical upstream map.
 6. Decision evaluation is read-only and lands only through `run decide`.
@@ -92,13 +92,13 @@ Use `maestro run recall maestro-ralph --intent "{intent}" --json` only as read-o
 
 Write chain JSON to a temporary file and call:
 
-`maestro run start "{intent}" --id {slug} --chain-file {path} --no-dispatch`
+`maestro session start "{intent}" --id {slug} --chain-file {path} --no-dispatch`
 
 Delete the file after success.
 
 ### Execute one Run
 
-Follow `orchestrator-run-loop.md`: `run status` → `run next --json` → `run brief` → execute → `run check` → drift/proposal policy → `run done`. Never allocate the next Run before the prior completion is sealed.
+Follow `orchestrator-run-loop.md`: `run status` → `run next --json` → `run brief` → execute → `run check` → drift/proposal policy → `session done`. Never allocate the next Run before the prior completion is sealed.
 
 ### Evaluate
 

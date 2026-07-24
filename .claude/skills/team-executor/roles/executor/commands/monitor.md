@@ -165,7 +165,7 @@ All tasks completed (no pending, no in_progress)
   +- Run lifecycle completion (the upstream team-coordinate Run must be sealed here):
   |   - Read run_id from team-session.json.run.run_id (created upstream, not by executor)
   |   - Write {run_dir}/report.md with frontmatter (verdict/summary/concerns)
-  |   - Run `maestro run complete <run_id>`
+  |   - Run `maestro session done <run_id>`
   |   - If complete fails: fix the blocking gate and retry once; still failing -> do NOT archive/clean - keep the team active (status=paused) and report the blocking gate
   |
   +- Generate pipeline summary (deliverables, stats, duration)

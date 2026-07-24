@@ -273,7 +273,7 @@ synthesize(best, top_k) → best-solution.md
 Run lifecycle completion (before displaying results):
 - Read run_id from team-session.json.run.run_id
 - Write {run_dir}/report.md with frontmatter (verdict/summary/concerns)
-- Run `maestro run complete <run_id>`
+- Run `maestro session done <run_id>`
 - If complete fails: fix the blocking gate and retry once; still failing -> do NOT archive/clean - keep the team active (status=paused) and report the blocking gate
 
 展示最终结果 + 交互选择:

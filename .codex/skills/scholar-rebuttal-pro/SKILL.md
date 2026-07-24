@@ -175,7 +175,7 @@ Phase 5: Quality Validation
       └─ Output: qualityScore, improvements, ${output_base}/quality-report.md, ${output_base}/improvement-suggestions.json
 
 Run Closure (see run-mode.md):
-   └─ maestro run check {run_id} → repair any reported gate → maestro run complete {run_id}
+   └─ maestro run check {run_id} → repair any reported gate → maestro session done {run_id}
       (Report success only after run complete.)
 
 Return:
@@ -285,7 +285,7 @@ Phase 5: Quality Validation
     | Files: ${output_base}/quality-report.md, ${output_base}/improvement-suggestions.json
     |
 [Run Closure]  (see run-mode.md)
-    | maestro run check {run_id} → repair gates → maestro run complete {run_id}
+    | maestro run check {run_id} → repair gates → maestro session done {run_id}
     |
 Return summary to user
 ```
@@ -374,7 +374,7 @@ After each phase completes:
 
 **Run Closure**:
 - [ ] `maestro run check {run_id}` clean (repair any reported gate)
-- [ ] `maestro run complete {run_id}` succeeded before reporting success
+- [ ] `maestro session done {run_id}` succeeded before reporting success
 
 ## Run Closure
 
@@ -384,7 +384,7 @@ After Phase 5 completes:
 
 1. `maestro run check {run_id}` — repair any blocking artifact or exit gate it reports.
 2. Optionally write `{run_dir}/report.md` (verdict + summary of the rebuttal and quality score).
-3. `maestro run complete {run_id}`. Report success only once the Run is completed.
+3. `maestro session done {run_id}`. Report success only once the Run is completed.
 
 ## Related Commands
 

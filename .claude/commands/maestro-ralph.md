@@ -54,11 +54,11 @@ All remaining text is intent. No engine, roadmap, script, depth, role, tier, pla
 6. **Runtime mutation authority** — session.json/run.json are never written directly; normal flow uses only `maestro run ...`.
 7. **Proposal governance** — Skill proposes, Ralph evaluates budget/confidence/intent, Runtime applies atomically with the producing Run.
 8. **No prompt fix templates** — fix/review/goal gaps dispatch a Skill that may emit a proposal.
-9. **Decision receipts are single-source** — decisions land through `run decide`, never direct append.
+9. **Decision receipts are single-source** — decisions land through `session decide`, never direct append.
 10. **Auto is bounded** — `-y` cannot bypass high risk, confidence <60, ambiguity, escalation, failed gates or reground halt.
 11. **Compatibility commands are out of band** — no Ralph/Session CLI is called or recommended.
 12. **Terminal means terminal** — sealed/archived returns `CHAIN_COMPLETE`, never resume.
-13. **Decision is mandatory** — every Ralph-created chain contains at least one formal decision node before Session seal; Run completion never substitutes for `run decide`.
+13. **Decision is mandatory** — every Ralph-created chain contains at least one formal decision node before Session seal; Run completion never substitutes for `session decide`.
 14. **Completion and decision both continue** — after successful `run complete|done --json` or `run decide --json`, immediately execute any satisfiable `continuation.authority=automatic` action in the same turn.
 </invariants>
 
@@ -133,7 +133,7 @@ Build outcome-oriented decomposition. For broad work, boundary clarification rem
 
 Write the chain definition to a temporary file, then call:
 
-`maestro run start "{intent}" --id {slug} --chain-file {path} --no-dispatch`
+`maestro session start "{intent}" --id {slug} --chain-file {path} --no-dispatch`
 
 Delete the file after success. The host runtime supplies platform/executor metadata. Enter the shared loop with the returned Session locator.
 
@@ -155,7 +155,7 @@ CONFIDENCE: high|medium|low
 
 Parse failure becomes `fix`, low confidence, `parse_failed=true`. Confidence below 60 cannot proceed. Retry budget exhaustion escalates. Goal audit compares every pending goal's `done_when` against evidence; missing evidence means unmet. Reground compares cumulative handoffs against intent and boundary; confident drift halts even under `-y`.
 
-Apply the result through `maestro run decide ... --json`. Read its canonical continuation exactly as for `run complete`: `proceed` immediately advances to the next Run, next decision, or seal; `escalate` enters audited recovery; `fix` requires new repair evidence before another evaluation. Any chain change is produced by an executable Skill as `chain-proposal/1.0` and accepted through the producing Run's `run done --apply-proposal`.
+Apply the result through `maestro session decide ... --json`. Read its canonical continuation exactly as for `session done`: `proceed` immediately advances to the next Run, next decision, or seal; `escalate` enters audited recovery; `fix` requires new repair evidence before another evaluation. Any chain change is produced by an executable Skill as `chain-proposal/1.0` and accepted through the producing Run's `run done --apply-proposal`.
 
 ### A_FAIL
 
@@ -165,15 +165,15 @@ Apply the result through `maestro run decide ... --json`. Read its canonical con
 
 ### A_RECOVER
 
-Only explicit `-c` enters recovery. Use `run status`, obtain user disposition for every exact blocker, call `run recover` per blocker, then `run recover --resume`. Resume does not allocate a Run.
+Only explicit `-c` enters recovery. Use `session status`, obtain user disposition for every exact blocker, call `run recover` per blocker, then `run recover --resume`. Resume does not allocate a Run.
 
 ### A_AMEND
 
-Read `ralph-amend-goal.md`. Snapshot with `run status`; perform read-only impact analysis; high risk always asks. Commit the full decomposition via `run edit --decomposition-file -`; pending-tail changes come from a planning Skill proposal.
+Read `ralph-amend-goal.md`. Snapshot with `session status`; perform read-only impact analysis; high risk always asks. Commit the full decomposition via `run edit --decomposition-file -`; pending-tail changes come from a planning Skill proposal.
 
 ### A_DONE
 
-When every execution Run is sealed, every decision is terminal, every goal is done and Session gates are clean, call `maestro run seal-session {session_id} --summary "..."`.
+When every execution Run is sealed, every decision is terminal, every goal is done and Session gates are clean, call `maestro session seal {session_id} --summary "..."`.
 
 </actions>
 

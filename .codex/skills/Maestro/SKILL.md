@@ -34,7 +34,7 @@ version: 0.5.55
 </deferred_reading>
 
 <purpose>
-Turn a user intent into the smallest sufficient Skill chain, create one canonical topic Session through `maestro run start --chain-file`, then execute the shared Run loop. Static versus dynamic is not a mode: each Skill contract decides whether it emits a typed chain proposal.
+Turn a user intent into the smallest sufficient Skill chain, create one canonical topic Session through `maestro session start --chain-file`, then execute the shared Run loop. Static versus dynamic is not a mode: each Skill contract decides whether it emits a typed chain proposal.
 </purpose>
 
 <interface>
@@ -105,14 +105,14 @@ Goals describe outcomes, not lifecycle stages.
 
 Write chain JSON to a temporary file and call:
 
-`maestro run start "{intent}" --id maestro-{slug} --chain-file {path} --no-dispatch`
+`maestro session start "{intent}" --id maestro-{slug} --chain-file {path} --no-dispatch`
 
-Delete the temporary file after success. Do not inline unescaped JSON. Runtime resolves commands when `run next` allocates each execution Run.
+Delete the temporary file after success. Do not inline unescaped JSON. Runtime resolves commands when `session next` allocates each execution Run.
 
 ### Continue, execute and adapt
 
 - Locate with read-only `run recall`, confirm through `run status`, then follow `orchestrator-run-loop.md`.
-- Per Run: `run next --json` → `run brief` → execute → `run check` → `run done`.
+- Per Run: `run next --json` → `run brief` → execute → `run check` → `session done`.
 - Accept exactly one valid typed proposal through `run done ... --apply-proposal`; reject by omission and note; revise on the same Run.
 - Decision evaluators are read-only and persist only through `run decide`.
 - Paused recovery uses `run recover`; amendment uses `run edit --decomposition-file -` after the deferred audit protocol.

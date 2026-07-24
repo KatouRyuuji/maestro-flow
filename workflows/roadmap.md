@@ -148,7 +148,7 @@ Do NOT write to `.workflow/roadmap.md` — roadmap is a Run artifact, not a proj
 
 ### Session Registration
 
-Artifact registration and state updates (session DAG registration, activation) are handled by `maestro run complete`. **GATE: sessions-registered** — every session written to `state.json.sessions[]` with `roadmap_artifact_id` and `seed_ref`.
+Artifact registration and state updates (session DAG registration, activation) are handled by `maestro session done`. **GATE: sessions-registered** — every session written to `state.json.sessions[]` with `roadmap_artifact_id` and `seed_ref`.
 
 ---
 
@@ -159,7 +159,7 @@ After outputs are written, confirm which root session to activate via `AskUserQu
 - Choose a different session from the DAG
 - Defer activation (keep all sessions `planned`)
 
-Skip in auto mode (`-y`) — select the first root session automatically. The chosen activation is applied by the runtime via `maestro run complete`.
+Skip in auto mode (`-y`) — select the first root session automatically. The chosen activation is applied by the runtime via `maestro session done`.
 
 ---
 

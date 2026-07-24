@@ -151,10 +151,10 @@ Before reporting completion, close the Run:
 
 ```bash
 maestro run check {run_id}     # repair any reported gate
-maestro run complete {run_id}
+maestro session done {run_id}
 ```
 
-Report success only after `run complete` succeeds.
+Report success only after `session done` succeeds.
 
 ### Step 5.5: Display Summary to User
 
@@ -178,4 +178,4 @@ Backups: {backupDir}/
 
 - **Files**: `final-report.md`
 - **State**: `status = completed`
-- **Next**: Run completed via `maestro run complete`. Return control to user.
+- **Next**: Run completed via `maestro session done`. Return control to user.

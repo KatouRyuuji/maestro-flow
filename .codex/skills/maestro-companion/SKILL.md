@@ -35,7 +35,7 @@ version: 0.5.55
 </required_reading>
 
 <purpose>
-Minimal-run execution channel. Full LLM capability (read/write files, run commands, search code, edit code) with minimal protocol overhead: one `run create` + one `run complete`, continuous recording to `{run_dir}/evidence/companion-log.md`.
+Minimal-run execution channel. Full LLM capability (read/write files, run commands, search code, edit code) with minimal protocol overhead: one `run create` + one `session done`, continuous recording to `{run_dir}/evidence/companion-log.md`.
 
 Use when:
 - Intent is mechanically clear — user knows exactly what to change, no design decisions or multi-angle analysis needed (file count is irrelevant; a 20-file rename is still lightweight)
@@ -67,7 +67,7 @@ $ARGUMENTS — intent text + optional flags.
 </context>
 
 <invariants>
-1. **Minimal-run lifecycle** — single Run in a chainless Session. Only `run create` + `run complete` lifecycle verbs apply. No prepare/brief/check or artifact gates (consumes/produces/gates all empty); required command arguments are still validated by runtime
+1. **Minimal-run lifecycle** — single Run in a chainless Session. Only `run create` + `session done` lifecycle verbs apply. No prepare/brief/check or artifact gates (consumes/produces/gates all empty); required command arguments are still validated by runtime
 2. **--note is append-only** — never overwrite or reorder existing entries
 3. **--promote delegates** — spec/knowhow promotion routes through `maestro-spec add` / `maestro-manage knowledge capture`, never writes directly
 4. **Evidence is non-formal** — `{run_dir}/evidence/companion-log.md` never enters gates or artifact registry
@@ -83,7 +83,7 @@ S_NOTE    — Append structured note to active companion doc
 S_PROMOTE — Review companion/run outputs, promote insights to spec/knowhow
 S_CTX     — Create minimal run, load context, open evidence log
 S_EXEC    — Execute the task directly; record each meaningful step
-S_SEAL    — `run complete`, summarize outcome, offer optional promote
+S_SEAL    — `session done`, summarize outcome, offer optional promote
 </states>
 
 <transitions>
@@ -176,7 +176,7 @@ Wrap up the companion run:
 
 2. **Complete the run**:
    ```bash
-   maestro run complete <run_id> --verdict done --workflow-root .
+   maestro session done <run_id> --verdict done --workflow-root .
    ```
 
 3. **Optional promote offer** — if the work produced reusable insights (patterns, decisions, pitfalls):
