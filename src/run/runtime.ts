@@ -3436,7 +3436,7 @@ export function briefRun(
         ? { path: content.workflow.path, content: tx(content.workflow.raw) }
         : null,
       run_mode: content.runMode
-        ? { path: content.runMode.path, content: tx(content.runMode.raw) }
+        ? { path: content.runMode.path, hash: protocolSha256(content.runMode.raw) }
         : null,
       refs: content.refs,
       goal_mode: resolveGoalMode(content.prepare?.raw, resolvedPlatform),

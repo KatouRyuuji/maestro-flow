@@ -417,6 +417,8 @@ const briefAnchorSchema = z.object({
   signals: z.string().nullable(),
 }).strict();
 const briefGuidancePartSchema = z.object({ path: z.string(), content: z.string() }).strict();
+/** run-mode.md is loaded via Skill @required_reading, not brief injection. Brief carries only a path + hash for freshness. */
+const briefRunModeRefSchema = z.object({ path: z.string(), hash: z.string().nullable() }).strict();
 const briefGuidanceDriftKeySchema = z.enum(['command', 'resolved_prompt', 'prepare', 'workflow', 'run_mode']);
 
 /**
@@ -453,7 +455,7 @@ export const briefResultV10Schema = z.object({
   guidance: z.object({
     prepare: briefGuidancePartSchema.nullable(),
     workflow: briefGuidancePartSchema.nullable(),
-    run_mode: briefGuidancePartSchema.nullable(),
+    run_mode: briefRunModeRefSchema.nullable(),
     refs: z.array(z.object({ path: z.string(), when: z.string() }).strict()),
     goal_mode: z.object({ platform: z.string(), instructions: z.string() }).strict().nullable(),
     freshness: z.object({

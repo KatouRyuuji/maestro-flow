@@ -27,7 +27,7 @@ import {
   sealSession,
 } from './runtime.js';
 import { registerRunCommand } from '../commands/run.js';
-import { resolveCommandSource } from './contract.js';
+import { invalidateResolutionCache, resolveCommandSource } from './contract.js';
 import { migrateV1toV2, readStateJson, writeStateJson } from '../utils/state-schema.js';
 
 const roots: string[] = [];
@@ -914,6 +914,7 @@ gates:
     const created = createRun({ projectRoot, command: 'drift-demo', intent: 'drift-safe brief' });
 
     writeFileSync(join(workflowDir, 'drift-demo.md'), '# Workflow\n\nChanged guidance.\n', 'utf8');
+    invalidateResolutionCache();
     const store = new SessionStore(projectRoot);
     store.update(created.session_id, draft => {
       draft.session.orchestration.decision_points.push({
@@ -936,7 +937,7 @@ gates:
 
     const brief = briefRun(projectRoot, created.run_id, created.session_id);
     expect(brief.guidance.workflow?.content).toContain('Changed guidance');
-    expect(brief.guidance.run_mode?.content).toContain('## Completion');
+    expect(brief.guidance.run_mode?.hash).toBeTruthy();
     expect(brief.guidance.freshness).toMatchObject({ status: 'changed', changed: ['workflow'] });
     expect(brief.session.open_decisions).toEqual([
       expect.objectContaining({ point_id: 'DP-BRIEF', status: 'pending' }),
