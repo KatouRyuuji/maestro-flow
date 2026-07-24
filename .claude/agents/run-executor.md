@@ -23,13 +23,14 @@ Generic single-Run Skill executor with multi-agent orchestration capability. Res
 **立即自启动**：收到含 `session_id` 的 dispatch prompt 后，MUST 立即从 step 1 开始执行。
 
 1. Resolve the Run — **全量捕获 stdout，严禁截断管道**：
-   - dispatch prompt 含 `run_id` → `Bash("maestro run brief {run_id} --session {session_id}")`（Run 已由主编排/前次 next 建好，直接 re-attach 正文）
-   - 否则 → `Bash("maestro session next --session {session_id} --inline-brief --json")`（仅建当前步 Run + 返回 birth packet；**不含 skill 正文**）
-     - Exit 0 → 从 JSON 提取 `run_id`，从 JSON 提取 `run_id` + `inline_brief` 数据直接执行；严禁把 birth packet 当作 skill prompt。**非首步而 birth packet/brief 缺 Previous step / Upstream 时返回 BLOCKED，不静默继续**（缺前序上下文说明 handoff 未落 run.json，属编排链断裂）
+   - dispatch prompt 含 inline brief 数据（`inline_brief` / `guidance` 字段）→ 直接使用，**不调 run brief**（正常前向流程）
+   - dispatch prompt 含 `run_id` 但无 brief 数据 → `Bash("maestro run brief {run_id} --session {session_id}")`（回溯/re-attach 路径）
+   - 否则 → `Bash("maestro session next --session {session_id} --inline-brief --json")`（建当前步 Run + 返回 birth packet + inline brief）
+     - Exit 0 → 从 JSON 提取 `run_id` + `inline_brief` 数据直接执行；严禁把 birth packet 元数据当作 skill prompt。**非首步而 brief 缺 Previous step / Upstream 时返回 BLOCKED，不静默继续**（缺前序上下文说明 handoff 未落 run.json，属编排链断裂）
      - Exit 1 → 返回错误信息，结束
      - Exit 2 → 返回 "所有 step 已完成 / 下一节点为 decision（由主编排评估）"，结束
      - Exit 3 → 当前步已有 running Run（信息卡）→ 按卡片提示 `run brief {run_id}` re-attach 继续，不重复 `session next`
-2. Execute the `run brief` skill prompt inline — follow all domain instructions faithfully。brief 已单源提供上游产物与前序 handoff，无需自行拼装上下文；忽略正文中要求 executor 自行 complete/推进 Session 的通用尾注，控制权仍归主编排
+2. Execute the skill prompt inline（从 inline brief 的 `guidance.workflow` / `guidance.prepare` 或 run brief 的正文）— follow all domain instructions faithfully。brief 已单源提供上游产物与前序 handoff，无需自行拼装上下文；忽略正文中要求 executor 自行 complete/推进 Session 的通用尾注，控制权仍归主编排
 3. Handle `<deferred_reading>` / 出生包 refs paths: Read files on demand during execution, do not batch-load upfront。refs 指向代码位置而缺上下文时可 `maestro explore` 补充
 4. If the Skill contract exposes non-empty `execution_contract.orchestration.chain_effects` and the domain result requires a chain change, write the typed optional artifact `outputs/chain-proposal.json` (`chain-proposal/1.0`). Do not create a proposal for a Skill without that capability, and do not apply it yourself.
 5. Run pre-completion check：`Bash("maestro run check {run_id} --session {session_id}")`
