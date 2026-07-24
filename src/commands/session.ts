@@ -3,7 +3,12 @@ import { resolve } from 'node:path';
 import type { Command } from 'commander';
 import { migrateAllSessions, migrateSession } from '../run/migrate.js';
 import { SessionStore } from '../run/store.js';
-import { sealSession } from '../run/runtime.js';
+import { completeRunWithVerdict, sealSession, type CompletionVerdict } from '../run/runtime.js';
+import { runNextStep } from '../run/next.js';
+import { runDecide, type DecisionConfidence, type DecisionVerdict } from '../run/decide.js';
+import { continuationAfterDecide } from '../run/continuation.js';
+import { buildGraph, renderGraphHuman } from '../run/graph.js';
+import { resolveRunningRun } from '../run/resolve.js';
 import { targetPlatformSchema, type SessionState } from '../run/schemas.js';
 import {
   chainDefinitionSchema,
@@ -202,8 +207,8 @@ function addMutationOptions(command: Command): Command {
 
 export function registerSessionCommand(program: Command): void {
   const session = program
-    .command('session', { hidden: true })
-    .description('Session topic grouping/index, canonical paused recovery, and chain administration');
+    .command('session')
+    .description('Session orchestration: chain stepping, Run management, decisions, and visualization');
 
   const addTransitionOptions = (command: Command): Command => command
     .requiredOption('--session <id>', 'exact Session ID')
@@ -634,6 +639,193 @@ export function registerSessionCommand(program: Command): void {
         else print(result);
       } catch (error) {
         if (opts.json) machineError('meta-update', error, opts); else reportError(error);
+      }
+    });
+
+  // ── Step-driving commands (migrated from maestro run) ─────────────────────
+
+  const VALID_VERDICTS: CompletionVerdict[] = ['done', 'done-with-concerns', 'needs-retry', 'blocked'];
+  const parseVerdict = (raw: string | undefined): CompletionVerdict | null => {
+    const normalized = (raw ?? 'done').trim().toLowerCase().replace(/_/g, '-');
+    return (VALID_VERDICTS as string[]).includes(normalized) ? (normalized as CompletionVerdict) : null;
+  };
+
+  session
+    .command('next')
+    .description('Advance chain: create the next pending Run and emit a birth packet')
+    .option('--session <id>', 'explicit Session ID')
+    .option('--inline-brief', 'include full brief-level guidance in the response (normal forward flow)')
+    .option('--pick <step-id>', 'advance a specific pending execution step instead of the queue head')
+    .option('--json', 'emit structured JSON instead of the human-readable birth packet')
+    .option('--execution-owner <owner>', 'lease execution owner')
+    .option('--owner-epoch <epoch>', 'lease owner epoch', Number.parseInt)
+    .option('--lease-id <id>', 'lease identifier for concurrency safety')
+    .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
+    .action((opts: {
+      session?: string;
+      inlineBrief?: boolean;
+      pick?: string;
+      json?: boolean;
+      executionOwner?: string;
+      ownerEpoch?: number;
+      leaseId?: string;
+      workflowRoot: string;
+    }) => {
+      try {
+        const outcome = runNextStep(resolve(opts.workflowRoot), {
+          sessionId: opts.session,
+          pick: opts.pick,
+          json: opts.json,
+          inlineBrief: opts.inlineBrief,
+          executionOwner: opts.executionOwner,
+          ownerEpoch: opts.ownerEpoch,
+          leaseId: opts.leaseId,
+        });
+        process.stdout.write(outcome.message + '\n');
+        process.exitCode = outcome.exitCode;
+      } catch (error) {
+        reportError(error);
+      }
+    });
+
+  session
+    .command('done [run-id]')
+    .description('Complete a Run step and advance the chain (returns continuation)')
+    .option('--session <id>', 'explicit Session ID')
+    .option('--verdict <verdict>', `completion verdict: ${VALID_VERDICTS.join('|')} (default done)`)
+    .option('--summary <text>', 'handoff.summary fallback when the report frontmatter left it empty')
+    .option('--reason <text>', 'blocker reason (blocked) merged into handoff concerns')
+    .option('--note <text>', 'supplementary concern merged into the handoff (repeatable)', collect, [])
+    .option('--decision <text>', 'decision appended to handoff.decisions (repeatable)', collect, [])
+    .option('--evidence <path>', 'run-relative evidence path (repeatable)', collect, [])
+    .option('--artifact <path>', 'run-relative artifact path (repeatable)', collect, [])
+    .option('--chain-proposal <path>', 'run-relative chain-proposal artifact applied atomically with completion')
+    .option('--apply-proposal', 'apply the single validated chain-proposal discovered in this Run')
+    .option('--json', 'emit structured JSON')
+    .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
+    .action((runIdArg: string | undefined, opts: {
+      session?: string;
+      verdict?: string;
+      summary?: string;
+      reason?: string;
+      note: string[];
+      decision: string[];
+      evidence: string[];
+      artifact: string[];
+      chainProposal?: string;
+      applyProposal?: boolean;
+      json?: boolean;
+      workflowRoot: string;
+    }) => {
+      try {
+        const projectRoot = resolve(opts.workflowRoot);
+        const verdict = parseVerdict(opts.verdict);
+        if (!verdict) throw new Error(`invalid --verdict "${opts.verdict}"; valid: ${VALID_VERDICTS.join(', ')}`);
+        const store = new SessionStore(projectRoot);
+        let sessionId: string;
+        let runId: string;
+        if (runIdArg) {
+          const located = store.findRun(runIdArg, opts.session);
+          sessionId = located.sessionId;
+          runId = runIdArg;
+        } else {
+          const resolved = resolveRunningRun(projectRoot, store, opts.session);
+          if (resolved.kind !== 'ok') throw new Error(resolved.message);
+          sessionId = resolved.sessionId;
+          runId = resolved.step.run_id;
+        }
+        const result = completeRunWithVerdict(projectRoot, runId, sessionId, {
+          verdict,
+          notes: opts.note,
+          decisions: opts.decision,
+          extraArtifacts: [...opts.artifact, ...opts.evidence],
+          summaryFallback: opts.summary,
+          reason: opts.reason,
+          chainProposal: opts.chainProposal,
+          applyChainProposal: opts.applyProposal,
+        });
+        print(result);
+        process.stderr.write(`next: ${result.next.command}\n      ${result.next.reason}\n`);
+        if (!result.run_sealed) process.exitCode = 1;
+      } catch (error) {
+        reportError(error);
+      }
+    });
+
+  session
+    .command('decide <point-id>')
+    .description('Record a decision point verdict and advance the chain')
+    .requiredOption('--session <id>', 'Session ID')
+    .requiredOption('--verdict <verdict>', 'decision verdict: proceed|fix|escalate')
+    .requiredOption('--confidence <level>', 'evaluation confidence: high|medium|low')
+    .option('--summary <text>', 'one-line rationale')
+    .option('--evidence <path>', 'evidence path/reference')
+    .option('--request-id <id>', 'idempotent decision request ID')
+    .option('--expected-identity-revision <n>', 'expected Session identity revision', Number.parseInt)
+    .option('--expected-activity-revision <n>', 'expected Session activity revision', Number.parseInt)
+    .option('--execution-owner <owner>', 'lease execution owner')
+    .option('--owner-epoch <epoch>', 'lease owner epoch', Number.parseInt)
+    .option('--lease-id <id>', 'lease identifier')
+    .option('--json', 'emit one run-response/1.0 envelope on stdout')
+    .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
+    .action((pointId: string, opts: {
+      session: string;
+      verdict: string;
+      confidence: string;
+      summary?: string;
+      evidence?: string;
+      requestId?: string;
+      json?: boolean;
+      workflowRoot: string;
+    }) => {
+      try {
+        const verdict = opts.verdict.trim().toLowerCase();
+        if (!['proceed', 'fix', 'escalate'].includes(verdict)) {
+          throw new Error(`invalid --verdict "${opts.verdict}"; valid: proceed, fix, escalate`);
+        }
+        const confidence = opts.confidence.trim().toLowerCase();
+        if (!['high', 'medium', 'low'].includes(confidence)) {
+          throw new Error(`invalid --confidence "${opts.confidence}"; valid: high, medium, low`);
+        }
+        const result = runDecide(resolve(opts.workflowRoot), opts.session, pointId, {
+          verdict: verdict as DecisionVerdict,
+          confidence: confidence as DecisionConfidence,
+          summary: opts.summary,
+          evidence: opts.evidence,
+          transition: mutationTransitionOptions(opts),
+        });
+        if (opts.json) {
+          machineSuccess(
+            'decide' as never,
+            result,
+            opts.session,
+            { status: result.transition.status, transition_id: result.transition.transition_id, request_id: result.transition.request_id },
+            { suggest_only: true, command: result.next.command, reason: result.next.reason },
+          );
+        } else {
+          print(result);
+          process.stderr.write(`next: ${result.next.command}\n      ${result.next.reason}\n`);
+        }
+      } catch (error) {
+        if (opts.json) machineError('decide' as never, error, opts); else reportError(error);
+      }
+    });
+
+  session
+    .command('graph [session-id]')
+    .description('Show chain visualization: steps, decisions, goals, and position')
+    .option('--json', 'emit structured JSON')
+    .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
+    .action((sessionId: string | undefined, opts: { json?: boolean; workflowRoot: string }) => {
+      try {
+        const graph = buildGraph(resolve(opts.workflowRoot), sessionId);
+        if (opts.json) {
+          print(graph);
+        } else {
+          console.log(renderGraphHuman(graph));
+        }
+      } catch (error) {
+        reportError(error);
       }
     });
 }

@@ -112,6 +112,8 @@ export interface ProjectSessionEntry {
   depends_on: string[];
   roadmap_artifact_id: string | null;
   seed_ref: string | null;
+  /** ISO timestamp of the last session next/done activity (multi-session fast path). */
+  last_activity?: string;
 }
 
 export interface StateJsonV2 {

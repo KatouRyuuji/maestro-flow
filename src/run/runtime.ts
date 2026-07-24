@@ -351,6 +351,13 @@ export interface CompleteNextSuggestion {
 }
 
 export interface CompleteRunOptions {
+  /**
+   * When true, the caller asserts that `run check` already passed clean and
+   * outputs/ has not been modified since. The completion engine may skip
+   * gate re-evaluation (but still scans for artifact registration).
+   * TODO: implement skip logic in prepareCompleteInputs.
+   */
+  checkClean?: boolean;
   /** Extra concerns merged (append + dedupe) into the derived handoff. */
   notes?: string[];
   /** Run-relative paths registered as evidence artifacts beyond the outputs scan. */
@@ -2115,6 +2122,17 @@ export function checkRun(projectRoot: string, runId: string, sessionId?: string)
     if (run.status === 'created') run.status = 'running';
     tx.writeRun(run);
     const clean = gates.blocking.length === 0 && scan.errors.length === 0;
+    // Write a .check_clean marker so `session done --check-clean` can skip
+    // gate re-evaluation when outputs/ has not been modified since.
+    if (clean) {
+      try {
+        writeFileSync(
+          join(store.runDir(located.sessionId, runId), '.check_clean'),
+          JSON.stringify({ at: new Date().toISOString(), gates_revision: bundle.gates.revision }),
+          'utf8',
+        );
+      } catch { /* best-effort marker */ }
+    }
     return {
       session_id: located.sessionId,
       run_id: runId,
@@ -3028,17 +3046,38 @@ export function summarizeRunMode(raw: string): string {
 
 // ---------------------------------------------------------------------------
 // Goal mode — prepare frontmatter 声明 `goal: true` 的 step，加载时按平台附带
-// goal 创建模式。用户选择加载带标志的 step 即构成显式启用（满足 codex goal
-// 工具「仅用户明确要求时使用」的约束）。平台无对应工具时返回 null。
+// goal 设置提示词。Goal 工具是 LLM 内置工具，不检测可用性——LLM 能调就调。
 // ---------------------------------------------------------------------------
 
 const GOAL_MODE_BLOCKS: Partial<Record<TargetPlatform, string>> = {
+  claude: [
+    'Goal 模式（该 step 声明 goal 标志）：',
+    '1. Session 创建后，输出 Goal Prompt 供用户设定终止条件（非阻塞，继续执行）：',
+    '   📋 可随时复制以下 /goal 设定终止条件（执行过程中输入即可）：',
+    '   /goal 完成以下子目标：',
+    '   {逐条列出 decomposition.goals 中 status!=superseded 的 id: goal — 完成条件: done_when}',
+    '   直到 session 的 decomposition.goals 全部 done 且 chain steps 全部 sealed 才停。',
+    '2. 用户输入 /goal 后由 harness 管理终止条件，LLM 无需额外操作。',
+    '3. 若用户未输入 /goal，不影响执行流程。',
+  ].join('\n'),
   codex: [
-    'Goal 模式（该 step 声明 goal 标志，用户加载即为明确启用）：',
-    '1. Run 开始时 `create_goal({ objective: "{step}: <用户意图一句话>" })`（用户给定预算时加 `token_budget`）；单一活跃 goal，若已有未完成 goal 先收口。',
-    '2. 过程中可用 `get_goal({})` 查看已用时间与剩余 token 预算。',
-    '3. Run 完成时 `update_goal({ status: "complete" })`；同一阻塞持续无法推进时 `update_goal({ status: "blocked" })`。',
-    '4. 完成后向用户报告工具返回的最终 token 用量。',
+    'Goal 模式（该 step 声明 goal 标志）：',
+    '1. Session 创建后 call `create_goal({ objective: "{intent}", success_criteria: [decomposition.goals 各 done_when] })`；单一活跃 goal，若已有未完成 goal 先收口。',
+    '2. 过程中可用 `get_goal({})` 查看进度与剩余 token 预算。',
+    '3. 全部子目标完成时 `update_goal({ status: "complete" })`；阻塞时 `update_goal({ status: "blocked" })`。',
+    '4. 完成后向用户报告最终状态。',
+  ].join('\n'),
+  pi: [
+    'Goal 模式（该 step 声明 goal 标志）：',
+    '1. Session 创建后 call `goal({ action: "create", objective: "{intent}" })`。',
+    '2. 过程中可用 `goal({ action: "get" })` 查看状态。',
+    '3. 全部子目标完成时 `goal({ action: "complete", summary: "..." })`。',
+  ].join('\n'),
+  'agents-standard': [
+    'Goal 模式（该 step 声明 goal 标志）：',
+    '1. Session 创建后 call `create_task({ subject: "Session: {intent}", description: "完成条件: {decomposition.goals 各 done_when 汇总}" })` 作为 session goal。',
+    '2. 各子目标完成时 update_task 标记 completed。',
+    '3. 全部完成时 update_task session goal 为 completed。',
   ].join('\n'),
 };
 

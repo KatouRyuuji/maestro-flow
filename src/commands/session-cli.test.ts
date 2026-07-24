@@ -66,15 +66,19 @@ describe('maestro session create', () => {
   it('registers create + chain subcommands', () => {
     const p = program();
     const session = p.commands.find(c => c.name() === 'session');
-    expect(session?.description()).toContain('topic grouping/index');
+    expect(session?.description()).toContain('Session orchestration');
     expect(session?.commands.map(c => c.name()).sort()).toEqual([
       'chain',
       'check',
       'create',
+      'decide',
+      'done',
       'evidence',
+      'graph',
       'list',
       'meta',
       'migrate',
+      'next',
       'resolve',
       'resume',
       'seal',

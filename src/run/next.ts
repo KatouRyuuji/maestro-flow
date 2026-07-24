@@ -37,7 +37,7 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveStepContent } from './contract.js';
-import { createRun, resolveArgumentRequirements, type CreateRunResult, type NamedGateBlocker, type PrevHandoff, type RunUpstream } from './runtime.js';
+import { briefRun, createRun, resolveArgumentRequirements, type CreateRunResult, type NamedGateBlocker, type PrevHandoff, type RunUpstream } from './runtime.js';
 import {
   activeStepIndex,
   nextPendingIndex,
@@ -91,6 +91,8 @@ export interface NextResult {
   queue?: QueueEntry[];
   /** Prior step handoff.next[] suggestions (command + reason + needs). */
   recommended?: RecommendedEntry[];
+  /** Full brief data when --inline-brief is requested (avoids a separate run brief call). */
+  inline_brief?: unknown;
 }
 
 export interface NextCmdOptions {
@@ -116,6 +118,12 @@ export interface NextCmdOptions {
   executionOwner?: string;
   ownerEpoch?: number;
   leaseId?: string;
+  /**
+   * Include full brief-level data (guidance, execution contract, continuity)
+   * in the result. The executor can use this directly instead of calling
+   * `maestro run brief` separately — the normal forward flow path.
+   */
+  inlineBrief?: boolean;
 }
 
 export type NextReasonCode =
@@ -723,6 +731,18 @@ export function runNextStep(projectRoot: string, opts: NextCmdOptions = {}): Nex
     queue,
     recommended,
   };
+
+  // Inline brief: attach full brief data so the executor can skip a separate
+  // `maestro run brief` CLI call in the normal forward flow.
+  if (opts.inlineBrief) {
+    try {
+      result.inline_brief = briefRun(projectRoot, result.run_id, sessionId);
+    } catch {
+      // Degrade gracefully: brief is optional inline; the executor can still
+      // call `maestro run brief` separately if the inline data is absent.
+      result.inline_brief = null;
+    }
+  }
 
   return {
     exitCode: 0,

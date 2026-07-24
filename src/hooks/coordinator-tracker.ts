@@ -278,8 +278,6 @@ function readLegacyMaestroSession(workspaceRoot: string): CoordBridgeData | null
 function parseMaestroStatus(raw: MaestroStatusJson, mtime: number, dirName?: string): CoordBridgeData | null {
   const steps = raw.steps ?? [];
   const currentIdx = raw.current_step ?? 0;
-  const isRalph = raw.source === 'ralph';
-
   // All steps count (includes decision nodes)
   const completed = steps.filter(s => s.status === 'completed').length;
 
@@ -289,7 +287,7 @@ function parseMaestroStatus(raw: MaestroStatusJson, mtime: number, dirName?: str
 
   // Detect decision pending state
   const currentStepRaw = steps[currentIdx];
-  const decisionPending = isRalph && currentStepRaw?.type === 'decision' &&
+  const decisionPending = currentStepRaw?.type === 'decision' &&
     (currentStepRaw.status === 'running' || currentStepRaw.status === 'pending');
 
   const currentStep = currentStepRaw
@@ -309,7 +307,7 @@ function parseMaestroStatus(raw: MaestroStatusJson, mtime: number, dirName?: str
   return {
     session_id: '',
     maestro_session_id: raw.session_id ?? dirName ?? undefined,
-    coordinator: isRalph ? 'ralph' : 'maestro',
+    coordinator: raw.source === 'ralph' ? 'ralph' : 'maestro',
     source: raw.source,
     chain_name: raw.chain_name ?? '',
     intent: raw.intent ?? '',
@@ -323,10 +321,10 @@ function parseMaestroStatus(raw: MaestroStatusJson, mtime: number, dirName?: str
     remaining_steps: remaining,
     status: raw.status ?? 'unknown',
     auto_mode: raw.auto_mode ?? false,
-    lifecycle_position: isRalph ? raw.lifecycle_position : undefined,
-    quality_mode: isRalph ? raw.quality_mode : undefined,
+    lifecycle_position: raw.lifecycle_position ?? undefined,
+    quality_mode: raw.quality_mode ?? undefined,
     decision_pending: decisionPending || undefined,
-    passed_gates: isRalph ? raw.passed_gates : undefined,
+    passed_gates: raw.passed_gates ?? undefined,
     updated_at: Math.floor(mtime),
   };
 }
@@ -600,11 +598,11 @@ export function buildNextStepHint(data: CoordBridgeData): string | null {
     lines.push(`Then: ${remaining}${data.remaining_steps.length > 4 ? ' …' : ''}`);
   }
 
-  // Resume hint — ralph uses /maestro-ralph continue, others use /maestro -c
+  // Resume hint
   if (data.coord_session_id) {
     lines.push(`Resume: /maestro-link-coordinate -c ${data.coord_session_id}`);
   } else if (data.source === 'ralph') {
-    lines.push(`Resume: /maestro-ralph continue`);
+    lines.push(`Resume: /maestro-ralph -c`);
   } else {
     lines.push(`Resume: /maestro -c`);
   }

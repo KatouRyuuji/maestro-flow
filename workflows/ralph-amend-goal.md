@@ -10,7 +10,7 @@ This filename is retained for compatibility. Goal amendment uses only the canoni
 
 ## 1. Snapshot
 
-1. Resolve exactly one live compatible Session through read-only `maestro run recall`, then call `maestro run status {session_id}`.
+1. Resolve exactly one live compatible Session through read-only `maestro run recall`, then call `maestro session status {session_id}`.
 2. Read active goals, `boundary_contract`, completed Run handoffs, pending chain steps and current identity/activity revisions.
 3. Present progress, active goals, boundary counts and changelog count. A sealed or archived Session is terminal; ambiguity requires user selection.
 
@@ -63,4 +63,4 @@ The proposal may change only the pending tail and must respect the Run's declare
 
 ## 6. Continue
 
-Display the amendment ID, risk, superseded/added goal counts and proposal disposition. Resume the shared loop with `maestro run status`, then explicitly allocate through `maestro run next`.
+Display the amendment ID, risk, superseded/added goal counts and proposal disposition. Resume the shared loop with `maestro session status`, then explicitly allocate through `maestro session next`.

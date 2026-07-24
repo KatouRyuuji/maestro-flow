@@ -151,6 +151,12 @@ function reportError(error: unknown): void {
   process.exitCode = 1;
 }
 
+/** Deprecation notice for session-level commands migrating to `maestro session`. */
+function sessionMigrationNotice(verb: string, sessionVerb?: string): void {
+  const target = sessionVerb ?? verb;
+  console.error(`[maestro run] deprecated: "maestro run ${verb}" is now "maestro session ${target}". This alias stays for backward compatibility.`);
+}
+
 type MachineOperation = RunResponse['operation'];
 function machineError(
   operation: MachineOperation,
@@ -249,6 +255,7 @@ export function registerRunCommand(program: Command): void {
       dispatch: boolean;
       workflowRoot: string;
     }) => {
+      sessionMigrationNotice('start', 'create');
       try {
         const projectRoot = resolve(opts.workflowRoot);
         const fileDefinition = opts.chainFile
@@ -312,6 +319,7 @@ export function registerRunCommand(program: Command): void {
     .description('Show canonical Session/Run chain status')
     .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
     .action((sessionId: string | undefined, opts: { workflowRoot: string }) => {
+      sessionMigrationNotice('status');
       try {
         const projectRoot = resolve(opts.workflowRoot);
         const resolved = resolveCompatibleSession(projectRoot, sessionId);
@@ -409,6 +417,7 @@ export function registerRunCommand(program: Command): void {
       applyProposal?: boolean;
       workflowRoot: string;
     }) => {
+      sessionMigrationNotice('done');
       try {
         const projectRoot = resolve(opts.workflowRoot);
         const verdict = parseVerdict(opts.verdict);
@@ -617,6 +626,7 @@ export function registerRunCommand(program: Command): void {
       workflowRoot: string;
     }) => {
       const projectRoot = resolve(opts.workflowRoot);
+      sessionMigrationNotice('next');
       try {
         const outcome = runNextStep(projectRoot, {
           sessionId: opts.session,
@@ -1133,6 +1143,7 @@ Compatibility boundary:
       json?: boolean;
       workflowRoot: string;
     }) => {
+      sessionMigrationNotice('decide');
       try {
         const verdict = opts.verdict.trim().toLowerCase();
         if (!['proceed', 'fix', 'escalate'].includes(verdict)) {
@@ -1216,6 +1227,7 @@ Compatibility boundary:
     .option('--json', 'emit one run-response/1.0 envelope on stdout')
     .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
     .action((sessionId: string, opts: { summary: string; json?: boolean; workflowRoot: string }) => {
+      sessionMigrationNotice('seal-session', 'seal');
       try {
         const result = sealSession(resolve(opts.workflowRoot), sessionId, opts.summary);
         if (opts.json) machineSuccess('seal-session', result, { session_id: result.session_id, run_id: null });

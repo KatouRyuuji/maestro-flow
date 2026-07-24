@@ -37,10 +37,10 @@ Maestro 与 Ralph 共享这一执行循环。它只调用 `maestro run ...`；Se
 | `load_run` | 调用同一 `run_id` 的 `run brief --json`，禁止创建重复 Run |
 | `execute_run` | 执行已加载的 Resume Packet，随后调用 directive 中的 check/complete command |
 | `repair_run` | 重新附着同一 Run，修复 gate/scan error，再 check |
-| `dispatch_next` | 校验 preconditions 后立即 `run next --json`；尤其是 `complete` 或 `decide` 后不得只展示命令 |
-| `evaluate_decision` | `command` 非空时只执行一次以读取 decision card；`reason_code=DECISION_CARD_READY` 时不得再次 `run next`，直接派发只读 evaluator，再调用 `run decide` |
+| `dispatch_next` | 校验 preconditions 后立即 `session next --json`；尤其是 `complete` 或 `decide` 后不得只展示命令 |
+| `evaluate_decision` | `command` 非空时只执行一次以读取 decision card；`reason_code=DECISION_CARD_READY` 时不得再次 `session next`，直接派发只读 evaluator，再调用 `session decide` |
 | `accept_reuse` | 按下述正式 reuse 流程处理 exact assessment |
-| `recover_session` | 只走 audited `run recover`；不得隐式 resume |
+| `recover_session` | 只走 audited `session recover`；不得隐式 resume |
 | `seal_session` | 校验 Runs、decisions、goals 与 Session gates 后 seal |
 | `offer_recommendations` | 只展示 chain 外建议；不得隐式创建新 Run |
 | `repair_chain` / `stop` | 停止续跑并报告结构化原因，不绕过 authority |
@@ -65,10 +65,10 @@ Maestro 与 Ralph 共享这一执行循环。它只调用 `maestro run ...`；Se
 
 ### `complete` / `decide` 闭环
 
-- `run complete|done --json` 返回 `dispatch_next` 时，当前 turn 必须立即执行其 command。
-- 若下一节点是 decision，执行 `run next --json` 取得 canonical decision card；decision 不创建 Run，必须通过 `run decide` 提交 verdict。
-- `run decide --json` 与 `complete` 使用同一 Continuation Router：`proceed` 后可继续到下一 Run、下一 decision 或 Session seal；`escalate` 转 audited recovery；`fix` 在获得新的 repair evidence 前不得重复 decide。
-- `run next` 成功后，birth packet 中的 `run_already_created=true` 是严格约束：立即加载该 exact `run_id` 的 brief，只执行其 command/args/goal/canonical upstream，禁止再次 `run create`，并在仍有 automatic continuation 时保持当前 turn。
+- `session done|done --json` 返回 `dispatch_next` 时，当前 turn 必须立即执行其 command。
+- 若下一节点是 decision，执行 `session next --json` 取得 canonical decision card；decision 不创建 Run，必须通过 `session decide` 提交 verdict。
+- `session decide --json` 与 `complete` 使用同一 Continuation Router：`proceed` 后可继续到下一 Run、下一 decision 或 Session seal；`escalate` 转 audited recovery；`fix` 在获得新的 repair evidence 前不得重复 decide。
+- `session next` 成功后，birth packet 中的 `run_already_created=true` 是严格约束：立即加载该 exact `run_id` 的 brief，只执行其 command/args/goal/canonical upstream，禁止再次 `run create`，并在仍有 automatic continuation 时保持当前 turn。
 
 ## Lifecycle
 
@@ -80,12 +80,12 @@ Maestro 与 Ralph 共享这一执行循环。它只调用 `maestro run ...`；Se
 
    `maestro run start "{intent}" --id {slug} --chain-file {path} --no-dispatch`
 
-4. Runtime resolver 在 `run next` 分配 Run 前校验 command、Skill 和 lifecycle step；prompt 不调用独立 catalog CLI。
+4. Runtime resolver 在 `session next` 分配 Run 前校验 command、Skill 和 lifecycle step；prompt 不调用独立 catalog CLI。
 
 ### 2. Locate and allocate
 
 1. `maestro run status {session_id}` 读取 canonical 状态。
-2. execution step：显式调用 `maestro run next --session {session_id} --json`。只有该动词能分配下一 Run。
+2. execution step：显式调用 `maestro session next --session {session_id} --json`。只有该动词能分配下一 Run。
 3. decision step：不创建 Run，转 Decision evaluation。
 4. `CHAIN_COMPLETE`：校验 goals 与 gates 后转 Session seal。
 
@@ -95,7 +95,7 @@ Maestro 与 Ralph 共享这一执行循环。它只调用 `maestro run ...`；Se
 2. `maestro run brief {run_id} --session {session_id}` 加载 Resume Packet 与 Skill 正文。
 3. 派发一个 unnamed `run-executor`；executor 只执行该 Run，可按 Skill 自身 contract 选择串行、并行或对抗实现。
 4. executor 写 formal artifacts 到 `{run_dir}/outputs/`，handoff 写 `{run_dir}/report.md`，然后运行 `maestro run check {run_id} --session {session_id}`。
-5. executor 不调用 `run done/complete`；completion authority 属于 orchestrator。
+5. executor 不调用 `session done/complete`；completion authority 属于 orchestrator。
 
 ### 4. Analyze, gate, and complete
 
@@ -110,23 +110,23 @@ Drift policy：
 
 | Result | Action |
 |---|---|
-| aligned | `run done --verdict done` |
-| minor drift | `run done --verdict done-with-concerns --note ...` |
-| major drift，未重试 | `run done --verdict needs-retry` |
-| major drift，已重试 | `run done --verdict done-with-concerns` |
-| external blocker | `run done --verdict blocked --reason ...` |
+| aligned | `session done --verdict done` |
+| minor drift | `session done --verdict done-with-concerns --note ...` |
+| major drift，未重试 | `session done --verdict needs-retry` |
+| major drift，已重试 | `session done --verdict done-with-concerns` |
+| external blocker | `session done --verdict blocked --reason ...` |
 
 日常 completion：
 
-`maestro run done {run_id} --session {session_id} --verdict {verdict} --summary "{summary}" [--evidence ...] [--decision ...] [--note ...]`
+`maestro session done {run_id} --session {session_id} --verdict {verdict} --summary "{summary}" [--evidence ...] [--decision ...] [--note ...]`
 
-Runtime 返回的 next 仅为 `suggest_only`，因此 Runtime 自身不执行它；canonical `continuation.authority=automatic` 已代表 orchestrator authority，必须在同一 turn 调用 `run next`，无需再次询问用户。
+Runtime 返回的 next 仅为 `suggest_only`，因此 Runtime 自身不执行它；canonical `continuation.authority=automatic` 已代表 orchestrator authority，必须在同一 turn 调用 `session next`，无需再次询问用户。
 
 ### 5. Chain proposal
 
 `run check` 自动发现并校验当前 Run outputs 中的 typed `chain-proposal/1.0`。
 
-- accept：必须恰好有一个 valid proposal，调用 `run done ... --apply-proposal`；proposal 与 completion 在同一事务应用。
+- accept：必须恰好有一个 valid proposal，调用 `session done ... --apply-proposal`；proposal 与 completion 在同一事务应用。
 - reject：不传 `--apply-proposal`，以 `--note` 记录理由。
 - revise：不 complete；用同一 `run_id` 重新加载 `run brief`，让原 Skill 修订后再次 check。
 
@@ -138,18 +138,18 @@ Runtime 返回的 next 仅为 `suggest_only`，因此 Runtime 自身不执行它
 2. 严格解析 `proceed|fix|escalate`；解析失败降级为 `fix`，confidence=low，并在 summary 标记 `parse_failed=true`。
 3. 调用：
 
-   `maestro run decide {point_id} --session {session_id} --verdict {verdict} --confidence {high|medium|low} [--summary "..."] [--evidence ...] --json`
+   `maestro session decide {point_id} --session {session_id} --verdict {verdict} --confidence {high|medium|low} [--summary "..."] [--evidence ...] --json`
 
-4. 读取 `run decide --json` 的 continuation 并留在同一闭环；`proceed` 立即继续，`escalate` 停在 recovery，`fix` 需要改变 pending tail 时必须由 repair Skill 产生 proposal，prompt 不直接复制 fix-loop template，也不得无新证据重复 decide。
+4. 读取 `session decide --json` 的 continuation 并留在同一闭环；`proceed` 立即继续，`escalate` 停在 recovery，`fix` 需要改变 pending tail 时必须由 repair Skill 产生 proposal，prompt 不直接复制 fix-loop template，也不得无新证据重复 decide。
 
 ### 7. Recovery and amend
 
 Paused recovery 仅由显式 `-c` 触发：
 
 1. `run status` 读取 exact blocker 与 revisions。
-2. 每个 blocker 经用户选择后调用 `maestro run recover --session {id} ... (--decision {point}|--step {step}) --disposition {value}`。
-3. blockers 清零后调用 `maestro run recover --resume --session {id} ...`。
-4. resume 只恢复 Session；下一 Run 仍由显式 `run next` 分配。
+2. 每个 blocker 经用户选择后调用 `maestro session recover --session {id} ... (--decision {point}|--step {step}) --disposition {value}`。
+3. blockers 清零后调用 `maestro session recover --resume --session {id} ...`。
+4. resume 只恢复 Session；下一 Run 仍由显式 `session next` 分配。
 
 Goal amend：读取 `ralph-amend-goal.md`，完成 snapshot → impact audit → confirmation → 通过 `maestro run edit --decomposition-file -` 整块更新 → planning Skill proposal。高风险修改不受 `-y` 影响。
 
@@ -157,11 +157,11 @@ Goal amend：读取 `ralph-amend-goal.md`，完成 snapshot → impact audit →
 
 所有 execution Runs sealed、decision steps terminal、goals done、Session gates clean 后：
 
-`maestro run seal-session {session_id} --summary "..."`
+`maestro session seal {session_id} --summary "..."`
 
 ## Failure rules
 
 - `run check` blocking：重新附着同一 Run 修复，不得报告成功或分配新 Run。
 - executor failed/null：首次 `needs-retry`；达到 retry budget 后 `blocked` 并暂停。
 - lease/revision conflict：停止并重新读取 status，不猜测或 force。
-- sealed/archived Session：终态，`run next` 应返回 `CHAIN_COMPLETE`，不得 resume。
+- sealed/archived Session：终态，`session next` 应返回 `CHAIN_COMPLETE`，不得 resume。

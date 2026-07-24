@@ -365,7 +365,29 @@ function extractContract(raw: string): unknown {
   return {};
 }
 
+// ── Process-level caches (short-lived CLI processes; avoids repeated disk I/O
+//    and YAML parsing when the same command is resolved multiple times within
+//    a single invocation, e.g. run next → createRun → brief). ─────────────────
+
+const commandSourceCache = new Map<string, ResolvedCommandSource>();
+const stepContentCache = new Map<string, ResolvedStepContent>();
+
+/** Invalidate all cached resolutions (used by tests and long-lived servers). */
+export function invalidateResolutionCache(): void {
+  commandSourceCache.clear();
+  stepContentCache.clear();
+}
+
 export function resolveCommandSource(projectRoot: string, commandName: string): ResolvedCommandSource {
+  const cacheKey = `${projectRoot}\0${commandName}`;
+  const cached = commandSourceCache.get(cacheKey);
+  if (cached) return cached;
+  const result = resolveCommandSourceUncached(projectRoot, commandName);
+  commandSourceCache.set(cacheKey, result);
+  return result;
+}
+
+function resolveCommandSourceUncached(projectRoot: string, commandName: string): ResolvedCommandSource {
   const normalized = commandName.replace(/^\//, '').replace(/\.md$/i, '');
   const names = Array.from(new Set([
     normalized,
@@ -544,6 +566,19 @@ function resolveAssociatedWorkflow(
 }
 
 export function resolveStepContent(
+  projectRoot: string,
+  stepName: string,
+  platformSuffix?: string,
+): ResolvedStepContent {
+  const cacheKey = `${projectRoot}\0${stepName}\0${platformSuffix ?? ''}`;
+  const cached = stepContentCache.get(cacheKey);
+  if (cached) return cached;
+  const result = resolveStepContentUncached(projectRoot, stepName, platformSuffix);
+  stepContentCache.set(cacheKey, result);
+  return result;
+}
+
+function resolveStepContentUncached(
   projectRoot: string,
   stepName: string,
   platformSuffix?: string,
