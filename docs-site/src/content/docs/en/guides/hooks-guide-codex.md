@@ -130,7 +130,7 @@ No AGENTS.md (file side effects); skip on `source=resume` (avoid duplicate); no 
 
 **stdin**:
 ```json
-{ "session_id": "abc123", "turn_id": "turn-001", "prompt": "/maestro-ralph continue",
+{ "session_id": "abc123", "turn_id": "turn-001", "prompt": "/maestro-ralph -c",
   "cwd": "/path/to/project", "hook_event_name": "UserPromptSubmit", "model": "gpt-5.1-codex" }
 ```
 

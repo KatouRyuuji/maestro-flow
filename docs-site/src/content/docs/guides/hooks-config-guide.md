@@ -99,14 +99,14 @@ maestro hooks uninstall
 为 51 个命令/skill 设置默认参数，通过 Hook 自动注入，无需每次手动输入。
 
 ```
-用户调用 /maestro-ralph continue
+用户调用 /maestro-ralph -c
        ↓
 skill-context hook (UserPromptSubmit)
        ↓ 匹配 skill → 加载配置 → 对比已有参数
        ↓
 additionalContext 注入默认参数
        ↓
-等同于 /maestro-ralph continue --auto-commit -y
+等同于 /maestro-ralph -c --auto-commit -y
 ```
 
 ### 配置文件

@@ -243,7 +243,7 @@ WikiIndexer 除了索引文件系统中的 spec/knowhow 文档外，还将非文
 ─────────                  ─────                    ─────                  ─────
 分析会话 ─────┐                              ┌─→ specs/     ─→ spec-injector → agent
 调试记录 ─────┼──→ /maestro-manage knowledge harvest ──────────┼─→ knowhow/   ─→ wiki load → 按需
-规划文档 ─────┤    /maestro-next --promote    ├─→ issues/    ─→ maestro-manage issue → 追踪
+规划文档 ─────┤    maestro-companion --promote├─→ issues/    ─→ maestro-manage issue → 追踪
 代码变更 ─────┘    /maestro-learn decompose          └─→ learnings  ─→ keyword-injector → 上下文
 
                     淘汰清理                    审计                    CodeGraph
@@ -274,7 +274,7 @@ maestro-ralph  → 质量发现 → review
 
 ```bash
 /workflow-lite-plan 用户管理模块 API：注册、登录、JWT 鉴权、用户 CRUD
-/maestro-ralph --engine swarm --script wf-analyze "API 端点设计模式分析"
+/maestro-ralph analyze "API 端点设计模式分析"
 ```
 
 **2. 实现 + 知识回收**
@@ -302,7 +302,7 @@ harvest 自动路由：
 **4. 测试消费**
 
 ```bash
-/maestro-ralph --engine swarm --keyword user-api    # 自动测试：发现 tool → 生成测试代码
+/maestro-ralph auto-test --keyword user-api    # 自动测试：发现 tool → 生成测试代码
 /maestro "test user management API"        # 会话式 UAT：按 tool 步骤逐项验证
 ```
 
@@ -320,7 +320,7 @@ harvest 自动路由：
 | `/maestro-manage knowledge harvest` | spec 条目 + wiki 条目 + issue | 被动知识 |
 | `/maestro-manage knowledge capture` | AST-*.md（API 契约） | 被动资产 |
 | `/maestro-spec add` | RCP-*.md（验证流程） | 主动可执行 |
-| `/maestro-ralph --engine swarm` | 测试代码 | 消费 tool |
+| `/maestro-ralph auto-test` | 测试代码 | 消费 tool |
 
 </details>
 

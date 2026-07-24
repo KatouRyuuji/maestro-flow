@@ -98,7 +98,7 @@ icon: "📁"
 │   ├── features.md
 │   └── concerns.md
 │
-├── .spec/                        # 规范包（/maestro-ralph --roadmap --mode full）
+├── .spec/                        # 规范包（/blueprint 七阶段 spec-generate 创建）
 │   ├── spec-config.json
 │   ├── product-brief.md
 │   ├── glossary.json
@@ -112,9 +112,18 @@ icon: "📁"
 │   ├── specs/                    # 团队级规范
 │   └── specs/{uid}/              # 个人级规范
 │
-├── .maestro/                     # Agent 会话状态（内部）
-│   ├── maestro-*/status.json
-│   ├── ralph-*/status.json
+├── sessions/                     # canonical Session/Run 存储（v0.5.56+，session/1.3）
+│   └── {session-id}/
+│       ├── session.json          # Session 状态机：orchestration.chain / decomposition / boundary_contract
+│       ├── evidence/             # Evidence Registry（typed evidence + Artifact 引用）
+│       └── runs/{run-id}/        # 单次执行尝试（attempt）
+│           ├── outputs/          # 权威产物（report.md、plan.json、verification.json…）
+│           ├── evidence/         # 非正式诊断痕迹（仅供回溯）
+│           └── report.md         # handoff（summary / decisions / caveats / next）
+│
+├── .maestro/                     # legacy Agent 会话状态（内部，v0.5.56 起由 sessions/ 取代）
+│   ├── maestro-*/status.json     # 旧格式，经 maestro session migrate 折叠进 sessions/{id}/session.json
+│   ├── ralph-*/status.json       # 旧格式（含 ralph-meta.json）
 │   ├── player-*/status.json
 │   └── coord-*/walker-state.json
 │
@@ -147,7 +156,7 @@ icon: "📁"
 | `state.json` | 项目状态机 + Artifact Registry | `version`, `status`, `current_milestone`, `current_phase`, `artifacts[]`, `milestones[]`, `milestone_history[]` |
 | `config.json` | 用户工作流配置（`maestro-init` 创建） | `granularity`, `workflow_agents`, `gate_preferences` |
 | `project.md` | 项目定义（`maestro-init` 创建） | Core Value, Requirements, Key Decisions, Context |
-| `roadmap.md` | 里程碑/阶段路线图（`/maestro-ralph --roadmap` 创建） | 里程碑列表、success criteria、依赖关系、Phase Progress Table |
+| `roadmap.md` | 里程碑/阶段路线图（`roadmap` 命令 / `/maestro` roadmap 链创建） | 里程碑列表、success criteria、依赖关系、Phase Progress Table |
 | `wiki-index.json` | Wiki 统一索引（WikiIndexer 自动生成） | 索引 project/specs/knowhow/issues/roadmap |
 
 ### state.json Schema
@@ -266,7 +275,60 @@ Learn 特殊前缀：`KNW-follow-`, `KNW-decompose-`, `KNW-retro-`, `KNW-opinion
 
 ---
 
-## 六、Session/Run 模型（v0.5.50+）
+## 六、Session/Run 模型（v0.5.56+）
+
+Maestro 与 Ralph 共享同一套 **canonical Session/Run 链协议**（schema `session/1.3`）：
+
+- **Session** 是 topic 分组与索引；`session.json.orchestration` 是 chain / goal / decision 的唯一真相源。
+- **Run** 是一次执行尝试（attempt）；Run 的 outputs、handoff、gate、proposal 与 transition receipt 归该 Run。
+- 编排层调用 `maestro session ...`（next/done/decide/seal/status/recover/chain edit），执行层调用 `maestro run ...`（brief/check/create/prepare）。
+- 协议文件始终由 Runtime 写入；prompt 不直接写 session.json/run.json。
+
+### 目录布局
+
+```
+.workflow/sessions/{session-id}/
+├── session.json          # Session 状态机（session/1.3）
+├── evidence/             # Evidence Registry
+└── runs/{run-id}/
+    ├── outputs/          # 权威产物
+    ├── evidence/         # 非正式诊断痕迹
+    └── report.md         # handoff
+```
+
+### session.json 核心结构
+
+```json
+{
+  "schema": "session/1.3",
+  "session_id": "maestro-fix-login",
+  "intent": "修复登录链路",
+  "status": "running|paused|sealed|archived|failed",
+  "orchestration": {
+    "engine": "ralph|coordinator|manual",
+    "quality_mode": "quick|standard|full",
+    "auto_mode": false,
+    "position": { "current_step": 2 },
+    "chain": [
+      { "command": "analyze", "args": "--session {session}", "stage": "analyze", "goal_ref": "G1", "status": "completed" },
+      { "command": "post-execute", "stage": "execute", "decision_ref": "post-execute", "status": "pending" }
+    ],
+    "decision_points": [{ "point_id": "post-execute", "max_retries": 2 }],
+    "decomposition": {
+      "goals": [{ "id": "G1", "goal": "...", "done_when": "...", "lifecycle": ["execute", "review"], "status": "pending" }]
+    }
+  },
+  "boundary_contract": { "in_scope": [], "out_of_scope": [], "constraints": [], "definition_of_done": "" }
+}
+```
+
+- `engine` 是兼容持久化字段，不是 Session 类型或策略
+- execution step 仅 `command/args?/stage?/goal_ref?/retry_max?`；decision step 声明 `decision_ref`
+- 链推进由 **verdict 驱动**：执行步 `maestro session done --verdict`，决策步 `maestro session decide --verdict`
+
+### Evidence Registry
+
+`maestro session evidence [session-id]` 查询 canonical Evidence Registry，支持 `--kind` / `--status proposed|accepted|rejected|superseded` / `--run` / `--point` 过滤。证据以 typed 条目存储并解析到具体 Artifact 引用；`chain-proposal/1.0` 由 `maestro run check` 自动发现并校验。
 
 ### 产物输出路径
 
@@ -274,19 +336,30 @@ Run 产物统一写入 `outputs/` 目录，`evidence/` 降级为非正式 traces
 
 | 目录 | 定位 | 权威性 |
 |------|------|--------|
-| `outputs/` | 产物输出（report.md、plan.json 等） | 权威，下游消费 |
-| `evidence/` | 调试/诊断痕迹 | 非正式，仅供回溯 |
+| `runs/{run-id}/outputs/` | 产物输出（report.md、plan.json 等） | 权威，下游消费 |
+| `runs/{run-id}/evidence/` | 调试/诊断痕迹 | 非正式，仅供回溯 |
 
-### Session 命名
+同 Session 的 sealed outputs 只经 birth packet / brief 的 canonical `upstream` 复用，不手动重建上下文。
 
-`maestro run create` 支持 `--session <name>` 显式命名（v0.5.50+）：
+### Session 命名与创建
+
+`maestro session create` / `maestro session start` 支持 `--id <slug>` 显式命名：
 - 合法字符：`a-z`、`0-9`、`-`
 - 不合法输入自动转为 ASCII slug 回退
-- 未指定时使用自动生成的时间戳 ID
+- 未指定时由 intent/topic 自动 slugify
+
+```bash
+maestro session start "修复登录链路" --chain analyze plan execute review   # 人类入口
+maestro session create "修复登录链路" --id maestro-fix-login --chain-file chain.json --no-dispatch   # 编排器建链
+```
+
+### legacy 迁移（session migrate）
+
+v0.5.56 将 Maestro 与 Ralph 合并为单一 Session 链协议。旧的 `.workflow/.maestro/ralph-*/status.json` 与 `ralph-meta.json` 通过 `maestro session migrate [--session <id>]` 折叠进 `sessions/{id}/session.json` 并打 `session/1.3` 标记（幂等）。
 
 ### chains 数据层移除
 
-v0.5.50+ 移除了 coordinate 图执行子系统（chains 数据层）。原 `--chain` 参数不再需要，工作流协调转向 session-based 模型。
+v0.5.50+ 移除了 coordinate 图执行子系统（chains 数据层）。原 coordinate `--chain` 参数不再需要；完整链编排转向 `maestro session` 模型。
 
 ---
 
@@ -329,25 +402,25 @@ v0.5.50+ 移除了 coordinate 图执行子系统（chains 数据层）。原 `--
 
 ### Artifact 类型与命令
 
-| Type | ID 前缀 | Scope | 命令 |
+| Type | ID 前缀 | Scope | 命令（经 `/maestro` 链或 Skill） |
 |------|---------|-------|------|
-| analyze | ANL-{NNN} | phase, adhoc, standalone | `/maestro-ralph --engine swarm --script wf-analyze` |
-| plan | PLN-{NNN} | phase, adhoc | `/maestro-next` |
-| execute | EXC-{NNN} | phase | `/maestro-ralph continue` |
-| verify | VRF-{NNN} | phase, milestone | （已退役；集成进 `/maestro-ralph` decision gate） |
-| review | REV-{NNN} | phase | `/maestro-ralph --engine swarm --script wf-review` |
+| analyze | ANL-{NNN} | phase, adhoc, standalone | `analyze`（`/maestro "分析..."`） |
+| plan | PLN-{NNN} | phase, adhoc | `plan`（`/maestro "plan phase N"`） |
+| execute | EXC-{NNN} | phase | `execute`（`/maestro "execute"`） |
+| verify | VRF-{NNN} | phase, milestone | （已退役；集成进 `/maestro-ralph` decision gate `post-execute`） |
+| review | REV-{NNN} | phase | `review`（`/maestro "review"`） |
 | debug | DBG-{NNN} | phase, standalone | `/maestro-odyssey --mode debug` |
-| test | TST-{NNN} | phase | `/maestro "<test intent>"` 或 `/security-audit` |
-| brainstorm | BRN-{NNN} | adhoc | `/maestro-ralph --engine swarm --script wf-brainstorm` |
-| collab | CLB-{NNN} | adhoc | `/maestro-ralph --engine swarm` |
+| test | TST-{NNN} | phase | `test`（`/maestro "<test intent>"`）或 `/security-audit` |
+| brainstorm | BRN-{NNN} | adhoc | `brainstorm`（`/maestro "brainstorm..."`） |
+| collab | CLB-{NNN} | adhoc | `/maestro-collab` / team 链 |
 | ui-design | — | phase, scratch | `/maestro-impeccable --codify` |
 
 ### Session ID 格式
 
 | 类型 | 格式 | 示例 |
 |------|------|------|
-| maestro 主会话 | `maestro-{YYYYMMDD-HHmmss}` | `maestro-20260513-143022` |
-| ralph 会话 | `ralph-{YYYYMMDD-HHmmss}` | `ralph-20260513-143022` |
+| maestro 主会话 | `maestro-{slug}` 或 `maestro-{YYYYMMDD-HHmmss}` | `maestro-fix-login` |
+| ralph 会话 | `{slug}` / `{YYYYMMDD-HHmmss}`（统一 Session 链，不再区分前缀） | `ralph-20260513-143022`（legacy） |
 | player 会话 | `player-{YYYYMMDD-HHmmss}` | `player-20260513-143022` |
 | delegate ID | `{prefix}-{HHmmss}-{rand4}` | `gem-143022-a7f2` |
 | Issue ID | `ISS-XXXXXXXX-NNN` | `ISS-a1b2c3d4-001` |

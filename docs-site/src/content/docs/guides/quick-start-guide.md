@@ -51,85 +51,85 @@ maestro install toggle --type skill --enable scholar-writing
 
 ```bash
 /maestro-init                          # 初始化 .workflow/ 目录
-/maestro-ralph --roadmap "项目名称和目标" -y  # 生成路线图
+/maestro "从需求开始做整个项目" -y      # spec-driven 链：init → roadmap → plan → execute → harvest
 ```
 
 ### 从头脑风暴开始
 
 ```bash
-/maestro-ralph --engine swarm --script wf-brainstorm "在线教育平台"  # 多角色头脑风暴
-/maestro-init --from brainstorm:ANL-xxx                           # 基于头脑风暴初始化
-/maestro-ralph --roadmap "创建路线图" -y
+/maestro "brainstorm 在线教育平台"      # 多角色头脑风暴（brainstorm-driven 链）
+/maestro-init --from-brainstorm SESSION-ID                  # 基于头脑风暴初始化
+/maestro "创建路线图" -y                # roadmap-driven 链
 ```
 
 ### 完整规范蓝图（大型项目）
 
 ```bash
 /maestro-init
-/maestro "生成规范蓝图"                   # 6 阶段规范蓝图（产品简报 + PRD + 架构 + 史诗）
+/maestro "生成规范蓝图"                   # blueprint-driven 链：7 阶段规范蓝图（产品简报 + PRD + 架构 + 史诗）
 ```
 
 ---
 
 ## 3. Phase 管线
 
-项目的核心推进流程，每个 Phase 走 `分析 → 规划 → 执行 → 验证` 生命周期：
+项目的核心推进流程，每个 Phase 走 `分析 → 规划 → 执行 → 审查 → 测试` 生命周期（验证已内聚于 `post-execute` 决策门）：
 
 ```bash
-# 全量模式——覆盖当前里程碑所有 Phase
-/maestro-ralph --engine swarm --script wf-analyze  # 分析
-/maestro-next                                      # 规划
-/maestro-ralph continue                            # 执行
+# 闭环模式——/maestro-ralph 构建完整生命周期链 + decision gate
+/maestro-ralph "实现用户认证系统"     # analyze → plan → execute → ◆ → review → ◆ → test → seal
+
+# 逐步模式（经 /maestro 路由单步链）
+/maestro "analyze"                    # 分析
+/maestro "plan phase 1"               # 规划
+/maestro "execute"                    # 执行
 # 注：/maestro-verify 已于 v0.5.51 退役，验证集成进 maestro-ralph 决策门
 
 # 逐 Phase 模式（micro 层：Phase 级深度分析）
-/maestro-ralph --engine swarm --script wf-analyze 1  # 只分析 Phase 1（6 维度评分）
-/maestro-next 1                                      # 只规划 Phase 1
-/maestro-ralph continue 1                            # 只执行 Phase 1
+/maestro "analyze phase 1"            # 只分析 Phase 1
+/maestro "plan phase 1"               # 只规划 Phase 1
+/maestro "execute phase 1"            # 只执行 Phase 1
 
 # 宏观探索模式（macro 层：roadmap 之前使用）
-/maestro "实现多租户架构"                            # 需求影响面探索 → scope_verdict 路由
+/maestro "实现多租户架构"              # analyze-macro → scope_verdict 路由
 ```
 
 ### 一键全自动
 
 ```bash
 /maestro -y "实现用户认证系统"
-# 自动执行完整生命周期
+# 自动分类意图 → 创建 canonical Session → 执行完整生命周期
 ```
 
 ### 免初始化模式（临时任务）
 
 ```bash
-/maestro "实现 JWT 认证"                 # scope=standalone，自动创建 state.json
-/maestro-next --dir scratch/20260420-analyze-jwt-...
-/maestro-ralph continue --dir scratch/20260420-plan-jwt-...
+/maestro "实现 JWT 认证"                 # analyze-plan-execute 链，scope=standalone
+maestro session start "实现 JWT 认证" --chain analyze plan execute   # CLI 直接建链
 ```
 
 ---
 
 ## 4. 质量管线
 
-执行后运行质量验证，三轨测试互补：
+执行后运行质量验证，质量门由 Ralph 策略作为 decision 节点插入链中：
 
 ```bash
-# 统一自动测试（智能路由：spec/gap/code）
-/maestro-ralph --engine swarm 1
+# 闭环模式（自动插入 quality gate）
+/maestro-ralph "实现 X"     # execute → ◆post-execute → review → ◆post-review → test → ◆post-test
 
-# 安全审计 / 测试
-/security-audit 1
-
-# 代码审查
-/maestro-ralph --engine swarm --script wf-review 1
+# 单步质量命令（经 /maestro 路由）
+/maestro "review phase 1"               # 代码审查
+/maestro "test phase 1"                 # UAT 测试
+/security-audit 1                        # 安全审计
 ```
 
 ### 测试失败修复循环
 
 ```bash
 /maestro-odyssey --mode debug --from-uat 1      # 诊断失败
-/maestro-next 1 --gaps                  # 生成修复计划
-/maestro-ralph continue 1              # 执行修复
-/maestro-ralph --engine swarm 1 --re-run  # 重跑失败场景
+/maestro "review 有问题需要修"            # review-fix 链：plan --gaps → execute → review
+/maestro "全面质量检查"                   # quality-loop 链：review → auto-test → test → debug → plan --gaps → execute
 ```
 
 ---
@@ -145,10 +145,8 @@ maestro install toggle --type skill --enable scholar-writing
 # 创建 Issue
 /maestro-manage issue create --title "内存泄漏" --severity high
 
-# 闭环处理
-/maestro-ralph --engine swarm --script wf-analyze --gaps ISS-001  # 根因分析
-/maestro-next --gaps                     # 方案规划
-/maestro-ralph continue                  # 执行修复
+# 闭环处理（issue-full 链）
+/maestro "fix issue ISS-001"     # analyze --gaps → plan --gaps → execute → review → close → harvest
 /maestro-manage issue close ISS-001 --resolution "Fixed"
 ```
 
@@ -161,14 +159,17 @@ maestro install toggle --type skill --enable scholar-writing
 跳过 Phase 管线，直接完成任务：
 
 ```bash
-# 最快路径
+# 最快路径（纯路由：分类意图 → 路由到 companion / 单 Run / /maestro）
 /maestro-next "修复登录页 Bug"
 
-# 带规划验证
-/maestro-next "重构 API 层" --full
+# 轻量执行（最小 Run 生命周期）
+/maestro-companion "修复登录页 Bug"
 
-# 带决策提取
-/maestro-next --note "数据库迁移策略"
+# 仅建议不执行
+/maestro-next --suggest "重构 API 层"
+
+# 列出可路由渠道
+/maestro-next --list
 ```
 
 ---
@@ -282,7 +283,7 @@ maestro hooks toggle spec-injector off
 ```bash
 /maestro-fork -m 2                              # Fork M2 worktree
 cd .worktrees/m2-production/
-/maestro-ralph --engine swarm --script wf-analyze 3 && /maestro-next 3 && /maestro-ralph continue 3
+/maestro "analyze phase 3" && /maestro "plan phase 3" && /maestro "execute phase 3"
 
 cd /project
 /maestro-merge -m 2                             # 合并回 main
@@ -356,7 +357,8 @@ maestro kg context "validateToken"                  # 调用者/被调用者
 | `maestro install` | 安装 |
 | `maestro search "query"` | 统一知识搜索 |
 | `maestro delegate "..." --to gemini` | 委托任务 |
-| `maestro coordinate run "..." --chain default -y` | 图协调器 |
+| `maestro session start "..." --chain analyze plan execute` | 建链并派发（人类入口） |
+| `maestro session status` | canonical Session/Run 状态 |
 | `maestro overlay list` | Overlay 管理 |
 | `maestro hooks status` | Hook 状态 |
 | `maestro spec load --category coding` | 加载规范 |
@@ -371,7 +373,8 @@ maestro kg context "validateToken"                  # 调用者/被调用者
 ### 新项目
 
 ```bash
-/maestro-init → /maestro-ralph --roadmap → /maestro-next 1 → /maestro-ralph continue 1 → /maestro-session-seal
+/maestro-init → /maestro "从需求开始做整个项目" → /maestro-session-seal
+# 或闭环：/maestro-ralph "实现 X" -y
 ```
 
 ### 一键全自动
@@ -383,13 +386,13 @@ maestro kg context "validateToken"                  # 调用者/被调用者
 ### Bug 修复
 
 ```bash
-/maestro-next "修复移动端登录页布局问题"
+/maestro-next "修复移动端登录页布局问题"    # 路由到 companion / 单 Run / /maestro
 ```
 
 ### 问题发现与修复
 
 ```bash
-/maestro-manage issue discover → /maestro-ralph --engine swarm --script wf-analyze --gaps ISS-xxx → /maestro-next --gaps → /maestro-ralph continue → /maestro-manage issue close
+/maestro-manage issue discover → /maestro "fix issue ISS-xxx" → /maestro-manage issue close
 ```
 
 ### 并行开发

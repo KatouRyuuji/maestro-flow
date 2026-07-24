@@ -23,9 +23,9 @@ Maestro's Overlay system provides a non-invasive command extension mechanism -- 
 
 `.claude/commands/*.md` files are managed by `maestro install`. Directly editing these files will be overwritten on the next install. However, users frequently need to:
 
-- Add CLI verification steps after `/maestro-ralph continue`
+- Add CLI verification steps after `/maestro-ralph -c`
 - Add required reading documents to `/maestro-next`
-- Append quality gates at the end of `/maestro-ralph --engine swarm --script wf-review`
+- Append quality gates at the end of `/maestro-ralph review`
 
 ### The Solution
 

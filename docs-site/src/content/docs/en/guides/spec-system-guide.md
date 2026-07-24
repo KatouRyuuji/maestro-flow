@@ -109,8 +109,8 @@ maestro spec load --keyword <kw>             # Cross all files
 ### Progressive Fill
 
 ```
-maestro-init    -> maestro-spec setup       /maestro-ralph --engine swarm --script wf-analyze -> plan, implement
-/maestro-next   -> implement, test  /maestro-ralph continue -> implement, analyze
+maestro-init    -> maestro-spec setup       /maestro-ralph analyze -> plan, implement
+/maestro-next   -> implement, test  /maestro-ralph -c -> implement, analyze
 (retired; integrated into /maestro-ralph decision gate) -> review
 ```
 

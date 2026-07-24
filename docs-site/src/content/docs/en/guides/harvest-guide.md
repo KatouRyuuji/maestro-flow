@@ -18,7 +18,7 @@ Knowledge harvesting extracts fragments from execution artifacts, classifies and
 |-------|------|---------------|--------------|
 | **Wiki** | `.workflow/wiki/` | Observations, general insights, knowledge graph | `/maestro-manage knowledge wiki connect`, `/maestro-manage knowledge wiki digest` |
 | **Spec** | `.workflow/specs/` | Coding conventions, architecture decisions, pattern rules | `/maestro-spec load`, Hook auto-injection |
-| **Issue** | `.workflow/issues/issues.jsonl` | Unresolved bugs, risks, TODOs | `/maestro-manage issue`, `/maestro-ralph --engine swarm --script wf-analyze` |
+| **Issue** | `.workflow/issues/issues.jsonl` | Unresolved bugs, risks, TODOs | `/maestro-manage issue`, `/maestro-ralph analyze` |
 
 ### Relationship with Knowhow
 
@@ -250,7 +250,7 @@ The command supports automatic type recognition via tokens:
 +----------------------------------------------------------+
 |                   Downstream Consumption                  |
 |  maestro-manage knowledge wiki connect / maestro-manage knowledge wiki digest / maestro-spec load / maestro-manage issue   |
-|  Hook auto-injection / maestro-next --gaps               |
+|  Hook auto-injection / /maestro "plan <phase> --gaps"    |
 +----------------------------------------------------------+
 ```
 </details>
@@ -275,6 +275,6 @@ Execution process -> /maestro-manage knowledge capture -> .workflow/knowhow/ -> 
 
 | Scenario | Steps |
 |----------|-------|
-| **Daily Development** | `/maestro-ralph continue` -> quick note on completion -> `/maestro-manage knowledge capture tip "discovered trick"` |
+| **Daily Development** | `/maestro "execute"` -> quick note on completion -> `/maestro-manage knowledge capture tip "discovered trick"` |
 | **Milestone Completion** | `/maestro-manage knowledge harvest --recent 30` -> `/maestro-manage knowledge capture compact` -> `/maestro-manage knowledge wiki connect --fix` |
 | **Project Handoff** | `/maestro-manage knowledge knowhow list` -> `/maestro-manage knowledge knowhow search "core concept"` -> `/maestro-spec load --role implement` |

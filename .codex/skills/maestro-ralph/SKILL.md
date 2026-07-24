@@ -75,7 +75,7 @@ S_PARSE — parse intent and the three public flags
 S_RESOLVE — locate or create a compatible Session
 S_DECOMPOSE — derive boundary and observable goals for a new Session
 S_BUILD — build initial Skill chain
-S_CREATE — `run start --chain-file --no-dispatch`
+S_CREATE — `session create --chain-file --no-dispatch`
 S_CONFIRM — confirm unless `-y`
 S_LOOP — shared Run lifecycle
 S_EVALUATE — quality/goal/scope/reground decision

@@ -8,17 +8,17 @@ Set default parameters for 51 commands/skills, auto-injected via Hook — no man
 
 ## Overview
 
-Maestro Skill Config solves a common pain point: manually typing `--auto-commit -y` every time you call `/maestro-ralph continue`.
+Maestro Skill Config solves a common pain point: manually typing `--auto-commit -y` every time you call `/maestro-ralph -c`.
 
 ```
-User calls /maestro-ralph continue
+User calls /maestro-ralph -c
        ↓
 skill-context hook (UserPromptSubmit)
        ↓ Match skill → Load config → Compare existing params
        ↓
 additionalContext injects defaults
        ↓
-Equivalent to /maestro-ralph continue --auto-commit -y
+Equivalent to /maestro-ralph -c --auto-commit -y
 ```
 
 ---

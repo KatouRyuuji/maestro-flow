@@ -24,9 +24,9 @@ Main worktree (master)              Worktree (.worktrees/m2-production/)
 │       ├── 03-realtime/ [forked]   │       └── 04-billing/ (owned)
 │       └── 04-billing/ [forked]    │
 │                                   │   Execute normally here:
-│   Fix M1 bugs on main             │   /maestro-ralph --engine swarm --script wf-analyze 3
+│   Fix M1 bugs on main             │   /maestro-ralph analyze 3
 │                                   │   /maestro-next "<plan intent> 3"
-│                                   │   /maestro-ralph continue
+│                                   │   /maestro "execute"
 ```
 
 </details>
@@ -53,7 +53,7 @@ cd /project
 
 # Terminal B: Advance M2 in worktree
 cd .worktrees/m2-production/
-/maestro-ralph --engine swarm --script wf-analyze 3 && /maestro-next "<plan intent> 3" && /maestro-ralph continue
+/maestro-ralph analyze 3 && /maestro-next "<plan intent> 3" && /maestro "execute"
 
 # M2 complete, merge back
 /maestro-merge -m 2

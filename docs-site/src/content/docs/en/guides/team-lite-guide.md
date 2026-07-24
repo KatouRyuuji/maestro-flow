@@ -27,7 +27,7 @@ maestro collab status              # See who is doing what (last 30 min)
 maestro collab sync                # One-click sync (stash → pull --rebase → pop → push)
 ```
 
-`/maestro-next` and `/maestro-ralph continue` templates already integrate preflight calls — no manual triggering needed.
+`/maestro-next` and `/maestro-ralph -c` templates already integrate preflight calls — no manual triggering needed.
 
 ## Core Command Reference
 

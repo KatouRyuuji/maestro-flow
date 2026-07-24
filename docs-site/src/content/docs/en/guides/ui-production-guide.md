@@ -194,7 +194,7 @@ Reverse-engineer a design system from existing source code, generate a reference
 ```bash
 /maestro-impeccable "1" --chain build  # Design first
 /maestro-next "1"                        # Plan based on design
-/maestro-ralph continue 1               # Execute implementation
+/maestro "execute" 1                    # Execute implementation
 # Verification integrated into maestro-ralph decision gate
 ```
 

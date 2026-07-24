@@ -1,30 +1,33 @@
-# Quick Start Guide
+---
+title: "Quick Start Guide"
+icon: "🚀"
+---
 
-Get to know Maestro Flow's core features in 10 minutes.
+Get to know Maestro Flow's core features and usage in 10 minutes.
 
 ---
 
 ## 1. Installation
 
 ```bash
-# Interactive install (recommended for first-time)
+# Interactive install (recommended for first-time use)
 maestro install
 
-# Non-interactive batch install
+# One-click full install
 maestro install --force
 
 # Register MCP Server only
 maestro install mcp
 
-# Install hooks automation (standard level recommended)
+# Install Hook automation (standard level recommended)
 maestro hooks install --level standard
 ```
 
-After installation, `/maestro-*` slash commands and `maestro` terminal commands are available in Claude Code.
+After installation, the `/maestro-*` family of slash commands and the `maestro` terminal command are available in Claude Code.
 
-### Optional Skill Packs (opt-in)
+### Optional Skill Packs (install as needed)
 
-In the `maestro install` interactive UI, the following 3 skill packs are unchecked by default — opt in as needed. Each skill has an individual detail page (under the Team / Scholar / Meta categories); see the [Installation Guide](/guides/install) for full details.
+In the `maestro install` interactive UI, the following 3 skill packs are unchecked by default — opt in as needed. Each skill has its own detail page on the docs site (look under the Team / Scholar / Meta categories); see the [Installation Guide](/guides/install) for full details.
 
 **skills-extra-team (16 team collaboration skills)**: team-arch-opt, team-brainstorm, team-designer, team-frontend, team-frontend-debug, team-interactive-craft, team-issue, team-motion-design, team-perf-opt, team-planex, team-roadmap-dev, team-ui-polish, team-uidesign, team-ultra-analyze, team-ux-improve, team-visual-a11y
 
@@ -33,7 +36,7 @@ In the `maestro install` interactive UI, the following 3 skill packs are uncheck
 **skills-meta (5 meta skills)**: skill-generator, skill-simplify, skill-tuning, prompt-generator, delegation-check
 
 ```bash
-# After installing a pack, enable/disable individual skills
+# After installing a pack, enable/disable individual skills one by one
 maestro install toggle --type skill --list
 maestro install toggle --type skill --enable scholar-writing
 ```
@@ -47,146 +50,147 @@ maestro install toggle --type skill --enable scholar-writing
 ### Minimal Path
 
 ```bash
-/maestro-init                          # Initialize .workflow/ directory
-/maestro-ralph --roadmap "Project name and goals" -y  # Generate roadmap
+/maestro-init                          # Initialize the .workflow/ directory
+/maestro "从需求开始做整个项目" -y      # spec-driven chain: init → roadmap → plan → execute → harvest
 ```
 
 ### Start from Brainstorming
 
 ```bash
-/maestro-ralph --engine swarm --script wf-brainstorm "Online education platform"  # Multi-role brainstorming
-/maestro-init --from brainstorm:ANL-xxx                                          # Initialize from brainstorm
-/maestro-ralph --roadmap "Create roadmap" -y
+/maestro "brainstorm 在线教育平台"      # Multi-role brainstorming (brainstorm-driven chain)
+/maestro-init --from-brainstorm SESSION-ID                  # Initialize based on brainstorming
+/maestro "创建路线图" -y                # roadmap-driven chain
 ```
 
 ### Full Specification Blueprint (Large Projects)
 
 ```bash
 /maestro-init
-/maestro "Generate spec blueprint"        # 6-stage spec blueprint (Product Brief + PRD + Architecture + Epics)
+/maestro "生成规范蓝图"                   # blueprint-driven chain: 7-stage spec blueprint (Product Brief + PRD + Architecture + Epics)
 ```
 
 ---
 
 ## 3. Phase Pipeline
 
-The core project progression — each Phase goes through `Analyze → Plan → Execute → Verify`:
+The core project progression — each Phase goes through the `analyze → plan → execute → review → test` lifecycle (verification is already cohesive within the `post-execute` decision gate):
 
 ```bash
-# Full mode — covers all phases in current milestone
-/maestro-ralph --engine swarm --script wf-analyze  # Analyze
-/maestro-next                                      # Plan
-/maestro-ralph continue                            # Execute
-# Note: maestro-verify retired in v0.5.51 — verification integrated into maestro-ralph decision gate
+# Closed-loop mode — /maestro-ralph builds the full lifecycle chain + decision gate
+/maestro-ralph "实现用户认证系统"     # analyze → plan → execute → ◆ → review → ◆ → test → seal
 
-# Per-phase mode (micro layer: Phase-level deep analysis)
-/maestro-ralph --engine swarm --script wf-analyze 1  # Analyze Phase 1 only (6-dimension scoring)
-/maestro-next 1                                      # Plan Phase 1 only
-/maestro-ralph continue 1                            # Execute Phase 1 only
+# Step-by-step mode (single-step chains routed via /maestro)
+/maestro "analyze"                    # Analyze
+/maestro "plan phase 1"               # Plan
+/maestro "execute"                    # Execute
+# Note: /maestro-verify was retired in v0.5.51 — verification is integrated into the maestro-ralph decision gate
 
-# Macro exploration (macro layer: use before roadmap)
-/maestro "Implement multi-tenancy"                   # Requirement impact exploration → scope_verdict routing
+# Per-Phase mode (micro layer: Phase-level deep analysis)
+/maestro "analyze phase 1"            # Analyze Phase 1 only
+/maestro "plan phase 1"               # Plan Phase 1 only
+/maestro "execute phase 1"            # Execute Phase 1 only
+
+# Macro exploration mode (macro layer: use before roadmap)
+/maestro "实现多租户架构"              # analyze-macro → scope_verdict routing
 ```
 
 ### One-Click Full Auto
 
 ```bash
-/maestro -y "Implement user authentication system"
-# Auto-executes the full lifecycle
+/maestro -y "实现用户认证系统"
+# Auto-classifies intent → creates canonical Session → runs the full lifecycle
 ```
 
 ### No-Init Mode (Ad-hoc Tasks)
 
 ```bash
-/maestro "Implement JWT auth"  # scope=standalone, auto-creates state.json
-/maestro-next --dir scratch/20260420-analyze-jwt-...
-/maestro-ralph continue --dir scratch/20260420-plan-jwt-...
+/maestro "实现 JWT 认证"                 # analyze-plan-execute chain, scope=standalone
+maestro session start "实现 JWT 认证" --chain analyze plan execute   # Build the chain directly via CLI
 ```
 
 ---
 
 ## 4. Quality Pipeline
 
-Run quality verification after execution — three complementary test tracks:
+Run quality verification after execution — the quality gate is inserted into the chain as a decision node by the Ralph strategy:
 
 ```bash
-# Unified auto-test (smart routing: spec/gap/code)
-/maestro-ralph --engine swarm 1
+# Closed-loop mode (quality gate inserted automatically)
+/maestro-ralph "实现 X"     # execute → ◆post-execute → review → ◆post-review → test → ◆post-test
 
-# Security audit / testing
-/security-audit 1
-
-# Code review
-/maestro-ralph --engine swarm --script wf-review 1
+# Single-step quality commands (routed via /maestro)
+/maestro "review phase 1"               # Code review
+/maestro "test phase 1"                 # UAT testing
+/security-audit 1                        # Security audit
 ```
 
 ### Test Failure Fix Loop
 
 ```bash
 /maestro-odyssey --mode debug --from-uat 1      # Diagnose failure
-/maestro-next 1 --gaps                 # Generate fix plan
-/maestro-ralph continue 1              # Execute fix
-/maestro-ralph --engine swarm 1 --re-run  # Re-run failed scenarios
+/maestro "review 有问题需要修"            # review-fix chain: plan --gaps → execute → review
+/maestro "全面质量检查"                   # quality-loop chain: review → auto-test → test → debug → plan --gaps → execute
 ```
 
 ---
 
 ## 5. Issue Closed-Loop
 
-Problem tracking system parallel to Phase pipeline, supports full automation:
+A problem tracking system independent of the Phase pipeline, supporting full closed-loop automation:
 
 ```bash
 # Discover problems
-/maestro-manage issue discover by-prompt "Check API error handling"
+/maestro-manage issue discover by-prompt "检查 API 错误处理"
 
-# Create issue
-/maestro-manage issue create --title "Memory leak" --severity high
+# Create an Issue
+/maestro-manage issue create --title "内存泄漏" --severity high
 
-# Closed-loop processing
-/maestro-ralph --engine swarm --script wf-analyze --gaps ISS-001  # Root cause analysis
-/maestro-next --gaps                    # Solution planning
-/maestro-ralph continue                 # Execute fix
+# Closed-loop processing (issue-full chain)
+/maestro "fix issue ISS-001"     # analyze --gaps → plan --gaps → execute → review → close → harvest
 /maestro-manage issue close ISS-001 --resolution "Fixed"
 ```
 
-**Commander Agent** can auto-advance unanalyzed issues without manual intervention.
+The **Commander Agent** can auto-advance unanalyzed Issues without manual intervention.
 
 ---
 
 ## 6. Quick Tasks
 
-Bypass the Phase pipeline and complete tasks directly:
+Skip the Phase pipeline and complete tasks directly:
 
 ```bash
-# Shortest path
-/maestro-next "Fix login page bug"
+# Fastest path (pure router: classify intent → route to companion / single Run / /maestro)
+/maestro-next "修复登录页 Bug"
 
-# With plan validation
-/maestro-next "Refactor API layer" --full
+# Lightweight execution (minimal Run lifecycle)
+/maestro-companion "修复登录页 Bug"
 
-# With decision extraction
-/maestro-next --note "Database migration strategy"
+# Suggest only, do not execute
+/maestro-next --suggest "重构 API 层"
+
+# List routable channels
+/maestro-next --list
 ```
 
 ---
 
-## 7. Delegate Async Tasks
+## 7. Delegate Async Delegation
 
 Delegate tasks to external AI engines (Gemini/Qwen/Codex/Claude/OpenCode):
 
 ```bash
 # Async analysis (returns immediately)
-maestro delegate "Analyze performance bottlenecks" --to gemini --async
+maestro delegate "分析性能瓶颈" --to gemini --async
 
 # Check status and results
 maestro delegate status gem-143022-a7f2
 maestro delegate output gem-143022-a7f2
 
-# Inject supplementary context mid-execution
-maestro delegate message gem-143022-a7f2 "Also check utils directory"
+# Append context while running
+maestro delegate message gem-143022-a7f2 "同时检查 utils 目录"
 
 # Task chain — auto-fix after analysis completes
-maestro delegate message gem-143022-a7f2 "Fix all critical issues" --delivery after_complete
+maestro delegate message gem-143022-a7f2 "修复所有高危问题" --delivery after_complete
 ```
 
 ### Supported --rule Templates
@@ -209,17 +213,17 @@ maestro delegate "..." --rule development-implement-feature --mode write
 
 ## 8. Spec Management
 
-Project-level knowledge auto-injection — no manual context pasting when Agents start:
+Project-level knowledge auto-injection — no manual context pasting when the Agent starts:
 
 ```bash
-# Initialize (scan codebase to generate spec files)
-/maestro-spec setup                                     # Existing projects: scan codebase to populate specs
+# Initialize (scan the codebase to generate spec files)
+/maestro-spec setup                                     # Existing projects: scan the codebase to populate specs
 # New projects can skip -- specs are progressively populated by analyze/plan/execute
 
 # Add specs
-/maestro-spec add coding "All APIs use Hono framework"
-/maestro-spec add arch "Notification module uses event-driven architecture"
-/maestro-spec add learning "Pagination offset=0 causes off-by-one"
+/maestro-spec add coding "所有 API 使用 Hono 框架"
+/maestro-spec add arch "通知模块使用事件驱动架构"
+/maestro-spec add learning "分页 offset=0 会越界"
 
 # Load specs
 /maestro-spec load --role implement
@@ -227,17 +231,17 @@ Project-level knowledge auto-injection — no manual context pasting when Agents
 /maestro-spec load --role implement --keyword auth
 ```
 
-**Auto-injection**: Hooks auto-inject specs by Agent type at startup (coder→coding, tester→test, debugger→debug).
+**Auto-injection**: Hooks auto-inject the corresponding specs by type when the Agent starts (coder→coding, tester→test, debugger→debug).
 
 ---
 
 ## 9. Overlay Command Extension
 
-Inject custom steps without modifying original command files:
+Inject custom steps without modifying the original command files:
 
 ```bash
 # Create via natural language
-/maestro-overlay "Add CLI verification after maestro-ralph continue"
+/maestro-overlay "在 maestro-execute 后增加 CLI 验证"
 
 # Manage
 maestro overlay list                    # Interactive TUI view
@@ -266,25 +270,25 @@ maestro hooks toggle spec-injector off
 
 | Level | Includes |
 |-------|----------|
-| `minimal` | Context monitoring + Spec auto-injection |
-| `standard` | + Delegate monitoring + Session context + Skill awareness + Coordinator tracking + KG sync + KG context injection |
+| `minimal` | Context monitoring + spec auto-injection |
+| `standard` | + Delegate monitoring + session context + Skill awareness + coordinator tracking + KG sync + KG context injection |
 | `full` | + Workflow guard (protect critical files) |
 
 ---
 
 ## 11. Worktree Parallel Development
 
-Milestone-level parallelism — start the next milestone without waiting for bug fixes:
+Milestone-level parallelism — start the next stage without waiting for bug fixes to finish:
 
 ```bash
 /maestro-fork -m 2                              # Fork M2 worktree
 cd .worktrees/m2-production/
-/maestro-ralph --engine swarm --script wf-analyze 3 && /maestro-next 3 && /maestro-ralph continue 3
+/maestro "analyze phase 3" && /maestro "plan phase 3" && /maestro "execute phase 3"
 
 cd /project
 /maestro-merge -m 2                             # Merge back to main
 
-# Sync main fixes to worktree
+# Sync main fixes to the worktree
 /maestro-fork -m 2 --sync
 ```
 
@@ -296,7 +300,7 @@ cd /project
 # Audit (cross-Phase integration verification)
 /maestro-session-seal
 
-# Complete (archive and advance to next milestone)
+# Complete (archive and advance to the next milestone)
 /maestro-session-seal
 ```
 
@@ -307,10 +311,10 @@ cd /project
 ```bash
 maestro view              # Browser kanban board
 maestro view --tui        # Terminal UI
-maestro stop              # Stop server
+maestro stop              # Stop the server
 ```
 
-Displays Phase progress, Issue status (Backlog → In Progress → Review → Done), supports batch execution and Agent selection.
+Displays Phase progress and Issue status (Backlog → In Progress → Review → Done), and supports batch execution and Agent selection.
 
 ---
 
@@ -320,7 +324,7 @@ Displays Phase progress, Issue status (Backlog → In Progress → Review → Do
 
 ```bash
 maestro search "auth token"                        # BM25 full-text search
-maestro search "auth" --type spec                   # Spec only
+maestro search "auth" --type spec                   # Search specs only
 maestro search "auth" --category coding             # Filter by category
 ```
 
@@ -328,13 +332,13 @@ maestro search "auth" --category coding             # Filter by category
 
 ### CodeGraph (Optional)
 
-Function-level Knowledge Graph with call relationships and symbol queries:
+A function-level knowledge graph providing call relationships and symbol queries:
 
 ```bash
 # Install (optional, enables function-level KG)
 npm install -g @colbymchenry/codegraph
 
-# Initialize index
+# Initialize the index
 maestro kg index --sqlite
 
 # Query
@@ -342,18 +346,19 @@ maestro kg search "validateToken"                   # Symbol search
 maestro kg context "validateToken"                  # Callers/callees
 ```
 
-Once installed, hooks keep the graph fresh and provide context automatically (`kg-sync` incremental sync + composed `keyword-spec-injector` prompt context).
+Once installed, hooks keep the graph fresh and provide context automatically (`kg-sync` incremental sync + `keyword-spec-injector` single-prompt context composition).
 
 ---
 
-## 15. Common Terminal Commands
+## 15. Common Terminal Commands Quick Reference
 
 | Command | Purpose |
 |---------|---------|
 | `maestro install` | Install |
 | `maestro search "query"` | Unified knowledge search |
-| `maestro delegate "..." --to gemini` | Delegate task |
-| `maestro coordinate run "..." --chain default -y` | Graph coordinator |
+| `maestro delegate "..." --to gemini` | Delegate a task |
+| `maestro session start "..." --chain analyze plan execute` | Build a chain and dispatch (human entry point) |
+| `maestro session status` | canonical Session/Run status |
 | `maestro overlay list` | Overlay management |
 | `maestro hooks status` | Hook status |
 | `maestro spec load --category coding` | Load specs |
@@ -363,34 +368,35 @@ Once installed, hooks keep the graph fresh and provide context automatically (`k
 
 ---
 
-## 16. Typical Workflows
+## 16. Typical Workflows at a Glance
 
 ### New Project
 
 ```bash
-/maestro-init → /maestro-ralph --roadmap → /maestro-next 1 → /maestro-ralph continue 1 → /maestro-session-seal
+/maestro-init → /maestro "从需求开始做整个项目" → /maestro-session-seal
+# Or closed-loop: /maestro-ralph "实现 X" -y
 ```
 
 ### One-Click Full Auto
 
 ```bash
-/maestro -y "Implement user authentication system"
+/maestro -y "实现用户认证系统"
 ```
 
 ### Bug Fix
 
 ```bash
-/maestro-next "Fix mobile login page layout issues"
+/maestro-next "修复移动端登录页布局问题"    # Routes to companion / single Run / /maestro
 ```
 
 ### Issue Discovery & Fix
 
 ```bash
-/maestro-manage issue discover → /maestro-ralph --engine swarm --script wf-analyze --gaps ISS-xxx → /maestro-next --gaps → /maestro-ralph continue → /maestro-manage issue close
+/maestro-manage issue discover → /maestro "fix issue ISS-xxx" → /maestro-manage issue close
 ```
 
 ### Parallel Development
 
 ```bash
-/maestro-fork -m 2 → (develop in worktree) → /maestro-merge -m 2
+/maestro-fork -m 2 → (develop in the worktree) → /maestro-merge -m 2
 ```

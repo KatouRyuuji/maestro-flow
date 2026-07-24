@@ -162,9 +162,9 @@ Writes heartbeat to `.workflow/collab/activity.jsonl` once per turn.
 
 **Event**: `UserPromptSubmit` | **Level**: `standard`
 
-Matches Skill invocations and injects workflow state + phase artifact tree + prior results via `additionalContext` (does not rewrite prompt). Supported patterns: `/maestro-ralph continue`, `/maestro-next {N}`, `/maestro-ralph --engine swarm --script wf-analyze`, `/maestro-ralph --engine swarm --script wf-review`, `/maestro "<test intent>"`, `/maestro`, `/maestro-ralph`
+Matches Skill invocations and injects workflow state + phase artifact tree + prior results via `additionalContext` (does not rewrite prompt). Supported patterns: `/maestro-ralph -c`, `/maestro-next {N}`, `/maestro-ralph analyze`, `/maestro-ralph review`, `/maestro "<test intent>"`, `/maestro`, `/maestro-ralph`
 
-Coordinator Skills additionally inject coordinator-tracker bridge next-step prompt: `Chain: full-lifecycle [3/6] | Status: paused | Next: /maestro-ralph --engine swarm --script wf-review 2 | Resume: /maestro -c`
+Coordinator Skills additionally inject coordinator-tracker bridge next-step prompt: `Chain: full-lifecycle [3/6] | Status: paused | Next: /maestro-ralph review 2 | Resume: /maestro -c`
 
 ### coordinator-tracker — Coordinator Progress Tracking
 
@@ -184,7 +184,7 @@ Updates bridge file at end of each turn for Statusline and skill-context consump
   "phase": 2,
   "steps_total": 6,
   "steps_completed": 3,
-  "current_step": { "index": 3, "skill": "maestro-ralph", "args": "--engine swarm --script wf-review 2" },
+  "current_step": { "index": 3, "skill": "maestro-ralph", "args": "review 2" },
   "next_step": { "index": 4, "skill": "maestro-ralph", "args": "<test intent> 2" },
   "status": "paused",
   "updated_at": 1744668285953
@@ -193,7 +193,7 @@ Updates bridge file at end of each turn for Statusline and skill-context consump
 
 </details>
 
-**Statusline**: `claude-sonnet-4-6 | P2 | [3/6]maestro-ralph --engine swarm --script wf-review` (paused shows `[P]maestro-ralph --engine swarm --script wf-review`)
+**Statusline**: `claude-sonnet-4-6 | P2 | [3/6]maestro-ralph review` (paused shows `[P]maestro-ralph review`)
 
 ### kg-sync — Knowledge Graph Sync
 

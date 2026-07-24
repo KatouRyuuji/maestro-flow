@@ -195,7 +195,7 @@ S_PARSE → S_SETUP → S_CHAIN → S_GATE → S_REPORT
 ```bash
 /maestro-impeccable "1" --chain build  # 设计先行
 /maestro-next "1"                        # 基于设计规划
-/maestro-ralph continue 1               # 执行实现
+/maestro "execute" 1                    # 执行实现
 # 验证已集成到 maestro-ralph 决策门控
 ```
 
