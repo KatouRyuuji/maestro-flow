@@ -34,7 +34,7 @@ contract:
 </deferred_reading>
 
 <purpose>
-Turn a user intent into the initial Skill chain, create one canonical topic Session through `maestro session start --chain-file`, then execute the shared Run loop. Static versus dynamic is not a Session or command mode: each Skill contract decides whether it emits a typed chain proposal.
+Turn a user intent into the initial Skill chain, create one canonical topic Session through `maestro session create --chain-file`, then execute the shared Run loop. Static versus dynamic is not a Session or command mode: each Skill contract decides whether it emits a typed chain proposal.
 </purpose>
 
 <interface>
@@ -53,7 +53,7 @@ All other text is intent. Unknown flags are not silently reinterpreted. Executor
 3. **Creator owns decomposition** — Maestro creates `boundary_contract` and outcome-oriented goals; later orchestrators consume rather than overwrite them.
 4. **Runtime owns mutation** — prompt never writes session.json/run.json and never auto-uses admin chain commands.
 5. **Skill owns domain adaptation** — optional chain changes come only from the current Skill's validated `chain-proposal/1.0`.
-6. **Verdict advances** — execution steps advance only through `run done/complete --verdict`; decision steps only through `session decide`.
+6. **Verdict advances** — execution steps advance only through `session done --verdict`; decision steps only through `session decide`.
 7. **Historical similarity remains read-only evidence** — it never selects a Session or binds outputs.
 8. **Compatibility commands are out of band** — normal orchestration calls only `maestro run ...`.
 9. **Auto is bounded** — `-y` never bypasses high risk, low confidence, ambiguity, failed gates or drift escalation.
@@ -143,7 +143,7 @@ Goals describe outcomes, not lifecycle stages.
 
 Build a chain definition with execution steps and formal decision nodes whenever the selected Ralph policy requires quality/goal/scope or reground evaluation. Every Ralph-created chain has at least one decision node before Session seal. Write it to a temporary JSON file and call:
 
-`maestro session start "{intent}" --id maestro-{slug} --chain-file {path} --no-dispatch`
+`maestro session create "{intent}" --id maestro-{slug} --chain-file {path} --no-dispatch`
 
 Delete the temporary file after success. Do not inline unescaped JSON. Then enter the shared loop using the returned `session_id`.
 

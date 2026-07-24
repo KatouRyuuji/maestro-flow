@@ -90,7 +90,7 @@ function addCanonicalRecoveryHelp(command: Command, phase: 'resolve' | 'resume')
 Canonical paused recovery:
   ${phaseDetail}
   Recovery requires an exact Session ID plus audit, revision, and optional lease-triple guards.
-  Neither phase creates a Run or binds a chain step. Run allocation remains an explicit maestro run next.
+  Neither phase creates a Run or binds a chain step. Run allocation remains an explicit maestro session next.
 `);
 }
 
@@ -531,10 +531,7 @@ export function registerSessionCommand(program: Command): void {
         if (!intent && !opts.session) throw new Error('session start requires an intent or --session');
         const platform = opts.platform ? targetPlatformSchema.parse(opts.platform) : undefined;
 
-        // Single-Run mode: --session provided, no chain creation
-        if (opts.session && !opts.chain?.length && !opts.chainFile) {
-          if (!opts.chain?.length) throw new Error('single-run start requires --chain <command>');
-        }
+        // Single-Run mode: --session + exactly one --chain command, no chain-file
         if (opts.session && opts.chain?.length === 1 && !opts.chainFile) {
           const result = createRun({
             projectRoot: root,

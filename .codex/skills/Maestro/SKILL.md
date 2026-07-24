@@ -34,7 +34,7 @@ version: 0.5.55
 </deferred_reading>
 
 <purpose>
-Turn a user intent into the smallest sufficient Skill chain, create one canonical topic Session through `maestro session start --chain-file`, then execute the shared Run loop. Static versus dynamic is not a mode: each Skill contract decides whether it emits a typed chain proposal.
+Turn a user intent into the smallest sufficient Skill chain, create one canonical topic Session through `maestro session create --chain-file`, then execute the shared Run loop. Static versus dynamic is not a mode: each Skill contract decides whether it emits a typed chain proposal.
 </purpose>
 
 <interface>
@@ -47,7 +47,7 @@ Only `-y`, `-c`, and `--amend` are accepted. All remaining text is intent. Execu
 3. Maestro owns the initial boundary and outcome decomposition; later orchestrators consume it.
 4. Runtime owns protocol files and chain mutation; normal orchestration calls only `maestro run ...`.
 5. Skill adaptation is optional and appears only as validated `chain-proposal/1.0`.
-6. Execution advances through `run done/complete --verdict`; decision nodes through `run decide`.
+6. Execution advances through `session done --verdict`; decision nodes through `run decide`.
 7. Historical similarity is read-only; same-Session sealed outputs enter only through canonical upstream.
 8. `-y` never bypasses high risk, low confidence, ambiguity, failed gates or drift escalation.
 9. `/maestro-next` may route here but never appears inside a chain.
@@ -105,7 +105,7 @@ Goals describe outcomes, not lifecycle stages.
 
 Write chain JSON to a temporary file and call:
 
-`maestro session start "{intent}" --id maestro-{slug} --chain-file {path} --no-dispatch`
+`maestro session create "{intent}" --id maestro-{slug} --chain-file {path} --no-dispatch`
 
 Delete the temporary file after success. Do not inline unescaped JSON. Runtime resolves commands when `session next` allocates each execution Run.
 

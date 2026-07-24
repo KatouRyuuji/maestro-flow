@@ -59,7 +59,7 @@ All remaining text is intent. No engine, roadmap, script, depth, role, tier, pla
 11. **Compatibility commands are out of band** — no Ralph/Session CLI is called or recommended.
 12. **Terminal means terminal** — sealed/archived returns `CHAIN_COMPLETE`, never resume.
 13. **Decision is mandatory** — every Ralph-created chain contains at least one formal decision node before Session seal; Run completion never substitutes for `session decide`.
-14. **Completion and decision both continue** — after successful `run complete|done --json` or `run decide --json`, immediately execute any satisfiable `continuation.authority=automatic` action in the same turn.
+14. **Completion and decision both continue** — after successful `session done --json` or `session decide --json`, immediately execute any satisfiable `continuation.authority=automatic` action in the same turn.
 </invariants>
 
 <state_machine>
@@ -119,23 +119,17 @@ S_DONE → END
 
 <actions>
 
+All command syntax and lifecycle mechanics follow `orchestrator-run-loop.md` and `run-mode.md`. The actions below define only Ralph-specific policy decisions.
+
 ### A_RESOLVE
 
-Use `maestro run recall maestro-ralph --intent "{intent}" --json` only as read-only lookup. Explicit birth `session_id/run_id` wins. Multiple live candidates require user selection; historical similarity never grants authority.
+Read-only lookup via `run recall`. Explicit birth `session_id/run_id` wins. Multiple live candidates require user selection; historical similarity never grants authority.
 
 ### A_BUILD
 
 Infer lifecycle start from intent and same-Session sealed outputs. New Sessions start from analysis unless intent explicitly calls for grill, brainstorm or blueprint. Roadmap is inferred only for multi-release evidence. Quality is quick/standard/full based on specs and observable risk, not a user flag.
 
 Build outcome-oriented decomposition. For broad work, boundary clarification remains mandatory even with `-y`. Every chain includes at least one final quality/goal/scope decision node before seal; long chains also include periodic reground decision nodes. Step execution strategy is defined by each Skill, never by Ralph flags.
-
-### A_CREATE
-
-Write the chain definition to a temporary file, then call:
-
-`maestro session start "{intent}" --id {slug} --chain-file {path} --no-dispatch`
-
-Delete the file after success. The host runtime supplies platform/executor metadata. Enter the shared loop with the returned Session locator.
 
 ### A_EXECUTE
 
@@ -153,27 +147,32 @@ CONFIDENCE: high|medium|low
 ---END---
 ```
 
-Parse failure becomes `fix`, low confidence, `parse_failed=true`. Confidence below 60 cannot proceed. Retry budget exhaustion escalates. Goal audit compares every pending goal's `done_when` against evidence; missing evidence means unmet. Reground compares cumulative handoffs against intent and boundary; confident drift halts even under `-y`.
+Ralph policy thresholds:
+- Parse failure → `fix`, low confidence, `parse_failed=true`.
+- Confidence below 60 → cannot proceed.
+- Retry budget exhaustion → escalate.
+- Goal audit: compare every pending goal's `done_when` against evidence; missing evidence means unmet.
+- Reground: compare cumulative handoffs against intent and boundary; confident drift halts even under `-y`.
 
-Apply the result through `maestro session decide ... --json`. Read its canonical continuation exactly as for `session done`: `proceed` immediately advances to the next Run, next decision, or seal; `escalate` enters audited recovery; `fix` requires new repair evidence before another evaluation. Any chain change is produced by an executable Skill as `chain-proposal/1.0` and accepted through the producing Run's `run done --apply-proposal`.
+Apply through `session decide --json` and follow the Continuation Router in `orchestrator-run-loop.md`.
 
 ### A_FAIL
 
-- Repairable executor/check/drift failure: `run done --verdict needs-retry`; re-dispatch only after Runtime returns the step to pending.
-- External or exhausted blocker: `run done --verdict blocked --reason ...`; Session pauses.
+- Repairable failure → verdict `needs-retry`; re-dispatch only after Runtime returns the step to pending.
+- External or exhausted blocker → verdict `blocked`; Session pauses.
 - Never allocate a new Run while the previous Run is running or gate-blocked.
 
 ### A_RECOVER
 
-Only explicit `-c` enters recovery. Use `session status`, obtain user disposition for every exact blocker, call `run recover` per blocker, then `run recover --resume`. Resume does not allocate a Run.
+Only explicit `-c` enters recovery. Follow `orchestrator-run-loop.md` §7 exactly.
 
 ### A_AMEND
 
-Read `ralph-amend-goal.md`. Snapshot with `session status`; perform read-only impact analysis; high risk always asks. Commit the full decomposition via `run edit --decomposition-file -`; pending-tail changes come from a planning Skill proposal.
+Read `ralph-amend-goal.md`. High risk always asks. Pending-tail changes come from a planning Skill proposal, not direct edit.
 
 ### A_DONE
 
-When every execution Run is sealed, every decision is terminal, every goal is done and Session gates are clean, call `maestro session seal {session_id} --summary "..."`.
+When every execution Run is sealed, every decision is terminal, every goal is done and Session gates are clean → seal.
 
 </actions>
 
@@ -181,8 +180,8 @@ When every execution Run is sealed, every decision is terminal, every goal is do
 
 <success_criteria>
 - Public flags are exactly `-y`, `-c`, `--amend`.
-- No legacy Ralph driver, Session administration, or independent Skills CLI appears in normal flow.
-- Each Run follows next → brief → execute → check → done and every decision uses decide.
+- No legacy Ralph driver, private Session type, or independent Skills CLI appears in normal flow.
+- Each Run follows `session next --inline-brief` → execute → `run check` → `session done`; backtracking uses `run brief`. Every decision uses `session decide`.
 - Proposal acceptance is pathless from Ralph's perspective and atomic with Run completion.
 - Retry, confidence, drift, goal audit, recovery and terminal semantics remain explicit.
 </success_criteria>

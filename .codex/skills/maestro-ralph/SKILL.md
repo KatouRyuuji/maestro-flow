@@ -53,7 +53,7 @@ Only `-y`, `-c`, and `--amend` are accepted. All remaining text is intent. Execu
 </invariants>
 
 <codex_dispatch>
-For an execution Run, call `spawn_agent` once with `agent_type: "ralph_executor"`, explicit Session locator and ownership limited to that Run. Immediately call `wait_agent({ timeout_ms: 3600000 })`; continue waiting after timeouts until completed or errored. The executor may use nested unnamed agents according to the loaded Skill, but it must not call `run done/complete`.
+For an execution Run, call `spawn_agent` once with `agent_type: "ralph_executor"`, explicit Session locator and ownership limited to that Run. Immediately call `wait_agent({ timeout_ms: 3600000 })`; continue waiting after timeouts until completed or errored. The executor may use nested unnamed agents according to the loaded Skill, but it must not call `session done`.
 
 Decision, goal-audit, reground and amend-impact workers are read-only default agents. Do not spawn agents when the active host policy or user scope forbids delegation; execute the same Resume Packet directly instead. Executor choice never changes Session semantics.
 </codex_dispatch>
@@ -92,13 +92,13 @@ Use `maestro run recall maestro-ralph --intent "{intent}" --json` only as read-o
 
 Write chain JSON to a temporary file and call:
 
-`maestro session start "{intent}" --id {slug} --chain-file {path} --no-dispatch`
+`maestro session create "{intent}" --id {slug} --chain-file {path} --no-dispatch`
 
 Delete the file after success.
 
 ### Execute one Run
 
-Follow `orchestrator-run-loop.md`: `run status` → `run next --json` → `run brief` → execute → `run check` → drift/proposal policy → `session done`. Never allocate the next Run before the prior completion is sealed.
+Follow `orchestrator-run-loop.md`: `session status` → `run next --json` → `run brief` → execute → `run check` → drift/proposal policy → `session done`. Never allocate the next Run before the prior completion is sealed.
 
 ### Evaluate
 
@@ -106,14 +106,14 @@ Read-only evaluator returns `proceed|fix|escalate` plus `high|medium|low`. Parse
 
 ### Proposal
 
-`run check` discovers typed proposals. Accept exactly one valid proposal with `run done ... --apply-proposal`; reject by omitting it and recording a note; revise by reloading the same Run. Legacy proposal path flags are never used.
+`run check` discovers typed proposals. Accept exactly one valid proposal with `session done ... --apply-proposal`; reject by omitting it and recording a note; revise by reloading the same Run. Legacy proposal path flags are never used.
 
 ### Failure, recovery, amend, seal
 
-- Repairable: `run done --verdict needs-retry`.
-- Exhausted/external: `run done --verdict blocked --reason ...`.
-- Explicit `-c` recovery: `run status` → `run recover` per blocker → `run recover --resume`.
-- Amend: read deferred protocol, snapshot with `run status`, commit full decomposition with `run edit --decomposition-file -`, then accept any planning proposal through its Run.
+- Repairable: `session done --verdict needs-retry`.
+- Exhausted/external: `session done --verdict blocked --reason ...`.
+- Explicit `-c` recovery: `session status` → `session recover` per blocker → `session recover --resume`.
+- Amend: read deferred protocol, snapshot with `session status`, commit full decomposition with `session chain edit --decomposition-file -`, then accept any planning proposal through its Run.
 - Terminal: `run seal-session {session_id} --summary "..."` after Runs, decisions, goals and gates are complete.
 
 </actions>

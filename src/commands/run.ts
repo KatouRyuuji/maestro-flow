@@ -287,7 +287,7 @@ export function registerRunCommand(program: Command): void {
             session_id: created.sessionId,
             session_dir: created.sessionDir,
             chain: summarizeChain(definition),
-            next: `maestro run next --session ${created.sessionId}`,
+            next: `maestro session next --session ${created.sessionId}`,
           };
           if (opts.dispatch) {
             const next = runNextStep(projectRoot, { sessionId: created.sessionId });
@@ -349,6 +349,7 @@ export function registerRunCommand(program: Command): void {
     .option('--lease-id <id>', 'lease ID')
     .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
     .action((opts: any) => {
+      sessionMigrationNotice('recover');
       try {
         const projectRoot = resolve(opts.workflowRoot);
         const common = {
@@ -486,6 +487,7 @@ export function registerRunCommand(program: Command): void {
       insertedBy: string;
       workflowRoot: string;
     }) => {
+      sessionMigrationNotice('edit', 'chain edit');
       try {
         const projectRoot = resolve(opts.workflowRoot);
         const store = new SessionStore(projectRoot);
@@ -573,7 +575,7 @@ export function registerRunCommand(program: Command): void {
           inserted.push(step);
           after = step.step_id;
         }
-        print({ session_id: sessionId, inserted, next: `maestro run next --session ${sessionId}` });
+        print({ session_id: sessionId, inserted, next: `maestro session next --session ${sessionId}` });
       } catch (error) {
         reportError(error);
       }
@@ -819,6 +821,7 @@ Compatibility boundary:
       json?: boolean;
       workflowRoot: string;
     }) => {
+      sessionMigrationNotice('complete', 'done');
       try {
         const projectRoot = resolve(opts.workflowRoot);
 
