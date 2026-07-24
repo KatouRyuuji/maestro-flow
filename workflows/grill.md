@@ -419,7 +419,7 @@ If any missing: produce the missing artifact before Step 7. Do NOT register comp
 
 ### 7.1: Artifact Registration
 
-Artifact registration and state updates are handled by `maestro run complete`.
+Artifact registration and state updates are handled by `maestro session done`.
 
 ### 7.2: Domain Knowledge Flow
 

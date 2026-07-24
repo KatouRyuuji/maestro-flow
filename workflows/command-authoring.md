@@ -323,10 +323,10 @@ Next steps:
 
 ### Orchestrated Run completion
 
-An executor reports `run_id`, check state, artifacts, summary, concerns, and optional proposal path to the orchestrator. It MUST NOT call `run complete` itself. The orchestrator maps the result to:
+An executor reports `run_id`, check state, artifacts, summary, concerns, and optional proposal path to the orchestrator. It MUST NOT call `session done` itself. The orchestrator maps the result to:
 
 ```
-maestro run complete --session <session-id> --verdict {verdict} \
+maestro session done --session <session-id> --verdict {verdict} \
   [--chain-proposal outputs/chain-proposal.json] [--evidence <path>] [--note "..."]
 ```
 
@@ -393,7 +393,7 @@ Line-by-line verifiable completion standards.
 - [ ] Every task has `convergence.criteria[]` with grep-verifiable conditions
 - [ ] Plan-checker passed (or minor issues acknowledged)
 - [ ] User confirmation captured (execute/modify/cancel)
-- [ ] Artifact declared by contract and registered by `maestro run complete`
+- [ ] Artifact declared by contract and registered by `maestro session done`
 </success_criteria>
 ```
 

@@ -193,7 +193,7 @@ Write 3 files to `{output_dir}`:
 
 ## Step 9: Wrap-up
 
-Artifact registration and state updates are handled by `maestro run complete`.
+Artifact registration and state updates are handled by `maestro session done`.
 
 ### Completion Report
 

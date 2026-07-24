@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import type { Command } from 'commander';
 import { migrateAllSessions, migrateSession } from '../run/migrate.js';
 import { SessionStore } from '../run/store.js';
-import { completeRunWithVerdict, sealSession, type CompletionVerdict } from '../run/runtime.js';
+import { completeRunWithVerdict, createRun, sealSession, type CompletionVerdict } from '../run/runtime.js';
 import { runNextStep } from '../run/next.js';
 import { runDecide, type DecisionConfidence, type DecisionVerdict } from '../run/decide.js';
 import { continuationAfterDecide } from '../run/continuation.js';
@@ -489,8 +489,105 @@ export function registerSessionCommand(program: Command): void {
           session_dir: result.sessionDir,
           engine: result.session.orchestration.engine,
           chain: definition ? chainSummary(definition.steps) : persistedChainSummary(result.session),
-          next: `maestro run next --session ${result.sessionId}`,
+          next: `maestro session next --session ${result.sessionId}`,
         });
+      } catch (error) {
+        reportError(error);
+      }
+    });
+
+  session
+    .command('start [intent...]')
+    .description('Create a Session and dispatch the first step (single-step or chain)')
+    .option('--chain <commands...>', 'command chain, e.g. --chain companion or --chain analyze execute review')
+    .option('--chain-file <path>', 'advanced chain definition JSON; "-" reads stdin')
+    .option('--id <slug>', 'explicit Session ID/slug')
+    .option('--session <id>', 'existing Session ID for a single Run (no chain creation)')
+    .option('--topic <text>', 'command-independent Session topic; defaults to intent')
+    .option('--arg <value>', 'command input stored in Run input.args (repeatable)', (v: string, p: string[] = []) => [...p, v], [])
+    .option('--platform <name>', 'target platform persisted for this Run')
+    .option('--no-dispatch', 'create the Session but do not run the first step')
+    .option('--engine <name>', 'orchestration engine: ralph|coordinator|manual')
+    .option('--quality <mode>', 'quality mode: quick|standard|full')
+    .option('--auto', 'enable auto mode')
+    .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
+    .action((intentParts: string[], opts: {
+      chain?: string[];
+      chainFile?: string;
+      id?: string;
+      session?: string;
+      topic?: string;
+      arg: string[];
+      platform?: string;
+      dispatch: boolean;
+      engine?: string;
+      quality?: string;
+      auto?: boolean;
+      workflowRoot: string;
+    }) => {
+      try {
+        const root = resolve(opts.workflowRoot);
+        const intent = intentParts.join(' ').trim() || opts.topic || opts.chain?.join(' → ') || '';
+        if (!intent && !opts.session) throw new Error('session start requires an intent or --session');
+        const platform = opts.platform ? targetPlatformSchema.parse(opts.platform) : undefined;
+
+        // Single-Run mode: --session provided, no chain creation
+        if (opts.session && !opts.chain?.length && !opts.chainFile) {
+          if (!opts.chain?.length) throw new Error('single-run start requires --chain <command>');
+        }
+        if (opts.session && opts.chain?.length === 1 && !opts.chainFile) {
+          const result = createRun({
+            projectRoot: root,
+            command: opts.chain[0],
+            sessionId: opts.session,
+            intent,
+            topic: opts.topic,
+            platform,
+            args: opts.arg,
+          });
+          print(result);
+          return;
+        }
+
+        // Chain mode: create Session + optionally dispatch first step
+        if (opts.chainFile && (opts.chain?.length ?? 0) > 0) {
+          throw new Error('use either --chain or --chain-file, not both');
+        }
+        if (opts.engine && !['ralph', 'coordinator', 'manual'].includes(opts.engine)) {
+          throw new Error(`invalid --engine "${opts.engine}" (ralph|coordinator|manual)`);
+        }
+        if (opts.quality && !['quick', 'standard', 'full'].includes(opts.quality)) {
+          throw new Error(`invalid --quality "${opts.quality}" (quick|standard|full)`);
+        }
+        const definition = opts.chainFile
+          ? chainDefinitionSchema.parse(
+              opts.chainFile === '-' ? JSON.parse(readFileSync(0, 'utf8')) : JSON.parse(readFileSync(resolve(opts.chainFile), 'utf8')),
+            )
+          : simpleChainDefinition(intent, opts.chain);
+        const fallbackSlug = opts.chain?.length ? opts.chain.join('-') : 'session';
+        const slug = opts.id ?? slugifySessionTopic(intent, slugifySessionTopic(fallbackSlug));
+        const created = createChainSession(root, slug, {
+          intent,
+          engine: opts.engine as 'ralph' | 'coordinator' | 'manual' | undefined,
+          qualityMode: opts.quality as 'quick' | 'standard' | 'full' | undefined,
+          autoMode: opts.auto,
+          executor: platform ? { platform, cli_tool: platform } : undefined,
+          definition,
+        });
+        const result: Record<string, unknown> = {
+          session_id: created.sessionId,
+          session_dir: created.sessionDir,
+          engine: created.session.orchestration.engine,
+          chain: definition ? chainSummary(definition.steps) : persistedChainSummary(created.session),
+          next: `maestro session next --session ${created.sessionId}`,
+        };
+        if (opts.dispatch) {
+          const next = runNextStep(root, { sessionId: created.sessionId });
+          result.dispatched = next.result;
+          result.message = next.message;
+          if (next.exitCode !== 0) process.exitCode = next.exitCode;
+        }
+        print(result);
       } catch (error) {
         reportError(error);
       }

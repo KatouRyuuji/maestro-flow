@@ -37,7 +37,7 @@ When `current-plan` is absent (entry gate skipped, not failed), execute enters *
 | `latest-debug` (diagnosis + fix-directions) | fix-directions present | **Companion** if ≤2 files; **Odyssey planex** otherwise |
 | No upstream at all | — | **Abort**: report E001 "No plan and no alternative upstream; run plan first" |
 
-Degradation seal: `maestro run complete <run_id> --verdict needs-retry` with report.md noting the degradation reason and target command. This preserves the run record without faking a plan.
+Degradation seal: `maestro session done <run_id> --verdict needs-retry` with report.md noting the degradation reason and target command. This preserves the run record without faking a plan.
 
 **Never fabricate a plan artifact to satisfy the gate.** The degradation path is the compliant escape.
 

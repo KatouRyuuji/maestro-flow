@@ -462,7 +462,7 @@ Write `{output_dir}/context-package.json` by extracting from session artifacts:
 - `open_questions[]`: from §4-N SHOULD/MAY items → `{ area, question, options[], ref }`
 - `references[]`: `{ type: "guidance", path: "guidance-specification.md" }` + `{ type: "role-analysis", path: "{role}/analysis.md" }` per role
 
-Artifact registration and state updates are handled by `maestro run complete`.
+Artifact registration and state updates are handled by `maestro session done`.
 
 **GATE Step 7.5→complete**: Glob `{output_dir}/context-package.json` MUST exist before workflow report; BLOCKED if missing.
 

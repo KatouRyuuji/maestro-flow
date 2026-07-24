@@ -29,7 +29,7 @@ Human-facing usage should prefer `session create`, `session done`, and `session 
 
 1. Read the caller frontmatter `name` as `<command-name>`.
 2. **Compose a session slug** — `YYYYMMDD-{command}-{topic}` where `{topic}` is a 1–3 word ASCII-only slug derived from the intent (e.g. `20260715-odyssey-jwt-auth`). NEVER let the runtime auto-generate from a Chinese or long intent string.
-3. Run `maestro run start "<short intent phrase>" --cmd <command-name> --session <slug> [--arg "<command input>"]` before domain work.
+3. Run `maestro session start "<short intent phrase>" --chain <command-name> --session <slug> [--arg "<command input>"]` before domain work.
    - `--session`: the slug from step 2 (explicit, ASCII-only, ≤64 chars).
    - Intent text is **Session metadata only** — a short human-readable phrase (1 sentence) describing the goal. It may contain Chinese, is NOT used as the session ID, does not enter `Run input.args`, and does not satisfy the command contract or `argument-hint`.
    - Command inputs: when the command contract or `argument-hint` requires them, pass each value with repeatable `--arg <value>`. If a legacy caller needs raw positional passthrough after `--`, use the lower-level `maestro run create <command-name> ... -- <args...>` compatibility verb.
@@ -40,9 +40,9 @@ Human-facing usage should prefer `session create`, `session done`, and `session 
 **Session slug examples:**
 ```
 # ✅ correct — mode-qualified command name resolves the mode's own contract
-maestro run start "完成 session-run-todo-goal 集成计划" --cmd odyssey-planex --session 20260715-odyssey-planex-todo-integration --arg "完成 session-run-todo-goal 集成计划"
-maestro run start "理解认证流程" --cmd learn --session 20260715-learn-auth-flow --arg "follow src/auth/"
-maestro run start "修复 README 拼写" --cmd companion --session 20260715-companion-fix-readme --arg "修复 README 拼写"
+maestro session start "完成 session-run-todo-goal 集成计划" --chain odyssey-planex --session 20260715-odyssey-planex-todo-integration --arg "完成 session-run-todo-goal 集成计划"
+maestro session start "理解认证流程" --chain learn --session 20260715-learn-auth-flow --arg "follow src/auth/"
+maestro session start "修复 README 拼写" --chain companion --session 20260715-companion-fix-readme --arg "修复 README 拼写"
 
 # ❌ wrong — no --session, Chinese intent generates unreadable ID
 maestro run create odyssey-planex --intent "完成 docs/session-run-todo-goal-integration-plan.md 的 P0-P6" --arg "完成 docs/session-run-todo-goal-integration-plan.md 的 P0-P6"
@@ -63,7 +63,7 @@ maestro run create odyssey --session 20260715-odyssey-planex-todo -- --mode plan
 - Temporary computation may use `{run_dir}/work/`; it is never an artifact and is never indexed.
 - `.workflow/sessions/{session_id}/` is the only Session authority. Do not create private command Session directories or a second status/manifest truth source. Team message buses may exist only as transient coordination and never contain formal artifacts.
 - Protocol files (`session.json`, `run.json`, `artifacts.json`) are runtime-owned and MUST NOT be edited directly.
-- Consume upstream only from the `upstream` map returned by `maestro run start` / `maestro run create`.
+- Consume upstream only from the `upstream` map returned by `maestro session start` / `maestro session create`.
 
 ## Chain Effects and Proposals
 

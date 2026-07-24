@@ -32,11 +32,11 @@ IF latest-review (review-findings) is available:
   count findings with actionable fix scope
   IF ≤3 findings AND each touches ≤2 files:
     → Companion path: write report.md with degradation note,
-      run `maestro run complete <run_id> --verdict needs-retry`,
+      run `maestro session done <run_id> --verdict needs-retry`,
       then surface: /maestro-companion "<finding summaries as intent>"
   ELSE:
     → Odyssey planex path: write report.md with degradation note,
-      run `maestro run complete <run_id> --verdict needs-retry`,
+      run `maestro session done <run_id> --verdict needs-retry`,
       then surface: /odyssey-planex "<review findings as requirement>"
 
 ELSE IF latest-debug (diagnosis) is available AND fix-directions present:
@@ -48,7 +48,7 @@ ELSE IF latest-debug (diagnosis) is available AND fix-directions present:
 ELSE:
   → E001: No plan and no alternative upstream. Abort.
     Write report.md with verdict: blocked, summary: "No current-plan; run plan first"
-    run `maestro run complete <run_id> --verdict blocked`
+    run `maestro session done <run_id> --verdict blocked`
 ```
 
 **Degradation seal protocol**: the run is sealed as `needs-retry` (not `done`) to preserve the audit trail without faking completion. report.md MUST note: (1) why degradation was triggered, (2) which upstream was available, (3) the target command. The `next` field in report frontmatter points to the degradation target.

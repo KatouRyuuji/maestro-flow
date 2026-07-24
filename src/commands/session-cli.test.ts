@@ -83,6 +83,7 @@ describe('maestro session create', () => {
       'resume',
       'seal',
       'show',
+      'start',
       'status',
     ]);
     const chain = session?.commands.find(c => c.name() === 'chain');
@@ -119,7 +120,7 @@ describe('maestro session create', () => {
     expect(String(out.session_id)).toMatch(/^feat-\d{8}-\d{6}$/);
     expect(out.engine).toBe('ralph');
     expect((out.chain as { total: number }).total).toBe(2);
-    expect(out.next).toBe(`maestro run next --session ${out.session_id}`);
+    expect(out.next).toBe(`maestro session next --session ${out.session_id}`);
 
     const store = new SessionStore(root);
     const session = store.readBundle(String(out.session_id)).session;
