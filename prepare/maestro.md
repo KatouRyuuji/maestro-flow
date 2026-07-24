@@ -2,7 +2,7 @@
 name: maestro
 description: "Intent-to-chain planner over the canonical Session/Run lifecycle"
 goal: true
-argument-hint: "<intent> [-y] [-c] [--amend]"
+argument-hint: "<intent> [-y] [-c] [--amend] [--executor agent|direct] [--dry-run]"
 contract:
   consumes: []
   produces: []
@@ -13,7 +13,7 @@ refs:
 
 # Prepare: Maestro
 
-Maestro 是意图到链的规划器。本文件定义 **公共接口** 和 **建链协议**。
+Maestro 是意图到链的规划器。本文件定义 **公共接口**、**分类协议**、**建链协议** 和 **分解协议**。
 意图分类目录见 `workflows/maestro.md`（deferred reading）；执行循环见 `orchestrator-run-loop.md`。
 
 ## Public Flags
@@ -23,8 +23,10 @@ Maestro 是意图到链的规划器。本文件定义 **公共接口** 和 **建
 | `-y` | 自动确认低风险分类和 proposal；不越高风险、低置信度、边界歧义、drift 熔断 |
 | `-c` | 继续唯一 live compatible Session；多候选必须询问；paused 进入 audited recovery |
 | `--amend` | 修改唯一 live Session 的目标；剩余文本为 change request |
+| `--executor <agent\|direct>` | 选择执行方式：`agent`（默认）派发 run-executor；`direct` 主 LLM 内联执行。不改变 Session 类型或链语义 |
+| `--dry-run` | 显示 chain 后结束，不执行 |
 
-其余文本全部视为 intent。Executor、platform、roadmap、quality、模板复用、并行与对抗策略由 intent、Session state、Skill contract 和 host runtime 推断。
+其余文本全部视为 intent。Platform、roadmap、quality、模板复用、并行与对抗策略由 intent、Session state、Skill contract 和 host runtime 推断。
 
 ## Classification Protocol（A_CLASSIFY）
 
@@ -33,27 +35,79 @@ Maestro 是意图到链的规划器。本文件定义 **公共接口** 和 **建
 1. **Exact match**：`continue/next/go/继续` → state_continue；`status/状态` → status
 2. **Semantic match**：LLM 语义理解匹配 task_type（见 maestro.md Chain Catalog）
 3. **Selection priorities**：issue_id > team > UI/design > multi-step > single-step > companion fallback
-4. **State validation**：execute 无 plan → 警告并前置 plan；test 未执行 → 警告并前置 execute
+4. **State validation（W003）**：execute 无 plan → 警告并前置 plan；test 未执行 → 警告并前置 execute
+5. **Classification evidence（必须）**：记录匹配了哪个 pattern、排除了哪些备选、confidence level。无记录的分类不可进入 A_CREATE
 
 输出：`{ task_type, scope, issue_id, phase_ref, urgency }`
 
 ## Chain Creation Protocol（A_CREATE）
 
-1. 从 `chainMap[task_type]` 获取步骤列表
-2. 解析占位符：`{phase}` → resolvePhase()、`{description}` → intent、`{issue_id}` → resolveIssueId()
-3. 写入临时 JSON chain-file
-4. 调用 `maestro session create "{intent}" --id maestro-{slug} --chain-file {path} --no-dispatch`
-5. 删除临时文件
-6. 进入共享执行循环（orchestrator-run-loop.md）
+### 1. Specs 预检
 
-### resolvePhase 优先级
+chain 包含 analyze/plan/execute 等执行 stage 且 `.workflow/specs/` 不存在 → 在 steps 最前面插入 `spec-setup`。chain ∈ {grill, brainstorm, blueprint, init, status} 时跳过。
 
-1. `intent_analysis.phase_ref`（结构化提取）
-2. 正则匹配 "phase N" 或裸数字
-3. 项目状态推断：in-progress execute → 首个未完成 phase → 最新 artifact phase
-4. `analyze-plan-execute` 链 → null（用 `{run_dir}`）
-5. 所有命令均 phase-independent → null
-6. 询问用户
+### 2. Skill 名预校验
+
+所有 step 的 skill 名通过 `maestro run skill --steps --json` 预校验（project 覆盖 global）。未命中 → 报错 E005，阻断建链。
+
+### 3. 组装 chain-file
+
+```json
+{
+  "intent": "<intent>",
+  "engine": "coordinator",
+  "quality_mode": "standard",
+  "auto_mode": false,
+  "boundary_contract": {
+    "in_scope": [], "out_of_scope": [], "constraints": [], "definition_of_done": ""
+  },
+  "steps": [
+    { "command": "analyze", "args": "--session {session}", "stage": "analyze", "goal_ref": "G1", "retry_max": 2 },
+    { "command": "execute", "args": "--session {session}", "stage": "execute", "goal_ref": "G1", "retry_max": 2 },
+    { "command": "review", "args": "--session {session}", "stage": "review", "retry_max": 2 }
+  ],
+  "decision_points": [],
+  "decomposition": {
+    "execution_criteria": [],
+    "goals": [
+      { "id": "G1", "goal": "...", "done_when": "...", "lifecycle": ["execute", "review"], "status": "pending" }
+    ],
+    "changelog": []
+  }
+}
+```
+
+- `engine: coordinator` 是兼容持久化字段，不是 Session 类型或策略
+- `{session}` `{intent}` 占位符由运行时替换
+- `decision_points` 只为读取/继续 legacy Session 保留；新链使用可执行 Skill step
+
+### 4. 创建
+
+`maestro session create "{intent}" --id maestro-{slug} --chain-file {path} --no-dispatch`
+
+删除临时文件后进入共享执行循环（orchestrator-run-loop.md）。
+
+## Decomposition Protocol（A_DECOMPOSE）
+
+设 `decomposition_owner = "maestro"`。下游 ralph 只消费不二次提问。
+
+1. 分类意图广度：narrow / 单步 / {status, init} 链 → 跳过分解
+2. broad/medium → 最多问 3 轮：Scope / Constraints / Definition of Done（`-y` 不跳过广泛歧义）
+3. 派生 `execution_criteria` + `goals`（每个含 `done_when` + `evidence` + `lifecycle`）
+4. `boundary_contract` 随 `session create` 建入；goals 装入 chain-file 的 `decomposition` 块
+5. 需要终结目标审计时，追加 audit/verify Skill step（拥有 Run，可按 contract 产出 proposal）
+
+### Goal 绑定提示
+
+分解完成后输出 `/goal` 绑定提示词（不阻塞）：
+
+```
+📋 任务分解完成。可随时设定目标：
+/goal 完成以下子目标：
+- G1: {goal} — 完成条件: {done_when}
+- G2: ...
+达成条件: session.json 中 goals[*].status == "done" 且 chain[*].status ∈ {completed,sealed,skipped}
+```
 
 ## Minimum Chain Rules
 
@@ -68,8 +122,21 @@ Maestro 是意图到链的规划器。本文件定义 **公共接口** 和 **建
 
 Roadmap 仅在多 release 证据时推断。Quality 基于 specs 和可观测风险，非用户 flag。
 
-## Decomposition（广泛 intent）
+## resolvePhase 优先级
 
-最多问 3 个问题（scope、constraints、observable done criteria）；`-y` 不跳过广泛歧义。
+1. `intent_analysis.phase_ref`（结构化提取）
+2. 正则匹配 "phase N" 或裸数字
+3. 项目状态推断：in-progress execute → 首个未完成 phase → 最新 artifact phase
+4. `analyze-plan-execute` 链 → null（用 `{run_dir}`）
+5. 所有命令均 phase-independent → null
+6. 询问用户
 
-产出 `boundary_contract` + outcome-oriented `goals`（非 lifecycle 复刻）。
+## Invariants（Maestro 特有）
+
+1. **One chain, executor-neutral** — `agent|direct` 只选择 executor，不产生 Session 分型
+2. **Session before execution** — session.json 经 `session create --chain-file` 创建后才执行
+3. **Creator owns decomposition** — Maestro 创建 boundary_contract + goals；后续 orchestrator 只消费不覆盖
+4. **Classification evidence** — 分类必须留痕（匹配 pattern、排除备选、confidence）
+5. **Verdict 驱动链推进** — 由 `session done --verdict` 驱动 chain step 完成
+6. **禁止以上下文消耗为由中断执行** — harness 自动处理 context compression
+7. **控制权优先级** — Maestro 拥有 initial chain 选择 + proposal disposition；Skill 拥有领域判断；Runtime 独占 mutation authority

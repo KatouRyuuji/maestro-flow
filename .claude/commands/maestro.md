@@ -43,8 +43,10 @@ Only these user flags are accepted:
 - `-y` — auto-confirm low-risk classification and proposal decisions.
 - `-c` — continue the unique live compatible Session.
 - `--amend` — amend that Session's goal; remaining text is the change request.
+- `--executor <agent|direct>` — select executor: `agent` (default) dispatches run-executor; `direct` executes inline. Never changes Session type or chain semantics.
+- `--dry-run` — show chain without executing.
 
-All other text is intent. Unknown flags are not silently reinterpreted. Executor, platform, roadmap, quality, template reuse, parallelism and adversarial depth are inferred.
+All other text is intent. Unknown flags are not silently reinterpreted. Platform, roadmap, quality, template reuse, parallelism and adversarial depth are inferred.
 </interface>
 
 <invariants>
@@ -153,7 +155,7 @@ Use read-only `run recall` plus `session status`. A paused Session follows share
 
 ### A_AMEND
 
-Read `ralph-amend-goal.md`, use `session status` for the snapshot, perform read-only impact analysis, confirm, then commit the whole decomposition with `run edit --decomposition-file -`. Any pending-tail change must come from a planning Skill proposal.
+Read `ralph-amend-goal.md`, use `session status` for the snapshot, perform read-only impact analysis, confirm, then commit the whole decomposition with `session chain edit --decomposition-file -`. Any pending-tail change must come from a planning Skill proposal.
 
 </actions>
 
