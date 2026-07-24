@@ -115,6 +115,7 @@
     {"name": "scholar-writing", "category": "scholar", "description": "端到端学术论文写作 — 从研究仓库到出版级 LaTeX 手稿", "source": "../scholar-writing/SKILL.md"}
   ],
   "agents": [
+    {"name": "run-executor", "description": "通用单 Run 执行器 — run next/brief + 内联 Skill 执行", "category": "workflow"},
     {"name": "ralph-executor", "description": "run-executor 的旧名兼容 alias", "category": "workflow"},
     {"name": "workflow-analyzer", "description": "多维度分析 — 证据评分和推荐", "category": "workflow"},
     {"name": "workflow-planner", "description": "任务分解和执行计划生成", "category": "workflow"},
@@ -180,7 +181,7 @@
     {"file": "guide/hooks-guide.md", "title": "Hook 系统", "description": "12 个 Hook、4 个安装级别", "status": "planned"},
     {"file": "guide/knowledge-management-guide.md", "title": "知识管理", "description": "Spec + Wiki 知识体系", "status": "planned"},
     {"file": "guide/knowledge-management-intro.md", "title": "知识管理导论", "description": "设计理念和产品结构", "status": "planned"},
-    {"file": "guide/maestro-coordinator-guide.md", "title": "/maestro 协调器", "description": "静态链选择器和意图路由", "status": "planned"},
+    {"file": "guide/maestro-coordinator-guide.md", "title": "/maestro 协调器", "description": "通用 Session/Run chain composer 与意图路由", "status": "planned"},
     {"file": "guide/maestro-ralph-guide.md", "title": "/maestro-ralph 引擎", "description": "自适应生命周期决策节点", "status": "planned"},
     {"file": "guide/overlay-guide.md", "title": "Overlay 系统", "description": "非侵入式命令补丁", "status": "planned"},
     {"file": "guide/role-routing-guide.md", "title": "角色路由", "description": "基于 --role 的工具选择", "status": "planned"},

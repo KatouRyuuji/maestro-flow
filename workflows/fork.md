@@ -11,9 +11,9 @@
 Timestamps use UTC+8 ISO format throughout.
 
 Parse from $ARGUMENTS:
+  --session <id>  → sessionId (session_id or intent slug)
   --sync          → syncMode (sync existing worktree instead of forking)
   --base <ref>    → baseBranch (default: HEAD)
-  -m <N> or bare <N> → milestoneNum (1-based)
 ```
 
 ---
@@ -21,24 +21,29 @@ Parse from $ARGUMENTS:
 ## Step 2: Validate Prerequisites
 
 ```
-Require: .workflow/state.json (E001), .workflow/roadmap.md (E002), milestoneNum (E004).
+Require: .workflow/state.json (E001).
+Require: state.json.sessions[] non-empty (E005).
+Require: sessionId provided (E004).
 Reject: .workflow/worktree-scope.json present (E003 — cannot fork from inside a worktree).
 
 Read projectState from state.json, config from config.json (defaults if missing).
 worktreeRoot = config.worktree?.root ?? ".worktrees"
-branchPrefix = config.worktree?.branch_prefix ?? "milestone/"
+branchPrefix = config.worktree?.branch_prefix ?? "session/"
 ```
 
 ---
 
-## Step 3: Resolve Milestone
+## Step 3: Resolve Session
 
 ```
-Lookup milestoneEntry from projectState.milestones[milestoneNum - 1] (1-based).
-E005 if no milestones array; E006 if index out of range (list available milestones).
+Lookup sessionEntry from projectState.sessions[] by:
+  1. Exact match on session_id == sessionId, OR
+  2. Intent slug match (kebab-case of intent) == sessionId.
+E006 if no match (list available sessions with id + intent + status).
 
-Extract: milestoneName (.name), milestoneTitle (.title), milestonePhases (.phases).
-milestoneSlug = kebab-case of milestoneName, max 40 chars.
+Extract: sessionId (.session_id), sessionIntent (.intent), sessionStatus (.status),
+         sessionDeps (.depends_on ?? []).
+sessionSlug = kebab-case derived from session_id (strip YYYYMMDD- prefix if present), max 40 chars.
 ```
 
 ---
@@ -49,9 +54,9 @@ If `syncMode` is true, treat as sync operation on existing worktree, not a fork.
 
 ```
 IF syncMode:
-  Find active worktree entry for milestoneNum in worktrees.json → E007 if not found.
+  Find active worktree entry for sessionId in worktrees.json → E007 if not found.
   Git merge main into worktree → warn and exit on conflict.
-  Re-copy shared context: project.md, roadmap.md, config.json (if exists), specs/ (if exists).
+  Re-copy shared context: project.md, config.json (if exists), specs/ (if exists).
   Display sync confirmation. EXIT.
 ```
 
@@ -60,11 +65,14 @@ IF syncMode:
 ## Step 5: Validate & Confirm
 
 ```
-Derive phase statuses from artifact registry (execute artifacts → completed/in_progress/pending).
-Reject if all phases completed (nothing to fork).
-Reject if milestone already has active worktree (E008).
+Reject if session already has active worktree in worktrees.json (E008).
 
-Display milestone info and phase list with statuses.
+Display session info:
+  Session:   {sessionId}
+  Intent:    {sessionIntent}
+  Status:    {sessionStatus}
+  Depends:   {sessionDeps.join(', ') || 'none'}
+
 Confirm with user → exit if declined.
 ```
 
@@ -75,20 +83,22 @@ Confirm with user → exit if declined.
 ```
 forkSessionId = "fork-{UTC8_compact_timestamp}"
 baseCommit = git rev-parse HEAD
-branch = {branchPrefix}{milestoneSlug}
-wtPath = {worktreeRoot}/m{milestoneNum}-{milestoneSlug}
+branch = {branchPrefix}{sessionSlug}
+wtPath = {worktreeRoot}/{sessionSlug}
 
 6a: Clean up stale worktree/branch at wtPath if exists (ignore errors).
 6b: git worktree add -b {branch} {wtPath} {baseBranch}
-6c: mkdir -p {wtPath}/{run_dir}/outputs
+6c: mkdir -p {wtPath}/.workflow/sessions/{sessionId}/runs
 
 6d: Copy shared context → wtPath/.workflow/:
-    project.md, roadmap.md, config.json (if exists), specs/ (if exists)
+    project.md, config.json (if exists), specs/ (if exists)
 
-6e: Copy milestone artifacts — all artifacts matching milestoneName.
-6f: Copy dependency artifacts — phases from milestoneEntry.depends_on not in owned phases.
+6e: Copy session artifacts — entire .workflow/sessions/{sessionId}/ directory
+    (session.json, artifacts.json, runs/, context.md, etc.).
+    Update copied session.json: set lifecycle.forked_from = main worktree path.
 
-6g: Build phase_dependencies map (external deps per owned phase).
+6f: Copy dependency session artifacts — for each dep in sessionDeps,
+    copy .workflow/sessions/{dep}/ (read-only reference for upstream context).
 ```
 
 Write `{wtPath}/.workflow/worktree-scope.json`:
@@ -96,10 +106,8 @@ Write `{wtPath}/.workflow/worktree-scope.json`:
 ```json
 {
   "worktree": true,
-  "milestone_num": "{milestoneNum}",
-  "milestone": "{milestoneName}",
-  "owned_phases": ["{ownedPhaseNumbers}"],
-  "phase_dependencies": "{phaseDeps}",
+  "session_id": "{sessionId}",
+  "session_intent": "{sessionIntent}",
   "main_worktree": "{resolve(cwd)}",
   "branch": "{branch}",
   "base_commit": "{baseCommit}",
@@ -108,8 +116,8 @@ Write `{wtPath}/.workflow/worktree-scope.json`:
 ```
 
 ```
-6i: Write scoped state.json — clone mainState with current_milestone set,
-    artifacts filtered to milestone-owned phases only.
+6g: Write scoped state.json — clone mainState with active_session_id set to sessionId,
+    sessions filtered to this session + its depends_on entries only.
 ```
 
 ---
@@ -120,14 +128,14 @@ Write `{wtPath}/.workflow/worktree-scope.json`:
 Load or initialize .workflow/worktrees.json (default: { version:"1.0", worktrees:[], fork_sessions:[] }).
 
 Append to worktrees[]:
-  { milestone_num, milestone, slug, branch, path:wtPath, base_commit, status:"active",
-    created_at, owned_phases, fork_session:forkSessionId }
+  { session_id, session_intent, slug:sessionSlug, branch, path:wtPath, base_commit,
+    status:"active", created_at, fork_session:forkSessionId }
 
 Append to fork_sessions[]:
-  { session_id:forkSessionId, created_at, milestone_num, milestone, base_branch, base_commit }
+  { session_id:forkSessionId, created_at, target_session_id:sessionId,
+    target_session_intent:sessionIntent, base_branch, base_commit }
 
 Write worktrees.json. Update mainState.last_updated, write state.json.
-Note: worktrees.json owned_phases tracks forked state — no per-phase marking needed.
 ```
 
 ---
@@ -137,29 +145,25 @@ Note: worktrees.json owned_phases tracks forked state — no per-phase marking n
 ```
 Display:
   === FORK COMPLETE ===
-  Session:    {forkSessionId}
+  Fork ID:    {forkSessionId}
   Base:       {baseBranch} ({baseCommit.substring(0, 7)})
-  Milestone:  M{milestoneNum} — {milestoneName} ({milestoneTitle})
+  Session:    {sessionId} — {sessionIntent}
   Branch:     {branch}
   Path:       {wtPath}
-  Phases:     {ownedPhaseNumbers.join(', ')}
+  Depends on: {sessionDeps.join(', ') || 'none'}
 
   Next steps (run in the worktree):
     cd {wtPath}
 
-    # Sequential lifecycle for each phase:
-    analyze {firstPending.phase}
-    plan {firstPending.phase}
-    execute {firstPending.phase}
-    review {firstPending.phase}
-    # ... repeat for next phases in milestone
+    # Continue session lifecycle:
+    maestro run next --session {sessionId}
 
   Or delegate (automated):
-    maestro delegate "run full lifecycle for milestone" --cd {wtPath} --mode write
+    maestro delegate "run full lifecycle for session" --cd {wtPath} --mode write
 
   Sync worktree with main (REQUIRED before merge):
-    /maestro-fork -m {milestoneNum} --sync
+    /maestro-fork --session {sessionId} --sync
 
-  When all phases in milestone complete:
-    /maestro-merge -m {milestoneNum}
+  When session completes:
+    /maestro-merge --session {sessionId}
 ```

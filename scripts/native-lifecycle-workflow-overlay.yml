@@ -1,0 +1,225 @@
+name: Native Lifecycle Artifact Build
+run-name: native-lifecycle-${{ inputs.source_sha }}-${{ inputs.dispatch_nonce }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Lowercase 40-character source commit SHA
+        required: true
+        type: string
+      dispatch_nonce:
+        description: Deterministic TASK-013 attempt nonce, at most 128 characters
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  win32-x64:
+    runs-on: windows-2025
+    steps:
+      - name: Validate dispatch identity
+        shell: pwsh
+        run: |
+          $sourceSha = '${{ inputs.source_sha }}'
+          $nonce = '${{ inputs.dispatch_nonce }}'
+          if ($sourceSha -notmatch '^[0-9a-f]{40}$') { throw 'invalid source_sha' }
+          if ($nonce.Length -gt 128) { throw 'dispatch_nonce exceeds 128 characters' }
+          if ($nonce -notmatch '^maestro-search-ranking-exec-20260723-102551-20260724-010-plan-TASK-013-attempt-[1-9][0-9]{0,5}$') { throw 'invalid dispatch_nonce' }
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+      - name: Install Rust target
+        run: rustup target add x86_64-pc-windows-msvc
+      - name: Build native helper
+        run: cargo build --release --locked --manifest-path native/lifecycle-fs/Cargo.toml --target x86_64-pc-windows-msvc
+      - name: Run native tests
+        run: cargo test --release --locked --manifest-path native/lifecycle-fs/Cargo.toml --target x86_64-pc-windows-msvc
+      - name: Probe protocol and write SHA-256 receipt
+        run: >-
+          node scripts/write-lifecycle-fs-native-receipt.mjs
+          --job-id win32-x64
+          --compiled-binary "native/lifecycle-fs/target/x86_64-pc-windows-msvc/release/lifecycle-fs-helper.exe"
+          --output-root ".workflow/native-artifacts/win32-x64"
+          --source-sha "${{ inputs.source_sha }}"
+          --dispatch-nonce "${{ inputs.dispatch_nonce }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lifecycle-fs-win32-x64-${{ inputs.source_sha }}
+          path: .workflow/native-artifacts/win32-x64
+          if-no-files-found: error
+
+  linux-x64:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Validate dispatch identity
+        shell: bash
+        run: |
+          source_sha='${{ inputs.source_sha }}'
+          nonce='${{ inputs.dispatch_nonce }}'
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'invalid source_sha' >&2; exit 1; }
+          [[ ${#nonce} -le 128 ]] || { echo 'dispatch_nonce exceeds 128 characters' >&2; exit 1; }
+          [[ "$nonce" =~ ^maestro-search-ranking-exec-20260723-102551-20260724-010-plan-TASK-013-attempt-[1-9][0-9]{0,5}$ ]] || { echo 'invalid dispatch_nonce' >&2; exit 1; }
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+      - name: Install Rust target
+        run: rustup target add x86_64-unknown-linux-gnu
+      - name: Build native helper
+        run: cargo build --release --locked --manifest-path native/lifecycle-fs/Cargo.toml --target x86_64-unknown-linux-gnu
+      - name: Run native tests
+        run: cargo test --release --locked --manifest-path native/lifecycle-fs/Cargo.toml --target x86_64-unknown-linux-gnu
+      - name: Probe protocol and write SHA-256 receipt
+        run: >-
+          node scripts/write-lifecycle-fs-native-receipt.mjs
+          --job-id linux-x64
+          --compiled-binary "native/lifecycle-fs/target/x86_64-unknown-linux-gnu/release/lifecycle-fs-helper"
+          --output-root ".workflow/native-artifacts/linux-x64"
+          --source-sha "${{ inputs.source_sha }}"
+          --dispatch-nonce "${{ inputs.dispatch_nonce }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lifecycle-fs-linux-x64-${{ inputs.source_sha }}
+          path: .workflow/native-artifacts/linux-x64
+          if-no-files-found: error
+
+  linux-arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Validate dispatch identity
+        shell: bash
+        run: |
+          source_sha='${{ inputs.source_sha }}'
+          nonce='${{ inputs.dispatch_nonce }}'
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'invalid source_sha' >&2; exit 1; }
+          [[ ${#nonce} -le 128 ]] || { echo 'dispatch_nonce exceeds 128 characters' >&2; exit 1; }
+          [[ "$nonce" =~ ^maestro-search-ranking-exec-20260723-102551-20260724-010-plan-TASK-013-attempt-[1-9][0-9]{0,5}$ ]] || { echo 'invalid dispatch_nonce' >&2; exit 1; }
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+      - name: Install Rust target
+        run: rustup target add aarch64-unknown-linux-gnu
+      - name: Build native helper
+        run: cargo build --release --locked --manifest-path native/lifecycle-fs/Cargo.toml --target aarch64-unknown-linux-gnu
+      - name: Run native tests
+        run: cargo test --release --locked --manifest-path native/lifecycle-fs/Cargo.toml --target aarch64-unknown-linux-gnu
+      - name: Probe protocol and write SHA-256 receipt
+        run: >-
+          node scripts/write-lifecycle-fs-native-receipt.mjs
+          --job-id linux-arm64
+          --compiled-binary "native/lifecycle-fs/target/aarch64-unknown-linux-gnu/release/lifecycle-fs-helper"
+          --output-root ".workflow/native-artifacts/linux-arm64"
+          --source-sha "${{ inputs.source_sha }}"
+          --dispatch-nonce "${{ inputs.dispatch_nonce }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lifecycle-fs-linux-arm64-${{ inputs.source_sha }}
+          path: .workflow/native-artifacts/linux-arm64
+          if-no-files-found: error
+
+  darwin-x64:
+    runs-on: macos-15-intel
+    steps:
+      - name: Validate dispatch identity
+        shell: bash
+        run: |
+          source_sha='${{ inputs.source_sha }}'
+          nonce='${{ inputs.dispatch_nonce }}'
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'invalid source_sha' >&2; exit 1; }
+          [[ ${#nonce} -le 128 ]] || { echo 'dispatch_nonce exceeds 128 characters' >&2; exit 1; }
+          [[ "$nonce" =~ ^maestro-search-ranking-exec-20260723-102551-20260724-010-plan-TASK-013-attempt-[1-9][0-9]{0,5}$ ]] || { echo 'invalid dispatch_nonce' >&2; exit 1; }
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+      - name: Install Rust target
+        run: rustup target add x86_64-apple-darwin
+      - name: Build native helper
+        run: cargo build --release --locked --manifest-path native/lifecycle-fs/Cargo.toml --target x86_64-apple-darwin
+      - name: Run native tests
+        run: cargo test --release --locked --manifest-path native/lifecycle-fs/Cargo.toml --target x86_64-apple-darwin
+      - name: Probe protocol and write SHA-256 receipt
+        run: >-
+          node scripts/write-lifecycle-fs-native-receipt.mjs
+          --job-id darwin-x64
+          --compiled-binary "native/lifecycle-fs/target/x86_64-apple-darwin/release/lifecycle-fs-helper"
+          --output-root ".workflow/native-artifacts/darwin-x64"
+          --source-sha "${{ inputs.source_sha }}"
+          --dispatch-nonce "${{ inputs.dispatch_nonce }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lifecycle-fs-darwin-x64-${{ inputs.source_sha }}
+          path: .workflow/native-artifacts/darwin-x64
+          if-no-files-found: error
+
+  darwin-arm64:
+    runs-on: macos-15
+    steps:
+      - name: Validate dispatch identity
+        shell: bash
+        run: |
+          source_sha='${{ inputs.source_sha }}'
+          nonce='${{ inputs.dispatch_nonce }}'
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'invalid source_sha' >&2; exit 1; }
+          [[ ${#nonce} -le 128 ]] || { echo 'dispatch_nonce exceeds 128 characters' >&2; exit 1; }
+          [[ "$nonce" =~ ^maestro-search-ranking-exec-20260723-102551-20260724-010-plan-TASK-013-attempt-[1-9][0-9]{0,5}$ ]] || { echo 'invalid dispatch_nonce' >&2; exit 1; }
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+      - name: Install Rust target
+        run: rustup target add aarch64-apple-darwin
+      - name: Build native helper
+        run: cargo build --release --locked --manifest-path native/lifecycle-fs/Cargo.toml --target aarch64-apple-darwin
+      - name: Run native tests
+        run: cargo test --release --locked --manifest-path native/lifecycle-fs/Cargo.toml --target aarch64-apple-darwin
+      - name: Probe protocol and write SHA-256 receipt
+        run: >-
+          node scripts/write-lifecycle-fs-native-receipt.mjs
+          --job-id darwin-arm64
+          --compiled-binary "native/lifecycle-fs/target/aarch64-apple-darwin/release/lifecycle-fs-helper"
+          --output-root ".workflow/native-artifacts/darwin-arm64"
+          --source-sha "${{ inputs.source_sha }}"
+          --dispatch-nonce "${{ inputs.dispatch_nonce }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lifecycle-fs-darwin-arm64-${{ inputs.source_sha }}
+          path: .workflow/native-artifacts/darwin-arm64
+          if-no-files-found: error
+
+  aggregate:
+    needs:
+      - win32-x64
+      - linux-x64
+      - linux-arm64
+      - darwin-x64
+      - darwin-arm64
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Validate dispatch identity
+        shell: bash
+        run: |
+          source_sha='${{ inputs.source_sha }}'
+          nonce='${{ inputs.dispatch_nonce }}'
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'invalid source_sha' >&2; exit 1; }
+          [[ ${#nonce} -le 128 ]] || { echo 'dispatch_nonce exceeds 128 characters' >&2; exit 1; }
+          [[ "$nonce" =~ ^maestro-search-ranking-exec-20260723-102551-20260724-010-plan-TASK-013-attempt-[1-9][0-9]{0,5}$ ]] || { echo 'invalid dispatch_nonce' >&2; exit 1; }
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: lifecycle-fs-*-${{ inputs.source_sha }}
+          path: .workflow/native-download
+      - name: Verify exact receipts and uploaded bytes
+        run: >-
+          node scripts/verify-lifecycle-fs-native-aggregate.mjs
+          --input-root ".workflow/native-download"
+          --output-root ".workflow/native-aggregate"
+          --source-sha "${{ inputs.source_sha }}"
+          --dispatch-nonce "${{ inputs.dispatch_nonce }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lifecycle-fs-aggregate-${{ inputs.source_sha }}
+          path: .workflow/native-aggregate
+          if-no-files-found: error

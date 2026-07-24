@@ -10,8 +10,13 @@ allowed-tools:
   - Grep
   - Read
   - Write
+  - followup_task
+  - interrupt_agent
+  - list_agents
   - request_user_input
+  - send_message
   - spawn_agent
+  - spawn_agents_on_csv
   - update_plan
   - wait_agent
 session-mode: run
@@ -19,7 +24,7 @@ contract:
   discovery: self-described
   consumes: []
   produces: []
-version: 0.5.55
+version: 0.5.56
 ---
 
 <required_reading>
@@ -34,59 +39,99 @@ version: 0.5.55
 </deferred_reading>
 
 <purpose>
-Turn a user intent into the smallest sufficient Skill chain, create one canonical topic Session through `maestro session create --chain-file`, then execute the shared Run loop. Static versus dynamic is not a mode: each Skill contract decides whether it emits a typed chain proposal.
+Turn a user intent into the initial Skill chain, create one canonical topic Session through `maestro session create --chain-file`, then execute the shared Run loop. Static versus dynamic is not a Session or command mode: each Skill contract decides whether it emits a typed chain proposal.
 </purpose>
 
 <interface>
-Only `-y`, `-c`, and `--amend` are accepted. All remaining text is intent. Executor, platform, roadmap, quality, template reuse, parallelism and adversarial depth are inferred from intent, Session state, Skill contract and host runtime.
+Only these user flags are accepted:
+
+- `-y` — auto-confirm low-risk classification and proposal decisions.
+- `-c` — continue the unique live compatible Session.
+- `--amend` — amend that Session's goal; remaining text is the change request.
+- `--executor <agent|direct>` — select executor: `agent` (default) dispatches run-executor; `direct` executes inline. Never changes Session type or chain semantics.
+- `--dry-run` — show chain without executing.
+
+All other text is intent. Unknown flags are not silently reinterpreted. Platform, roadmap, quality, template reuse, parallelism and adversarial depth are inferred.
 </interface>
 
 <invariants>
-1. Every task uses the same Session/Run protocol; there is no engine-specific Session type.
-2. Create the Session through `run start --chain-file --no-dispatch` before allocating a step Run.
-3. Maestro owns the initial boundary and outcome decomposition; later orchestrators consume it.
-4. Runtime owns protocol files and chain mutation; normal orchestration calls only `maestro run ...`.
-5. Skill adaptation is optional and appears only as validated `chain-proposal/1.0`.
-6. Execution advances through `session done --verdict`; decision nodes through `run decide`.
-7. Historical similarity is read-only; same-Session sealed outputs enter only through canonical upstream.
-8. `-y` never bypasses high risk, low confidence, ambiguity, failed gates or drift escalation.
-9. `/maestro-next` may route here but never appears inside a chain.
+1. **One chain** — every task uses the same Session/Run protocol; no static/dynamic, Maestro/Ralph, or executor-specific Session type.
+2. **Session before execution** — create via `run start --chain-file --no-dispatch` before allocating a step Run.
+3. **Creator owns decomposition** — Maestro creates `boundary_contract` and outcome-oriented goals; later orchestrators consume rather than overwrite them.
+4. **Runtime owns mutation** — prompt never writes session.json/run.json and never auto-uses admin chain commands.
+5. **Skill owns domain adaptation** — optional chain changes come only from the current Skill's validated `chain-proposal/1.0`.
+6. **Verdict advances** — execution steps advance only through `session done --verdict`; decision steps only through `session decide`.
+7. **Historical similarity remains read-only evidence** — it never selects a Session or binds outputs.
+8. **Compatibility commands are out of band** — normal orchestration calls only `maestro run ...`.
+9. **Auto is bounded** — `-y` never bypasses high risk, low confidence, ambiguity, failed gates or drift escalation.
+10. **Router is not a step** — `/maestro-next` may route here but never appears inside the chain.
+11. **Running means continue** — while canonical continuation authority is `automatic`, execute it and re-read the receipt in the same turn; `suggest_only` is Runtime passivity, not a reason to end the turn.
 </invariants>
-
-<codex_dispatch>
-For one execution Run, use one unnamed executor with ownership limited to that Run. When agent delegation is allowed, call `spawn_agent` once with `agent_type: "ralph_executor"`, then immediately `wait_agent({ timeout_ms: 3600000 })`; keep waiting after a timeout until completion or error. The executor may follow the loaded Skill's internal strategy but must not call `run done/complete`.
-
-When host policy or user scope forbids delegation, execute the same Resume Packet directly. Executor choice never changes Session semantics. Track the user-visible plan with `update_plan`; Session artifacts remain authoritative.
-</codex_dispatch>
 
 <state_machine>
 
+<states>
+S_PARSE — parse intent and the three public flags
+S_CONTINUE — locate the unique live Session
+S_AMEND — audited goal amendment
+S_CLASSIFY — select the smallest sufficient initial chain
+S_DECOMPOSE — derive boundary, criteria and observable goals
+S_CREATE — create via `run start --chain-file --no-dispatch`
+S_CONFIRM — confirm classification unless `-y`
+S_RUN_LOOP — execute `orchestrator-run-loop.md`
+S_FALLBACK — request missing intent or disambiguation
+</states>
+
+<transitions>
 S_PARSE:
-  → S_AMEND when `--amend`
-  → S_CONTINUE when `-c`
-  → S_CLASSIFY when intent exists
-  → END otherwise
+  → S_AMEND WHEN: `--amend`
+  → S_CONTINUE WHEN: `-c`
+  → S_CLASSIFY WHEN: intent present
+  → S_FALLBACK OTHERWISE
 
 S_CONTINUE:
-  → S_LOOP for exactly one live compatible Session
-  → S_RECOVER for an exact paused Session
-  → END for none, ambiguity or a terminal Session
+  → S_RUN_LOOP WHEN: exactly one live compatible Session
+  → S_FALLBACK WHEN: none or multiple
 
-S_CLASSIFY → S_DECOMPOSE for broad work; otherwise S_CREATE
+S_AMEND:
+  → S_RUN_LOOP WHEN: shared amend protocol committed
+  → END WHEN: cancelled or blocked
+
+S_CLASSIFY:
+  → S_DECOMPOSE WHEN: multi-step chain
+  → S_CREATE WHEN: narrow/single-step chain
+  → S_FALLBACK WHEN: confidence insufficient
+
 S_DECOMPOSE → S_CREATE
-S_CREATE → S_CONFIRM unless `-y`; otherwise S_LOOP
-S_CONFIRM → S_LOOP when accepted; → S_CLASSIFY when revised; → END when cancelled
-S_LOOP → S_LOOP after each sealed Run; → S_RECOVER on escalation; → S_DONE on `CHAIN_COMPLETE`
-S_AMEND/S_RECOVER → S_LOOP after an audited commit
-S_DONE → END
+S_CREATE → S_RUN_LOOP WHEN: `-y`
+S_CREATE → S_CONFIRM OTHERWISE
+S_CONFIRM → S_RUN_LOOP WHEN: confirmed
+S_CONFIRM → S_CLASSIFY WHEN: revised
+S_CONFIRM → END WHEN: cancelled
+</transitions>
 
 <actions>
 
-### Classify and decompose
+### A_CLASSIFY
 
-Read deferred `maestro.md`. Record matched evidence, excluded alternatives and confidence. Use the smallest sufficient chain. Roadmap is inferred only for multi-release work. Broad ambiguity requires at most 3 questions even under `-y`.
+Read deferred `maestro.md`. Record matched evidence, excluded alternatives and confidence before creation.
 
-Outcome decomposition shape:
+Minimum chain rules:
+
+| Intent evidence | Initial chain |
+|---|---|
+| narrow fix/change | analyze → plan → execute → review/test as required |
+| broad rewrite/migration | analyze-macro → scope decision → plan/roadmap path |
+| brainstorm/explore | brainstorm, then only Skill-proposed continuation |
+| stress/grill | grill, then only Skill-proposed continuation |
+| formal specification | blueprint → plan path |
+| existing compatible Session | do not rebuild; enter shared loop |
+
+Roadmap is inferred only for multi-release evidence. Quality depth follows project specs, UI evidence needs frontend verification, and every executable command is resolved by Run Runtime.
+
+### A_DECOMPOSE
+
+For broad intent, ask at most 3 questions covering scope, constraints and observable done criteria; broad ambiguity is not skipped by `-y`. Produce:
 
 ```json
 {
@@ -101,29 +146,30 @@ Outcome decomposition shape:
 
 Goals describe outcomes, not lifecycle stages.
 
-### Create
+### A_CREATE
 
-Write chain JSON to a temporary file and call:
+Build a chain definition with execution steps and formal decision nodes whenever the selected Ralph policy requires quality/goal/scope or reground evaluation. Every Ralph-created chain has at least one decision node before Session seal. Write it to a temporary JSON file and call:
 
 `maestro session create "{intent}" --id maestro-{slug} --chain-file {path} --no-dispatch`
 
-Delete the temporary file after success. Do not inline unescaped JSON. Runtime resolves commands when `session next` allocates each execution Run.
+Delete the temporary file after success. Do not inline unescaped JSON. Then enter the shared loop using the returned `session_id`.
 
-### Continue, execute and adapt
+### A_CONTINUE
 
-- Locate with read-only `run recall`, confirm through `run status`, then follow `orchestrator-run-loop.md`.
-- Per Run: `run next --json` → `run brief` → execute → `run check` → `session done`.
-- Accept exactly one valid typed proposal through `run done ... --apply-proposal`; reject by omission and note; revise on the same Run.
-- Decision evaluators are read-only and persist only through `run decide`.
-- Paused recovery uses `run recover`; amendment uses `run edit --decomposition-file -` after the deferred audit protocol.
-- Seal only through `run seal-session` after Runs, decisions, goals and gates are complete.
+Use read-only `run recall` plus `session status`. A paused Session follows shared `run recover`; sealed/archived Sessions are terminal. Multiple live candidates require explicit selection.
+
+### A_AMEND
+
+Read `ralph-amend-goal.md`, use `session status` for the snapshot, perform read-only impact analysis, confirm, then commit the whole decomposition with `session chain edit --decomposition-file -`. Any pending-tail change must come from a planning Skill proposal.
 
 </actions>
+
 </state_machine>
 
 <success_criteria>
 - Public flags are exactly `-y`, `-c`, `--amend`.
-- Normal flow and recommendations use only `maestro run ...`.
-- Session exists before step execution; every Run follows next → brief → execute → check → done.
+- Initial classification is auditable and the Session exists before step execution.
+- Every step follows next → brief → execute → check → done; decision nodes use decide.
 - Chain adaptation is Skill-proposed and atomically applied by the producing Run.
+- Normal output and recommendations contain only `maestro run ...` lifecycle commands.
 </success_criteria>

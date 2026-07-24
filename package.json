@@ -1,9 +1,10 @@
 {
   "name": "maestro-flow",
-  "version": "0.5.55",
+  "version": "0.5.56",
   "description": "Intent-driven workflow orchestration for multi-agent AI development with adaptive lifecycle engine and self-reinforcing knowledge graph",
   "type": "module",
   "imports": {
+    "#built-search-adapter-contract": "./shared/built-search-adapter-contract.mjs",
     "#maestro-dashboard/agents/*": "./dashboard/dist-server/dashboard/src/server/agents/*",
     "#maestro-dashboard/shared/*": "./dashboard/dist-server/dashboard/src/shared/*",
     "#maestro-dashboard/wiki/*": "./dashboard/dist-server/dashboard/src/server/wiki/*",
@@ -20,6 +21,7 @@
   "files": [
     "bin",
     "dist",
+    "resources/lifecycle-fs",
     "shared",
     "templates",
     "prepare",
@@ -42,7 +44,7 @@
     "dashboard/package.json"
   ],
   "scripts": {
-    "build": "cd dashboard && npx tsc -p tsconfig.node.json && cd .. && tsc && node -e \"const fs=require('fs');const p=require('path');const s='src/tools/impeccable/live/static',d='dist/src/tools/impeccable/live/static';if(fs.existsSync(s)){fs.mkdirSync(d,{recursive:true});for(const f of fs.readdirSync(s)){fs.copyFileSync(p.join(s,f),p.join(d,f))}}\" && node -e \"const fs=require('fs');const p=require('path');for(const [s,d] of [['src/graph/db/schema.sql','dist/src/graph/db/schema.sql'],['src/graph/kg/schema.sql','dist/src/graph/kg/schema.sql']]){if(fs.existsSync(s)){fs.mkdirSync(p.dirname(d),{recursive:true});fs.copyFileSync(s,d)}}\"",
+    "build": "npm run native:lifecycle:verify && cd dashboard && npx tsc -p tsconfig.node.json && cd .. && tsc && node -e \"const fs=require('fs');const p=require('path');const s='src/tools/impeccable/live/static',d='dist/src/tools/impeccable/live/static';if(fs.existsSync(s)){fs.mkdirSync(d,{recursive:true});for(const f of fs.readdirSync(s)){fs.copyFileSync(p.join(s,f),p.join(d,f))}}\" && node -e \"const fs=require('fs');const p=require('path');for(const [s,d] of [['src/graph/db/schema.sql','dist/src/graph/db/schema.sql'],['src/graph/kg/schema.sql','dist/src/graph/kg/schema.sql']]){if(fs.existsSync(s)){fs.mkdirSync(p.dirname(d),{recursive:true});fs.copyFileSync(s,d)}}\"",
     "dev": "tsc --watch",
     "start": "node bin/maestro.js",
     "mcp": "node bin/maestro-mcp.js",
@@ -60,6 +62,10 @@
     "check:search-ranking-release-machine": "node scripts/check-search-ranking-release-machine.mjs",
     "check:search-ranking-release-machine:source": "node scripts/check-search-ranking-release-machine.mjs --source-only",
     "check:search-ranking-release-machine:built": "node scripts/check-search-ranking-release-machine.mjs --built",
+    "native:lifecycle:dispatch": "node scripts/run-lifecycle-fs-native-dispatch.mjs",
+    "native:lifecycle:build-local": "node scripts/build-lifecycle-fs-helper.mjs",
+    "native:lifecycle:verify": "node scripts/verify-lifecycle-fs-binaries.mjs",
+    "native:lifecycle:test": "node scripts/run-lifecycle-fs-native-tests.mjs",
     "lint:codex-skills": "node scripts/lint-session-run-mirrors.mjs",
     "lint:codex-agents": "node scripts/sync-codex-agents.mjs --check",
     "migrate:session-run-prompts": "node scripts/migrate-session-run-prompts.mjs --write",

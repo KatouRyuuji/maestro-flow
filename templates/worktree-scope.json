@@ -1,9 +1,1 @@
-{
-  "worktree": true,
-  "milestone_num": "{{MILESTONE_NUMBER}}",
-  "milestone": "{{MILESTONE_NAME}}",
-  "main_worktree": "{{MAIN_WORKTREE_PATH}}",
-  "branch": "milestone/{{MILESTONE_SLUG}}",
-  "base_commit": "{{BASE_COMMIT}}",
-  "created_at": "{{TIMESTAMP}}"
-}
+{"worktree": true, "session_id": "{{SESSION_ID}}", "session_intent": "{{SESSION_INTENT}}", "main_worktree": "{{MAIN_WORKTREE_PATH}}", "branch": "session/{{SESSION_SLUG}}", "base_commit": "{{BASE_COMMIT}}", "created_at": "{{TIMESTAMP}}"}

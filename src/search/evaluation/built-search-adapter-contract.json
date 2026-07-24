@@ -1,0 +1,580 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://maestro.dev/schemas/built-search-adapter-contract.json",
+  "title": "BuiltSearchAdapterReport",
+  "$ref": "#/$defs/BuiltSearchAdapterReport",
+  "$defs": {
+    "Provider": {
+      "type": "string",
+      "enum": ["wiki", "kg", "code", "mixed", "linked"]
+    },
+    "ProviderFunction": {
+      "type": "string",
+      "enum": [
+        "WikiIndexer.searchWithMeta",
+        "MaestroGraph.searchUnified",
+        "runCodeSearch/MaestroGraph.searchCode",
+        "runMixedSearch",
+        "runCodeSearch/MaestroGraph.openReadOnly.searchCode"
+      ]
+    },
+    "RunnerPlatform": {
+      "type": "string",
+      "enum": [
+        "aix",
+        "android",
+        "darwin",
+        "freebsd",
+        "haiku",
+        "linux",
+        "openbsd",
+        "sunos",
+        "win32",
+        "cygwin",
+        "netbsd"
+      ],
+      "x-typescript-type": "NodeJS.Platform"
+    },
+    "QueryExpected": {
+      "type": "object",
+      "required": ["queryId", "category", "provider", "function", "expectedCount"],
+      "additionalProperties": false,
+      "properties": {
+        "queryId": { "type": "string", "minLength": 1 },
+        "category": { "type": "string", "minLength": 1 },
+        "provider": { "$ref": "#/$defs/Provider" },
+        "function": { "$ref": "#/$defs/ProviderFunction" },
+        "expectedCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20
+        }
+      }
+    },
+    "DatabasePaths": {
+      "type": "object",
+      "required": [
+        "canonicalDatabase",
+        "linkedCanonicalDatabase",
+        "unauthorizedControlDatabase"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "canonicalDatabase": {
+          "type": "string",
+          "format": "absolute-path"
+        },
+        "linkedCanonicalDatabase": {
+          "type": "string",
+          "format": "absolute-path"
+        },
+        "unauthorizedControlDatabase": {
+          "type": "string",
+          "format": "absolute-path"
+        }
+      }
+    },
+    "Runner": {
+      "type": "object",
+      "required": ["node", "platform", "arch", "cpuCount"],
+      "additionalProperties": false,
+      "properties": {
+        "node": { "type": "string", "minLength": 1 },
+        "platform": { "$ref": "#/$defs/RunnerPlatform" },
+        "arch": { "type": "string", "minLength": 1 },
+        "cpuCount": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "ProtocolConstants": {
+      "type": "object",
+      "required": ["runs", "topK", "warmups", "measuredSamples"],
+      "additionalProperties": false,
+      "properties": {
+        "runs": { "const": 5 },
+        "topK": { "const": 20 },
+        "warmups": { "const": 20 },
+        "measuredSamples": { "const": 100 }
+      }
+    },
+    "BuiltSearchAdapterExpected": {
+      "type": "object",
+      "required": [
+        "workspaceRoot",
+        "qrelsSha256",
+        "queries",
+        "databasePaths",
+        "runner",
+        "constants"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "workspaceRoot": {
+          "type": "string",
+          "format": "absolute-path"
+        },
+        "qrelsSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "queries": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/QueryExpected" }
+        },
+        "databasePaths": { "$ref": "#/$defs/DatabasePaths" },
+        "runner": { "$ref": "#/$defs/Runner" },
+        "constants": { "$ref": "#/$defs/ProtocolConstants" }
+      }
+    },
+    "Provenance": {
+      "type": "object",
+      "required": ["source", "path"],
+      "additionalProperties": false,
+      "properties": {
+        "source": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "minLength": 1 }
+      }
+    },
+    "EvidenceResult": {
+      "type": "object",
+      "required": [
+        "id",
+        "rank",
+        "score",
+        "workspace",
+        "workspaceFence",
+        "authorized",
+        "status",
+        "provenance"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "rank": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20
+        },
+        "score": {
+          "type": ["number", "null"]
+        },
+        "workspace": {
+          "type": ["string", "null"]
+        },
+        "workspaceFence": {
+          "type": ["string", "null"]
+        },
+        "authorized": { "type": "boolean" },
+        "status": {
+          "type": "string",
+          "enum": ["active", "deprecated"]
+        },
+        "provenance": {
+          "anyOf": [
+            { "$ref": "#/$defs/Provenance" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "EvidenceRun": {
+      "type": "object",
+      "required": ["results"],
+      "additionalProperties": false,
+      "properties": {
+        "results": {
+          "type": "array",
+          "maxItems": 20,
+          "items": { "$ref": "#/$defs/EvidenceResult" }
+        }
+      }
+    },
+    "QueryEvidence": {
+      "type": "object",
+      "required": [
+        "queryId",
+        "category",
+        "provider",
+        "function",
+        "expectedCount",
+        "runs"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "queryId": { "type": "string", "minLength": 1 },
+        "category": { "type": "string", "minLength": 1 },
+        "provider": { "$ref": "#/$defs/Provider" },
+        "function": { "$ref": "#/$defs/ProviderFunction" },
+        "expectedCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20
+        },
+        "runs": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": { "$ref": "#/$defs/EvidenceRun" }
+        }
+      }
+    },
+    "EvidenceEventName": {
+      "type": "string",
+      "enum": [
+        "daemon-lookup",
+        "daemon-start",
+        "filesystem-cache-read",
+        "filesystem-cache-write",
+        "filesystem-index-write",
+        "embedding-build",
+        "embedding-save",
+        "credibility-hit-write",
+        "database-attach-or-merge"
+      ]
+    },
+    "EvidenceEvent": {
+      "type": "object",
+      "required": ["sequence", "event", "site", "queryId"],
+      "additionalProperties": false,
+      "properties": {
+        "sequence": { "type": "integer", "minimum": 1 },
+        "event": { "$ref": "#/$defs/EvidenceEventName" },
+        "site": { "type": "string", "minLength": 1 },
+        "queryId": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "WikiIndexSample": {
+      "type": "object",
+      "required": ["durationMs", "cacheState"],
+      "additionalProperties": false,
+      "properties": {
+        "durationMs": { "type": "number", "minimum": 0 },
+        "cacheState": { "const": "cold-build" }
+      }
+    },
+    "RawLatencyEvidence": {
+      "type": "object",
+      "required": [
+        "kgWarmSamplesMs",
+        "wikiQuerySamplesMs",
+        "wikiIndexWarmupSamples",
+        "wikiIndexSamples"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kgWarmSamplesMs": {
+          "type": "array",
+          "minItems": 100,
+          "maxItems": 100,
+          "items": { "type": "number", "minimum": 0 }
+        },
+        "wikiQuerySamplesMs": {
+          "type": "array",
+          "minItems": 100,
+          "maxItems": 100,
+          "items": { "type": "number", "minimum": 0 }
+        },
+        "wikiIndexWarmupSamples": {
+          "type": "array",
+          "minItems": 20,
+          "maxItems": 20,
+          "items": { "$ref": "#/$defs/WikiIndexSample" }
+        },
+        "wikiIndexSamples": {
+          "type": "array",
+          "minItems": 100,
+          "maxItems": 100,
+          "items": { "$ref": "#/$defs/WikiIndexSample" }
+        }
+      }
+    },
+    "Evidence": {
+      "type": "object",
+      "required": ["queries", "events", "latency"],
+      "additionalProperties": false,
+      "properties": {
+        "queries": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/QueryEvidence" }
+        },
+        "events": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/EvidenceEvent" }
+        },
+        "latency": { "$ref": "#/$defs/RawLatencyEvidence" }
+      }
+    },
+    "RankingMetrics": {
+      "type": "object",
+      "required": ["ndcgAt10", "mrrAt10", "recallAt20"],
+      "additionalProperties": false,
+      "properties": {
+        "ndcgAt10": { "type": "number" },
+        "mrrAt10": { "type": "number" },
+        "recallAt20": { "type": "number" }
+      }
+    },
+    "AggregatedRankingMetrics": {
+      "type": "object",
+      "required": ["overall", "categories"],
+      "additionalProperties": false,
+      "properties": {
+        "overall": { "$ref": "#/$defs/RankingMetrics" },
+        "categories": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/RankingMetrics" }
+        }
+      }
+    },
+    "ReportedLatency": {
+      "type": "object",
+      "required": [
+        "kgWarmP95Ms",
+        "kgWarmMaxMs",
+        "wikiQueryP95Ms",
+        "wikiIndexP95Ms"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kgWarmP95Ms": { "type": "number", "minimum": 0 },
+        "kgWarmMaxMs": { "type": "number", "minimum": 0 },
+        "wikiQueryP95Ms": { "type": "number", "minimum": 0 },
+        "wikiIndexP95Ms": { "type": "number", "minimum": 0 }
+      }
+    },
+    "ReportedIntegrity": {
+      "type": "object",
+      "required": [
+        "deprecatedLeakCount",
+        "unauthorizedWorkspaceHitCount",
+        "provenanceLossCount",
+        "attachOrMergeCalls"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "deprecatedLeakCount": { "type": "integer", "minimum": 0 },
+        "unauthorizedWorkspaceHitCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "provenanceLossCount": { "type": "integer", "minimum": 0 },
+        "attachOrMergeCalls": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "ReportedSideEffects": {
+      "type": "object",
+      "required": [
+        "daemonLookupCalls",
+        "daemonStartCalls",
+        "filesystemCacheReadCalls",
+        "filesystemCacheWriteCalls",
+        "filesystemIndexWriteCalls",
+        "embeddingBuildCalls",
+        "embeddingSaveCalls",
+        "credibilityHitWriteCalls"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "daemonLookupCalls": { "type": "integer", "minimum": 0 },
+        "daemonStartCalls": { "type": "integer", "minimum": 0 },
+        "filesystemCacheReadCalls": { "type": "integer", "minimum": 0 },
+        "filesystemCacheWriteCalls": { "type": "integer", "minimum": 0 },
+        "filesystemIndexWriteCalls": { "type": "integer", "minimum": 0 },
+        "embeddingBuildCalls": { "type": "integer", "minimum": 0 },
+        "embeddingSaveCalls": { "type": "integer", "minimum": 0 },
+        "credibilityHitWriteCalls": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "ReportedAggregates": {
+      "type": "object",
+      "required": [
+        "metrics",
+        "overallNdcgGain",
+        "maxCategoryNdcgDrop",
+        "stability",
+        "latency",
+        "integrity",
+        "sideEffects"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "metrics": { "$ref": "#/$defs/AggregatedRankingMetrics" },
+        "overallNdcgGain": { "type": "number" },
+        "maxCategoryNdcgDrop": { "type": "number" },
+        "stability": {
+          "type": "object",
+          "required": ["runs", "topK", "stableTop20"],
+          "additionalProperties": false,
+          "properties": {
+            "runs": { "const": 5 },
+            "topK": { "const": 20 },
+            "stableTop20": { "type": "boolean" }
+          }
+        },
+        "latency": { "$ref": "#/$defs/ReportedLatency" },
+        "integrity": { "$ref": "#/$defs/ReportedIntegrity" },
+        "sideEffects": { "$ref": "#/$defs/ReportedSideEffects" }
+      }
+    },
+    "FileIdentity": {
+      "type": "object",
+      "required": ["size", "mtimeMs", "sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "size": { "type": "integer", "minimum": 0 },
+        "mtimeMs": { "type": "number", "minimum": 0 },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "ProtectedState": {
+      "type": "object",
+      "required": ["before", "after", "unchanged"],
+      "additionalProperties": false,
+      "properties": {
+        "before": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/FileIdentity" }
+        },
+        "after": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/FileIdentity" }
+        },
+        "unchanged": { "const": true }
+      }
+    },
+    "WorkspaceEvidence": {
+      "type": "object",
+      "required": [
+        "root",
+        "cwd",
+        "maestroProjectRoot",
+        "canonicalDatabase",
+        "linkedCanonicalDatabase",
+        "unauthorizedControlDatabase",
+        "persistence",
+        "executionMode"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "root": { "type": "string", "format": "absolute-path" },
+        "cwd": { "type": "string", "format": "absolute-path" },
+        "maestroProjectRoot": {
+          "type": "string",
+          "format": "absolute-path"
+        },
+        "canonicalDatabase": {
+          "type": "string",
+          "format": "absolute-path"
+        },
+        "linkedCanonicalDatabase": {
+          "type": "string",
+          "format": "absolute-path"
+        },
+        "unauthorizedControlDatabase": {
+          "type": "string",
+          "format": "absolute-path"
+        },
+        "persistence": { "const": "memory-only" },
+        "executionMode": { "const": "read-only-probe" }
+      }
+    },
+    "BuiltSearchAdapterReport": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "ok",
+        "qrelsSha256",
+        "evidence",
+        "reported",
+        "workspace",
+        "protectedState",
+        "runner"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": { "const": "built-search-adapter/1.1" },
+        "ok": { "const": true },
+        "qrelsSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "evidence": { "$ref": "#/$defs/Evidence" },
+        "reported": { "$ref": "#/$defs/ReportedAggregates" },
+        "workspace": { "$ref": "#/$defs/WorkspaceEvidence" },
+        "protectedState": { "$ref": "#/$defs/ProtectedState" },
+        "runner": { "$ref": "#/$defs/Runner" }
+      }
+    },
+    "BuiltSearchAdapterFixtureInput": {
+      "type": "object",
+      "required": [
+        "expected",
+        "queryRuns",
+        "events",
+        "kgWarmSamplesMs",
+        "wikiQuerySamplesMs",
+        "wikiIndexWarmupSamples",
+        "wikiIndexSamples",
+        "protectedState",
+        "reportedOverrides"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "expected": { "$ref": "#/$defs/BuiltSearchAdapterExpected" },
+        "queryRuns": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 5,
+            "maxItems": 5,
+            "items": { "$ref": "#/$defs/EvidenceRun" }
+          }
+        },
+        "events": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/EvidenceEvent" }
+        },
+        "kgWarmSamplesMs": {
+          "type": "array",
+          "minItems": 100,
+          "maxItems": 100,
+          "items": { "type": "number", "minimum": 0 }
+        },
+        "wikiQuerySamplesMs": {
+          "type": "array",
+          "minItems": 100,
+          "maxItems": 100,
+          "items": { "type": "number", "minimum": 0 }
+        },
+        "wikiIndexWarmupSamples": {
+          "type": "array",
+          "minItems": 20,
+          "maxItems": 20,
+          "items": { "$ref": "#/$defs/WikiIndexSample" }
+        },
+        "wikiIndexSamples": {
+          "type": "array",
+          "minItems": 100,
+          "maxItems": 100,
+          "items": { "$ref": "#/$defs/WikiIndexSample" }
+        },
+        "protectedState": { "$ref": "#/$defs/ProtectedState" },
+        "reportedOverrides": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": {}
+            },
+            { "type": "null" }
+          ]
+        }
+      }
+    }
+  }
+}

@@ -15,7 +15,16 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { Command } from 'commander';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 
 import { WikiIndexer } from '../../../dashboard/src/server/wiki/wiki-indexer.js';
 import { registerKnowhowCommand } from '../../commands/knowhow.js';
@@ -108,6 +117,9 @@ const canonicalPayload = {
 
 const absolute = JSON.parse(readFileSync(absolutePath, 'utf8')) as PiAbsoluteFixture;
 const holdouts = JSON.parse(readFileSync(holdoutsPath, 'utf8')) as PiHoldoutFixture;
+const restoreCrashPoints = (
+  JSON.parse(readFileSync(productionSnapshotPath, 'utf8')) as KnowhowLifecycleSnapshot
+).targets.map((_target, index) => index + 1);
 
 let root: string;
 let previousRoot: string | undefined;
@@ -280,6 +292,39 @@ describe('Pi canonical migration replay', () => {
 });
 
 describe('Pi absolute and external holdout discovery', () => {
+  it('locks minimum counts, canonical targets, disjoint queries and fixed thresholds', () => {
+    const external = holdouts.queries.filter(query => query.category === 'pi');
+    const allQueries = [...absolute.queries, ...external];
+    const normalized = (value: string): string =>
+      value.trim().toLocaleLowerCase('en-US').replace(/\s+/g, ' ');
+
+    expect(absolute.schema_version).toBe('pi-knowledge-absolute/1.0');
+    expect(absolute.canonicalId.trim()).toBe(absolute.canonicalId);
+    expect(absolute.canonicalId).not.toBe('');
+    expect(absolute.thresholds).toEqual({
+      topK: 5,
+      recallAt: 20,
+      minRecall: 0.90,
+      maxDeprecatedLeakCount: 0,
+    });
+    expect(absolute.queries.length).toBeGreaterThanOrEqual(2);
+    expect(external.length).toBeGreaterThanOrEqual(2);
+    expect(allQueries.every(query => query.id.trim().length > 0)).toBe(true);
+    expect(allQueries.every(query => query.query.trim().length > 0)).toBe(true);
+    expect(new Set(allQueries.map(query => query.id)).size).toBe(allQueries.length);
+    expect(new Set(allQueries.map(query => normalized(query.query))).size).toBe(
+      allQueries.length,
+    );
+    expect(allQueries.every(query => (
+      query.targetIds.length > 0
+      && new Set(query.targetIds).size === query.targetIds.length
+      && query.targetIds.every(targetId => targetId === absolute.canonicalId)
+    ))).toBe(true);
+
+    const primaryQueries = new Set(absolute.queries.map(query => normalized(query.query)));
+    expect(external.some(query => primaryQueries.has(normalized(query.query)))).toBe(false);
+  });
+
   it('keeps both history directions identical and exposes the CLI machine envelope', async () => {
     await migrateWorkspace(root);
     const fromLegacy = getKnowhowEvolutionChain(root, absolute.legacyId);
@@ -367,6 +412,8 @@ describe('Pi absolute and external holdout discovery', () => {
       }
       deprecatedLeakCount += ids.filter(id => id === absolute.legacyId).length;
     }
+    expect(relevant).toBeGreaterThan(0);
+    expect(Number.isFinite(recalled / relevant)).toBe(true);
     expect(recalled / relevant).toBeGreaterThanOrEqual(absolute.thresholds.minRecall);
     expect(deprecatedLeakCount).toBeLessThanOrEqual(
       absolute.thresholds.maxDeprecatedLeakCount,
@@ -439,75 +486,141 @@ describe('frozen relative judgments and anti-special-case guards', () => {
 });
 
 describe('temporary-copy restore crash matrix', () => {
-  it('replays only pending targets after every per-target crash', async () => {
-    const seedRoot = mkdtempSync(join(tmpdir(), 'pi-restore-seed-'));
+  let restoreSeedRoot: string;
+
+  beforeAll(async () => {
+    restoreSeedRoot = mkdtempSync(join(tmpdir(), 'pi-restore-seed-'));
+    const previousProjectRoot = process.env.MAESTRO_PROJECT_ROOT;
     try {
-      const seedSnapshotPath = await migrateWorkspace(seedRoot);
-      const seedSnapshot = JSON.parse(
-        readFileSync(seedSnapshotPath, 'utf8'),
-      ) as KnowhowLifecycleSnapshot;
-
-      for (let crashAfter = 1; crashAfter <= seedSnapshot.targets.length; crashAfter += 1) {
-        const caseRoot = mkdtempSync(join(tmpdir(), `pi-restore-${crashAfter}-`));
-        try {
-          cpSync(seedRoot, caseRoot, { recursive: true });
-          const caseSnapshotPath = join(caseRoot, snapshotRelativePath);
-          const completedBeforeCrash: string[] = [];
-          const crashed = restoreKnowhowLifecycleSnapshot(caseRoot, caseSnapshotPath, {
-            claimedRun: `pi-crash-${crashAfter}`,
-            afterTarget: (path, completed) => {
-              completedBeforeCrash.push(path);
-              if (completed === crashAfter) throw new Error('injected restore crash');
-            },
-          });
-          expect(crashed.success).toBe(false);
-          expect(completedBeforeCrash).toHaveLength(crashAfter);
-
-          const replayedPaths: string[] = [];
-          const replay = restoreKnowhowLifecycleSnapshot(caseRoot, caseSnapshotPath, {
-            claimedRun: 'must-not-replace-original',
-            afterTarget: path => replayedPaths.push(path),
-          });
-          expect(replay).toMatchObject({
-            success: true,
-            replayed: true,
-            receipt: {
-              schema_version: 'knowhow-restore-receipt/1.0',
-              operation: 'restore',
-              status: 'completed',
-              claimedRun: `pi-crash-${crashAfter}`,
-            },
-          });
-          expect(replay.receipt?.targets.every(target => target.completed)).toBe(true);
-          expect(replayedPaths).toHaveLength(seedSnapshot.targets.length - crashAfter);
-          expect(replayedPaths.some(path => completedBeforeCrash.includes(path))).toBe(false);
-          expect(readFileSync(join(caseRoot, legacyRelativePath))).toEqual(
-            snapshotBeforeBytes(legacyRelativePath),
-          );
-          expect(existsSync(join(caseRoot, canonicalRelativePath))).toBe(false);
-          expect(existsSync(join(
-            caseRoot,
-            'src/search/evaluation/fixtures/pi-knowledge-absolute.json',
-          ))).toBe(false);
-          expect(existsSync(join(
-            caseRoot,
-            'src/search/evaluation/pi-knowledge-absolute.test.ts',
-          ))).toBe(false);
-        } finally {
-          rmSync(caseRoot, { recursive: true, force: true });
-        }
-      }
+      await migrateWorkspace(restoreSeedRoot);
     } finally {
-      rmSync(seedRoot, { recursive: true, force: true });
+      if (previousProjectRoot === undefined) delete process.env.MAESTRO_PROJECT_ROOT;
+      else process.env.MAESTRO_PROJECT_ROOT = previousProjectRoot;
     }
   });
+
+  afterAll(() => {
+    rmSync(restoreSeedRoot, { recursive: true, force: true });
+  });
+
+  function copyMigratedWorkspace(): string {
+    cpSync(restoreSeedRoot, root, { recursive: true });
+    process.env.MAESTRO_PROJECT_ROOT = root;
+    return join(root, snapshotRelativePath);
+  }
+
+  it.each(restoreCrashPoints)(
+    'reconciles every target written before its completed checkpoint (target %i)',
+    async crashBefore => {
+      const snapshotPath = copyMigratedWorkspace();
+      const snapshot = JSON.parse(readFileSync(snapshotPath, 'utf8')) as KnowhowLifecycleSnapshot;
+      const writtenBeforeCrash: string[] = [];
+      const crashed = restoreKnowhowLifecycleSnapshot(root, snapshotPath, {
+        claimedRun: `pi-before-checkpoint-${crashBefore}`,
+        beforeTargetCheckpoint: (path, completed) => {
+          writtenBeforeCrash.push(path);
+          if (completed === crashBefore) {
+            throw new Error('injected restore before-checkpoint crash');
+          }
+        },
+      });
+      expect(crashed.success).toBe(false);
+      expect(writtenBeforeCrash).toHaveLength(crashBefore);
+      const interruptedPath = writtenBeforeCrash.at(-1)!;
+
+      const replayWrites: string[] = [];
+      const replayCheckpoints: string[] = [];
+      const replay = restoreKnowhowLifecycleSnapshot(root, snapshotPath, {
+        claimedRun: 'must-not-replace-original',
+        beforeTargetCheckpoint: path => replayWrites.push(path),
+        afterTarget: path => replayCheckpoints.push(path),
+      });
+      expect(replay).toMatchObject({
+        success: true,
+        replayed: true,
+        receipt: {
+          schema_version: 'knowhow-restore-receipt/1.0',
+          operation: 'restore',
+          status: 'completed',
+          claimedRun: `pi-before-checkpoint-${crashBefore}`,
+        },
+      });
+      expect(replay.receipt?.targets.every(target => target.completed)).toBe(true);
+      expect(replayWrites).toHaveLength(snapshot.targets.length - crashBefore);
+      expect(replayWrites.some(path => writtenBeforeCrash.includes(path))).toBe(false);
+      expect(replayCheckpoints).toContain(interruptedPath);
+      expect(readFileSync(join(root, legacyRelativePath))).toEqual(
+        snapshotBeforeBytes(legacyRelativePath),
+      );
+      expect(existsSync(join(root, canonicalRelativePath))).toBe(false);
+      expect(existsSync(join(
+        root,
+        'src/search/evaluation/fixtures/pi-knowledge-absolute.json',
+      ))).toBe(false);
+      expect(existsSync(join(
+        root,
+        'src/search/evaluation/pi-knowledge-absolute.test.ts',
+      ))).toBe(false);
+    },
+  );
+
+  it.each(restoreCrashPoints)(
+    'replays only pending targets after every per-target crash (target %i)',
+    async crashAfter => {
+      const snapshotPath = copyMigratedWorkspace();
+      const snapshot = JSON.parse(readFileSync(snapshotPath, 'utf8')) as KnowhowLifecycleSnapshot;
+      const completedBeforeCrash: string[] = [];
+      const crashed = restoreKnowhowLifecycleSnapshot(root, snapshotPath, {
+        claimedRun: `pi-crash-${crashAfter}`,
+        afterTarget: (path, completed) => {
+          completedBeforeCrash.push(path);
+          if (completed === crashAfter) throw new Error('injected restore crash');
+        },
+      });
+      expect(crashed.success).toBe(false);
+      expect(completedBeforeCrash).toHaveLength(crashAfter);
+
+      const replayedPaths: string[] = [];
+      const replay = restoreKnowhowLifecycleSnapshot(root, snapshotPath, {
+        claimedRun: 'must-not-replace-original',
+        afterTarget: path => replayedPaths.push(path),
+      });
+      expect(replay).toMatchObject({
+        success: true,
+        replayed: true,
+        receipt: {
+          schema_version: 'knowhow-restore-receipt/1.0',
+          operation: 'restore',
+          status: 'completed',
+          claimedRun: `pi-crash-${crashAfter}`,
+        },
+      });
+      expect(replay.receipt?.targets.every(target => target.completed)).toBe(true);
+      expect(replayedPaths).toHaveLength(snapshot.targets.length - crashAfter);
+      expect(replayedPaths.some(path => completedBeforeCrash.includes(path))).toBe(false);
+      expect(readFileSync(join(root, legacyRelativePath))).toEqual(
+        snapshotBeforeBytes(legacyRelativePath),
+      );
+      expect(existsSync(join(root, canonicalRelativePath))).toBe(false);
+      expect(existsSync(join(
+        root,
+        'src/search/evaluation/fixtures/pi-knowledge-absolute.json',
+      ))).toBe(false);
+      expect(existsSync(join(
+        root,
+        'src/search/evaluation/pi-knowledge-absolute.test.ts',
+      ))).toBe(false);
+    },
+  );
 
   it.each(['completed', 'pending'] as const)(
     'preserves %s target hash conflicts for audit without overwriting',
     async conflictKind => {
       const seedRoot = mkdtempSync(join(tmpdir(), `pi-conflict-${conflictKind}-`));
       try {
-        const snapshotPath = await migrateWorkspace(seedRoot);
+        cpSync(restoreSeedRoot, seedRoot, { recursive: true });
+        process.env.MAESTRO_PROJECT_ROOT = seedRoot;
+        const snapshotPath = join(seedRoot, snapshotRelativePath);
         let completedPath = '';
         const crashed = restoreKnowhowLifecycleSnapshot(seedRoot, snapshotPath, {
           claimedRun: `pi-${conflictKind}-conflict`,
@@ -550,4 +663,41 @@ describe('temporary-copy restore crash matrix', () => {
       }
     },
   );
+
+  it('rejects stale terminal conflict evidence', async () => {
+    const qrelsBefore = sha256(qrelsPath);
+    const snapshotBefore = sha256(productionSnapshotPath);
+    const snapshotPath = copyMigratedWorkspace();
+    let completedPath = '';
+    expect(restoreKnowhowLifecycleSnapshot(root, snapshotPath, {
+      claimedRun: 'pi-stale-terminal-conflict',
+      afterTarget: (path, completed) => {
+        completedPath = path;
+        if (completed === 1) throw new Error('persist partial Pi restore');
+      },
+    }).success).toBe(false);
+
+    const intentPath = `${snapshotPath}.restore.intent.json`;
+    const pending = JSON.parse(readFileSync(intentPath, 'utf8')) as {
+      targets: Array<{ path: string; completed: boolean }>;
+    };
+    const conflictPath = pending.targets.find(target => !target.completed)!.path;
+    write(join(root, conflictPath), 'Pi terminal conflict evidence');
+    expect(restoreKnowhowLifecycleSnapshot(root, snapshotPath)).toMatchObject({
+      success: false,
+      code: 'KNOWHOW_RESTORE_CONFLICT',
+      receipt: { status: 'conflict' },
+    });
+
+    const completedAbsolute = join(root, completedPath);
+    write(completedAbsolute, 'Pi post-receipt target drift');
+    expect(restoreKnowhowLifecycleSnapshot(root, snapshotPath)).toMatchObject({
+      success: false,
+      code: 'KNOWHOW_RESTORE_FAILED',
+      error: expect.stringContaining('Restore terminal replay drift'),
+    });
+    expect(readFileSync(completedAbsolute, 'utf8')).toBe('Pi post-receipt target drift');
+    expect(sha256(qrelsPath)).toBe(qrelsBefore);
+    expect(sha256(productionSnapshotPath)).toBe(snapshotBefore);
+  });
 });

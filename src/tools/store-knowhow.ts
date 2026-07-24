@@ -36,7 +36,10 @@ import {
   parseFrontmatter,
 } from '../utils/frontmatter.js';
 import { updateFileAtomic } from '../utils/atomic-write.js';
-import { runKnowhowLifecycleAsync } from './knowhow-lifecycle-async.js';
+import {
+  KnowhowLifecycleBridgeError,
+  runKnowhowLifecycleAsync,
+} from './knowhow-lifecycle-async.js';
 
 const DECISION_STATUSES = ['proposed', 'accepted', 'superseded'] as const;
 
@@ -545,6 +548,11 @@ export async function handler(params: Record<string, unknown>): Promise<CcwToolR
         return { success: false, error: `Unknown operation: ${parsed.data.operation}` };
     }
   } catch (error) {
-    return { success: false, error: (error as Error).message };
+    return {
+      success: false,
+      error: error instanceof KnowhowLifecycleBridgeError
+        ? `${error.code}: ${error.message}`
+        : (error as Error).message,
+    };
   }
 }

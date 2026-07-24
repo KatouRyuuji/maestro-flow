@@ -17,6 +17,20 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    version: '0.5.56',
+    date: '2026-07',
+    changes: [
+      { type: 'feat', text_en: 'Unify Maestro and Ralph into a single Session chain protocol with Skill chain-proposal contract and atomic proposal application', text_zh: '统一 Maestro 与 Ralph 为单一 Session 链协议，新增 Skill 链提案契约与原子提案应用' },
+      { type: 'feat', text_en: 'Add session start command with run start deprecation and full reference migration; new prepare/maestro.md for intent classification and chain building', text_zh: '新增 session start 命令并废弃 run start，全量迁移引用；新建 prepare/maestro.md 意图分类与建链协议' },
+      { type: 'feat', text_en: 'Rewrite ralph prepare/workflow restoring Stage Mapping, Build Rules and state machine; align maestro prepare flags, decomposition protocol and invariants', text_zh: '重写 ralph prepare/workflow 恢复 Stage Mapping、Build Rules 与状态机；对齐 maestro prepare flags、分解协议与 invariants' },
+      { type: 'feat', text_en: 'Install entry commands converted to skill format with hub arrow and expanded step selection', text_zh: '安装入口命令转为 skill 格式，新增 hub 箭头与扩展步骤选择' },
+      { type: 'fix', text_en: 'Complete Run recovery loop, auto-continuation and decision closure; clean 82 files of residual command references', text_zh: '补全 Run 恢复闭环、自动续行与决策闭环；清理 82 个文件的残留命令引用' },
+      { type: 'fix', text_en: 'Fix ralph decision gate classification, evaluation flow and missing links; adapt run-executor for inline-brief forward flow', text_zh: '修复 ralph decision gate 分类、评估流程与缺失环节；适配 run-executor 的 inline-brief 前向流程' },
+      { type: 'refactor', text_en: 'Session/Run responsibility separation with full Ralph migration; unify orchestration into Run lifecycle; neutralize Run executor and evidence queries', text_zh: 'Session/Run 职责分离与 Ralph 完全迁移；统一编排到 Run 生命周期；中立化 Run executor 与 evidence 查询' },
+      { type: 'feat', text_en: 'Brief no longer injects full run-mode.md text, eliminating redundant executor loading', text_zh: 'brief 不再注入 run-mode.md 全文，消除执行器重复加载' },
+    ],
+  },
+  {
     version: '0.5.55',
     date: '2026-07',
     changes: [

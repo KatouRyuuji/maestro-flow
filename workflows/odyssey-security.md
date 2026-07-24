@@ -242,7 +242,7 @@ Goals:       {done}/{total} ({skipped} skipped)
 - [ ] Severity matrix produced with file:line references and remediation for every finding
 - [ ] Read-only invariant maintained — zero source code modifications
 - [ ] Multi-layer generalization + discovery triage (unless --skip-generalize)
-- [ ] phase_goals derived, tracked, and hardened-audited; Goal Prompt once
+- [ ] phase_goals derived, tracked, and hardened-audited; goal_mode injected via prepare goal:true
 - [ ] Session resumable via -c; completion summary emitted
 
 ---

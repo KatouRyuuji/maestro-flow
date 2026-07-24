@@ -163,6 +163,40 @@ describe('linked CodeGraph search', () => {
     expect(search?.options.some(option => option.long === '--workspace')).toBe(true);
   });
 
+  it('keeps linked results opt-in for adapter-style read-only probes', async () => {
+    const projectRoot = temporaryRoot('linked-adapter-probe');
+    const linkedRoot = join(projectRoot, 'linked');
+    await createGraph(projectRoot, 'ProbeNeedle', 'code:function:local');
+    await createGraph(linkedRoot, 'ProbeNeedle', 'code:function:linked');
+    writeWorkspaceConfig(projectRoot, [
+      { name: 'linked', path: linkedRoot, share: ['codebase'] },
+    ]);
+
+    const localOnly = await runCodeSearch(
+      'ProbeNeedle',
+      20,
+      true,
+      false,
+      projectRoot,
+      'read-only-probe',
+    );
+    const optedIn = await runCodeSearch(
+      'ProbeNeedle',
+      20,
+      true,
+      true,
+      projectRoot,
+      'read-only-probe',
+    );
+
+    expect(localOnly.results.map(result => result.id)).toEqual(['code:function:local']);
+    expect(localOnly.results.every(result => result.workspace === undefined)).toBe(true);
+    expect(optedIn.results.map(result => result.id)).toEqual([
+      'code:function:local',
+      'ws:linked:code:function:linked',
+    ]);
+  });
+
   it('only searches valid workspaces explicitly sharing codebase', async () => {
     const projectRoot = temporaryRoot('linked-auth');
     const authorizedRoot = join(projectRoot, 'authorized');

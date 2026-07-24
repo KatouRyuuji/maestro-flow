@@ -1628,6 +1628,7 @@ function prepareEphemeralBranch({
 function parseArguments(argv) {
   const values = {};
   const flags = new Set([
+    '--cleanup',
     '--execute-authorized',
     '--transaction-only',
     '--test-mode',
@@ -1646,6 +1647,8 @@ function parseArguments(argv) {
     '--failpoint',
     '--poll-interval-ms',
     '--lock-wait-ms',
+    '--receipt',
+    '--final-implementation-commit',
   ]);
   for (let index = 0; index < argv.length; index += 1) {
     const key = argv[index];
@@ -1665,11 +1668,32 @@ function parseArguments(argv) {
 
 async function main(argv) {
   const args = parseArguments(argv);
+  const workspaceRoot = resolve(args['--workspace-root'] ?? resolve(dirname(fileURLToPath(import.meta.url)), '..'));
+  if (args['--cleanup']) {
+    if (!args['--receipt']
+      || args['--execute-authorized']
+      || args['--transaction-only']
+      || args['--test-mode']
+      || args['--retry-hermetic-authorized']
+      || args['--retry-historical-authorized']) {
+      fail('--cleanup requires only --receipt and optional workspace/final-commit arguments');
+    }
+    const { cleanupNativeLifecycleDispatch } = await import('./verify-lifecycle-fs-native-matrix.mjs');
+    const finalImplementationCommitSha = args['--final-implementation-commit']
+      ?? runCommand('git', ['rev-parse', 'HEAD'], { cwd: workspaceRoot });
+    const completed = cleanupNativeLifecycleDispatch({
+      receiptPath: resolve(workspaceRoot, args['--receipt']),
+      workspaceRoot,
+      finalImplementationCommitSha,
+      remote: 'origin',
+    });
+    process.stdout.write(`${jcs(completed.receipt)}\n`);
+    return;
+  }
   if (!args['--execute-authorized']) fail('--execute-authorized is required');
   if ((args['--repo'] ?? REPO) !== REPO || (args['--run-key'] ?? RUN_KEY) !== RUN_KEY) {
     fail('repo or run-key is outside authority');
   }
-  const workspaceRoot = resolve(args['--workspace-root'] ?? resolve(dirname(fileURLToPath(import.meta.url)), '..'));
   const apiBase = (args['--api-base'] ?? 'https://api.github.com').replace(/\/$/, '');
   const testMode = Boolean(args['--test-mode']);
   if (testMode && process.env.NATIVE_LIFECYCLE_TESTING !== '1') {

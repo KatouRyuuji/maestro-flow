@@ -19,13 +19,25 @@ function assertRequest(value: unknown): asserts value is KnowhowLifecycleWorkerR
   if (typeof request.projectRoot !== 'string') {
     throw new Error('Invalid knowhow lifecycle worker projectRoot');
   }
+  if (typeof request.ownerGeneration !== 'string'
+    || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      .test(request.ownerGeneration)) {
+    throw new Error('Invalid knowhow lifecycle worker ownerGeneration');
+  }
   if (request.operation === 'supersede'
     && typeof request.oldId === 'string'
-    && typeof request.newId === 'string') {
+    && typeof request.newId === 'string'
+    && Object.keys(request).sort().join(',')
+      === 'newId,oldId,operation,ownerGeneration,projectRoot') {
     return;
   }
-  if (request.operation === 'history' && typeof request.id === 'string') return;
-  if (request.operation === 'recover') return;
+  if (request.operation === 'history'
+    && typeof request.id === 'string'
+    && Object.keys(request).sort().join(',')
+      === 'id,operation,ownerGeneration,projectRoot') return;
+  if (request.operation === 'recover'
+    && Object.keys(request).sort().join(',')
+      === 'operation,ownerGeneration,projectRoot') return;
   throw new Error('Invalid knowhow lifecycle worker operation');
 }
 
@@ -38,6 +50,7 @@ function dispatch(request: KnowhowLifecycleWorkerRequest): KnowhowLifecycleWorke
           request.projectRoot,
           request.oldId,
           request.newId,
+          { ownerGeneration: request.ownerGeneration },
         ),
       };
     case 'history':
@@ -48,7 +61,10 @@ function dispatch(request: KnowhowLifecycleWorkerRequest): KnowhowLifecycleWorke
     case 'recover':
       return {
         operation: request.operation,
-        result: recoverKnowhowLifecycleIntent(request.projectRoot),
+        result: recoverKnowhowLifecycleIntent(
+          request.projectRoot,
+          { ownerGeneration: request.ownerGeneration },
+        ),
       };
   }
 }

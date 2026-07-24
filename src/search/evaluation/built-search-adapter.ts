@@ -6,6 +6,18 @@ import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 
 import { WikiIndexer } from '#maestro-dashboard/wiki/wiki-indexer.js';
+import {
+  makeBuiltSearchAdapterFixture,
+  parseBuiltSearchAdapterReport,
+  type BuiltSearchAdapterExpected,
+  type BuiltSearchAdapterReport,
+  type EvidenceEvent,
+  type EvidenceResult,
+  type EvidenceRun,
+  type FixedLengthArray,
+  type QueryExpected,
+  type WikiIndexSample,
+} from '#built-search-adapter-contract';
 
 import {
   runCodeSearch,
@@ -36,6 +48,14 @@ import {
 } from './relevance-evaluator.js';
 
 export type BuiltProviderName = 'wiki' | 'kg' | 'code' | 'mixed' | 'linked';
+export type {
+  BuiltSearchAdapterExpected,
+  BuiltSearchAdapterReport,
+  EvidenceEvent,
+  EvidenceResult,
+  EvidenceRun,
+  WikiIndexSample,
+} from '#built-search-adapter-contract';
 
 export interface BuiltSearchAdapterInput {
   workspaceRoot: string;
@@ -52,82 +72,21 @@ interface FileIdentity {
   sha256: string;
 }
 
-interface ProviderTrace {
-  queryId: string;
-  function: string;
-  resultIds: string[];
-  runs: string[][];
-}
-
 interface LatencyStats {
   p95Ms: number;
   maxMs: number;
+  samplesMs: FixedLengthArray<number, 100>;
 }
 
-export interface BuiltSearchAdapterReport {
-  schema_version: 'built-search-adapter/1.0';
-  ok: true;
-  qrelsSha256: string;
-  qrelsSha256Match: true;
-  metrics: ReturnType<typeof aggregateRankingMetrics>;
-  overallNdcgGain: number;
-  maxCategoryNdcgDrop: number;
-  stability: {
-    runs: 5;
-    topK: 20;
-    stableTop20: boolean;
-  };
-  providers: Record<BuiltProviderName, ProviderTrace[]>;
-  latency: {
-    warmups: 20;
-    measuredSamples: 100;
-    kgWarmP95Ms: number;
-    kgWarmMaxMs: number;
-    wikiQueryP95Ms: number;
-    wikiIndexP95Ms: number;
-    operations: {
-      kg: { function: 'MaestroGraph.searchUnified'; warmups: 20; samples: 100 };
-      wikiQuery: { function: 'WikiIndexer.searchWithMeta'; warmups: 20; samples: 100 };
-      wikiIndex: { function: 'WikiIndexer.getSearchIndex'; warmups: 20; samples: 100 };
-    };
-  };
-  integrity: {
-    deprecatedLeakCount: number;
-    unauthorizedWorkspaceHitCount: number;
-    provenanceLossCount: number;
-    attachOrMergeCalls: 0;
-  };
-  sideEffects: {
-    daemonLookupCalls: 0;
-    daemonStartCalls: 0;
-    filesystemCacheReadCalls: 0;
-    filesystemCacheWriteCalls: 0;
-    filesystemIndexWriteCalls: 0;
-    embeddingBuildCalls: 0;
-    embeddingSaveCalls: 0;
-    credibilityHitWriteCalls: 0;
-  };
-  workspace: {
-    root: string;
-    cwd: string;
-    maestroProjectRoot: string;
-    canonicalDatabase: string;
-    linkedCanonicalDatabase: string;
-    unauthorizedControlDatabase: string;
-    persistence: 'memory-only';
-    executionMode: 'read-only-probe';
-  };
-  protectedState: {
-    before: Record<string, FileIdentity>;
-    after: Record<string, FileIdentity>;
-    unchanged: true;
-  };
-  runner: {
-    node: string;
-    platform: NodeJS.Platform;
-    arch: string;
-    cpuCount: number;
-  };
+interface ObservedWikiIndexSample {
+  durationMs: number;
+  cacheState: 'cold-build' | 'cache-hit';
+}
+
+interface RawProviderResult {
+  id: string;
+  score: number | null;
+  workspaceFence: string | null;
 }
 
 function percentile(samples: readonly number[], fraction: number): number {
@@ -147,9 +106,91 @@ async function measure(operation: () => Promise<void>): Promise<LatencyStats> {
     await operation();
     samples.push(performance.now() - started);
   }
+  const samplesMs = samples.map(rounded) as FixedLengthArray<number, 100>;
   return {
-    p95Ms: rounded(percentile(samples, 0.95)),
-    maxMs: rounded(Math.max(...samples)),
+    p95Ms: percentile(samplesMs, 0.95),
+    maxMs: Math.max(...samplesMs),
+    samplesMs,
+  };
+}
+
+export function assertColdWikiIndexEvidence(
+  warmupSamples: readonly ObservedWikiIndexSample[],
+  measuredSamples: readonly ObservedWikiIndexSample[],
+): void {
+  if (warmupSamples.length !== LATENCY_WARMUPS || measuredSamples.length !== LATENCY_SAMPLES) {
+    throw new RankingEvaluationError(
+      'INVALID_COLD_WIKI_EVIDENCE',
+      'cold Wiki evidence has an unexpected sample count',
+      {
+        expectedWarmups: LATENCY_WARMUPS,
+        actualWarmups: warmupSamples.length,
+        expectedMeasuredSamples: LATENCY_SAMPLES,
+        actualMeasuredSamples: measuredSamples.length,
+      },
+    );
+  }
+  for (const [phase, samples] of [
+    ['warmup', warmupSamples],
+    ['measured', measuredSamples],
+  ] as const) {
+    for (let index = 0; index < samples.length; index += 1) {
+      const sample = samples[index];
+      if (
+        !sample
+        || typeof sample.durationMs !== 'number'
+        || !Number.isFinite(sample.durationMs)
+        || sample.durationMs < 0
+        || sample.cacheState !== 'cold-build'
+      ) {
+        throw new RankingEvaluationError(
+          'INVALID_COLD_WIKI_EVIDENCE',
+          'cold Wiki evidence contains an invalid or warm sample',
+          { phase, index, sample },
+        );
+      }
+    }
+  }
+}
+
+async function measureColdWikiIndex(
+  createIndexer: () => WikiIndexer,
+): Promise<{
+  warmupSamples: FixedLengthArray<WikiIndexSample, 20>;
+  measuredSamples: FixedLengthArray<WikiIndexSample, 100>;
+  p95Ms: number;
+}> {
+  const observe = async (): Promise<ObservedWikiIndexSample> => {
+    const indexer = createIndexer();
+    const cacheAwareIndexer = indexer as WikiIndexer & {
+      getSearchIndexWithMeta?: () => Promise<{ cacheState: ObservedWikiIndexSample['cacheState'] }>;
+    };
+    if (typeof cacheAwareIndexer.getSearchIndexWithMeta !== 'function') {
+      throw new RankingEvaluationError(
+        'MISSING_WIKI_CACHE_METADATA',
+        'WikiIndexer.getSearchIndexWithMeta is required for cold Wiki evidence',
+      );
+    }
+    const started = performance.now();
+    const { cacheState } = await cacheAwareIndexer.getSearchIndexWithMeta();
+    return {
+      durationMs: rounded(performance.now() - started),
+      cacheState,
+    };
+  };
+  const warmupSamples: ObservedWikiIndexSample[] = [];
+  for (let index = 0; index < LATENCY_WARMUPS; index += 1) {
+    warmupSamples.push(await observe());
+  }
+  const measuredSamples: ObservedWikiIndexSample[] = [];
+  for (let index = 0; index < LATENCY_SAMPLES; index += 1) {
+    measuredSamples.push(await observe());
+  }
+  assertColdWikiIndexEvidence(warmupSamples, measuredSamples);
+  return {
+    warmupSamples: warmupSamples as FixedLengthArray<WikiIndexSample, 20>,
+    measuredSamples: measuredSamples as FixedLengthArray<WikiIndexSample, 100>,
+    p95Ms: rounded(percentile(measuredSamples.map(sample => sample.durationMs), 0.95)),
   };
 }
 
@@ -177,8 +218,13 @@ async function snapshotFiles(root: string): Promise<Record<string, FileIdentity>
   return snapshot;
 }
 
-function unique(ids: readonly string[]): string[] {
-  return [...new Set(ids)];
+function uniqueResults(results: readonly RawProviderResult[]): RawProviderResult[] {
+  const seen = new Set<string>();
+  return results.filter(result => {
+    if (seen.has(result.id)) return false;
+    seen.add(result.id);
+    return true;
+  });
 }
 
 function codeResultId(result: CodeSearchResult, documentIds: ReadonlySet<string>): string {
@@ -222,7 +268,7 @@ function providerFor(category: string): BuiltProviderName {
   throw new RankingEvaluationError('UNKNOWN_RANKING_CATEGORY', `unknown ranking category: ${category}`);
 }
 
-function providerFunction(provider: BuiltProviderName): string {
+function providerFunction(provider: BuiltProviderName): QueryExpected['function'] {
   switch (provider) {
     case 'wiki': return 'WikiIndexer.searchWithMeta';
     case 'kg': return 'MaestroGraph.searchUnified';
@@ -230,6 +276,65 @@ function providerFunction(provider: BuiltProviderName): string {
     case 'mixed': return 'runMixedSearch';
     case 'linked': return 'runCodeSearch/MaestroGraph.openReadOnly.searchCode';
   }
+}
+
+function eligibleAuthorizedCorpusSize(
+  judgment: RankingJudgment,
+  provider: BuiltProviderName,
+  documentById: ReadonlyMap<string, ReturnType<typeof expandCorpus>[number]>,
+): number {
+  const queryTerms = judgment.query
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .toLocaleLowerCase('en-US')
+    .match(/[\p{L}\p{N}_$]+/gu) ?? [];
+  let count = 0;
+  for (const documentId of Object.keys(judgment.relevance)) {
+    const document = documentById.get(documentId);
+    if (!document
+        || document.authorized === false
+        || document.status === 'deprecated') continue;
+    const workspace = document.workspace ?? 'local';
+    const eligible = provider === 'linked'
+      ? workspace === 'peer' && document.kind === 'code-symbol'
+      : provider === 'code'
+        ? workspace === 'local' && document.kind === 'code-symbol'
+        : provider === 'wiki'
+          ? workspace === 'local'
+            && document.kind !== 'code-symbol'
+            && document.kind !== 'latency-noise'
+        : provider === 'mixed'
+            ? workspace === 'local' && document.kind !== 'latency-noise'
+            : workspace === 'local';
+    const searchable = [
+      document.title,
+      document.summary,
+      document.tags.join(' '),
+      document.body,
+    ].join(' ').toLocaleLowerCase('en-US');
+    if (eligible && (
+      provider === 'kg'
+      || queryTerms.every(term => searchable.includes(term))
+    )) count += 1;
+  }
+  return Math.min(20, count);
+}
+
+function evidenceResult(
+  result: RawProviderResult,
+  rank: number,
+  documentById: ReadonlyMap<string, ReturnType<typeof expandCorpus>[number]>,
+): EvidenceResult {
+  const document = documentById.get(result.id);
+  return {
+    id: result.id,
+    rank,
+    score: result.score,
+    workspace: document?.workspace ?? null,
+    workspaceFence: result.workspaceFence,
+    authorized: document?.authorized !== false,
+    status: document?.status === 'deprecated' ? 'deprecated' : 'active',
+    provenance: document?.provenance ?? null,
+  };
 }
 
 export async function runBuiltSearchAdapter(
@@ -253,21 +358,56 @@ export async function runBuiltSearchAdapter(
     workflowRoot: join(workspace.linkedWorkspaceRoot, '.workflow'),
     shareTypes: ['codebase'] as Array<'codebase'>,
   }];
-  const createWikiIndexer = () => new WikiIndexer({
-    workflowRoot: join(workspace.root, '.workflow'),
-    linkedWorkspaces,
-    persistence: 'memory-only',
-  });
+  const events: EvidenceEvent[] = [];
+  const recordEvidence = (event: Omit<EvidenceEvent, 'sequence'>): void => {
+    events.push({ sequence: events.length + 1, ...event });
+  };
+  const createWikiIndexer = () => {
+    const config = {
+      workflowRoot: join(workspace.root, '.workflow'),
+      linkedWorkspaces,
+      persistence: 'memory-only' as const,
+      evidenceRecorder: (event: Omit<EvidenceEvent, 'sequence'>) => recordEvidence(event),
+    };
+    return new WikiIndexer(config);
+  };
   const wikiIndexer = createWikiIndexer();
   const graph = await MaestroGraph.openReadOnly(workspace.root);
   const linkedReadMarkHolder = await MaestroGraph.openReadOnly(workspace.linkedWorkspaceRoot);
-  const providers: Record<BuiltProviderName, ProviderTrace[]> = {
-    wiki: [],
-    kg: [],
-    code: [],
-    mixed: [],
-    linked: [],
+  const runner = {
+    node: process.version,
+    platform: process.platform,
+    arch: process.arch,
+    cpuCount: cpus().length,
   };
+  const expectedQueries: QueryExpected[] = qrels.queries.map(judgment => {
+    const provider = providerFor(judgment.category);
+    return {
+      queryId: judgment.id,
+      category: judgment.category,
+      provider,
+      function: providerFunction(provider),
+      expectedCount: eligibleAuthorizedCorpusSize(judgment, provider, documentById),
+    };
+  });
+  const expected: BuiltSearchAdapterExpected = {
+    workspaceRoot: workspace.root,
+    qrelsSha256,
+    queries: expectedQueries,
+    databasePaths: {
+      canonicalDatabase: workspace.maestroGraphPath,
+      linkedCanonicalDatabase: workspace.linkedMaestroGraphPath,
+      unauthorizedControlDatabase: workspace.unauthorizedMaestroGraphPath,
+    },
+    runner,
+    constants: {
+      runs: 5,
+      topK: 20,
+      warmups: LATENCY_WARMUPS,
+      measuredSamples: LATENCY_SAMPLES,
+    },
+  };
+  const queryRuns: Record<string, [EvidenceRun, EvidenceRun, EvidenceRun, EvidenceRun, EvidenceRun]> = {};
   const queryRows: Array<{ category: string; metrics: ReturnType<typeof computeRankingMetrics> }> = [];
   const returnedIds = new Set<string>();
   let stableTop20 = true;
@@ -282,85 +422,124 @@ export async function runBuiltSearchAdapter(
   const execute = async (
     judgment: RankingJudgment,
     provider: BuiltProviderName,
-  ): Promise<string[]> => {
-    let ids: string[];
+    expectedCount: number,
+  ): Promise<EvidenceRun> => {
+    if (expectedCount === 0 || input.faultProvider === provider) return { results: [] };
+    let rawResults: RawProviderResult[];
     switch (provider) {
       case 'wiki': {
-        const output = await wikiIndexer.searchWithMeta(judgment.query, 20, { skipEmbedding: true });
-        ids = output.results.map(item => wikiResultId({
-          id: item.entry.id,
-          type: item.entry.type,
-          title: item.entry.title,
-          category: item.entry.category,
-          summary: item.entry.summary,
+        const output = await wikiIndexer.searchWithMeta(
+          judgment.query,
+          expectedCount,
+          { skipEmbedding: true },
+        );
+        rawResults = output.results.map(item => ({
+          id: wikiResultId({
+            id: item.entry.id,
+            type: item.entry.type,
+            title: item.entry.title,
+            category: item.entry.category,
+            summary: item.entry.summary,
+            score: item.score,
+            snippet: null,
+            source: item.entry.source,
+            sourceRef: item.entry.sourceRef,
+          }, documentIds),
           score: item.score,
-          snippet: null,
-          source: item.entry.source,
-          sourceRef: item.entry.sourceRef,
-        }, documentIds));
+          workspaceFence: item.entry.source.workspace
+            ? `linked:${item.entry.source.workspace}`
+            : null,
+        }));
         break;
       }
       case 'kg':
-        ids = graph.searchUnified(judgment.query, { limit: 20 }).directMatches
+        rawResults = graph.searchUnified(judgment.query, { limit: expectedCount }).directMatches
           .filter(item => item.node.status !== 'deprecated')
-          .map(item => item.node.id);
+          .map(item => ({
+            id: item.node.id,
+            score: item.score,
+            workspaceFence: null,
+          }));
         break;
       case 'code': {
         const output = await runCodeSearch(
           judgment.query,
-          20,
+          expectedCount,
           true,
           false,
           workspace.root,
           'read-only-probe',
         );
-        ids = output.results.map(item => codeResultId(item, documentIds));
+        rawResults = output.results.map(item => ({
+          id: codeResultId(item, documentIds),
+          score: item.score,
+          workspaceFence: item.workspaceFence ?? null,
+        }));
         break;
       }
       case 'mixed': {
         const output = await runMixedSearch(judgment.query, {
-          limit: 20,
+          limit: expectedCount,
           skipEmbedding: true,
           executionMode: 'read-only-probe',
+          evidenceRecorder: event => recordEvidence(event),
+          evidenceQueryId: judgment.id,
         });
-        ids = output.results.map(item => mixedResultId(item, output.wikiResults, documentIds));
+        rawResults = output.results.map(item => ({
+          id: mixedResultId(item, output.wikiResults, documentIds),
+          score: item.score,
+          workspaceFence: item.workspaceFence ?? null,
+        }));
         break;
       }
       case 'linked': {
         const output = await runCodeSearch(
           judgment.query,
-          20,
+          expectedCount,
           true,
           true,
           workspace.root,
           'read-only-probe',
         );
-        ids = output.results.map(item => codeResultId(item, documentIds));
+        rawResults = output.results.map(item => ({
+          id: codeResultId(item, documentIds),
+          score: item.score,
+          workspaceFence: item.workspaceFence ?? null,
+        }));
         break;
       }
     }
-    const ranked = unique(ids).slice(0, 20);
-    return input.faultProvider === provider ? [] : ranked;
+    return {
+      results: uniqueResults(rawResults)
+        .slice(0, expectedCount)
+        .map((result, index) => evidenceResult(result, index + 1, documentById)),
+    };
   };
 
   try {
     process.chdir(workspace.root);
-    for (const judgment of qrels.queries) {
-      const provider = providerFor(judgment.category);
-      const runs: string[][] = [];
-      for (let run = 0; run < 5; run += 1) runs.push(await execute(judgment, provider));
-      stableTop20 &&= runs.slice(1).every(run => JSON.stringify(run) === JSON.stringify(runs[0]));
-      for (const id of runs[0]) returnedIds.add(id);
+    for (let queryIndex = 0; queryIndex < qrels.queries.length; queryIndex += 1) {
+      const judgment = qrels.queries[queryIndex];
+      const expectedQuery = expectedQueries[queryIndex];
+      const runs: EvidenceRun[] = [];
+      for (let run = 0; run < 5; run += 1) {
+        runs.push(await execute(judgment, expectedQuery.provider, expectedQuery.expectedCount));
+      }
+      const runIds = runs.map(row => row.results.map(result => result.id));
+      stableTop20 &&= runIds.slice(1)
+        .every(ids => JSON.stringify(ids) === JSON.stringify(runIds[0]));
+      for (const id of runIds[0]) returnedIds.add(id);
       queryRows.push({
         category: judgment.category,
-        metrics: computeRankingMetrics(runs[0], judgment.relevance),
+        metrics: computeRankingMetrics(runIds[0], judgment.relevance),
       });
-      providers[provider].push({
-        queryId: judgment.id,
-        function: providerFunction(provider),
-        resultIds: runs[0],
-        runs,
-      });
+      queryRuns[judgment.id] = runs as [
+        EvidenceRun,
+        EvidenceRun,
+        EvidenceRun,
+        EvidenceRun,
+        EvidenceRun,
+      ];
     }
 
     const metrics = aggregateRankingMetrics(queryRows);
@@ -383,10 +562,7 @@ export async function runBuiltSearchAdapter(
     const queryLatency = await measure(async () => {
       await wikiIndexer.searchWithMeta(wikiLatencyJudgment.query, 20, { skipEmbedding: true });
     });
-    const indexMeasurementIndexer = createWikiIndexer();
-    const indexLatency = await measure(async () => {
-      await indexMeasurementIndexer.getSearchIndex();
-    });
+    const indexLatency = await measureColdWikiIndex(createWikiIndexer);
 
     const protectedAfter = await snapshotFiles(workspace.root);
     if (JSON.stringify(protectedAfter) !== JSON.stringify(protectedBefore)) {
@@ -407,79 +583,52 @@ export async function runBuiltSearchAdapter(
         return document ? !document.provenance : false;
       }).length;
 
-    return {
-      schema_version: 'built-search-adapter/1.0',
-      ok: true,
-      qrelsSha256,
-      qrelsSha256Match: true,
-      metrics,
-      overallNdcgGain: comparison.overallNdcgGain,
-      maxCategoryNdcgDrop: comparison.maxCategoryNdcgDrop,
-      stability: { runs: 5, topK: 20, stableTop20: true },
-      providers,
-      latency: {
-        warmups: LATENCY_WARMUPS,
-        measuredSamples: LATENCY_SAMPLES,
-        kgWarmP95Ms: kgLatency.p95Ms,
-        kgWarmMaxMs: kgLatency.maxMs,
-        wikiQueryP95Ms: queryLatency.p95Ms,
-        wikiIndexP95Ms: indexLatency.p95Ms,
-        operations: {
-          kg: {
-            function: 'MaestroGraph.searchUnified',
-            warmups: LATENCY_WARMUPS,
-            samples: LATENCY_SAMPLES,
-          },
-          wikiQuery: {
-            function: 'WikiIndexer.searchWithMeta',
-            warmups: LATENCY_WARMUPS,
-            samples: LATENCY_SAMPLES,
-          },
-          wikiIndex: {
-            function: 'WikiIndexer.getSearchIndex',
-            warmups: LATENCY_WARMUPS,
-            samples: LATENCY_SAMPLES,
-          },
-        },
-      },
-      integrity: {
-        deprecatedLeakCount,
-        unauthorizedWorkspaceHitCount,
-        provenanceLossCount,
-        attachOrMergeCalls: 0,
-      },
-      sideEffects: {
-        daemonLookupCalls: 0,
-        daemonStartCalls: 0,
-        filesystemCacheReadCalls: 0,
-        filesystemCacheWriteCalls: 0,
-        filesystemIndexWriteCalls: 0,
-        embeddingBuildCalls: 0,
-        embeddingSaveCalls: 0,
-        credibilityHitWriteCalls: 0,
-      },
-      workspace: {
-        root: workspace.root,
-        cwd: process.cwd(),
-        maestroProjectRoot: process.env.MAESTRO_PROJECT_ROOT ?? '',
-        canonicalDatabase: workspace.maestroGraphPath,
-        linkedCanonicalDatabase: workspace.linkedMaestroGraphPath,
-        unauthorizedControlDatabase: workspace.unauthorizedMaestroGraphPath,
-        persistence: 'memory-only',
-        executionMode: 'read-only-probe',
-      },
+    const countEvent = (event: EvidenceEvent['event']): number => (
+      events.filter(row => row.event === event).length
+    );
+    const report = makeBuiltSearchAdapterFixture({
+      expected,
+      queryRuns,
+      events,
+      kgWarmSamplesMs: kgLatency.samplesMs,
+      wikiQuerySamplesMs: queryLatency.samplesMs,
+      wikiIndexWarmupSamples: indexLatency.warmupSamples,
+      wikiIndexSamples: indexLatency.measuredSamples,
       protectedState: {
         before: protectedBefore,
         after: protectedAfter,
         unchanged: true,
       },
-      runner: {
-        node: process.version,
-        platform: process.platform,
-        arch: process.arch,
-        cpuCount: cpus().length,
+      reportedOverrides: {
+        metrics,
+        overallNdcgGain: comparison.overallNdcgGain,
+        maxCategoryNdcgDrop: comparison.maxCategoryNdcgDrop,
+        stability: { runs: 5, topK: 20, stableTop20: true },
+        latency: {
+          kgWarmP95Ms: kgLatency.p95Ms,
+          kgWarmMaxMs: kgLatency.maxMs,
+          wikiQueryP95Ms: queryLatency.p95Ms,
+          wikiIndexP95Ms: indexLatency.p95Ms,
+        },
+        integrity: {
+          deprecatedLeakCount,
+          unauthorizedWorkspaceHitCount,
+          provenanceLossCount,
+          attachOrMergeCalls: countEvent('database-attach-or-merge'),
+        },
+        sideEffects: {
+          daemonLookupCalls: countEvent('daemon-lookup'),
+          daemonStartCalls: countEvent('daemon-start'),
+          filesystemCacheReadCalls: countEvent('filesystem-cache-read'),
+          filesystemCacheWriteCalls: countEvent('filesystem-cache-write'),
+          filesystemIndexWriteCalls: countEvent('filesystem-index-write'),
+          embeddingBuildCalls: countEvent('embedding-build'),
+          embeddingSaveCalls: countEvent('embedding-save'),
+          credibilityHitWriteCalls: countEvent('credibility-hit-write'),
+        },
       },
-    };
+    });
+    return parseBuiltSearchAdapterReport(report, expected);
   } finally {
     graph.close();
     linkedReadMarkHolder.close();

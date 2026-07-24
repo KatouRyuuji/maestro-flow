@@ -70,6 +70,16 @@ export interface CodeSearchResult {
 /** Availability of the codegraph index backing code search. */
 export type CodeIndexStatus = 'ok' | 'not-initialized' | 'empty' | 'error';
 export type SearchExecutionMode = 'default' | 'read-only-probe';
+export type SearchEvidenceEventName =
+  | 'daemon-lookup'
+  | 'daemon-start'
+  | 'credibility-hit-write';
+
+export interface SearchEvidenceEvent {
+  event: SearchEvidenceEventName;
+  site: string;
+  queryId: string | null;
+}
 
 /** Code search results plus index availability for actionable feedback. */
 export interface CodeSearchOutcome {
@@ -116,6 +126,10 @@ export interface UnifiedSearchOptions {
   executionMode?: SearchExecutionMode;
   /** Include entries with status="deprecated" (superseded). Default: excluded. */
   includeDeprecated?: boolean;
+  /** Optional raw recorder used by the built adapter; absent in normal CLI calls. */
+  evidenceRecorder?: (event: SearchEvidenceEvent) => void;
+  /** Query identity attached to raw evidence events. */
+  evidenceQueryId?: string | null;
 }
 
 // ── Lazy offline client ────────────────────────────────────────────────
@@ -187,6 +201,13 @@ export async function runUnifiedSearch(q: string, opts: UnifiedSearchOptions & {
 
   // Try daemon first (warm ONNX model, no cold-start penalty)
   const workflowRoot = resolve('.workflow');
+  if (!readOnlyProbe) {
+    opts.evidenceRecorder?.({
+      event: 'daemon-lookup',
+      site: 'runUnifiedSearch.tryDaemonSearch',
+      queryId: opts.evidenceQueryId ?? null,
+    });
+  }
   const daemonResult = readOnlyProbe
     ? null
     : await tryDaemonSearch(workflowRoot, q, candidateLimit, opts.skipEmbedding);
@@ -210,7 +231,14 @@ export async function runUnifiedSearch(q: string, opts: UnifiedSearchOptions & {
     scored = result.results;
     embeddingUsed = result.embeddingUsed;
     embeddingDocs = result.embeddingDocs;
-    if (!readOnlyProbe) spawnDaemon(workflowRoot).catch(() => {});
+    if (!readOnlyProbe) {
+      opts.evidenceRecorder?.({
+        event: 'daemon-start',
+        site: 'runUnifiedSearch.spawnDaemon',
+        queryId: opts.evidenceQueryId ?? null,
+      });
+      spawnDaemon(workflowRoot).catch(() => {});
+    }
   }
   _lastSearchMeta = { embeddingUsed, embeddingDocs };
 
@@ -304,7 +332,11 @@ export async function runUnifiedSearch(q: string, opts: UnifiedSearchOptions & {
 
   // Async credibility search_hits increment (best-effort, never blocks)
   if (!readOnlyProbe && results.length > 0) {
-    incrementSearchHitsAsync(results.map(result => ({ id: result.id, sourceRef: result.sourceRef })));
+    incrementSearchHitsAsync(
+      results.map(result => ({ id: result.id, sourceRef: result.sourceRef })),
+      opts.evidenceRecorder,
+      opts.evidenceQueryId ?? null,
+    );
   }
 
   return results;
@@ -322,7 +354,11 @@ function sessionTopology(entry: WikiEntry): Pick<SearchResult, 'sessionId' | 'ru
   };
 }
 
-function incrementSearchHitsAsync(entries: Array<{ id: string; sourceRef?: string | null }>): void {
+function incrementSearchHitsAsync(
+  entries: Array<{ id: string; sourceRef?: string | null }>,
+  evidenceRecorder?: (event: SearchEvidenceEvent) => void,
+  queryId: string | null = null,
+): void {
   const projectRoot = resolve('.');
   Promise.all([
     import('../graph/kg/engine.js'),
@@ -340,6 +376,12 @@ function incrementSearchHitsAsync(entries: Array<{ id: string; sourceRef?: strin
           : wikiIdToNodeId(entry.id)
       ).filter(Boolean) as string[];
       const existingIds = [...mg.getQueryBuilder().getNodesByIds(candidateIds).keys()];
+      if (existingIds.length === 0) return;
+      evidenceRecorder?.({
+        event: 'credibility-hit-write',
+        site: 'incrementSearchHitsAsync.incrementSearchHits',
+        queryId,
+      });
       mg.getConnection().transaction(() => store.incrementSearchHits(existingIds));
     } finally {
       mg.close();

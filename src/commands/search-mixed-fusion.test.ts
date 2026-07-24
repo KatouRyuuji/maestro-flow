@@ -1,10 +1,25 @@
 import { describe, expect, it, vi } from 'vitest';
 
+vi.mock('../search/daemon-client.js', () => ({
+  tryDaemonSearch: vi.fn(async () => ({
+    ok: true,
+    results: [],
+    embeddingUsed: false,
+    embeddingDocs: 0,
+  })),
+  stopDaemon: vi.fn(),
+  spawnDaemon: vi.fn(async () => {}),
+  readDaemonInfo: vi.fn(() => null),
+  isDaemonAlive: vi.fn(() => false),
+  getDaemonPath: vi.fn(() => ''),
+}));
+
 import type { WikiNodeType } from '#maestro-dashboard/wiki/wiki-types.js';
 import {
   interleaveCodeProviders,
   mergeAndNormalize,
   runMixedSearch,
+  runUnifiedSearch,
   type CodeSearchResult,
   type SearchResult,
 } from './search.js';
@@ -42,6 +57,24 @@ function scoresById(results: ReturnType<typeof mergeAndNormalize>): Record<strin
 }
 
 describe('mixed provider candidate pool', () => {
+  it('records the actual daemon lookup branch without changing empty results', async () => {
+    const events: Array<{ event: string; site: string; queryId: string | null }> = [];
+
+    const results = await runUnifiedSearch('recorder sentinel', {
+      limit: 5,
+      skipEmbedding: true,
+      evidenceRecorder: event => events.push(event),
+      evidenceQueryId: 'recorder-query',
+    });
+
+    expect(results).toEqual([]);
+    expect(events).toEqual([{
+      event: 'daemon-lookup',
+      site: 'runUnifiedSearch.tryDaemonSearch',
+      queryId: 'recorder-query',
+    }]);
+  });
+
   it('calls each provider and merge once with the same bounded candidate limit', async () => {
     const wiki = Array.from({ length: 40 }, (_, index) => wikiResult(`wiki-${index}`, 40 - index));
     const code = Array.from({ length: 40 }, (_, index) => codeResult(`code-${index}`, 40 - index));
@@ -122,6 +155,42 @@ describe('mixed provider candidate pool', () => {
         workspaceFence: expect.stringMatching(/^linked:ws-[ab]$/),
       }),
     ]));
+  });
+
+  it('preserves result, rank, and score behavior when an optional recorder is present', async () => {
+    const wiki = [wikiResult('wiki-a', 10), wikiResult('wiki-b', 5)];
+    const code = [codeResult('code-a', 8), codeResult('code-b', 4)];
+    const wikiSearch = vi.fn(async () => wiki);
+    const codeSearch = vi.fn(async () => ({ results: code, status: 'ok' as const }));
+    const events: Array<{ event: string; site: string; queryId: string | null }> = [];
+
+    const plain = await runMixedSearch(
+      'plain terms',
+      { limit: 4, skipEmbedding: true },
+      { wikiSearch, codeSearch },
+    );
+    const recorded = await runMixedSearch(
+      'plain terms',
+      {
+        limit: 4,
+        skipEmbedding: true,
+        evidenceRecorder: event => events.push(event),
+        evidenceQueryId: 'fixture-query',
+      },
+      { wikiSearch, codeSearch },
+    );
+
+    expect(recorded.results).toEqual(plain.results);
+    expect(ranksById(recorded.results)).toEqual(ranksById(plain.results));
+    expect(scoresById(recorded.results)).toEqual(scoresById(plain.results));
+    expect(events).toEqual([]);
+    expect(wikiSearch).toHaveBeenLastCalledWith(
+      'plain terms',
+      expect.objectContaining({
+        evidenceRecorder: expect.any(Function),
+        evidenceQueryId: 'fixture-query',
+      }),
+    );
   });
 });
 

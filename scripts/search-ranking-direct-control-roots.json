@@ -1,0 +1,64 @@
+{
+  "schema_version": "search-ranking-direct-control-roots/1.0",
+  "package_scripts": [
+    "check:search-ranking-release-machine",
+    "check:search-ranking-release-machine:source",
+    "check:search-ranking-release-machine:built",
+    "build",
+    "prepublishOnly"
+  ],
+  "package_bins": [
+    "maestro"
+  ],
+  "entrypoints": [
+    "scripts/check-search-ranking-release-machine.mjs"
+  ],
+  "native": {
+    "manifest": "resources/lifecycle-fs/manifest.json",
+    "provenance": "resources/lifecycle-fs/provenance.json",
+    "cargo_manifest": "native/lifecycle-fs/Cargo.toml"
+  },
+  "registered_workflow": {
+    "template": "scripts/native-lifecycle-workflow-overlay.yml",
+    "path": ".github/workflows/deploy-docs.yml",
+    "workflow_id": 247776234,
+    "default_blob_sha": "d070327596e52788a309d4aeea84d54339b545b6"
+  },
+  "exclusions": [
+    {
+      "pattern": "node_modules/**",
+      "class": "external-tool-bytes",
+      "rationale": "Installed dependency bytes are external to the repository certificate; package.json and package-lock.json retain their reproducible identities."
+    },
+    {
+      "pattern": ".git/**",
+      "class": "repository-metadata",
+      "rationale": "Git object and worktree metadata are repository transport state, not release-control inputs."
+    },
+    {
+      "pattern": ".workflow/tmp/**",
+      "class": "ephemeral-run-evidence",
+      "rationale": "Ephemeral transaction downloads and cleanup state are represented by the checked-in native provenance receipt and its bound hashes."
+    },
+    {
+      "pattern": ".workflow/sessions/**/outputs/**",
+      "class": "planning-output",
+      "rationale": "Session planning and execution outputs do not control the packaged release."
+    },
+    {
+      "pattern": "**/coverage/**",
+      "class": "test-output",
+      "rationale": "Coverage output is derived test telemetry."
+    },
+    {
+      "pattern": "**/*.log",
+      "class": "runtime-log",
+      "rationale": "Runtime logs are derived diagnostics and do not control release execution."
+    },
+    {
+      "pattern": "native/lifecycle-fs/target/**",
+      "class": "external-tool-output",
+      "rationale": "Cargo target directories are local compiler output; Cargo manifests, lockfile, Rust sources, and checked-in release bytes are retained."
+    }
+  ]
+}

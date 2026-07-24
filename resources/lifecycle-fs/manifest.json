@@ -1,0 +1,46 @@
+{
+  "schema_version": "lifecycle-fs-native-manifest/1.0",
+  "protocol": "lifecycle-fs-helper/1.0",
+  "artifacts": [
+    {
+      "target": "x86_64-pc-windows-msvc",
+      "platform": "win32",
+      "arch": "x64",
+      "path": "resources/lifecycle-fs/win32-x64/maestro-lifecycle-fs.exe",
+      "sha256": "2b8f297f69600bc62e64b95a6e9081887fabe60011faae1ac18555fbd19ee6b3",
+      "protocol": "lifecycle-fs-helper/1.0"
+    },
+    {
+      "target": "x86_64-unknown-linux-gnu",
+      "platform": "linux",
+      "arch": "x64",
+      "path": "resources/lifecycle-fs/linux-x64/maestro-lifecycle-fs",
+      "sha256": "a8bd93de9f84ec27f3cc46a85a0bb3baeb84c764cbdfbc738c8f1fd5382e27d5",
+      "protocol": "lifecycle-fs-helper/1.0"
+    },
+    {
+      "target": "aarch64-unknown-linux-gnu",
+      "platform": "linux",
+      "arch": "arm64",
+      "path": "resources/lifecycle-fs/linux-arm64/maestro-lifecycle-fs",
+      "sha256": "5970f1b218a1f34b376331311b3b3461d0d015f7671648d78115870a3785044a",
+      "protocol": "lifecycle-fs-helper/1.0"
+    },
+    {
+      "target": "x86_64-apple-darwin",
+      "platform": "darwin",
+      "arch": "x64",
+      "path": "resources/lifecycle-fs/darwin-x64/maestro-lifecycle-fs",
+      "sha256": "696e8eb76a9d59b8ee9fb849725278f20ad121ed37b2711a964045ce3dcd65b5",
+      "protocol": "lifecycle-fs-helper/1.0"
+    },
+    {
+      "target": "aarch64-apple-darwin",
+      "platform": "darwin",
+      "arch": "arm64",
+      "path": "resources/lifecycle-fs/darwin-arm64/maestro-lifecycle-fs",
+      "sha256": "4d6aae57d131dbaba20961c8be30b959cfc8b471b15e328ae5761184af43d94c",
+      "protocol": "lifecycle-fs-helper/1.0"
+    }
+  ]
+}

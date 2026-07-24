@@ -178,4 +178,4 @@ Backups: {backupDir}/
 
 - **Files**: `final-report.md`
 - **State**: `status = completed`
-- **Next**: Run completed via `maestro session done`. Return control to user.
+- **Next**: Run completed via `session done`. Return control to user.

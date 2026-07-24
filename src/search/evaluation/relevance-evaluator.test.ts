@@ -1,9 +1,15 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('#maestro-dashboard/wiki/wiki-indexer.js', async () => (
+  vi.importActual('../../../dashboard/src/server/wiki/wiki-indexer.js')
+));
 
 import {
   assertNoQuerySpecialCases,
@@ -21,15 +27,30 @@ import {
   type RankingQrelsFixture,
   type RankingCorpusFixture,
 } from './relevance-evaluator.js';
-import { runBuiltSearchAdapter } from './built-search-adapter.js';
+import {
+  assertColdWikiIndexEvidence,
+  runBuiltSearchAdapter,
+  type BuiltSearchAdapterExpected,
+  type BuiltSearchAdapterReport,
+  type WikiIndexSample,
+} from './built-search-adapter.js';
+import { parseBuiltSearchAdapterReport } from '#built-search-adapter-contract';
 
 const fixturesRoot = fileURLToPath(new URL('./fixtures/', import.meta.url));
 const corpusPath = join(fixturesRoot, 'search-ranking-corpus.json');
 const qrelsPath = join(fixturesRoot, 'search-ranking-qrels.json');
 const baselinePath = join(fixturesRoot, 'search-ranking-baseline.json');
 const holdoutsPath = join(fixturesRoot, 'search-ranking-holdouts.json');
+const repoRoot = join(fixturesRoot, '..', '..', '..', '..');
+const generateContractPath = join(repoRoot, 'scripts', 'generate-built-search-adapter-contract.mjs');
+const contractSchemaPath = join(fixturesRoot, '..', 'built-search-adapter-contract.json');
+const contractRuntimePath = join(repoRoot, 'shared', 'built-search-adapter-contract.mjs');
+const contractDeclarationPath = join(repoRoot, 'shared', 'built-search-adapter-contract.d.mts');
+const execFileAsync = promisify(execFile);
 
 let testRoot: string;
+let coldEvidenceRoot: string | null = null;
+let coldEvidenceReportPromise: Promise<BuiltSearchAdapterReport> | null = null;
 
 async function write(relativePath: string, body: string): Promise<string> {
   const path = join(testRoot, relativePath);
@@ -45,6 +66,59 @@ beforeEach(async () => {
 afterEach(async () => {
   await rm(testRoot, { recursive: true, force: true, maxRetries: 3 });
 });
+
+afterAll(async () => {
+  if (coldEvidenceRoot) {
+    await rm(coldEvidenceRoot, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
+
+async function getColdEvidenceReport(): Promise<BuiltSearchAdapterReport> {
+  if (!coldEvidenceReportPromise) {
+    coldEvidenceRoot = await mkdtemp(join(tmpdir(), 'search-ranking-cold-wiki-'));
+    coldEvidenceReportPromise = runBuiltSearchAdapter({
+      workspaceRoot: join(coldEvidenceRoot, 'workspace'),
+      corpusPath,
+      qrelsPath,
+      baselinePath,
+      holdoutsPath,
+    });
+  }
+  return coldEvidenceReportPromise;
+}
+
+function coldWikiP95(samples: readonly WikiIndexSample[]): number {
+  const durations = samples.map(sample => sample.durationMs)
+    .sort((left, right) => left - right);
+  return durations[Math.min(durations.length - 1, Math.floor(durations.length * 0.95))];
+}
+
+function expectedForReport(report: BuiltSearchAdapterReport): BuiltSearchAdapterExpected {
+  return {
+    workspaceRoot: report.workspace.root,
+    qrelsSha256: report.qrelsSha256,
+    queries: report.evidence.queries.map(({
+      queryId,
+      category,
+      provider,
+      function: providerFunction,
+      expectedCount,
+    }) => ({
+      queryId,
+      category,
+      provider,
+      function: providerFunction,
+      expectedCount,
+    })),
+    databasePaths: {
+      canonicalDatabase: report.workspace.canonicalDatabase,
+      linkedCanonicalDatabase: report.workspace.linkedCanonicalDatabase,
+      unauthorizedControlDatabase: report.workspace.unauthorizedControlDatabase,
+    },
+    runner: report.runner,
+    constants: { runs: 5, topK: 20, warmups: 20, measuredSamples: 100 },
+  };
+}
 
 describe('ranking metric goldens', () => {
   it('returns exact ones for a perfect order', () => {
@@ -380,9 +454,206 @@ describe('compiled production ranking adapter', () => {
     expect(adapterSource).toContain(
       'wikiIndexer.searchWithMeta(wikiLatencyJudgment.query, 20, { skipEmbedding: true })',
     );
-    expect(adapterSource).toContain('indexMeasurementIndexer.getSearchIndex()');
+    expect(adapterSource).toContain('const indexer = createIndexer()');
+    expect(adapterSource).toContain('getSearchIndexWithMeta');
     expect(adapterSource).not.toMatch(
       /rankPrepared|measurePreparedLatency|measureWikiLatency/,
     );
   });
+
+  it('emits 20 and 100 raw cold Wiki observations', async () => {
+    const report = await getColdEvidenceReport();
+    const latency = report.evidence.latency;
+
+    expect(latency.wikiIndexWarmupSamples).toHaveLength(20);
+    expect(latency.wikiIndexSamples).toHaveLength(100);
+    expect(latency.wikiIndexWarmupSamples.every(
+      sample => sample.cacheState === 'cold-build',
+    )).toBe(true);
+    expect(latency.wikiIndexSamples.every(
+      sample => sample.cacheState === 'cold-build',
+    )).toBe(true);
+    expect(latency.wikiIndexWarmupSamples.every(
+      sample => Number.isFinite(sample.durationMs) && sample.durationMs >= 0,
+    )).toBe(true);
+    expect(latency.wikiIndexSamples.every(
+      sample => Number.isFinite(sample.durationMs) && sample.durationMs >= 0,
+    )).toBe(true);
+  }, 120_000);
+
+  it('computes cold Wiki P95 from raw measured samples', async () => {
+    const report = await getColdEvidenceReport();
+    const independentlyComputed = coldWikiP95(report.evidence.latency.wikiIndexSamples);
+
+    expect(report.evidence.latency.wikiIndexSamples).toHaveLength(100);
+    expect(report.reported.latency.wikiIndexP95Ms).toBe(independentlyComputed);
+    expect(independentlyComputed).toBeLessThan(500);
+  }, 120_000);
+
+  it('rejects incomplete or warm Wiki evidence', async () => {
+    const report = await getColdEvidenceReport();
+    const warmups = report.evidence.latency.wikiIndexWarmupSamples;
+    const measured = report.evidence.latency.wikiIndexSamples;
+    expect(() => assertColdWikiIndexEvidence(warmups, measured)).not.toThrow();
+
+    expect(() => assertColdWikiIndexEvidence(warmups.slice(1), measured))
+      .toThrow(/unexpected sample count/);
+    expect(() => assertColdWikiIndexEvidence(warmups, measured.slice(1)))
+      .toThrow(/unexpected sample count/);
+    expect(() => assertColdWikiIndexEvidence(
+      [{ ...warmups[0], cacheState: 'cache-hit' }, ...warmups.slice(1)],
+      measured,
+    )).toThrow(/invalid or warm sample/);
+    expect(() => assertColdWikiIndexEvidence(
+      warmups,
+      [{ ...measured[0], cacheState: 'cache-hit' }, ...measured.slice(1)],
+    )).toThrow(/invalid or warm sample/);
+  }, 120_000);
+
+  it('enforces exact adapter raw evidence counts', async () => {
+    const report = await getColdEvidenceReport();
+    const expected = expectedForReport(report);
+    expect(parseBuiltSearchAdapterReport(report, expected)).toEqual(report);
+    expect(report.evidence.queries.every(query => query.runs.length === 5)).toBe(true);
+
+    const firstQuery = report.evidence.queries[0];
+    expect(firstQuery.expectedCount).toBeGreaterThan(0);
+    expect(firstQuery.runs.every(
+      run => run.results.length === firstQuery.expectedCount,
+    )).toBe(true);
+
+    const short = structuredClone(report);
+    short.evidence.queries[0].runs[0].results.pop();
+
+    const long = structuredClone(report);
+    const firstResults = long.evidence.queries[0].runs[0].results;
+    firstResults.push({
+      ...firstResults[0],
+      id: 'unexpected:extra-result',
+      rank: firstResults.length + 1,
+    });
+
+    const duplicate = structuredClone(report);
+    const duplicateResults = duplicate.evidence.queries[0].runs[0].results;
+    if (duplicateResults.length === 1) {
+      duplicateResults.push({ ...duplicateResults[0], rank: 2 });
+    } else {
+      duplicateResults[1] = {
+        ...duplicateResults[1],
+        id: duplicateResults[0].id,
+      };
+    }
+
+    const wrongRank = structuredClone(report);
+    wrongRank.evidence.queries[0].runs[0].results[0].rank = 2;
+
+    const wrongQueryOrder = structuredClone(report);
+    [
+      wrongQueryOrder.evidence.queries[0],
+      wrongQueryOrder.evidence.queries[1],
+    ] = [
+      wrongQueryOrder.evidence.queries[1],
+      wrongQueryOrder.evidence.queries[0],
+    ];
+
+    const unstable = structuredClone(report);
+    unstable.evidence.queries[0].runs[1].results[0].id = 'unexpected:reordered-result';
+
+    const shortWarmups = structuredClone(report);
+    shortWarmups.evidence.latency.wikiIndexWarmupSamples.pop();
+    const shortSamples = structuredClone(report);
+    shortSamples.evidence.latency.wikiIndexSamples.pop();
+
+    for (const fault of [
+      short,
+      long,
+      duplicate,
+      wrongRank,
+      wrongQueryOrder,
+      unstable,
+      shortWarmups,
+      shortSamples,
+    ]) {
+      expect(() => parseBuiltSearchAdapterReport(fault, expected)).toThrow();
+    }
+  }, 120_000);
+
+  it('rejects aggregate green with incomplete raw evidence', async () => {
+    const report = await getColdEvidenceReport();
+    const expected = expectedForReport(report);
+    const faults: unknown[] = [];
+
+    const missingResults = structuredClone(report) as unknown as {
+      evidence: { queries: Array<{ runs: Array<{ results?: unknown[] }> }> };
+    };
+    delete missingResults.evidence.queries[0].runs[0].results;
+    faults.push(missingResults);
+
+    const missingEvents = structuredClone(report) as unknown as {
+      evidence: { events?: unknown[] };
+    };
+    delete missingEvents.evidence.events;
+    faults.push(missingEvents);
+
+    const missingWarmups = structuredClone(report);
+    missingWarmups.evidence.latency.wikiIndexWarmupSamples.pop();
+    faults.push(missingWarmups);
+
+    const missingSamples = structuredClone(report);
+    missingSamples.evidence.latency.kgWarmSamplesMs.pop();
+    faults.push(missingSamples);
+
+    for (const fault of faults) {
+      const rawFaultWithGreenAggregate = {
+        ...(fault as object),
+        reported: structuredClone(report.reported),
+      };
+      expect(() => parseBuiltSearchAdapterReport(rawFaultWithGreenAggregate, expected)).toThrow();
+    }
+    expect(parseBuiltSearchAdapterReport(report, expected).reported.stability.stableTop20)
+      .toBe(true);
+  }, 120_000);
+
+  it('fails adapter contract byte and semantic drift', async () => {
+    await expect(execFileAsync(process.execPath, [generateContractPath, '--check'], {
+      cwd: repoRoot,
+    })).resolves.toMatchObject({ stderr: '' });
+
+    const driftRoot = join(testRoot, 'contract-drift');
+    await mkdir(driftRoot, { recursive: true });
+    const schema = await readFile(contractSchemaPath, 'utf8');
+    const runtime = await readFile(contractRuntimePath, 'utf8');
+    const declaration = await readFile(contractDeclarationPath, 'utf8');
+    const driftSchemaPath = join(driftRoot, 'contract.json');
+    const driftRuntimePath = join(driftRoot, 'contract.mjs');
+    const driftDeclarationPath = join(driftRoot, 'contract.d.mts');
+    await writeFile(
+      driftSchemaPath,
+      schema.replace('"title": "BuiltSearchAdapterReport"', '"title": "DriftedReport"'),
+      'utf8',
+    );
+    await writeFile(driftRuntimePath, runtime, 'utf8');
+    await writeFile(driftDeclarationPath, declaration, 'utf8');
+    await expect(execFileAsync(process.execPath, [
+      generateContractPath,
+      '--check',
+      '--schema',
+      driftSchemaPath,
+      '--runtime',
+      driftRuntimePath,
+      '--declaration',
+      driftDeclarationPath,
+    ], { cwd: repoRoot })).rejects.toThrow(/artifacts are stale/);
+
+    const report = await getColdEvidenceReport();
+    const expected = expectedForReport(report);
+    for (const fault of [
+      { ...report, unexpected: true },
+      { ...report, schema_version: 'built-search-adapter/1.0' },
+      { ...report, runner: { ...report.runner, platform: 'not-a-platform' } },
+      { ...report, evidence: { ...report.evidence, events: null } },
+    ]) {
+      expect(() => parseBuiltSearchAdapterReport(fault, expected)).toThrow();
+    }
+  }, 120_000);
 });

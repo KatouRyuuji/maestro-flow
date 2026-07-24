@@ -159,12 +159,18 @@ describe('WikiIndexer', () => {
       return [path, { bytes: await readFile(join(tmpRoot, path)), mtimeMs: info.mtimeMs }];
     })));
 
+    const evidenceEvents: Array<{ event: string; site: string; queryId: null }> = [];
     const indexer = new WikiIndexer({
       workflowRoot: tmpRoot,
       persistence: 'memory-only',
+      evidenceRecorder: event => evidenceEvents.push(event),
     });
+    const firstIndex = await indexer.getSearchIndexWithMeta();
+    const secondIndex = await indexer.getSearchIndexWithMeta();
     const result = await indexer.searchWithMeta('memory sentinel', 5);
 
+    expect(firstIndex.cacheState).toBe('cold-build');
+    expect(secondIndex).toEqual({ index: firstIndex.index, cacheState: 'cache-hit' });
     expect(result.results.map(item => item.entry.id)).toContain('spec:project:memory-only');
     expect(result.embeddingUsed).toBe(false);
     for (const path of staleArtifacts) {
@@ -174,6 +180,76 @@ describe('WikiIndexer', () => {
     }
     await expect(readFile(join(tmpRoot, 'search-cache.json.tmp'))).rejects.toThrow();
     await expect(readFile(join(tmpRoot, 'embedding-index.db'))).rejects.toThrow();
+    expect(evidenceEvents).toEqual([]);
+  });
+
+  it('reports real search-index cache state across reuse and invalidation', async () => {
+    await write(
+      'specs/cache-state.md',
+      '---\ntitle: Cache state sentinel\n---\n# Cache state sentinel\nCold index evidence.',
+    );
+    const indexer = new WikiIndexer({
+      workflowRoot: tmpRoot,
+      persistence: 'memory-only',
+    });
+
+    const first = await indexer.getSearchIndexWithMeta();
+    const second = await indexer.getSearchIndexWithMeta();
+    expect(first.cacheState).toBe('cold-build');
+    expect(second).toEqual({ index: first.index, cacheState: 'cache-hit' });
+    await expect(indexer.getSearchIndex()).resolves.toBe(first.index);
+
+    indexer.invalidate();
+    const rebuilt = await indexer.getSearchIndexWithMeta();
+    expect(rebuilt.cacheState).toBe('cold-build');
+    expect(rebuilt.index).not.toBe(first.index);
+  });
+
+  it('records actual filesystem cache/index branch events', async () => {
+    await write(
+      'specs/event-evidence.md',
+      '---\ntitle: Event evidence\n---\n# Event evidence\nBranch-site recorder.',
+    );
+    const writeEvents: Array<{ event: string; site: string; queryId: null }> = [];
+    const writer = new WikiIndexer({
+      workflowRoot: tmpRoot,
+      evidenceRecorder: event => writeEvents.push(event),
+    });
+
+    await writer.get();
+    await expect.poll(async () => {
+      try {
+        await stat(join(tmpRoot, 'wiki-index.json'));
+        await stat(join(tmpRoot, 'search-cache.json'));
+        return true;
+      } catch {
+        return false;
+      }
+    }).toBe(true);
+    expect(writeEvents).toEqual(expect.arrayContaining([
+      {
+        event: 'filesystem-cache-write',
+        site: 'WikiIndexer.persistSearchCache.createWriteStream',
+        queryId: null,
+      },
+      {
+        event: 'filesystem-index-write',
+        site: 'WikiIndexer.persistIndex.writeFile',
+        queryId: null,
+      },
+    ]));
+
+    const readEvents: Array<{ event: string; site: string; queryId: null }> = [];
+    const reader = new WikiIndexer({
+      workflowRoot: tmpRoot,
+      evidenceRecorder: event => readEvents.push(event),
+    });
+    await reader.get();
+    expect(readEvents).toContainEqual({
+      event: 'filesystem-cache-read',
+      site: 'WikiIndexer.tryLoadSearchCache.readFile',
+      queryId: null,
+    });
   });
 });
 

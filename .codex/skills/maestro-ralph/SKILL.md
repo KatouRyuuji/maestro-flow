@@ -10,8 +10,13 @@ allowed-tools:
   - Grep
   - Read
   - Write
+  - followup_task
+  - interrupt_agent
+  - list_agents
   - request_user_input
+  - send_message
   - spawn_agent
+  - spawn_agents_on_csv
   - update_plan
   - wait_agent
 session-mode: run
@@ -19,7 +24,7 @@ contract:
   discovery: self-described
   consumes: []
   produces: []
-version: 0.5.55
+version: 0.5.56
 ---
 
 <required_reading>
@@ -33,95 +38,156 @@ version: 0.5.55
 </deferred_reading>
 
 <purpose>
-Apply retry, confidence, drift, goal-audit and stopping policy over any compatible canonical Session. Ralph owns no CLI driver or private state: normal execution calls only `maestro run ...` and follows the shared Run loop.
+Apply retry, confidence, drift, goal-audit and stopping policy over any compatible canonical Session. Ralph does not own a CLI driver, private Session type or second state store; it calls only `maestro run ...` and follows the shared Run loop.
 </purpose>
 
 <interface>
-Only `-y`, `-c`, and `--amend` are accepted. All remaining text is intent. Executor, platform, roadmap, quality, parallelism and adversarial strategy are inferred from intent, Session state, Skill contract and host runtime.
+Only these user flags are accepted:
+
+- `-y` — auto-confirm low-risk policy decisions.
+- `-c` — continue the unique live compatible Session; paused state enters audited recovery.
+- `--amend` — amend the live Session goal; remaining text is the change request.
+
+All remaining text is intent. No engine, roadmap, script, depth, role, tier, platform, resume or dry-run flags are parsed. Those choices belong to Skill contracts and Runtime.
 </interface>
 
 <invariants>
-1. Session is a topic grouping/index; execution and immutable outputs belong to Runs.
-2. `session.json.orchestration` is the only chain/goal/decision authority; never edit protocol files directly.
-3. Each execution step allocates one Run via `session next`, loads it via `run brief`, executes and checks it, then the orchestrator completes it.
-4. Skill proposes `chain-proposal/1.0`; Ralph evaluates; Runtime applies it atomically with the producing Run.
-5. Same-Session sealed outputs enter only through the canonical upstream map.
-6. Decision evaluation is read-only and lands only through `run decide`.
-7. `-y` cannot bypass high risk, low confidence, ambiguity, failed gates, escalation or drift halt.
-8. No legacy Ralph driver, Session administration, private Session type, manual fix template or second progress store.
-9. Sealed/archived Sessions are terminal and return `CHAIN_COMPLETE`.
+1. **Ralph owns the policy loop** — locate → allocate → brief → dispatch → check → drift/proposal evaluation → done/decide → next → seal.
+2. **One executor per Run** — dispatch one unnamed `run-executor`; nested execution strategy belongs to the Skill.
+3. **Thin executor** — executor executes and checks one Run but never completes it.
+4. **Sessions are topic grouping/indexes** — execution, handoff, anchor and immutable outputs belong to Runs.
+5. **canonical upstream map** — same-Session sealed outputs enter only through birth/brief; no manual context reconstruction.
+6. **Runtime mutation authority** — session.json/run.json are never written directly; normal flow uses only `maestro run ...`.
+7. **Proposal governance** — Skill proposes, Ralph evaluates budget/confidence/intent, Runtime applies atomically with the producing Run.
+8. **No prompt fix templates** — fix/review/goal gaps dispatch a Skill that may emit a proposal.
+9. **Decision receipts are single-source** — decisions land through `session decide`, never direct append.
+10. **Auto is bounded** — `-y` cannot bypass high risk, confidence <60, ambiguity, escalation, failed gates or reground halt.
+11. **Compatibility commands are out of band** — no Ralph/Session CLI is called or recommended.
+12. **Terminal means terminal** — sealed/archived returns `CHAIN_COMPLETE`, never resume.
+13. **Decision is mandatory** — every Ralph-created chain contains at least one formal decision node before Session seal; Run completion never substitutes for `session decide`.
+14. **Completion and decision both continue** — after successful `session done --json` or `session decide --json`, immediately execute any satisfiable `continuation.authority=automatic` action in the same turn.
 </invariants>
-
-<codex_dispatch>
-For an execution Run, call `spawn_agent` once with `agent_type: "ralph_executor"`, explicit Session locator and ownership limited to that Run. Immediately call `wait_agent({ timeout_ms: 3600000 })`; continue waiting after timeouts until completed or errored. The executor may use nested unnamed agents according to the loaded Skill, but it must not call `session done`.
-
-Decision, goal-audit, reground and amend-impact workers are read-only default agents. Do not spawn agents when the active host policy or user scope forbids delegation; execute the same Resume Packet directly instead. Executor choice never changes Session semantics.
-</codex_dispatch>
 
 <state_machine>
 
+<states>
+S_PARSE — parse intent and the three public flags
+S_RESOLVE — locate or create a compatible Session
+S_DECOMPOSE — derive boundary and observable goals for a new Session
+S_BUILD — build initial Skill chain
+S_CREATE — `run start --chain-file --no-dispatch`
+S_CONFIRM — confirm unless `-y`
+S_LOOP — shared Run lifecycle
+S_EVALUATE — quality/goal/scope/reground decision
+S_AMEND — audited goal amendment
+S_RECOVER — audited paused recovery
+S_FAIL — retry or pause
+S_DONE — seal Session
+</states>
+
+<transitions>
 S_PARSE:
-  → S_AMEND when `--amend`
-  → S_RESOLVE when `-c` or intent exists
-  → END otherwise
+  → S_AMEND WHEN: `--amend`
+  → S_RESOLVE WHEN: `-c` or intent present
+  → S_FAIL OTHERWISE
 
 S_RESOLVE:
-  → S_RECOVER for an exact paused Session under `-c`
-  → S_LOOP for an exact running compatible Session
-  → S_BUILD when no live Session and intent exists
-  → END for ambiguity or terminal incompatibility
+  → S_RECOVER WHEN: exact compatible Session is paused and `-c`
+  → S_LOOP WHEN: exact compatible Session is running with a chain
+  → S_DECOMPOSE WHEN: no live Session and intent present
+  → S_FAIL WHEN: multiple candidates or incompatible terminal Session
 
-S_BUILD → S_CREATE → S_CONFIRM unless `-y` → S_LOOP
+S_DECOMPOSE → S_BUILD → S_CREATE
+S_CREATE → S_LOOP WHEN: `-y`
+S_CREATE → S_CONFIRM OTHERWISE
+S_CONFIRM → S_LOOP WHEN: confirmed
+S_CONFIRM → S_BUILD WHEN: revised
+S_CONFIRM → END WHEN: cancelled
 
 S_LOOP:
-  → S_EVALUATE for a decision node
-  → S_FAIL for retry/blocker
-  → S_DONE for `CHAIN_COMPLETE`
-  → S_LOOP after a sealed Run with pending work
+  → S_EVALUATE WHEN: next node is a decision
+  → S_FAIL WHEN: executor/check/drift reports retry or blocker
+  → S_DONE WHEN: `CHAIN_COMPLETE`
+  → S_LOOP WHEN: Run sealed and another pending step exists
 
-S_EVALUATE → S_LOOP for proceed/fix; → S_RECOVER for escalate
-S_FAIL → S_LOOP while retry budget remains; → END after pause
-S_AMEND/S_RECOVER → S_LOOP after audited commit
+S_EVALUATE:
+  → S_LOOP WHEN: proceed or accepted fix proposal
+  → S_RECOVER WHEN: escalate pauses Session
+
+S_FAIL:
+  → S_LOOP WHEN: retry budget remains
+  → END WHEN: Session paused or user aborts
+
+S_AMEND → S_LOOP WHEN: shared amend protocol committed
+S_RECOVER → S_LOOP WHEN: blockers resolved and resume committed
 S_DONE → END
+</transitions>
 
 <actions>
 
-### Resolve and create
+All command syntax and lifecycle mechanics follow `orchestrator-run-loop.md` and `run-mode.md`. The actions below define only Ralph-specific policy decisions.
 
-Use `maestro run recall maestro-ralph --intent "{intent}" --json` only as read-only lookup. New Sessions derive boundary, observable goals and the smallest sufficient Skill chain. Roadmap is inferred only for multi-release work; execution strategy belongs to each Skill.
+### A_RESOLVE
 
-Write chain JSON to a temporary file and call:
+Read-only lookup via `run recall`. Explicit birth `session_id/run_id` wins. Multiple live candidates require user selection; historical similarity never grants authority.
 
-`maestro session create "{intent}" --id {slug} --chain-file {path} --no-dispatch`
+### A_BUILD
 
-Delete the file after success.
+Infer lifecycle start from intent and same-Session sealed outputs. New Sessions start from analysis unless intent explicitly calls for grill, brainstorm or blueprint. Roadmap is inferred only for multi-release evidence. Quality is quick/standard/full based on specs and observable risk, not a user flag.
 
-### Execute one Run
+Build outcome-oriented decomposition. For broad work, boundary clarification remains mandatory even with `-y`. Every chain includes at least one final quality/goal/scope decision node before seal; long chains also include periodic reground decision nodes. Step execution strategy is defined by each Skill, never by Ralph flags.
 
-Follow `orchestrator-run-loop.md`: `session status` → `run next --json` → `run brief` → execute → `run check` → drift/proposal policy → `session done`. Never allocate the next Run before the prior completion is sealed.
+### A_EXECUTE
 
-### Evaluate
+Follow `orchestrator-run-loop.md` exactly. Display identity may use stage prefixes, but no private agent name or Ralph progress file is persisted. Task/Goal UI is projection only.
 
-Read-only evaluator returns `proceed|fix|escalate` plus `high|medium|low`. Parse failure becomes fix/low and records `parse_failed=true`. Confidence below 60 cannot proceed; retry budget exhaustion escalates. Apply through `run decide`.
+### A_EVALUATE
 
-### Proposal
+Dispatch one read-only generic evaluator. Expected result:
 
-`run check` discovers typed proposals. Accept exactly one valid proposal with `session done ... --apply-proposal`; reject by omitting it and recording a note; revise by reloading the same Run. Legacy proposal path flags are never used.
+```text
+---VERDICT---
+STATUS: proceed|fix|escalate
+REASON: <one line>
+CONFIDENCE: high|medium|low
+---END---
+```
 
-### Failure, recovery, amend, seal
+Ralph policy thresholds:
+- Parse failure → `fix`, low confidence, `parse_failed=true`.
+- Confidence below 60 → cannot proceed.
+- Retry budget exhaustion → escalate.
+- Goal audit: compare every pending goal's `done_when` against evidence; missing evidence means unmet.
+- Reground: compare cumulative handoffs against intent and boundary; confident drift halts even under `-y`.
 
-- Repairable: `session done --verdict needs-retry`.
-- Exhausted/external: `session done --verdict blocked --reason ...`.
-- Explicit `-c` recovery: `session status` → `session recover` per blocker → `session recover --resume`.
-- Amend: read deferred protocol, snapshot with `session status`, commit full decomposition with `session chain edit --decomposition-file -`, then accept any planning proposal through its Run.
-- Terminal: `run seal-session {session_id} --summary "..."` after Runs, decisions, goals and gates are complete.
+Apply through `session decide --json` and follow the Continuation Router in `orchestrator-run-loop.md`.
+
+### A_FAIL
+
+- Repairable failure → verdict `needs-retry`; re-dispatch only after Runtime returns the step to pending.
+- External or exhausted blocker → verdict `blocked`; Session pauses.
+- Never allocate a new Run while the previous Run is running or gate-blocked.
+
+### A_RECOVER
+
+Only explicit `-c` enters recovery. Follow `orchestrator-run-loop.md` §7 exactly.
+
+### A_AMEND
+
+Read `ralph-amend-goal.md`. High risk always asks. Pending-tail changes come from a planning Skill proposal, not direct edit.
+
+### A_DONE
+
+When every execution Run is sealed, every decision is terminal, every goal is done and Session gates are clean → seal.
 
 </actions>
+
 </state_machine>
 
 <success_criteria>
 - Public flags are exactly `-y`, `-c`, `--amend`.
-- Normal flow and recommendations use only `maestro run ...`.
-- Run lifecycle is next → brief → execute → check → done; decisions use decide.
-- Proposal mutation is pathless for Ralph and atomic with completion.
+- No legacy Ralph driver, private Session type, or independent Skills CLI appears in normal flow.
+- Each Run follows `session next --inline-brief` → execute → `run check` → `session done`; backtracking uses `run brief`. Every decision uses `session decide`.
+- Proposal acceptance is pathless from Ralph's perspective and atomic with Run completion.
+- Retry, confidence, drift, goal audit, recovery and terminal semantics remain explicit.
 </success_criteria>

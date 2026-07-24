@@ -228,7 +228,7 @@ Goals:      {done}/{total} ({skipped} skipped)
 - [ ] understanding.md 8 sections written progressively (§1–§8)
 - [ ] Fix + verify (unless --skip-fix); all findings/ideas addressed by priority
 - [ ] Multi-layer generalization + discovery triage (unless --skip-generalize)
-- [ ] phase_goals derived, tracked, and hardened-audited; Goal Prompt once
+- [ ] phase_goals derived, tracked, and hardened-audited; goal_mode injected via prepare goal:true
 - [ ] Session resumable via -c; completion summary emitted
 
 ---

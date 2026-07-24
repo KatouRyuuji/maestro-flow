@@ -289,7 +289,7 @@ Status:      {ALL_PASSED|PARTIAL|ESCALATED}
 - [ ] understanding.md sections written progressively (§1–§8)
 - [ ] Criteria verified by method (test/grep/cli-review/manual); fix loop if needed
 - [ ] Multi-layer generalization + discovery triage (unless --skip-generalize)
-- [ ] phase_goals derived, tracked, and hardened-audited; Goal Prompt once
+- [ ] phase_goals derived, tracked, and hardened-audited; goal_mode injected via prepare goal:true
 - [ ] Session resumable via -c; completion summary emitted
 - [ ] Status: ALL_PASSED / PARTIAL / ESCALATED
 

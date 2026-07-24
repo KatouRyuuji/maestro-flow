@@ -80,6 +80,20 @@ export interface WikiIndexerConfig {
   workflowRoot: string;
   linkedWorkspaces?: LinkedWorkspaceConfig[];
   persistence?: 'filesystem' | 'memory-only';
+  evidenceRecorder?: (event: WikiEvidenceEvent) => void;
+}
+
+export type WikiEvidenceEventName =
+  | 'filesystem-cache-read'
+  | 'filesystem-cache-write'
+  | 'filesystem-index-write'
+  | 'embedding-build'
+  | 'embedding-save';
+
+export interface WikiEvidenceEvent {
+  event: WikiEvidenceEventName;
+  site: string;
+  queryId: null;
 }
 
 function finalizeSearchResults(
@@ -132,6 +146,7 @@ function finalizeSearchResults(
 export class WikiIndexer {
   private readonly workflowRoot: string;
   private readonly persistence: 'filesystem' | 'memory-only';
+  private readonly evidenceRecorder: ((event: WikiEvidenceEvent) => void) | undefined;
   private readonly linkedWorkspaces: Array<{
     name: string;
     workflowRoot: string;
@@ -150,6 +165,7 @@ export class WikiIndexer {
   constructor(config: WikiIndexerConfig) {
     this.workflowRoot = resolve(config.workflowRoot);
     this.persistence = config.persistence ?? 'filesystem';
+    this.evidenceRecorder = config.evidenceRecorder;
     this.linkedWorkspaces = (config.linkedWorkspaces ?? []).map(lw => ({
       name: lw.name,
       workflowRoot: resolve(lw.workflowRoot),
@@ -159,6 +175,10 @@ export class WikiIndexer {
 
   getWorkflowRoot(): string {
     return this.workflowRoot;
+  }
+
+  private recordEvidence(event: WikiEvidenceEventName, site: string): void {
+    this.evidenceRecorder?.({ event, site, queryId: null });
   }
 
   async get(): Promise<WikiIndex> {
@@ -301,6 +321,7 @@ export class WikiIndexer {
     if (!existsSync(cachePath)) return false;
 
     try {
+      this.recordEvidence('filesystem-cache-read', 'WikiIndexer.tryLoadSearchCache.readFile');
       const raw = await readFile(cachePath, 'utf-8');
       const cached = JSON.parse(raw);
       if (cached.version !== SEARCH_CACHE_VERSION || !Array.isArray(cached.entries)) return false;
@@ -337,6 +358,10 @@ export class WikiIndexer {
     const target = join(this.workflowRoot, 'search-cache.json');
     const tmpTarget = target + '.tmp';
     try {
+      this.recordEvidence(
+        'filesystem-cache-write',
+        'WikiIndexer.persistSearchCache.createWriteStream',
+      );
       stream = createWriteStream(tmpTarget, { encoding: 'utf-8' });
       
       stream.on('error', (e) => {
@@ -605,10 +630,22 @@ export class WikiIndexer {
   }
 
   async getSearchIndex(): Promise<InvertedIndex> {
-    if (this.searchCache) return this.searchCache;
+    return (await this.getSearchIndexWithMeta()).index;
+  }
+
+  async getSearchIndexWithMeta(): Promise<{
+    index: InvertedIndex;
+    cacheState: 'cold-build' | 'cache-hit';
+  }> {
+    if (this.searchCache) {
+      return { index: this.searchCache, cacheState: 'cache-hit' };
+    }
     const index = await this.get();
+    if (this.searchCache) {
+      return { index: this.searchCache, cacheState: 'cache-hit' };
+    }
     this.searchCache = buildInvertedIndex(index.entries);
-    return this.searchCache;
+    return { index: this.searchCache, cacheState: 'cold-build' };
   }
 
   async searchWithScores(
@@ -753,6 +790,10 @@ export class WikiIndexer {
         return null;
       }
 
+      this.recordEvidence(
+        'filesystem-cache-read',
+        'WikiIndexer.loadOrBuildEmbeddings.loadEmbeddingIndex',
+      );
       const cached = loadEmbeddingIndex(this.workflowRoot);
       if (signal?.aborted) return null;
       const index = await this.get();
@@ -815,8 +856,16 @@ export class WikiIndexer {
 
       try {
         if (signal?.aborted) return cached ?? null;
+        this.recordEvidence(
+          'embedding-build',
+          'WikiIndexer.loadOrBuildEmbeddings.buildEmbeddingIndex',
+        );
         const embIdx = await buildEmbeddingIndex(docs, cached, currentHashes);
         if (signal?.aborted) return null;
+        this.recordEvidence(
+          'embedding-save',
+          'WikiIndexer.loadOrBuildEmbeddings.saveEmbeddingIndex',
+        );
         await saveEmbeddingIndex(embIdx, this.workflowRoot);
         return embIdx;
       } catch (buildErr: unknown) {
@@ -1695,6 +1744,7 @@ export class WikiIndexer {
     };
     const target = join(this.workflowRoot, 'wiki-index.json');
     await mkdir(dirname(target), { recursive: true });
+    this.recordEvidence('filesystem-index-write', 'WikiIndexer.persistIndex.writeFile');
     await writeFile(target, JSON.stringify(persisted, null, 2), 'utf-8');
   }
 

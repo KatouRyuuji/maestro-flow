@@ -1,0 +1,23 @@
+[
+  {
+    "probe_id": "built-search-adapter",
+    "caller": "dist/src/commands/search.js",
+    "specifier": "#maestro-dashboard/wiki/wiki-indexer.js",
+    "resolved_url": "dashboard/dist-server/dashboard/src/server/wiki/wiki-indexer.js",
+    "guard": "mixed-wiki-search"
+  },
+  {
+    "probe_id": "built-search-adapter",
+    "caller": "dist/src/commands/search.js",
+    "specifier": "../graph/kg/engine.js",
+    "resolved_url": "dist/src/graph/kg/engine.js",
+    "guard": "code-search"
+  },
+  {
+    "probe_id": "read-only-probe",
+    "caller": "dist/src/commands/search.js",
+    "specifier": "#maestro-dashboard/wiki/wiki-indexer.js",
+    "resolved_url": "dashboard/dist-server/dashboard/src/server/wiki/wiki-indexer.js",
+    "guard": "wiki-search"
+  }
+]

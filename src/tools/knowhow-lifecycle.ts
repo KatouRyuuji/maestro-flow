@@ -1,18 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
-  closeSync,
   existsSync,
-  fstatSync,
   lstatSync,
   mkdirSync,
-  openSync,
-  readFileSync,
   readdirSync,
   realpathSync,
-  rmSync,
-  statSync,
-  unlinkSync,
-  writeFileSync,
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
@@ -21,7 +13,21 @@ import {
   knowhowFileToWikiId,
   parseFrontmatter,
 } from '../utils/frontmatter.js';
-import { updateFileAtomic } from '../utils/atomic-write.js';
+import {
+  acquireLifecycleLockBound,
+  compareReleaseLifecycleLock,
+  LifecycleFsHelperError,
+  quarantineLifecycleFileBound,
+  readLifecycleFileBound,
+  recoverLifecycleQuarantineBound,
+  replaceLifecycleFileBound,
+  withVerifiedLifecycleFsHelper,
+} from '../utils/lifecycle-fs-helper.js';
+import type {
+  BoundLock,
+  BoundQuarantine,
+  BoundRead,
+} from '../utils/lifecycle-fs-wire.js';
 
 const LIFECYCLE_LOCK = '.lifecycle.lock';
 const LIFECYCLE_INTENT = '.lifecycle.intent.json';
@@ -54,7 +60,13 @@ export interface KnowhowEvolutionLink {
 }
 
 export interface LifecycleFaultOptions {
+  ownerGeneration?: string;
   afterTarget?: (path: string, completedTargets: number) => void;
+  beforeTargetCheckpoint?: (path: string, completedTargets: number) => void;
+  afterTargetQuarantine?: (
+    path: string,
+    quarantine: BoundQuarantine,
+  ) => void;
   beforeLockDelete?: (
     phase: 'reclaim' | 'release',
     lockPath: string,
@@ -118,6 +130,7 @@ export interface RestoreTargetState {
   afterHash: ContentHash;
   restoreHash: ContentHash;
   completed: boolean;
+  quarantine?: BoundQuarantine;
 }
 
 export interface KnowhowRestoreIntent {
@@ -259,121 +272,90 @@ function ensureLifecycleDirectory(projectRoot: string, input: string): string {
   return resolveLifecyclePath(projectRoot, path, 'existing-directory');
 }
 
-function removeLifecycleFile(projectRoot: string, input: string): void {
-  const path = resolveLifecyclePath(projectRoot, input, 'delete-target');
-  if (existsSync(path)) {
-    resolveLifecyclePath(projectRoot, path, 'existing-file');
-    rmSync(path, { force: true });
-  }
-  const after = resolveLifecyclePath(projectRoot, path, 'delete-target');
-  if (existsSync(after)) throw unsafeLifecyclePath(input, 'delete did not remove target');
-}
-
-interface LifecycleLockRecord {
-  schema_version: 'knowhow-lifecycle-lock/1.0';
-  token: string;
-  pid: number;
-  acquiredAt: number;
-}
-
-interface LifecycleLockIdentity {
-  dev: number;
-  ino: number;
-  size: number;
-  mtimeMs: number;
-  birthtimeMs: number;
-}
-
-interface LifecycleLockSnapshot {
+interface LifecycleBoundRead extends BoundRead {
   bytes: Buffer;
-  owner: LifecycleLockRecord;
-  identity: LifecycleLockIdentity;
 }
 
-function lifecycleLockIdentity(
-  stats: ReturnType<typeof fstatSync>,
-): LifecycleLockIdentity {
-  return {
-    dev: Number(stats.dev),
-    ino: Number(stats.ino),
-    size: Number(stats.size),
-    mtimeMs: Number(stats.mtimeMs),
-    birthtimeMs: Number(stats.birthtimeMs),
-  };
+interface LifecycleLockOwnerView {
+  pid: number;
 }
 
-function sameLifecycleLockIdentity(
-  left: LifecycleLockIdentity,
-  right: LifecycleLockIdentity,
-): boolean {
-  return left.dev === right.dev
-    && left.ino === right.ino
-    && left.size === right.size
-    && left.mtimeMs === right.mtimeMs
-    && left.birthtimeMs === right.birthtimeMs;
+function lifecycleRelativePath(projectRoot: string, input: string): string {
+  const root = resolve(projectRoot);
+  const normalizedInput = input.replaceAll('\\', sep);
+  const absolute = isAbsolute(normalizedInput)
+    ? resolve(normalizedInput)
+    : resolve(root, normalizedInput);
+  if (!isContainedPath(root, absolute)) {
+    throw unsafeLifecyclePath(input, 'outside project root');
+  }
+  const output = relative(root, absolute).replaceAll('\\', '/');
+  if (!output || output === '.' || output.startsWith('../')) {
+    throw unsafeLifecyclePath(input, 'path must name a project file');
+  }
+  return output;
 }
 
-function parseLifecycleLockRecord(bytes: Buffer): LifecycleLockRecord | null {
+function isLifecycleFsError(
+  error: unknown,
+  ...codes: LifecycleFsHelperError['code'][]
+): error is LifecycleFsHelperError {
+  return error instanceof LifecycleFsHelperError && codes.includes(error.code);
+}
+
+function readLifecycleBoundOptional(
+  projectRoot: string,
+  input: string,
+): LifecycleBoundRead | null {
   try {
-    const value = JSON.parse(bytes.toString('utf8')) as Partial<LifecycleLockRecord>;
-    const keys = Object.keys(value).sort();
-    if (keys.join(',') !== 'acquiredAt,pid,schema_version,token'
-      || value.schema_version !== 'knowhow-lifecycle-lock/1.0'
-      || typeof value.token !== 'string'
-      || value.token.length === 0
-      || !Number.isInteger(value.pid)
-      || (value.pid ?? 0) <= 0
-      || !Number.isInteger(value.acquiredAt)
-      || (value.acquiredAt ?? -1) < 0) {
-      return null;
-    }
-    return value as LifecycleLockRecord;
-  } catch {
-    return null;
+    const bound = readLifecycleFileBound(
+      projectRoot,
+      lifecycleRelativePath(projectRoot, input),
+    );
+    return {
+      ...bound,
+      bytes: Buffer.from(bound.bytesBase64, 'base64'),
+    };
+  } catch (error) {
+    if (isLifecycleFsError(error, 'MISSING')) return null;
+    throw error;
   }
 }
 
-function sameLifecycleLockSnapshot(
-  left: LifecycleLockSnapshot,
-  right: LifecycleLockSnapshot,
+function sameLifecycleBoundRead(
+  left: LifecycleBoundRead,
+  right: LifecycleBoundRead,
 ): boolean {
   return left.bytes.equals(right.bytes)
-    && left.owner.pid === right.owner.pid
-    && left.owner.token === right.owner.token
-    && left.owner.acquiredAt === right.owner.acquiredAt
-    && sameLifecycleLockIdentity(left.identity, right.identity);
+    && stableJson(left.generation) === stableJson(right.generation);
 }
 
-function readStableLifecycleLockSnapshot(
-  projectRoot: string,
-  lockPathInput: string,
-): LifecycleLockSnapshot | null {
-  let fd: number | null = null;
+function parseLifecycleLockOwner(bytes: Buffer): LifecycleLockOwnerView | null {
   try {
-    const candidate = resolveLifecyclePath(projectRoot, lockPathInput, 'delete-target');
-    if (!existsSync(candidate)) return null;
-    const lockPath = resolveLifecyclePath(projectRoot, candidate, 'existing-file');
-    fd = openSync(lockPath, 'r');
-    const before = lifecycleLockIdentity(fstatSync(fd));
-    const bytes = readFileSync(fd);
-    const after = lifecycleLockIdentity(fstatSync(fd));
-    if (!sameLifecycleLockIdentity(before, after)) return null;
-    resolveLifecyclePath(projectRoot, lockPath, 'existing-file');
-    const pathIdentity = lifecycleLockIdentity(statSync(lockPath));
-    if (!sameLifecycleLockIdentity(after, pathIdentity)) return null;
-    const owner = parseLifecycleLockRecord(bytes);
-    return owner ? { bytes, owner, identity: after } : null;
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT' || code === 'EACCES' || code === 'EPERM' || code === 'EBUSY') {
+    const value = JSON.parse(bytes.toString('utf8')) as Record<string, unknown>;
+    const keys = Object.keys(value).sort().join(',');
+    const canonical = keys === 'ownerGeneration,pid,token'
+      && typeof value.ownerGeneration === 'string'
+      && value.ownerGeneration.length > 0
+      && typeof value.token === 'string'
+      && value.token.length > 0;
+    const lifecycleLegacy = keys === 'acquiredAt,pid,schema_version,token'
+      && value.schema_version === 'knowhow-lifecycle-lock/1.0'
+      && Number.isInteger(value.acquiredAt)
+      && (value.acquiredAt as number) >= 0
+      && typeof value.token === 'string'
+      && value.token.length > 0;
+    const atomicWriterLegacy = keys === 'createdAt,pid'
+      && Number.isInteger(value.createdAt)
+      && (value.createdAt as number) >= 0;
+    if ((!canonical && !lifecycleLegacy && !atomicWriterLegacy)
+      || !Number.isInteger(value.pid)
+      || (value.pid as number) <= 0) {
       return null;
     }
-    if (!existsSync(lockPathInput)) return null;
-    throw error;
-  } finally {
-    if (fd !== null) {
-      try { closeSync(fd); } catch { /* fd already closed */ }
-    }
+    return { pid: value.pid as number };
+  } catch {
+    return null;
   }
 }
 
@@ -386,75 +368,184 @@ function lifecycleOwnerLiveness(pid: number): 'alive' | 'dead' | 'unknown' {
   }
 }
 
+function withLifecyclePathLock<T>(
+  projectRoot: string,
+  lockPathInput: string,
+  action: (lock: BoundLock) => T,
+  options?: LifecycleFaultOptions,
+): T {
+  return withVerifiedLifecycleFsHelper(
+    () => withLifecyclePathLockVerified(projectRoot, lockPathInput, action, options),
+  );
+}
+
+function withLifecyclePathLockVerified<T>(
+  projectRoot: string,
+  lockPathInput: string,
+  action: (lock: BoundLock) => T,
+  options?: LifecycleFaultOptions,
+): T {
+  const lockRelativePath = lifecycleRelativePath(projectRoot, lockPathInput);
+  const lockPath = resolve(projectRoot, lockRelativePath.replaceAll('/', sep));
+  ensureLifecycleDirectory(projectRoot, dirname(lockPath));
+  const startedAt = Date.now();
+  const owner = {
+    pid: process.pid,
+    token: randomUUID(),
+    ownerGeneration: options?.ownerGeneration ?? randomUUID(),
+  };
+  let lock: BoundLock | null = null;
+  let busyError: LifecycleFsHelperError | null = null;
+  while (lock === null) {
+    try {
+      lock = acquireLifecycleLockBound(
+        projectRoot,
+        lockRelativePath,
+        owner,
+        LOCK_TIMEOUT_MS,
+      );
+      break;
+    } catch (error) {
+      if (!isLifecycleFsError(error, 'BUSY')) throw error;
+      busyError = error;
+      const observed = readLifecycleBoundOptional(projectRoot, lockRelativePath);
+      const observedOwner = observed ? parseLifecycleLockOwner(observed.bytes) : null;
+      if (observed && observedOwner) {
+        const liveness = lifecycleOwnerLiveness(observedOwner.pid);
+        if (liveness === 'dead') {
+          options?.beforeLockDelete?.('reclaim', lockPath);
+          const verified = readLifecycleBoundOptional(projectRoot, lockRelativePath);
+          if (verified && sameLifecycleBoundRead(observed, verified)) {
+            try {
+              const quarantine = quarantineLifecycleFileBound(
+                projectRoot,
+                lockRelativePath,
+                verified.generation.sha256,
+                `lock-reclaim_${randomUUID()}`,
+                randomUUID(),
+              );
+              const recovered = recoverLifecycleQuarantineBound(
+                projectRoot,
+                quarantine,
+                'commit',
+              );
+              if (recovered === 'committed') continue;
+              if (recovered === 'replaced') continue;
+              throw new Error(`Unexpected stale lock recovery result: ${recovered}`);
+            } catch (reclaimError) {
+              if (isLifecycleFsError(reclaimError, 'MISSING', 'REPLACED')) {
+                continue;
+              }
+              throw reclaimError;
+            }
+          }
+        }
+        if (liveness !== 'dead') throw busyError;
+      }
+      if (observed && !observedOwner) throw busyError;
+      if (Date.now() - startedAt >= LOCK_TIMEOUT_MS) {
+        throw busyError;
+      }
+      sleepSync(LOCK_RETRY_MS);
+    }
+  }
+
+  let result: T | undefined;
+  let actionError: unknown;
+  try {
+    result = action(lock);
+  } catch (error) {
+    actionError = error;
+  }
+
+  let releaseError: unknown;
+  try {
+    options?.beforeLockDelete?.('release', lockPath);
+    const release = compareReleaseLifecycleLock(projectRoot, lock);
+    if (release !== 'released' && release !== 'missing' && release !== 'replaced') {
+      throw new Error(`Unexpected lifecycle lock release result: ${release}`);
+    }
+  } catch (error) {
+    releaseError = error;
+  }
+
+  if (actionError !== undefined && releaseError !== undefined) {
+    throw new AggregateError(
+      [actionError, releaseError],
+      'Lifecycle action and exact lock release both failed',
+    );
+  }
+  if (actionError !== undefined) throw actionError;
+  if (releaseError !== undefined) throw releaseError;
+  return result as T;
+}
+
 function withLifecycleLock<T>(
   projectRoot: string,
   action: () => T,
   options?: LifecycleFaultOptions,
 ): T {
-  const knowhowDir = ensureLifecycleDirectory(projectRoot, getKnowhowDir(projectRoot));
-  const lockPath = resolveLifecyclePath(
+  const knowhowDir = join(getKnowhowDir(projectRoot));
+  return withLifecyclePathLock(
     projectRoot,
     join(knowhowDir, LIFECYCLE_LOCK),
-    'write-target',
+    action,
+    options,
   );
-  const startedAt = Date.now();
-  const owner: LifecycleLockRecord = {
-    schema_version: 'knowhow-lifecycle-lock/1.0',
-    token: randomUUID(),
-    pid: process.pid,
-    acquiredAt: Date.now(),
-  };
-  const ownerBytes = Buffer.from(JSON.stringify(owner), 'utf8');
-  let acquired = false;
-  while (!acquired) {
-    try {
-      resolveLifecyclePath(projectRoot, lockPath, 'write-target');
-      const fd = openSync(lockPath, 'wx');
-      try {
-        writeFileSync(fd, ownerBytes);
-      } finally {
-        closeSync(fd);
-      }
-      resolveLifecyclePath(projectRoot, lockPath, 'existing-file');
-      acquired = true;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      const snapshot = readStableLifecycleLockSnapshot(projectRoot, lockPath);
-      if (snapshot) {
-        const liveness = lifecycleOwnerLiveness(snapshot.owner.pid);
-        if (liveness === 'dead') {
-          options?.beforeLockDelete?.('reclaim', lockPath);
-          const verified = readStableLifecycleLockSnapshot(projectRoot, lockPath);
-          if (verified && sameLifecycleLockSnapshot(snapshot, verified)) {
-            try {
-              unlinkSync(lockPath);
-              continue;
-            } catch (unlinkError) {
-              if ((unlinkError as NodeJS.ErrnoException).code === 'ENOENT') continue;
-            }
-          }
-        }
-      }
-      if (Date.now() - startedAt >= LOCK_TIMEOUT_MS) {
-        throw new Error(`Timed out acquiring knowhow lifecycle lock: ${lockPath}`);
-      }
-      sleepSync(LOCK_RETRY_MS);
+}
+
+function withTargetWriterLock<T>(
+  projectRoot: string,
+  targetInput: string,
+  action: (lock: BoundLock) => T,
+): T {
+  const targetRelativePath = lifecycleRelativePath(projectRoot, targetInput);
+  return withLifecyclePathLock(
+    projectRoot,
+    `${targetRelativePath}.lock`,
+    action,
+  );
+}
+
+function writeLifecycleBytesExact(
+  projectRoot: string,
+  pathInput: string,
+  bytes: Buffer,
+  expectedHash: ContentHash | undefined,
+): void {
+  const relativePath = lifecycleRelativePath(projectRoot, pathInput);
+  const current = readLifecycleBoundOptional(projectRoot, relativePath);
+  const currentHash = current ? sha256(current.bytes) : null;
+  if (expectedHash !== undefined && currentHash !== expectedHash) {
+    throw new Error(`Concurrent modification detected: ${relativePath}`);
+  }
+  if (current?.bytes.equals(bytes)) return;
+  replaceLifecycleFileBound(
+    projectRoot,
+    relativePath,
+    bytes,
+    current?.generation ?? null,
+    randomUUID(),
+  );
+}
+
+function removeLifecycleFile(projectRoot: string, input: string): void {
+  const relativePath = lifecycleRelativePath(projectRoot, input);
+  withTargetWriterLock(projectRoot, relativePath, writerLock => {
+    const current = readLifecycleBoundOptional(projectRoot, relativePath);
+    if (!current) return;
+    const quarantine = quarantineLifecycleFileBound(
+      projectRoot,
+      relativePath,
+      current.generation.sha256,
+      `delete_${randomUUID()}`,
+      writerLock.ownerGeneration,
+    );
+    const recovered = recoverLifecycleQuarantineBound(projectRoot, quarantine, 'commit');
+    if (recovered !== 'committed') {
+      throw new Error(`Lifecycle delete lost exact quarantine: ${relativePath}`);
     }
-  }
-  try {
-    return action();
-  } finally {
-    try {
-      const snapshot = readStableLifecycleLockSnapshot(projectRoot, lockPath);
-      if (snapshot?.owner.pid === owner.pid && snapshot.owner.token === owner.token) {
-        options?.beforeLockDelete?.('release', lockPath);
-        const verified = readStableLifecycleLockSnapshot(projectRoot, lockPath);
-        if (verified && sameLifecycleLockSnapshot(snapshot, verified)) {
-          unlinkSync(lockPath);
-        }
-      }
-    } catch { /* stale-lock recovery handles crashes */ }
-  }
+  });
 }
 
 function sha256(value: string | Buffer): string {
@@ -478,51 +569,27 @@ function stableJson(value: unknown): string {
 }
 
 function hashFile(projectRoot: string, input: string): ContentHash {
-  const path = resolveLifecyclePath(projectRoot, input, 'delete-target');
-  if (!existsSync(path)) return null;
-  const before = resolveLifecyclePath(projectRoot, path, 'existing-file');
-  const content = readFileSync(before);
-  const after = resolveLifecyclePath(projectRoot, path, 'existing-file');
-  if (comparablePath(before) !== comparablePath(after)) {
-    throw unsafeLifecyclePath(input, 'path identity changed while reading');
-  }
-  return sha256(content);
-}
-
-function updateLifecycleFileAtomic(
-  projectRoot: string,
-  pathInput: string,
-  update: (current: string | null) => string | null,
-): string | null {
-  const path = resolveLifecyclePath(projectRoot, pathInput, 'write-target');
-  const sidecars = [`${path}.lock`, `${path}.tmp`];
-  for (const sidecar of sidecars) {
-    resolveLifecyclePath(projectRoot, sidecar, 'write-target');
-  }
-  const result = updateFileAtomic(path, update);
-  for (const sidecar of sidecars) {
-    resolveLifecyclePath(projectRoot, sidecar, 'delete-target');
-  }
-  if (existsSync(path)) resolveLifecyclePath(projectRoot, path, 'existing-file');
-  return result;
+  const read = readLifecycleBoundOptional(projectRoot, input);
+  return read ? sha256(read.bytes) : null;
 }
 
 function relativePath(projectRoot: string, path: string): string {
-  return relative(realpathSync.native(projectRoot), resolve(path)).replaceAll('\\', '/');
+  return lifecycleRelativePath(projectRoot, path);
 }
 
 function writeJsonAtomic(projectRoot: string, pathInput: string, value: unknown): void {
-  const path = resolveLifecyclePath(projectRoot, pathInput, 'write-target');
-  const document = `${JSON.stringify(value, null, 2)}\n`;
-  updateLifecycleFileAtomic(projectRoot, path, () => document);
-  resolveLifecyclePath(projectRoot, path, 'existing-file');
+  const document = Buffer.from(`${JSON.stringify(value, null, 2)}\n`, 'utf8');
+  writeLifecycleBytesExact(projectRoot, pathInput, document, undefined);
 }
 
 function readJson<T>(projectRoot: string, pathInput: string): T {
-  const path = resolveLifecyclePath(projectRoot, pathInput, 'existing-file');
-  const document = readFileSync(path, 'utf8');
-  resolveLifecyclePath(projectRoot, path, 'existing-file');
-  return JSON.parse(document) as T;
+  const read = readLifecycleBoundOptional(projectRoot, pathInput);
+  if (!read) throw new Error(`Lifecycle JSON file is missing: ${pathInput}`);
+  return parseLifecycleJson<T>(read);
+}
+
+function parseLifecycleJson<T>(read: LifecycleBoundRead): T {
+  return JSON.parse(read.bytes.toString('utf8')) as T;
 }
 
 function listMarkdownFiles(projectRoot: string, dirInput: string): string[] {
@@ -557,15 +624,19 @@ function scanKnowhow(projectRoot: string): Map<string, KnowhowNode> {
     const filename = basename(filePath);
     const id = knowhowFileToWikiId(filename);
     if (byId.has(id)) throw new Error(`Duplicate knowhow id: ${id}`);
-    const safeFilePath = resolveLifecyclePath(projectRoot, filePath, 'existing-file');
-    const raw = readFileSync(safeFilePath, 'utf8');
-    resolveLifecyclePath(projectRoot, safeFilePath, 'existing-file');
+    const relativeFilePath = lifecycleRelativePath(projectRoot, filePath);
+    const bound = readLifecycleBoundOptional(projectRoot, relativeFilePath);
+    if (!bound) {
+      throw new Error(`Knowhow file disappeared during bound scan: ${relativeFilePath}`);
+    }
+    const raw = bound.bytes.toString('utf8');
+    const safeFilePath = resolve(projectRoot, relativeFilePath.replaceAll('/', sep));
     const { data } = parseFrontmatter(raw);
     byId.set(id, {
       id,
       filename,
       filePath: safeFilePath,
-      relativePath: relativePath(projectRoot, safeFilePath),
+      relativePath: relativeFilePath,
       raw,
       data,
     });
@@ -682,15 +753,9 @@ export function assertLifecycleIntent(
     if (!expectedNode || seenIds.has(target.id)) {
       throw new Error(`Lifecycle intent target id is not bound to the supersede pair: ${target.id}`);
     }
-    const canonicalTarget = resolveLifecyclePath(projectRoot, target.path, 'existing-file');
-    const canonicalExpected = resolveLifecyclePath(
-      projectRoot,
-      expectedNode.filePath,
-      'existing-file',
-    );
-    const comparableTarget = comparablePath(canonicalTarget);
-    if (comparableTarget !== comparablePath(canonicalExpected)
-      || seenPaths.has(comparableTarget)) {
+    const canonicalTarget = lifecycleRelativePath(projectRoot, target.path);
+    const canonicalExpected = lifecycleRelativePath(projectRoot, expectedNode.filePath);
+    if (canonicalTarget !== canonicalExpected || seenPaths.has(canonicalTarget)) {
       throw new Error(`Lifecycle intent target path is not canonical for ${target.id}: ${target.path}`);
     }
 
@@ -710,7 +775,7 @@ export function assertLifecycleIntent(
       throw new Error(`Lifecycle intent after bytes exceed the allowed supersede transform: ${target.path}`);
     }
     seenIds.add(target.id);
-    seenPaths.add(comparableTarget);
+    seenPaths.add(canonicalTarget);
   }
   if (seenIds.size !== expectedNodes.size) {
     throw new Error('Lifecycle intent targets do not exactly match oldId/newId');
@@ -723,37 +788,30 @@ function writeTarget(
   expectedHash: ContentHash,
   contentBase64: string | null,
 ): void {
-  const path = resolveLifecyclePath(projectRoot, target.path, 'write-target');
-  if (hashFile(projectRoot, path) !== expectedHash) {
-    throw new Error(`Concurrent modification detected: ${target.path}`);
-  }
   if (contentBase64 === null) {
-    removeLifecycleFile(projectRoot, path);
+    if (hashFile(projectRoot, target.path) !== expectedHash) {
+      throw new Error(`Concurrent modification detected: ${target.path}`);
+    }
+    removeLifecycleFile(projectRoot, target.path);
     return;
   }
-  const content = Buffer.from(contentBase64, 'base64').toString('utf8');
-  resolveLifecyclePath(projectRoot, path, 'write-target');
-  updateLifecycleFileAtomic(projectRoot, path, current => {
-    const currentHash = current === null ? null : sha256(Buffer.from(current, 'utf8'));
-    if (currentHash !== expectedHash) throw new Error(`Concurrent modification detected: ${target.path}`);
-    return content;
-  });
-  resolveLifecyclePath(projectRoot, path, 'existing-file');
+  writeLifecycleBytesExact(
+    projectRoot,
+    target.path,
+    Buffer.from(contentBase64, 'base64'),
+    expectedHash,
+  );
 }
 
 function recoverLifecycleUnlocked(projectRoot: string, options?: LifecycleFaultOptions): boolean {
-  const intentPath = resolveLifecyclePath(
-    projectRoot,
-    lifecycleIntentPath(projectRoot),
-    'delete-target',
-  );
-  if (!existsSync(intentPath)) return false;
-  const intent = readJson<LifecycleIntent>(projectRoot, intentPath);
+  const intentPath = lifecycleIntentPath(projectRoot);
+  const intentRead = readLifecycleBoundOptional(projectRoot, intentPath);
+  if (!intentRead) return false;
+  const intent = parseLifecycleJson<LifecycleIntent>(intentRead);
   assertLifecycleIntent(projectRoot, intent);
   let completed = 0;
   for (const target of [...intent.targets].sort((left, right) => left.id.localeCompare(right.id))) {
-    const path = resolveLifecyclePath(projectRoot, target.path, 'existing-file');
-    const currentHash = hashFile(projectRoot, path);
+    const currentHash = hashFile(projectRoot, target.path);
     if (currentHash === target.afterHash) {
       completed++;
       continue;
@@ -772,13 +830,8 @@ function recoverLifecycleUnlocked(projectRoot: string, options?: LifecycleFaultO
 }
 
 function assertHistoryRecoveryNotRequired(projectRoot: string): void {
-  const intentPath = resolveLifecyclePath(
-    projectRoot,
-    lifecycleIntentPath(projectRoot),
-    'delete-target',
-  );
-  if (existsSync(intentPath)) {
-    resolveLifecyclePath(projectRoot, intentPath, 'existing-file');
+  const intentPath = lifecycleIntentPath(projectRoot);
+  if (readLifecycleBoundOptional(projectRoot, intentPath)) {
     throw new Error(
       `KNOWHOW_LIFECYCLE_RECOVERY_REQUIRED: run "maestro knowhow recover" before reading history`,
     );
@@ -902,6 +955,15 @@ export function getKnowhowEvolutionChain(
   projectRoot: string,
   id: string,
 ): KnowhowEvolutionLink[] {
+  return withVerifiedLifecycleFsHelper(
+    () => getKnowhowEvolutionChainBound(projectRoot, id),
+  );
+}
+
+function getKnowhowEvolutionChainBound(
+  projectRoot: string,
+  id: string,
+): KnowhowEvolutionLink[] {
   assertHistoryRecoveryNotRequired(projectRoot);
   const nodes = scanKnowhow(projectRoot);
   assertHistoryRecoveryNotRequired(projectRoot);
@@ -968,18 +1030,15 @@ function resolveSnapshotTargetInput(projectRoot: string, path: string): string {
 }
 
 function captureSnapshotTarget(projectRoot: string, path: string): KnowhowSnapshotTarget {
-  const absolute = resolveLifecyclePath(projectRoot, path, 'delete-target');
-  const present = existsSync(absolute);
-  const content = present
-    ? readFileSync(resolveLifecyclePath(projectRoot, absolute, 'existing-file'))
-    : null;
-  if (present) resolveLifecyclePath(projectRoot, absolute, 'existing-file');
+  const relativeTarget = lifecycleRelativePath(projectRoot, path);
+  const bound = readLifecycleBoundOptional(projectRoot, relativeTarget);
+  const content = bound?.bytes ?? null;
   return {
-    path: relativePath(projectRoot, absolute),
+    path: relativeTarget,
     beforeHash: content ? sha256(content) : null,
     beforeBase64: content?.toString('base64') ?? null,
     afterHash: null,
-    expectedAbsent: !present,
+    expectedAbsent: bound === null,
   };
 }
 
@@ -1028,8 +1087,9 @@ export function createKnowhowLifecycleSnapshot(
     };
     const out = resolveSnapshotPath(projectRoot, options.out, 'write-target');
     ensureLifecycleDirectory(projectRoot, dirname(out));
-    resolveLifecyclePath(projectRoot, out, 'write-target');
-    if (existsSync(out)) throw new Error(`Snapshot already exists: ${relativePath(projectRoot, out)}`);
+    if (readLifecycleBoundOptional(projectRoot, out)) {
+      throw new Error(`Snapshot already exists: ${relativePath(projectRoot, out)}`);
+    }
     writeJsonAtomic(projectRoot, out, snapshot);
     return snapshot;
   });
@@ -1050,10 +1110,7 @@ export function sealKnowhowLifecycleSnapshot(
       sealedAt: new Date().toISOString(),
       targets: snapshot.targets.map(target => ({
         ...target,
-        afterHash: hashFile(
-          projectRoot,
-          resolveLifecyclePath(projectRoot, target.path, 'delete-target'),
-        ),
+        afterHash: hashFile(projectRoot, target.path),
       })),
     };
     writeJsonAtomic(projectRoot, path, sealed);
@@ -1086,56 +1143,444 @@ function restoreRequestPayload(intent: Pick<
   };
 }
 
-function restoreResultPayload(intent: KnowhowRestoreIntent): unknown {
+function restoreOutcomePayload(receipt: Pick<
+  KnowhowRestoreReceipt,
+  'status' | 'targets' | 'conflict'
+>): unknown {
   return {
-    status: intent.status,
-    targets: intent.targets.map(target => ({
+    status: receipt.status,
+    targets: receipt.targets.map(target => ({
       path: target.path,
       restoreHash: target.restoreHash,
       completed: target.completed,
     })),
-    conflict: intent.conflict,
+    conflict: receipt.conflict,
   };
 }
 
-function assertRestoreIntent(intent: KnowhowRestoreIntent): void {
-  if (intent.schema_version !== 'knowhow-restore-intent/1.0'
-    || intent.operation !== 'restore'
-    || !Array.isArray(intent.targets)
-    || sha256(stableJson(restoreRequestPayload(intent))) !== intent.requestHash) {
-    throw new Error('Invalid or unbound knowhow restore intent');
-  }
+function receiptRestoreTargets(
+  targets: RestoreTargetState[],
+): RestoreTargetState[] {
+  return targets.map(({ quarantine: _quarantine, ...target }) => ({ ...target }));
 }
 
 function createRestoreReceipt(intent: KnowhowRestoreIntent): KnowhowRestoreReceipt {
+  const outcome: Pick<
+    KnowhowRestoreReceipt,
+    'status' | 'targets' | 'conflict'
+  > = {
+    status: intent.status === 'conflict' ? 'conflict' : 'completed',
+    targets: receiptRestoreTargets(intent.targets),
+    ...(intent.conflict ? { conflict: { ...intent.conflict } } : {}),
+  };
   return {
     schema_version: 'knowhow-restore-receipt/1.0',
     requestId: intent.requestId,
     operation: intent.operation,
-    status: intent.status === 'conflict' ? 'conflict' : 'completed',
+    status: outcome.status,
     subject: intent.subject,
     claimedRun: intent.claimedRun,
     requestHash: intent.requestHash,
-    resultHash: sha256(stableJson(restoreResultPayload(intent))),
-    targets: intent.targets.map(target => ({ ...target })),
-    ...(intent.conflict ? { conflict: { ...intent.conflict } } : {}),
+    resultHash: sha256(stableJson(restoreOutcomePayload(outcome))),
+    targets: outcome.targets,
+    ...(outcome.conflict ? { conflict: outcome.conflict } : {}),
   };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hasExactKeys(value: Record<string, unknown>, expected: string[]): boolean {
+  return Object.keys(value).sort().join(',') === [...expected].sort().join(',');
+}
+
+function isContentHash(value: unknown): value is ContentHash {
+  return value === null
+    || (typeof value === 'string' && /^sha256:[a-f0-9]{64}$/.test(value));
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+function parseNormalizedRestorePath(value: unknown): string {
+  if (!isNonEmptyString(value)
+    || value.includes('\0')
+    || value.includes('\\')
+    || value.startsWith('/')
+    || /^[A-Za-z]:/.test(value)) {
+    throw new Error('Invalid or unbound knowhow restore intent');
+  }
+  const segments = value.split('/');
+  if (segments.some(segment => segment.length === 0 || segment === '.' || segment === '..')
+    || segments.join('/') !== value) {
+    throw new Error('Invalid or unbound knowhow restore intent');
+  }
+  return value;
+}
+
+function isPlatformIdentity(
+  value: unknown,
+  platform: 'windows' | 'posix',
+): boolean {
+  if (!isRecord(value)) return false;
+  if (platform === 'posix') {
+    return hasExactKeys(value, ['kind', 'dev', 'ino', 'mode'])
+      && value.kind === 'posix'
+      && isNonEmptyString(value.dev)
+      && isNonEmptyString(value.ino)
+      && Number.isSafeInteger(value.mode)
+      && (value.mode as number) >= 0;
+  }
+  return hasExactKeys(value, [
+    'kind',
+    'volumeSerial',
+    'fileId128',
+    'fileAttributes',
+    'reparseTag',
+  ])
+    && value.kind === 'windows'
+    && isNonEmptyString(value.volumeSerial)
+    && isNonEmptyString(value.fileId128)
+    && Number.isSafeInteger(value.fileAttributes)
+    && (value.fileAttributes as number) >= 0
+    && (value.reparseTag === null
+      || (Number.isSafeInteger(value.reparseTag) && (value.reparseTag as number) >= 0));
+}
+
+function isLifecycleGeneration(value: unknown): boolean {
+  if (!isRecord(value)
+    || !hasExactKeys(value, [
+      'schema_version',
+      'platform',
+      'root',
+      'parentChain',
+      'entry',
+      'sha256',
+      'ownerGeneration',
+    ])
+    || value.schema_version !== 'lifecycle-fs-generation/1.0'
+    || (value.platform !== 'windows' && value.platform !== 'posix')
+    || !Array.isArray(value.parentChain)
+    || !isContentHash(value.sha256)
+    || value.sha256 === null
+    || (value.ownerGeneration !== null && !isNonEmptyString(value.ownerGeneration))) {
+    return false;
+  }
+  const platform = value.platform as 'windows' | 'posix';
+  return isPlatformIdentity(value.root, platform)
+    && value.parentChain.every(identity => isPlatformIdentity(identity, platform))
+    && isPlatformIdentity(value.entry, platform);
+}
+
+function isBoundRestoreQuarantine(
+  value: unknown,
+  requestId: string,
+  target: RestoreTargetState,
+): value is BoundQuarantine {
+  if (!isRecord(value)
+    || !hasExactKeys(value, [
+      'originalRelativePath',
+      'quarantineRelativePath',
+      'requestId',
+      'ownerGeneration',
+      'expectedSha256',
+      'generation',
+    ])
+    || !isNonEmptyString(value.ownerGeneration)
+    || value.requestId !== requestId
+    || value.originalRelativePath !== target.path
+    || value.expectedSha256 !== target.afterHash
+    || target.afterHash === null
+    || !isLifecycleGeneration(value.generation)) {
+    return false;
+  }
+  try {
+    parseNormalizedRestorePath(value.originalRelativePath);
+    parseNormalizedRestorePath(value.quarantineRelativePath);
+  } catch {
+    return false;
+  }
+  const generation = value.generation as BoundQuarantine['generation'];
+  return generation.ownerGeneration === value.ownerGeneration
+    && generation.sha256 === value.expectedSha256;
+}
+
+export function parseRestoreIntent(
+  value: unknown,
+  snapshot: KnowhowLifecycleSnapshot,
+  expectedSubject: string,
+): KnowhowRestoreIntent {
+  if (!isRecord(value)
+    || !hasExactKeys(value, [
+      'schema_version',
+      'requestId',
+      'operation',
+      'status',
+      'subject',
+      'claimedRun',
+      'requestHash',
+      'targets',
+      ...(Object.hasOwn(value, 'conflict') ? ['conflict'] : []),
+    ])
+    || value.schema_version !== 'knowhow-restore-intent/1.0'
+    || value.operation !== 'restore'
+    || (value.status !== 'pending'
+      && value.status !== 'completed'
+      && value.status !== 'conflict')
+    || !isNonEmptyString(value.requestId)
+    || !isNonEmptyString(value.subject)
+    || !isNonEmptyString(value.claimedRun)
+    || !isContentHash(value.requestHash)
+    || value.requestHash === null
+    || !Array.isArray(value.targets)
+    || value.targets.length === 0
+    || !Array.isArray(snapshot.targets)) {
+    throw new Error('Invalid or unbound knowhow restore intent');
+  }
+
+  const subject = parseNormalizedRestorePath(value.subject);
+  if (subject !== parseNormalizedRestorePath(expectedSubject)) {
+    throw new Error('Restore intent subject does not match snapshot');
+  }
+
+  const snapshotByPath = new Map<string, KnowhowSnapshotTarget>();
+  for (const snapshotTarget of snapshot.targets) {
+    if (!isRecord(snapshotTarget)
+      || !isContentHash(snapshotTarget.beforeHash)
+      || !isContentHash(snapshotTarget.afterHash)) {
+      throw new Error('Restore intent targets do not match snapshot');
+    }
+    const path = parseNormalizedRestorePath(snapshotTarget.path);
+    if (snapshotByPath.has(path)) {
+      throw new Error('Restore intent targets do not match snapshot');
+    }
+    snapshotByPath.set(path, snapshotTarget as unknown as KnowhowSnapshotTarget);
+  }
+  if (snapshotByPath.size === 0 || value.targets.length !== snapshotByPath.size) {
+    throw new Error('Restore intent targets do not match snapshot');
+  }
+
+  const intent = value as unknown as KnowhowRestoreIntent;
+  const targetPaths = new Set<string>();
+  for (const targetInput of value.targets) {
+    if (!isRecord(targetInput)
+      || !hasExactKeys(targetInput, [
+        'path',
+        'beforeHash',
+        'afterHash',
+        'restoreHash',
+        'completed',
+        ...(Object.hasOwn(targetInput, 'quarantine') ? ['quarantine'] : []),
+      ])
+      || !isContentHash(targetInput.beforeHash)
+      || !isContentHash(targetInput.afterHash)
+      || !isContentHash(targetInput.restoreHash)
+      || typeof targetInput.completed !== 'boolean') {
+      throw new Error('Invalid or unbound knowhow restore intent');
+    }
+    const path = parseNormalizedRestorePath(targetInput.path);
+    if (targetPaths.has(path)) {
+      throw new Error('Invalid or unbound knowhow restore intent');
+    }
+    const snapshotTarget = snapshotByPath.get(path);
+    if (!snapshotTarget
+      || snapshotTarget.beforeHash !== targetInput.beforeHash
+      || snapshotTarget.afterHash !== targetInput.afterHash
+      || snapshotTarget.beforeHash !== targetInput.restoreHash) {
+      throw new Error('Restore intent targets do not match snapshot');
+    }
+    const target = targetInput as unknown as RestoreTargetState;
+    if (Object.hasOwn(targetInput, 'quarantine')
+      && !isBoundRestoreQuarantine(targetInput.quarantine, intent.requestId, target)) {
+      throw new Error(`Invalid or unbound restore quarantine: ${path}`);
+    }
+    if (target.completed && target.quarantine) {
+      throw new Error('Invalid or unbound knowhow restore intent');
+    }
+    targetPaths.add(path);
+  }
+
+  const orderedPaths = intent.targets.map(target => target.path);
+  if (stableJson(orderedPaths) !== stableJson([...targetPaths].sort())) {
+    throw new Error('Invalid or unbound knowhow restore intent');
+  }
+  const hasQuarantine = intent.targets.some(target => target.quarantine !== undefined);
+  if (intent.status === 'pending') {
+    if (intent.conflict !== undefined) {
+      throw new Error('Invalid or unbound knowhow restore intent');
+    }
+  } else if (intent.status === 'completed') {
+    if (intent.conflict !== undefined
+      || hasQuarantine
+      || intent.targets.some(target => !target.completed)) {
+      throw new Error('Invalid or unbound knowhow restore intent');
+    }
+  } else {
+    if (hasQuarantine
+      || !isRecord(intent.conflict)
+      || !hasExactKeys(intent.conflict, ['path', 'expectedHash', 'actualHash'])
+      || !isContentHash(intent.conflict.expectedHash)
+      || !isContentHash(intent.conflict.actualHash)) {
+      throw new Error('Invalid or unbound knowhow restore intent');
+    }
+    const conflictPath = parseNormalizedRestorePath(intent.conflict.path);
+    const conflictTarget = intent.targets.find(target => target.path === conflictPath);
+    const expectedHash = conflictTarget?.completed
+      ? conflictTarget.restoreHash
+      : conflictTarget?.afterHash;
+    if (!conflictTarget
+      || intent.conflict.expectedHash !== expectedHash
+      || intent.conflict.actualHash === expectedHash) {
+      throw new Error('Invalid or unbound knowhow restore intent');
+    }
+  }
+
+  if (sha256(stableJson(restoreRequestPayload(intent))) !== intent.requestHash) {
+    throw new Error('Invalid or unbound knowhow restore intent');
+  }
+  return intent;
+}
+
 function assertRestoreReceipt(
-  receipt: KnowhowRestoreReceipt,
+  receiptInput: unknown,
   intent: KnowhowRestoreIntent,
-): void {
+): asserts receiptInput is KnowhowRestoreReceipt {
+  if (!isRecord(receiptInput)
+    || !hasExactKeys(receiptInput, [
+      'schema_version',
+      'requestId',
+      'operation',
+      'status',
+      'subject',
+      'claimedRun',
+      'requestHash',
+      'resultHash',
+      'targets',
+      ...(Object.hasOwn(receiptInput, 'conflict') ? ['conflict'] : []),
+    ])) {
+    throw new Error('Invalid or unbound knowhow restore receipt');
+  }
+  const receipt = receiptInput as unknown as KnowhowRestoreReceipt;
+  const stringFields = [
+    receipt.requestId,
+    receipt.subject,
+    receipt.claimedRun,
+  ];
   if (receipt.schema_version !== 'knowhow-restore-receipt/1.0'
+    || receipt.operation !== 'restore'
+    || (receipt.status !== 'completed' && receipt.status !== 'conflict')
+    || stringFields.some(value => typeof value !== 'string' || value.length === 0)
+    || !isContentHash(receipt.requestHash)
+    || receipt.requestHash === null
+    || !isContentHash(receipt.resultHash)
+    || receipt.resultHash === null
+    || !Array.isArray(receipt.targets)
+    || receipt.targets.length === 0) {
+    throw new Error('Invalid or unbound knowhow restore receipt');
+  }
+
+  const targetPaths = new Set<string>();
+  for (const target of receipt.targets) {
+    if (!isRecord(target)
+      || !hasExactKeys(target, [
+        'path',
+        'beforeHash',
+        'afterHash',
+        'restoreHash',
+        'completed',
+      ])
+      || typeof target.path !== 'string'
+      || target.path.length === 0
+      || targetPaths.has(target.path)
+      || !isContentHash(target.beforeHash)
+      || !isContentHash(target.afterHash)
+      || !isContentHash(target.restoreHash)
+      || typeof target.completed !== 'boolean') {
+      throw new Error('Invalid or unbound knowhow restore receipt');
+    }
+    targetPaths.add(target.path);
+  }
+
+  if (receipt.status === 'completed') {
+    if (receipt.conflict !== undefined
+      || receipt.targets.some(target => !target.completed)) {
+      throw new Error('Invalid or unbound knowhow restore receipt');
+    }
+  } else {
+    if (!isRecord(receipt.conflict)
+      || !hasExactKeys(receipt.conflict, ['path', 'expectedHash', 'actualHash'])
+      || typeof receipt.conflict.path !== 'string'
+      || receipt.conflict.path.length === 0
+      || !isContentHash(receipt.conflict.expectedHash)
+      || !isContentHash(receipt.conflict.actualHash)) {
+      throw new Error('Invalid or unbound knowhow restore receipt');
+    }
+    const conflictTarget = receipt.targets.find(
+      target => target.path === receipt.conflict!.path,
+    );
+    const expectedHash = conflictTarget?.completed
+      ? conflictTarget.restoreHash
+      : conflictTarget?.afterHash;
+    if (!conflictTarget
+      || receipt.conflict.expectedHash !== expectedHash
+      || receipt.conflict.actualHash === expectedHash) {
+      throw new Error('Invalid or unbound knowhow restore receipt');
+    }
+  }
+
+  if (receipt.resultHash !== sha256(stableJson(restoreOutcomePayload(receipt)))
     || receipt.requestId !== intent.requestId
     || receipt.operation !== intent.operation
     || receipt.status !== intent.status
     || receipt.subject !== intent.subject
     || receipt.claimedRun !== intent.claimedRun
     || receipt.requestHash !== intent.requestHash
-    || stableJson(receipt.targets) !== stableJson(intent.targets)
-    || receipt.resultHash !== sha256(stableJson(restoreResultPayload(intent)))) {
+    || stableJson(receipt.targets) !== stableJson(receiptRestoreTargets(intent.targets))
+    || stableJson(receipt.conflict) !== stableJson(intent.conflict)) {
     throw new Error('Invalid or unbound knowhow restore receipt');
+  }
+}
+
+function readOrPersistRestoreReceipt(
+  projectRoot: string,
+  receiptPath: string,
+  intent: KnowhowRestoreIntent,
+): KnowhowRestoreReceipt {
+  let persisted = readLifecycleBoundOptional(projectRoot, receiptPath);
+  if (!persisted) {
+    writeJsonAtomic(projectRoot, receiptPath, createRestoreReceipt(intent));
+    persisted = readLifecycleBoundOptional(projectRoot, receiptPath);
+    if (!persisted) {
+      throw new Error('Knowhow restore receipt was not durably persisted');
+    }
+  }
+  const receiptInput = parseLifecycleJson<unknown>(persisted);
+  assertRestoreReceipt(receiptInput, intent);
+  return receiptInput;
+}
+
+function assertTerminalRestoreTargets(
+  projectRoot: string,
+  intent: KnowhowRestoreIntent,
+): void {
+  if (intent.status === 'pending') {
+    throw new Error('Pending restore intent is not terminal');
+  }
+  for (const target of intent.targets) {
+    const expectedHash = intent.status === 'conflict'
+      && intent.conflict?.path === target.path
+      ? intent.conflict.actualHash
+      : target.completed
+        ? target.restoreHash
+        : target.afterHash;
+    const actualHash = hashFile(projectRoot, target.path);
+    if (actualHash !== expectedHash) {
+      throw new Error(
+        `Restore terminal replay drift at ${target.path}: expected ${expectedHash}, got ${actualHash}`,
+      );
+    }
   }
 }
 
@@ -1151,8 +1596,8 @@ function markRestoreConflict(
   intent.status = 'conflict';
   intent.conflict = { path: target.path, expectedHash, actualHash };
   writeJsonAtomic(projectRoot, intentPath, intent);
-  const receipt = createRestoreReceipt(intent);
-  writeJsonAtomic(projectRoot, receiptPath, receipt);
+  const receipt = readOrPersistRestoreReceipt(projectRoot, receiptPath, intent);
+  assertTerminalRestoreTargets(projectRoot, intent);
   return {
     success: false,
     replayed: false,
@@ -1167,29 +1612,68 @@ function restoreTarget(
   projectRoot: string,
   snapshotTarget: KnowhowSnapshotTarget,
   target: RestoreTargetState,
+  intent: KnowhowRestoreIntent,
+  intentPath: string,
+  options?: RestoreKnowhowOptions,
 ): void {
-  const path = resolveLifecyclePath(projectRoot, target.path, 'delete-target');
-  const currentHash = hashFile(projectRoot, path);
-  if (currentHash !== target.afterHash) {
-    throw new Error(`Restore fence changed before write: ${target.path}`);
-  }
-  if (snapshotTarget.beforeBase64 === null) {
-    removeLifecycleFile(projectRoot, path);
-  } else {
-    const content = Buffer.from(snapshotTarget.beforeBase64, 'base64').toString('utf8');
-    resolveLifecyclePath(projectRoot, path, 'write-target');
-    updateLifecycleFileAtomic(projectRoot, path, current => {
-      const currentHashInside = current === null ? null : sha256(Buffer.from(current, 'utf8'));
-      if (currentHashInside !== target.afterHash) {
+  const relativeTarget = lifecycleRelativePath(projectRoot, target.path);
+  withTargetWriterLock(projectRoot, relativeTarget, writerLock => {
+    if (target.quarantine) {
+      const recovery = recoverLifecycleQuarantineBound(
+        projectRoot,
+        target.quarantine,
+        'commit',
+      );
+      if (recovery === 'replaced' && readLifecycleBoundOptional(projectRoot, relativeTarget)) {
+        throw new Error(`Restore quarantine generation was replaced: ${target.path}`);
+      }
+      target.quarantine = undefined;
+      writeJsonAtomic(projectRoot, intentPath, intent);
+    } else {
+      const current = readLifecycleBoundOptional(projectRoot, relativeTarget);
+      const currentHash = current ? sha256(current.bytes) : null;
+      if (currentHash !== target.afterHash) {
         throw new Error(`Restore fence changed before write: ${target.path}`);
       }
-      return content;
-    });
-    resolveLifecyclePath(projectRoot, path, 'existing-file');
-  }
-  if (hashFile(projectRoot, path) !== target.restoreHash) {
-    throw new Error(`Restore output hash mismatch: ${target.path}`);
-  }
+      if (snapshotTarget.beforeBase64 === null) {
+        if (!current || target.afterHash === null) {
+          throw new Error(`Restore delete target is unexpectedly absent: ${target.path}`);
+        }
+        const quarantine = quarantineLifecycleFileBound(
+          projectRoot,
+          relativeTarget,
+          current.generation.sha256,
+          intent.requestId,
+          writerLock.ownerGeneration,
+        );
+        target.quarantine = quarantine;
+        writeJsonAtomic(projectRoot, intentPath, intent);
+        options?.afterTargetQuarantine?.(target.path, quarantine);
+        const recovery = recoverLifecycleQuarantineBound(
+          projectRoot,
+          quarantine,
+          'commit',
+        );
+        if (recovery !== 'committed') {
+          throw new Error(`Restore delete lost exact quarantine: ${target.path}`);
+        }
+        target.quarantine = undefined;
+        writeJsonAtomic(projectRoot, intentPath, intent);
+      } else {
+        const content = Buffer.from(snapshotTarget.beforeBase64, 'base64');
+        replaceLifecycleFileBound(
+          projectRoot,
+          relativeTarget,
+          content,
+          current?.generation ?? null,
+          writerLock.ownerGeneration,
+        );
+      }
+    }
+    if (hashFile(projectRoot, relativeTarget) !== target.restoreHash) {
+      throw new Error(`Restore output hash mismatch: ${target.path}`);
+    }
+  });
 }
 
 export function restoreKnowhowLifecycleSnapshot(
@@ -1205,28 +1689,24 @@ export function restoreKnowhowLifecycleSnapshot(
       assertSnapshot(snapshot);
       if (!snapshot.sealedAt) throw new Error('Knowhow lifecycle snapshot must be sealed before restore');
       for (const target of snapshot.targets) {
-        resolveLifecyclePath(projectRoot, target.path, 'delete-target');
+        lifecycleRelativePath(projectRoot, target.path);
       }
 
       const rawRestorePaths = restorePaths(snapshotPath);
-      const intentPath = resolveLifecyclePath(
-        projectRoot,
-        rawRestorePaths.intentPath,
-        'write-target',
-      );
-      const receiptPath = resolveLifecyclePath(
-        projectRoot,
-        rawRestorePaths.receiptPath,
-        'write-target',
-      );
+      const intentPath = rawRestorePaths.intentPath;
+      const receiptPath = rawRestorePaths.receiptPath;
+      const subject = relativePath(projectRoot, snapshotPath);
       let intent: KnowhowRestoreIntent;
       let replayed = false;
-      if (existsSync(intentPath)) {
-        intent = readJson<KnowhowRestoreIntent>(projectRoot, intentPath);
-        assertRestoreIntent(intent);
+      const existingIntent = readLifecycleBoundOptional(projectRoot, intentPath);
+      if (existingIntent) {
+        intent = parseRestoreIntent(
+          parseLifecycleJson<unknown>(existingIntent),
+          snapshot,
+          subject,
+        );
         replayed = true;
       } else {
-        const subject = relativePath(projectRoot, snapshotPath);
         const claimedRun = options?.claimedRun
           ?? process.env.MAESTRO_RUN_ID
           ?? 'standalone';
@@ -1252,30 +1732,15 @@ export function restoreKnowhowLifecycleSnapshot(
           status: 'pending',
           requestHash: sha256(stableJson(restoreRequestPayload(base))),
         };
+        intent = parseRestoreIntent(intent, snapshot, subject);
         writeJsonAtomic(projectRoot, intentPath, intent);
       }
 
-      if (intent.subject !== relativePath(projectRoot, snapshotPath)) {
-        throw new Error('Restore intent subject does not match snapshot');
-      }
       const snapshotByPath = new Map(snapshot.targets.map(target => [target.path, target]));
-      if (intent.targets.length !== snapshot.targets.length
-        || intent.targets.some(target => {
-          const source = snapshotByPath.get(target.path);
-          resolveLifecyclePath(projectRoot, target.path, 'delete-target');
-          return !source
-            || source.beforeHash !== target.beforeHash
-            || source.afterHash !== target.afterHash
-            || source.beforeHash !== target.restoreHash;
-        })) {
-        throw new Error('Restore intent targets do not match snapshot');
-      }
 
       if (intent.status === 'conflict') {
-        const receipt = existsSync(receiptPath)
-          ? readJson<KnowhowRestoreReceipt>(projectRoot, receiptPath)
-          : createRestoreReceipt(intent);
-        assertRestoreReceipt(receipt, intent);
+        const receipt = readOrPersistRestoreReceipt(projectRoot, receiptPath, intent);
+        assertTerminalRestoreTargets(projectRoot, intent);
         return {
           success: false,
           replayed: true,
@@ -1286,39 +1751,60 @@ export function restoreKnowhowLifecycleSnapshot(
         };
       }
 
+      let completedCount = intent.targets.filter(target => target.completed).length;
       for (const target of intent.targets) {
-        const actualHash = hashFile(
-          projectRoot,
-          resolveLifecyclePath(projectRoot, target.path, 'delete-target'),
-        );
-        const expectedHash = target.completed ? target.restoreHash : target.afterHash;
-        if (actualHash !== expectedHash) {
+        if (target.quarantine) continue;
+        const actualHash = hashFile(projectRoot, target.path);
+        if (target.completed) {
+          if (actualHash === target.restoreHash) continue;
           return markRestoreConflict(
             projectRoot,
             intentPath,
             receiptPath,
             intent,
             target,
-            expectedHash,
+            target.restoreHash,
+            actualHash,
+          );
+        }
+        if (actualHash === target.restoreHash) {
+          target.completed = true;
+          completedCount++;
+          writeJsonAtomic(projectRoot, intentPath, intent);
+          options?.afterTarget?.(target.path, completedCount);
+          continue;
+        }
+        if (actualHash !== target.afterHash) {
+          return markRestoreConflict(
+            projectRoot,
+            intentPath,
+            receiptPath,
+            intent,
+            target,
+            target.afterHash,
             actualHash,
           );
         }
       }
 
       if (intent.status === 'completed') {
-        if (!existsSync(receiptPath)) {
-          writeJsonAtomic(projectRoot, receiptPath, createRestoreReceipt(intent));
-        }
-        const receipt = readJson<KnowhowRestoreReceipt>(projectRoot, receiptPath);
-        assertRestoreReceipt(receipt, intent);
+        const receipt = readOrPersistRestoreReceipt(projectRoot, receiptPath, intent);
+        assertTerminalRestoreTargets(projectRoot, intent);
         return { success: true, replayed: true, intent, receipt };
       }
 
-      let completedCount = intent.targets.filter(target => target.completed).length;
       for (const target of intent.targets) {
         if (target.completed) continue;
         const snapshotTarget = snapshotByPath.get(target.path)!;
-        restoreTarget(projectRoot, snapshotTarget, target);
+        restoreTarget(
+          projectRoot,
+          snapshotTarget,
+          target,
+          intent,
+          intentPath,
+          options,
+        );
+        options?.beforeTargetCheckpoint?.(target.path, completedCount + 1);
         target.completed = true;
         completedCount++;
         writeJsonAtomic(projectRoot, intentPath, intent);
@@ -1327,9 +1813,8 @@ export function restoreKnowhowLifecycleSnapshot(
 
       intent.status = 'completed';
       writeJsonAtomic(projectRoot, intentPath, intent);
-      const receipt = createRestoreReceipt(intent);
-      writeJsonAtomic(projectRoot, receiptPath, receipt);
-      assertRestoreReceipt(receipt, intent);
+      const receipt = readOrPersistRestoreReceipt(projectRoot, receiptPath, intent);
+      assertTerminalRestoreTargets(projectRoot, intent);
       return { success: true, replayed, intent, receipt };
     }, options);
   } catch (error) {
@@ -1337,13 +1822,10 @@ export function restoreKnowhowLifecycleSnapshot(
     let persistedIntent: KnowhowRestoreIntent | null = null;
     try {
       safeSnapshotPath = resolveSnapshotPath(projectRoot, snapshotPathInput, 'delete-target');
-      const candidateIntentPath = resolveLifecyclePath(
-        projectRoot,
-        restorePaths(safeSnapshotPath).intentPath,
-        'delete-target',
-      );
-      if (existsSync(candidateIntentPath)) {
-        persistedIntent = readJson<KnowhowRestoreIntent>(projectRoot, candidateIntentPath);
+      const candidateIntentPath = restorePaths(safeSnapshotPath).intentPath;
+      const persistedRead = readLifecycleBoundOptional(projectRoot, candidateIntentPath);
+      if (persistedRead) {
+        persistedIntent = parseLifecycleJson<KnowhowRestoreIntent>(persistedRead);
       }
     } catch {
       safeSnapshotPath = null;

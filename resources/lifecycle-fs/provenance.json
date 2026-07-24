@@ -1,0 +1,49 @@
+{
+  "schema_version": "lifecycle-fs-native-provenance/1.0",
+  "repo": "catlog22/maestro-flow",
+  "workflow_id": 247776234,
+  "workflow_path": ".github/workflows/deploy-docs.yml",
+  "run_name": "native-lifecycle-171275976d5b8e519bffc20eb10610907d3888eb-native-ce5291f4a27b4211bee3d0c9a43a3f3e",
+  "database_id": 30067863404,
+  "run_attempt": 1,
+  "ref": "refs/heads/maestro/native-lifecycle-20260724-010-plan-785ca0e4e526",
+  "source_sha": "171275976d5b8e519bffc20eb10610907d3888eb",
+  "dispatch_nonce": "native-ce5291f4a27b4211bee3d0c9a43a3f3e",
+  "workflow_tuple_sha256": "ce5291f4a27b4211bee3d0c9a43a3f3ec690651b9a8dc6e0746b75c57e0c1c39",
+  "dispatch_receipt_path": ".workflow/tmp/lifecycle-native/20260724-010-plan/dispatch-transactions/ce5291f4a27b4211bee3d0c9a43a3f3ec690651b9a8dc6e0746b75c57e0c1c39/dispatch-receipt.json",
+  "dispatch_receipt_self_sha256": "08ef9f1d168b7f3a7deb756a4d09ce24b8606f36beef2e0afeae44e7fb8183fd",
+  "dispatch_receipt_file_sha256": "e0ede4403fbf50ab5ad55554a1b331af6351cc9d60b30138d3f0af29d51e24dc",
+  "aggregate_provenance_path": ".workflow/tmp/lifecycle-native/20260724-010-plan/dispatch-transactions/ce5291f4a27b4211bee3d0c9a43a3f3ec690651b9a8dc6e0746b75c57e0c1c39/download/aggregate-provenance.json",
+  "aggregate_provenance_sha256": "0957ffb363826f4ab382de215c56093e12499fe743a1bbbd622dc2d0145c17c8",
+  "default_ref": "refs/heads/master",
+  "default_blob_pre_sha": "d070327596e52788a309d4aeea84d54339b545b6",
+  "default_blob_post_sha": "d070327596e52788a309d4aeea84d54339b545b6",
+  "cleanup_receipt_path": ".workflow/tmp/lifecycle-native/20260724-010-plan/171275976d5b8e519bffc20eb10610907d3888eb/native-ce5291f4a27b4211bee3d0c9a43a3f3e/cleanup-complete.json",
+  "artifacts": [
+    {
+      "target": "x86_64-pc-windows-msvc",
+      "job_receipt_sha256": "caeb3a92de3a82fc980e7f9ab1314d3e4b5d12f0eec3d1f9dc7e4c71d3460e20",
+      "binary_sha256": "2b8f297f69600bc62e64b95a6e9081887fabe60011faae1ac18555fbd19ee6b3"
+    },
+    {
+      "target": "x86_64-unknown-linux-gnu",
+      "job_receipt_sha256": "7c5be5c55a480e0d3553b95338468d33be949bf73561b026127c4d9bcdc21335",
+      "binary_sha256": "a8bd93de9f84ec27f3cc46a85a0bb3baeb84c764cbdfbc738c8f1fd5382e27d5"
+    },
+    {
+      "target": "aarch64-unknown-linux-gnu",
+      "job_receipt_sha256": "33e2847be40af174f2ad0f1d7bfbeec4d2ba2e0d80ef1c5954cf5b1dfba5e7ba",
+      "binary_sha256": "5970f1b218a1f34b376331311b3b3461d0d015f7671648d78115870a3785044a"
+    },
+    {
+      "target": "x86_64-apple-darwin",
+      "job_receipt_sha256": "e2f29ba94edbe530e34f1d0a73897f44dcc79a7348e1085a471687213aedfc2b",
+      "binary_sha256": "696e8eb76a9d59b8ee9fb849725278f20ad121ed37b2711a964045ce3dcd65b5"
+    },
+    {
+      "target": "aarch64-apple-darwin",
+      "job_receipt_sha256": "3f609c96f7bc92708b3874fd366a28e6cbb7cd137df11d5b61884fbed99e29d1",
+      "binary_sha256": "4d6aae57d131dbaba20961c8be30b959cfc8b471b15e328ae5761184af43d94c"
+    }
+  ]
+}

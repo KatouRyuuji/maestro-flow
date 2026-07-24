@@ -20,7 +20,7 @@ allowed-tools:
   - spawn_agent
   - update_plan
 session-mode: run
-version: 0.5.55
+version: 0.5.56
 contract:
   discovery: self-described
   consumes: []
@@ -176,7 +176,7 @@ Phase 5: Quality Validation
 
 Run Closure (see run-mode.md):
    └─ maestro run check {run_id} → repair any reported gate → maestro session done {run_id}
-      (Report success only after run complete.)
+      (Report success only after session done.)
 
 Return:
    └─ Summary with recommended next steps

@@ -186,7 +186,7 @@ Mode-specific phase gates (Discovery, Audit, FIX, VERIFY/CONFIRM) are defined in
 - [ ] Fix + verify/confirm (unless --skip-fix); zero-residual for improve/review/ui; all criteria pass for planex
 - [ ] Read-only invariant maintained for security mode — zero source modifications
 - [ ] Multi-layer generalization + discovery triage (unless --skip-generalize); every unfixed finding individually justified
-- [ ] phase_goals derived, tracked, and hardened-audited; Goal Prompt once; `-y` no blocking prompts
+- [ ] phase_goals derived, tracked, and hardened-audited; goal_mode injected via prepare goal:true; `-y` no blocking prompts
 - [ ] Session resumable via -c; mode-specific completion summary emitted
 </success_criteria>
 
