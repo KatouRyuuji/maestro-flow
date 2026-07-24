@@ -72,6 +72,16 @@ S_LOOP:
 S_EVALUATE:
   → S_LOOP      WHEN: proceed or accepted fix proposal
   → S_RECOVER   WHEN: escalate pauses Session
+  → S_LOOP      WHEN: post-goal-audit + has_unmet → fix loop（按 target_stage 插入修复 step）
+  → S_DONE      WHEN: post-goal-audit + all_met + INTENT_ALIGNED=true
+  → END         WHEN: post-goal-audit + all_met + INTENT_ALIGNED=false → REGROUND_HALT
+  → S_LOOP      WHEN: post-analyze-scope → 应用 scope_verdict 调整链路径
+  → S_DONE      WHEN: post-session + preflight passed → decide 然后 seal
+  → S_LOOP      WHEN: post-session + preflight failed → fix loop
+  → END         WHEN: post-debug-escalate → 始终暂停
+  → END         WHEN: post-reground + drifted + confidence ≥ 60 → REGROUND_HALT（-y 不跳过）
+  → S_LOOP      WHEN: post-reground + aligned → proceed
+  → S_LOOP      WHEN: post-reground + drifted + confidence < 60 → proceed（标记 LOW CONFIDENCE）
 
 S_FAIL:
   → S_LOOP      WHEN: retry budget remains

@@ -38,6 +38,7 @@ Ralph 是闭环编排策略层。本文件定义 **命令选择**（Stage Mappin
 | frontend-verify | `test --session {session} --frontend-verify` | `post-frontend-verify` | all（仅当交付 UI 时插入） |
 | goal-audit | *(decision-only)* | `post-goal-audit` | all（仅当有 decomposition 时） |
 | session-seal | *(decision-only)* | `post-session` | all |
+| debug-escalate | *(decision-only)* | `post-debug-escalate` | all（仅当 debug step 升级时插入） |
 
 ## Build Rules（按顺序应用）
 
@@ -65,6 +66,70 @@ Ralph 是闭环编排策略层。本文件定义 **命令选择**（Stage Mappin
     - `blueprint_id` + plan → `--from blueprint:{id}`（优先级低于 `--session`）
     - Session 内来源由 Run upstream 审计，不复制到 args
 13. **动态插入步骤**同样应用规则 7-12。
+
+## Decision Gate 分类与评估
+
+每个 decision step 按 `decision_ref` 分为 5 类，各类由不同的评估方法处理：
+
+| 类型 | decision_ref | 评估方法 | 读取文件 |
+|------|-------------|---------|----------|
+| quality-gate | post-execute | A_AGENT_EVALUATE | verification.json |
+| quality-gate | post-business-test | A_AGENT_EVALUATE | .tests/auto-test/report.json |
+| quality-gate | post-review | A_AGENT_EVALUATE | review.json |
+| quality-gate | post-test | A_AGENT_EVALUATE | uat.md, .tests/test-results.json |
+| quality-gate | post-frontend-verify | A_AGENT_EVALUATE | e2e-results.json |
+| goal-gate | post-goal-audit | A_AGENT_GOAL_AUDIT | session.json goals + evidence |
+| scope-gate | post-analyze-scope | A_SCOPE_EVALUATE | analyze conclusions.scope_verdict |
+| reground-gate | post-reground | A_AGENT_REGROUND | intent + handoffs + goals |
+| structural | post-session | A_STRUCTURAL_EVALUATE | 全量核验（runs sealed + gates clean） |
+| structural | post-debug-escalate | A_PAUSE_ESCALATE | —（始终暂停） |
+
+### Evaluator 输出格式（quality-gate / goal-gate / reground）
+
+```text
+---VERDICT---
+STATUS: proceed|fix|escalate|PASS|FAIL|PARTIAL|BLOCKED|aligned|drifted|all_met|has_unmet
+REASON: <一句话原因>
+CONFIDENCE: high|medium|low
+CONFIDENCE_SCORE: 0-100
+---END---
+```
+
+解析失败 → `fix`, confidence=low, `parse_failed=true`。
+
+### Goal Audit 详细流程（post-goal-audit）
+
+1. 读取 `orchestration.decomposition.goals` 中 status≠done 的子目标
+2. 打开 evidence 产物，对照 `done_when` 严格判定 met/unmet
+3. 对照 intent + definition_of_done 判定意图保真
+4. 结果路由：
+   - `has_unmet` → **fix loop**：按 `target_stage` 插入修复 step（由 Skill proposal 产生）
+   - `all_met` + `INTENT_ALIGNED=true` → proceed → seal
+   - `all_met` + `INTENT_ALIGNED=false` → **REGROUND_HALT**（即使 -y）
+
+### Reground 详细流程（post-reground）
+
+1. 读取 intent + boundary_contract + 已完成 steps 的 handoff + 已 done goals
+2. 判定累积产出是否仍服务 intent
+3. 结果路由：
+   - `aligned` → proceed
+   - `drifted` + confidence ≥ 60 → **REGROUND_HALT**（-y 不跳过）
+   - `drifted` + confidence < 60 → proceed（标记 LOW CONFIDENCE）
+
+### Scope Verdict 应用（post-analyze-scope）
+
+1. 读取 macro analyze 的 `conclusions.scope_verdict`（large/medium/small/unknown）
+2. 写入 session.scope_verdict + analyze_macro_id
+3. 路由：
+   - `large` + wants_roadmap → 保留 roadmap + analyze；plan 用 `--session`
+   - 其余 → 跳过 roadmap + analyze；plan 用 `--from analyze:{id}`
+   - `unknown` → 默认 standalone，询问用户（-y 不猜测）
+
+### Post-Session Preflight（post-session）
+
+1. 只读核验：所有 execution Run 已 sealed、无 claimed request、session gates clean、goal audit 已通过
+2. preflight clean → verdict=proceed → `session decide` 然后 `session seal`
+3. preflight blocking → verdict=fix + 精确 blocker；Session 保持 running
 
 ## Chain Definition 格式
 
