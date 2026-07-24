@@ -1,0 +1,107 @@
+{
+  "schema_version": "native-lifecycle-dispatch-receipt/1",
+  "transaction_state": "receipted",
+  "cleanup": {
+    "state": "pending",
+    "required": true
+  },
+  "cleanup_required": true,
+  "tuple": {
+    "repo": "catlog22/maestro-flow",
+    "workflow_id": 247776234,
+    "ref": "refs/heads/maestro/native-lifecycle-20260724-010-plan-0123456789ab",
+    "head_sha": "0123456789abcdef0123456789abcdef01234567",
+    "inputs_hash": "472520e73bc07fdccebf9c3e8c05f5f98efd41a8f1010c7fe4fd555f5e9831bf"
+  },
+  "tuple_hash": "76be39107457e5a0b49126666376d05c1bed9395572df2f1233748acdbe3b411",
+  "canonical_inputs": {
+    "source_sha": "0123456789abcdef0123456789abcdef01234567"
+  },
+  "dispatch_nonce": "native-76be39107457e5a0b49126666376d05c",
+  "branch": "maestro/native-lifecycle-20260724-010-plan-0123456789ab",
+  "ref": "refs/heads/maestro/native-lifecycle-20260724-010-plan-0123456789ab",
+  "default_ref": "refs/heads/master",
+  "default_blob_sha": "d070327596e52788a309d4aeea84d54339b545b6",
+  "overlay_commit_sha": "0123456789abcdef0123456789abcdef01234567",
+  "workflow_run": {
+    "id": 101,
+    "attempt": 1,
+    "workflow_id": 247776234,
+    "event": "workflow_dispatch",
+    "head_sha": "0123456789abcdef0123456789abcdef01234567",
+    "head_branch": "maestro/native-lifecycle-20260724-010-plan-0123456789ab",
+    "head_ref": "refs/heads/maestro/native-lifecycle-20260724-010-plan-0123456789ab",
+    "display_title": "native-lifecycle-0123456789abcdef0123456789abcdef01234567-native-76be39107457e5a0b49126666376d05c"
+  },
+  "artifacts": [
+    {
+      "target": "x86_64-pc-windows-msvc",
+      "runner_label": "windows-2025",
+      "artifact_name": "lifecycle-fs-win32-x64-0123456789abcdef0123456789abcdef01234567",
+      "download_path": ".workflow/tmp/lifecycle-native/20260724-010-plan/dispatch-transactions/76be39107457e5a0b49126666376d05c1bed9395572df2f1233748acdbe3b411/download/lifecycle-fs-win32-x64-0123456789abcdef0123456789abcdef01234567",
+      "binary_path": ".workflow/tmp/lifecycle-native/20260724-010-plan/dispatch-transactions/76be39107457e5a0b49126666376d05c1bed9395572df2f1233748acdbe3b411/download/lifecycle-fs-win32-x64-0123456789abcdef0123456789abcdef01234567/resources/lifecycle-fs/win32-x64/maestro-lifecycle-fs.exe",
+      "binary_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "protocol_version": "lifecycle-fs-helper/1.0",
+      "job_receipt_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+      "provenance_path": ".workflow/tmp/lifecycle-native/20260724-010-plan/dispatch-transactions/76be39107457e5a0b49126666376d05c1bed9395572df2f1233748acdbe3b411/download/lifecycle-fs-win32-x64-0123456789abcdef0123456789abcdef01234567/receipt.json",
+      "provenance_sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+    },
+    {
+      "target": "x86_64-unknown-linux-gnu",
+      "runner_label": "ubuntu-24.04",
+      "artifact_name": "lifecycle-fs-linux-x64-0123456789abcdef0123456789abcdef01234567",
+      "download_path": ".workflow/tmp/lifecycle-native/20260724-010-plan/dispatch-transactions/76be39107457e5a0b49126666376d05c1bed9395572df2f1233748acdbe3b411/download/lifecycle-fs-linux-x64-0123456789abcdef0123456789abcdef01234567",
+      "binary_path": ".workflow/tmp/lifecycle-native/20260724-010-plan/dispatch-transactions/76be39107457e5a0b49126666376d05c1bed9395572df2f1233748acdbe3b411/download/lifecycle-fs-linux-x64-0123456789abcdef0123456789abcdef01234567/resources/lifecycle-fs/linux-x64/maestro-lifecycle-fs",
+      "binary_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "protocol_version": "lifecycle-fs-helper/1.0",
+      "job_receipt_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+      "provenance_path": ".workflow/tmp/lifecycle-native/20260724-010-plan/dispatch-transactions/76be39107457e5a0b49126666376d05c1bed9395572df2f1233748acdbe3b411/download/lifecycle-fs-linux-x64-0123456789abcdef0123456789abcdef01234567/receipt.json",
+      "provenance_sha256": "7777777777777777777777777777777777777777777777777777777777777777"
+    },
+    {
+      "target": "aarch64-unknown-linux-gnu",
+      "runner_label": "ubuntu-24.04-arm",
+      "artifact_name": "lifecycle-fs-linux-arm64-0123456789abcdef0123456789abcdef01234567",
+      "download_path": ".workflow/tmp/lifecycle-native/20260724-010-plan/dispatch-transactions/76be39107457e5a0b49126666376d05c1bed9395572df2f1233748acdbe3b411/download/lifecycle-fs-linux-arm64-0123456789abcdef0123456789abcdef01234567",
+      "binary_path": ".workflow/tmp/lifecycle-native/20260724-010-plan/dispatch-transactions/76be39107457e5a0b49126666376d05c1bed9395572df2f1233748acdbe3b411/download/lifecycle-fs-linux-arm64-0123456789abcdef0123456789abcdef01234567/resources/lifecycle-fs/linux-arm64/maestro-lifecycle-fs",
+      "binary_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "protocol_version": "lifecycle-fs-helper/1.0",
+      "job_receipt_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+      "provenance_path": ".workflow/tmp/lifecycle-native/20260724-010-plan/dispatch-transactions/76be39107457e5a0b49126666376d05c1bed9395572df2f1233748acdbe3b411/download/lifecycle-fs-linux-arm64-0123456789abcdef0123456789abcdef01234567/receipt.json",
+      "provenance_sha256": "8888888888888888888888888888888888888888888888888888888888888888"
+    },
+    {
+      "target": "x86_64-apple-darwin",
+      "runner_label": "macos-15-intel",
+      "artifact_name": "lifecycle-fs-darwin-x64-0123456789abcdef0123456789abcdef01234567",
+      "download_path": ".workflow/tmp/lifecycle-native/20260724-010-plan/dispatch-transactions/76be39107457e5a0b49126666376d05c1bed9395572df2f1233748acdbe3b411/download/lifecycle-fs-darwin-x64-0123456789abcdef0123456789abcdef01234567",
+      "binary_path": ".workflow/tmp/lifecycle-native/20260724-010-plan/dispatch-transactions/76be39107457e5a0b49126666376d05c1bed9395572df2f1233748acdbe3b411/download/lifecycle-fs-darwin-x64-0123456789abcdef0123456789abcdef01234567/resources/lifecycle-fs/darwin-x64/maestro-lifecycle-fs",
+      "binary_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "protocol_version": "lifecycle-fs-helper/1.0",
+      "job_receipt_sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+      "provenance_path": ".workflow/tmp/lifecycle-native/20260724-010-plan/dispatch-transactions/76be39107457e5a0b49126666376d05c1bed9395572df2f1233748acdbe3b411/download/lifecycle-fs-darwin-x64-0123456789abcdef0123456789abcdef01234567/receipt.json",
+      "provenance_sha256": "9999999999999999999999999999999999999999999999999999999999999999"
+    },
+    {
+      "target": "aarch64-apple-darwin",
+      "runner_label": "macos-15",
+      "artifact_name": "lifecycle-fs-darwin-arm64-0123456789abcdef0123456789abcdef01234567",
+      "download_path": ".workflow/tmp/lifecycle-native/20260724-010-plan/dispatch-transactions/76be39107457e5a0b49126666376d05c1bed9395572df2f1233748acdbe3b411/download/lifecycle-fs-darwin-arm64-0123456789abcdef0123456789abcdef01234567",
+      "binary_path": ".workflow/tmp/lifecycle-native/20260724-010-plan/dispatch-transactions/76be39107457e5a0b49126666376d05c1bed9395572df2f1233748acdbe3b411/download/lifecycle-fs-darwin-arm64-0123456789abcdef0123456789abcdef01234567/resources/lifecycle-fs/darwin-arm64/maestro-lifecycle-fs",
+      "binary_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "protocol_version": "lifecycle-fs-helper/1.0",
+      "job_receipt_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "provenance_path": ".workflow/tmp/lifecycle-native/20260724-010-plan/dispatch-transactions/76be39107457e5a0b49126666376d05c1bed9395572df2f1233748acdbe3b411/download/lifecycle-fs-darwin-arm64-0123456789abcdef0123456789abcdef01234567/receipt.json",
+      "provenance_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "aggregate_provenance": {
+    "path": ".workflow/tmp/lifecycle-native/20260724-010-plan/dispatch-transactions/76be39107457e5a0b49126666376d05c1bed9395572df2f1233748acdbe3b411/download/aggregate-provenance.json",
+    "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "intent_path": ".workflow/tmp/lifecycle-native/20260724-010-plan/dispatch-transactions/76be39107457e5a0b49126666376d05c1bed9395572df2f1233748acdbe3b411/dispatch-intent.json",
+  "receipt_path": ".workflow/tmp/lifecycle-native/20260724-010-plan/dispatch-transactions/76be39107457e5a0b49126666376d05c1bed9395572df2f1233748acdbe3b411/dispatch-receipt.json",
+  "created_at": "2026-07-24T00:00:00.000Z",
+  "receipted_at": "2026-07-24T00:01:00.000Z",
+  "receipt_sha256": "f45e6bb0ef8fdb94c4b509555b93895384a477f2be74a651e9daad328c18d675"
+}
