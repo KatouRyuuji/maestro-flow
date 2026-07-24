@@ -26,7 +26,16 @@ Never ask "how severe is this?".
 | session/run scope | `TARGET_TYPE=scope`, resolve from the run registry |
 | none | check for an active UAT session (Step 2), otherwise prompt the user |
 
-Validate the target exists and has `latest-verification` (missing → E002).
+Validate the target exists, then resolve `EVIDENCE_SOURCE` (degradation routing — mirror `execute` E001):
+
+| Condition | `EVIDENCE_SOURCE` | Confidence lineage |
+|------|------|------|
+| `latest-verification` present | `verification` | full |
+| no verification, but `current-execution`/self-check + `current-plan` present | `execution+plan` | degraded |
+| only `latest-review` present | `review-only` | degraded (lowest) |
+| none of the above | — | **E002** (no evidence source; cannot test) |
+
+A missing `latest-verification` is **not** fatal — fall back to the degraded path and carry `EVIDENCE_SOURCE` through Steps 4, 10, 12.5, 13.
 
 ---
 
@@ -61,7 +70,13 @@ Record results in the `## Smoke Tests` section of `uat.md`. Any failure → abor
 
 ## Step 4: Load verification context
 
-Read `latest-verification`, report.md frontmatter, and execution task summaries from the target run. Build a testable checklist from success_criteria + must_haves + task outcomes (user-observable results only).
+Build a testable checklist (user-observable results only) from the best available evidence per `EVIDENCE_SOURCE`:
+
+- **`verification`** (full): read `latest-verification`, report.md frontmatter, and execution task summaries from the target run. Checklist from success_criteria + must_haves + task outcomes.
+- **`execution+plan`** (degraded): no `latest-verification` — read `current-plan` (success_criteria + must_haves), `current-execution` task summaries + `self-check.json` conclusion, and `latest-review` findings (if any). Checklist from plan criteria + executed task outcomes.
+- **`review-only`** (degraded, lowest): read `latest-review` findings + any `current-plan` criteria. Checklist from review findings and plan criteria.
+
+Never fabricate criteria from nowhere — if no evidence source yields testable items, that is E002.
 
 ---
 
@@ -189,11 +204,12 @@ Write `outputs/test-results.json`:
   "target": "{scope}",
   "completed_at": "{ISO}",
   "results": [ { "id": "T-001", "name": "...", "status": "pass|issue|skipped", "details": "..." } ],
+  "evidence_source": "{EVIDENCE_SOURCE}",
   "summary": { "total": N, "passed": N, "issues": N, "skipped": N }
 }
 ```
 
-Write `outputs/acceptance.json` — per-criterion UAT conclusion and evidence.
+Write `outputs/acceptance.json` — per-criterion UAT conclusion and evidence. Both `test-results.json` and `acceptance.json` carry `"evidence_source": "{EVIDENCE_SOURCE}"` so downstream audit knows the confidence tier.
 Write `outputs/coverage.json`:
 
 ```json
@@ -239,6 +255,8 @@ Pass → update `uat.md` gap to resolved; still has gaps → report the remainin
 
 Dimensions (4): scenario_coverage, diagnostic_depth, observation_quality, closure_completeness. Factors (weights): requirements_mapped(.30), observation_specificity(.25), user_validation(.20), diagnostic_depth(.15), consistency(.10). Scoring points: init (Step 5), each user response (Step 8), after the gap-fix loop (Step 12).
 
+**Evidence lineage** — `evidence_lineage = full` when `EVIDENCE_SOURCE=verification`, otherwise `degraded`. When degraded: `closure_completeness` is capped (cannot reach its top band), the composite confidence cannot reach the highest tier, and the confidence summary + `uat.md` must carry `[DEGRADED EVIDENCE: no independent verification — source={EVIDENCE_SOURCE}]` (mirror retrospective `[LOW CONFIDENCE]` / auto-test `SPEC_MODE=degraded`). Degradation lowers the confidence tier and annotates lineage; it does **not** waive the Readiness Gate or the exit gates, and it never licenses guessing outcomes.
+
 Quality mechanisms: **Pressure Pass** — >80% pass → ask the user to try an edge case; **Devil's Advocate** — >70% first-pass → challenge scenario difficulty; **Stall Detection** — 2 rounds of gap-fix with no improvement → stop. **GATE: pass-rate-met** — each scenario has a real observed outcome (timeout / no-response / missing-entry may never be scored as pass); under `--frontend-verify`, any `[UI-observable]` failure or a write endpoint with no UI entry forces NEEDS_RETRY. (The pressure-pass mechanism above is a separate quality lever, not the gate's definition.)
 
 **Readiness Gate** (blocks Step 13): scenario_coverage < 40% | blocker gap not diagnosed | no pressure pass (if >80%) | unconfirmed remaining gap. The confidence summary is appended to `uat.md`. **GATE: coverage-met** — two components must both hold: (1) every mapped scenario source has a corresponding UAT scenario, and (2) the Readiness Gate passes (scenario_coverage ≥ 40%).
@@ -247,7 +265,7 @@ Quality mechanisms: **Pressure Pass** — >80% pass → ask the user to try an e
 
 ## Step 13: Report
 
-Write `report.md` with standard frontmatter + fixed five sections; frontmatter records target, verdict, smoke/UAT counts, coverage_percentage. Body:
+Write `report.md` with standard frontmatter + fixed five sections; frontmatter records target, verdict, smoke/UAT counts, coverage_percentage, and `details.evidence_source: {EVIDENCE_SOURCE}` (propagates to `handoff.details`; when degraded, include the `[DEGRADED EVIDENCE]` marker in the summary). Body:
 
 ```
 === UAT RESULTS ===
@@ -316,7 +334,7 @@ BLOCKED conditions: Readiness Gate not passed, or `test-results.json` missing.
 | Code | Condition | Recovery |
 |------|-----------|----------|
 | E001 | No scope target and no active session | Prompt to provide a scope |
-| E002 | Target not verified (no `latest-verification`) | Suggest running `execute` first (verification built in) |
+| E002 | No evidence source (no `latest-verification`, `current-execution`, `current-plan`, or `latest-review`) | Run `execute` first (self-check + plan give the degraded path; a separate `verify` gives the full path) |
 | E003 | Smoke failed (app won't start) | Suggest `debug` |
 | W001 | One or more scenarios failed | Auto-diagnose, suggest fix options |
 | W002 | Coverage below threshold | Suggest generating additional tests |

@@ -226,15 +226,22 @@ contract:
 
 ```yaml
 contract:
-  consumes: [{ kind: change-manifest, alias: latest-execution, required: true }]
+  consumes:
+    - { kind: verification, alias: latest-verification, required: false }   # 缺失时走降级路径，非硬前置
+    - { kind: plan, alias: current-plan, required: false }
+    - { kind: execution, alias: current-execution, required: false }
+    - { kind: review-findings, alias: latest-review, required: false }
+    - { kind: diagnosis, alias: latest-debug, required: false }
   produces:
     - { kind: test-results, primary: true, path: outputs/test-results.json, alias: latest-test }
     - { kind: acceptance,                  path: outputs/acceptance.json }
     - { kind: coverage,                    path: outputs/coverage.json }
   gates:
-    # entry 门隐式派生自 consumes(required)
+    # entry 门隐式派生自 consumes；全部可选——"全无证据源" 由 workflow E002 兜底
     exit: [coverage-met, pass-rate-met]
 ```
+
+- **降级路由（EVIDENCE_SOURCE）**：`latest-verification` 不再是硬前置。有 verification → full；无 verification 但有 `current-execution`/self-check + `current-plan` → degraded；仅 `latest-review` → degraded(最低)；全无 → E002。降级时置信封顶并标注 `[DEGRADED EVIDENCE]`，`evidence_source` 记入 report `details` 与 `test-results.json`/`acceptance.json`（对齐 execute E001 degradation routing）。
 
 - **产物迁移**：**`uat.md` → `acceptance.json`（机器真相源）**；`test-results.json` 按 scenario ID 组织；补 `e2e-results.json`（如适用）。
 - **Swarm 优化建议**：

@@ -37,6 +37,17 @@ function stepCommand(projectRoot: string, name: string): void {
   writeFileSync(join(wfDir, `${name}.md`), `# ${name}\n\nwork\n`, 'utf8');
 }
 
+/** A command whose contract requires a typed consume — proves a missing required
+ * upstream blocks completion instead of hollow-sealing (007/013 regression). */
+function requiredConsumeCommand(projectRoot: string, name: string, kind: string, alias: string): void {
+  const cmdDir = join(projectRoot, '.claude', 'commands');
+  mkdirSync(cmdDir, { recursive: true });
+  writeFileSync(join(cmdDir, `${name}.md`), `<contract>\nconsumes:\n  - kind: ${kind}\n    alias: ${alias}\n    required: true\nproduces: []\ngates:\n  entry: []\n  exit: []\n</contract>\n`, 'utf8');
+  const wfDir = join(projectRoot, 'workflows');
+  mkdirSync(wfDir, { recursive: true });
+  writeFileSync(join(wfDir, `${name}.md`), `# ${name}\n\nwork\n`, 'utf8');
+}
+
 function proposalCommand(projectRoot: string, name: string, effects: string[]): void {
   stepCommand(projectRoot, name);
   writeFileSync(join(projectRoot, '.claude', 'commands', `${name}.md`), `<contract>\ncontract_version: 2
@@ -293,6 +304,40 @@ describe('run complete — verdict chain transitions', () => {
     expect(chainOf(projectRoot, 's')[0].status).toBe('failed');
     const handoff = readRunHandoff(projectRoot, 's', runId);
     expect(handoff?.concerns).toContain('upstream API down');
+  });
+});
+
+describe('run complete — required consume gate blocks hollow seal', () => {
+  it('done over a failed blocking consume gate forces blocked, not a hollow ready seal', () => {
+    const projectRoot = root();
+    requiredConsumeCommand(projectRoot, 'test', 'verification', 'latest-verification');
+    seedSession(projectRoot, 's', [{ command: 'test' }]);
+    // startStep writes a `verdict: ready` report but registers NO verification
+    // artifact — the required latest-verification consume gate must fail.
+    const runId = startStep(projectRoot, 's', 0);
+
+    const result = completeRunWithVerdict(projectRoot, runId, 's', { verdict: 'done' });
+
+    // The run must NOT hollow-seal as ready: it blocks on the consume gate.
+    expect(result.run_sealed).toBe(false);
+    expect(result.seal.status).toBe('blocked');
+    expect(result.seal.gates.blocking.length).toBeGreaterThan(0);
+    expect(result.next?.action).toBe('repair_run');
+
+    const store = new SessionStore(projectRoot);
+    const run = store.readRun('s', runId);
+    expect(run.status).toBe('blocked');
+    // No ready verdict was fabricated over the missing upstream (output.verdict
+    // stays null because the blocked path returns before deriving the handoff).
+    expect(run.output.verdict).not.toBe('ready');
+
+    // The blocking gate is the required latest-verification consume gate.
+    const gates = store.readBundle('s').gates.gates;
+    const blockingGate = gates[result.seal.gates.blocking[0]];
+    expect(blockingGate.check).toMatchObject({ type: 'artifact', kind: 'verification', alias: 'latest-verification' });
+    expect(blockingGate.required).toBe(true);
+    expect(blockingGate.blocking).toBe(true);
+    expect(blockingGate.status).toBe('failed');
   });
 });
 

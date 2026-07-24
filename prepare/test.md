@@ -4,7 +4,9 @@ description: Run conversational UAT, coverage, and optional browser acceptance o
 argument-hint: "[scope] [--smoke] [--auto-fix] [--frontend-verify]"
 contract:
   consumes:
-    - { kind: verification, alias: latest-verification, required: true }
+    - { kind: verification, alias: latest-verification, required: false }
+    - { kind: plan, alias: current-plan, required: false }
+    - { kind: execution, alias: current-execution, required: false }
     - { kind: review-findings, alias: latest-review, required: false }
     - { kind: diagnosis, alias: latest-debug, required: false }
   produces:
