@@ -43,7 +43,7 @@ export function validateExecutorLifecycleBoundary(text, label) {
   const required = [
     'maestro run brief',
     'maestro run check',
-    'Do not call `maestro run complete`',
+    'Do not call `maestro session done`',
     'handled by the orchestrator',
   ];
   return required
@@ -224,12 +224,12 @@ const canonicalRunMode = join(root, 'workflows', 'run-mode.md');
 if (!existsSync(canonicalRunMode)) errors.push('workflows/run-mode.md: missing canonical Run workflow');
 else {
   const text = readFileSync(canonicalRunMode, 'utf8');
-  for (const token of ['maestro run create', 'topic grouping/index', 'same Session', 'Historical similarity is read-only', '{run_dir}/outputs/', 'complete top-level `_meta` object', '`kind` and `schema` are required together', 'maestro run check', 'maestro run complete', 'suggest_only', 'maestro run next', 'deprecated admin-only']) {
+  for (const token of ['maestro run create', 'topic grouping/index', 'same Session', 'Historical similarity is read-only', '{run_dir}/outputs/', 'complete top-level `_meta` object', '`kind` and `schema` are required together', 'maestro run check', 'session done', 'suggest_only', 'session next', 'deprecated admin-only']) {
     if (!text.includes(token)) errors.push(`workflows/run-mode.md: missing ${token}`);
   }
   errors.push(...validateRunCreateArgumentChannels(text, 'workflows/run-mode.md'));
   if (text.includes('same normalized intent')) errors.push('workflows/run-mode.md: obsolete intent-only Session routing remains');
-  if (/maestro ralph\s|maestro session\s|\bralph next\b/.test(text)) errors.push('workflows/run-mode.md: normal lifecycle must use only maestro run');
+  if (/maestro ralph\s|\bralph next\b/.test(text)) errors.push('workflows/run-mode.md: normal lifecycle must use only maestro run');
 }
 
 const canonicalRunModeLite = join(root, 'workflows', 'run-mode-lite.md');
@@ -240,7 +240,7 @@ else {
     if (!text.includes(token)) errors.push(`workflows/run-mode-lite.md: missing ${token}`);
   }
   errors.push(...validateRunCreateArgumentChannels(text, 'workflows/run-mode-lite.md'));
-  if (/maestro ralph\s|maestro session\s|\bralph next\b/.test(text)) errors.push('workflows/run-mode-lite.md: normal lifecycle must use only maestro run');
+  if (/maestro ralph\s|\bralph next\b/.test(text)) errors.push('workflows/run-mode-lite.md: normal lifecycle must use only maestro run');
 }
 
 const canonicalOrchestratorLoop = join(root, 'workflows', 'orchestrator-run-loop.md');
@@ -261,7 +261,7 @@ if (!existsSync(canonicalOrchestratorLoop)) {
     'handoff `next[]`',
     '### `complete` / `decide` 闭环',
     'run_already_created=true',
-    'run decide --json',
+    'session decide --json',
     'reason_code=DECISION_CARD_READY',
   ]) {
     if (!text.includes(token)) errors.push(`workflows/orchestrator-run-loop.md: missing ${token}`);
@@ -274,8 +274,8 @@ if (existsSync(canonicalRalphCommand)) {
   for (const token of [
     'Decision is mandatory',
     'every Ralph-created chain',
-    'run decide ... --json',
-    'run complete|done --json',
+    'session decide --json',
+    'session done --json',
   ]) {
     if (!text.includes(token)) errors.push(`.claude/commands/maestro-ralph.md: missing ${token}`);
   }

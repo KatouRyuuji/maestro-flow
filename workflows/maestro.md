@@ -1,4 +1,9 @@
-<!-- session-mode: inherited -->
+---
+name: maestro
+session-mode: inherited
+prepare: maestro
+commands: [maestro]
+---
 
 <required_reading>
 @~/.maestro/workflows/run-mode.md
