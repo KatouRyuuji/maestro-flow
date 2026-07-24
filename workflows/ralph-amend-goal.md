@@ -47,7 +47,7 @@ Validate the full object before persistence. Goals describe outcomes; lifecycle 
 
 After confirmation, write the full JSON object to stdin or a temporary file and call:
 
-`maestro run edit --session {session_id} --decomposition-file -`
+`maestro session chain edit --session {session_id} --decomposition-file -`
 
 Runtime performs the audited metadata update. Never write `session.json`, `status.json`, or any secondary goal store.
 

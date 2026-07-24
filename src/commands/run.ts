@@ -255,7 +255,8 @@ export function registerRunCommand(program: Command): void {
       dispatch: boolean;
       workflowRoot: string;
     }) => {
-      sessionMigrationNotice('start', 'create');
+      // run start is a Run-level command (creates a Run + auto-resolves Session).
+      // session create is the chain-level equivalent for multi-step orchestration.
       try {
         const projectRoot = resolve(opts.workflowRoot);
         const fileDefinition = opts.chainFile

@@ -3,7 +3,7 @@
 
 Canonical lifecycle reference: `@~/.maestro/workflows/run-mode.md`.
 
-Maestro 与 Ralph 共享这一执行循环。它只调用 `maestro run ...`；Session 与 Run 协议文件始终由 Runtime 写入。
+Maestro 与 Ralph 共享这一执行循环。编排层调用 `maestro session ...`（next/done/decide/seal/status/recover/chain edit），执行层调用 `maestro run ...`（brief/check/create/prepare）。Session 与 Run 协议文件始终由 Runtime 写入。
 
 ## Public flags
 
@@ -78,21 +78,21 @@ Maestro 与 Ralph 共享这一执行循环。它只调用 `maestro run ...`；Se
 2. 新 intent：分类并构建 chain definition。每个 execution step 只声明 `command/args/stage/goal_ref/retry_max`；decision step 声明 `decision_ref`。
 3. 用临时 JSON 文件创建，不把未转义 JSON 拼入 shell：
 
-   `maestro run start "{intent}" --id {slug} --chain-file {path} --no-dispatch`
+   `maestro session create "{intent}" --id {slug} --chain-file {path} --no-dispatch`
 
 4. Runtime resolver 在 `session next` 分配 Run 前校验 command、Skill 和 lifecycle step；prompt 不调用独立 catalog CLI。
 
 ### 2. Locate and allocate
 
-1. `maestro run status {session_id}` 读取 canonical 状态。
-2. execution step：显式调用 `maestro session next --session {session_id} --json`。只有该动词能分配下一 Run。
+1. `maestro session status --session {session_id}` 读取 canonical 状态。
+2. execution step：显式调用 `maestro session next --session {session_id} --inline-brief --json`。只有该动词能分配下一 Run。`--inline-brief` 在 birth packet 中内联 Resume Packet（guidance + contract + continuity），正常前向流程无需再调 `run brief`。
 3. decision step：不创建 Run，转 Decision evaluation。
 4. `CHAIN_COMPLETE`：校验 goals 与 gates 后转 Session seal。
 
 ### 3. Load and execute one Run
 
-1. 从 birth packet 取得 `run_id/run_dir/upstream/previous_handoff/queue/goal`。
-2. `maestro run brief {run_id} --session {session_id}` 加载 Resume Packet 与 Skill 正文。
+1. 从 birth packet 取得 `run_id/run_dir/upstream/previous_handoff/queue/goal`。若使用 `--inline-brief`，`inline_brief` 字段已包含完整 Resume Packet 与 Skill 正文，直接使用。
+2. 仅在回溯场景（executor 崩溃恢复、上下文溢出、手动检查）调用 `maestro run brief {run_id} --session {session_id}` 重新加载。正常前向流程不调 `run brief`。
 3. 派发一个 unnamed `run-executor`；executor 只执行该 Run，可按 Skill 自身 contract 选择串行、并行或对抗实现。
 4. executor 写 formal artifacts 到 `{run_dir}/outputs/`，handoff 写 `{run_dir}/report.md`，然后运行 `maestro run check {run_id} --session {session_id}`。
 5. executor 不调用 `session done/complete`；completion authority 属于 orchestrator。
@@ -146,12 +146,12 @@ Runtime 返回的 next 仅为 `suggest_only`，因此 Runtime 自身不执行它
 
 Paused recovery 仅由显式 `-c` 触发：
 
-1. `run status` 读取 exact blocker 与 revisions。
+1. `session status` 读取 exact blocker 与 revisions。
 2. 每个 blocker 经用户选择后调用 `maestro session recover --session {id} ... (--decision {point}|--step {step}) --disposition {value}`。
 3. blockers 清零后调用 `maestro session recover --resume --session {id} ...`。
 4. resume 只恢复 Session；下一 Run 仍由显式 `session next` 分配。
 
-Goal amend：读取 `ralph-amend-goal.md`，完成 snapshot → impact audit → confirmation → 通过 `maestro run edit --decomposition-file -` 整块更新 → planning Skill proposal。高风险修改不受 `-y` 影响。
+Goal amend：读取 `ralph-amend-goal.md`，完成 snapshot → impact audit → confirmation → 通过 `maestro session chain edit --decomposition-file -` 整块更新 → planning Skill proposal。高风险修改不受 `-y` 影响。
 
 ### 8. Seal
 
