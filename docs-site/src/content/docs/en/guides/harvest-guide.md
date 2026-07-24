@@ -18,7 +18,7 @@ Knowledge harvesting extracts fragments from execution artifacts, classifies and
 |-------|------|---------------|--------------|
 | **Wiki** | `.workflow/wiki/` | Observations, general insights, knowledge graph | `/maestro-manage knowledge wiki connect`, `/maestro-manage knowledge wiki digest` |
 | **Spec** | `.workflow/specs/` | Coding conventions, architecture decisions, pattern rules | `/maestro-spec load`, Hook auto-injection |
-| **Issue** | `.workflow/issues/issues.jsonl` | Unresolved bugs, risks, TODOs | `/maestro-manage issue`, `/maestro-ralph analyze` |
+| **Issue** | `.workflow/issues/issues.jsonl` | Unresolved bugs, risks, TODOs | `/maestro-manage issue`, `/maestro "analyze..."` |
 
 ### Relationship with Knowhow
 
@@ -223,7 +223,7 @@ The command supports automatic type recognition via tokens:
 ```
 +----------------------------------------------------------+
 |                     Execution Phase                       |
-|  maestro-ralph -> maestro-next -> maestro-ralph continue  |
+|  analyze -> plan -> execute (Skill chain steps)           |
 |       |              |                |                  |
 |   ANL-xxx/       plan-xxx/       code changes            |
 |   brainstorm/    lite-plan/      debug-log/              |

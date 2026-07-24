@@ -78,7 +78,7 @@ Maestro 与 Ralph 共享这一执行循环。编排层调用 `maestro session ..
 2. 新 intent：分类并构建 chain definition。每个 execution step 只声明 `command/args/stage/goal_ref/retry_max`；decision step 声明 `decision_ref`。
 3. 用临时 JSON 文件创建，不把未转义 JSON 拼入 shell：
 
-   `maestro session create "{intent}" --id {slug} --chain-file {path} --no-dispatch`
+   `maestro session create "{intent}" --id {slug} --chain-file {path}`
 
 4. Runtime resolver 在 `session next` 分配 Run 前校验 command、Skill 和 lifecycle step；prompt 不调用独立 catalog CLI。
 

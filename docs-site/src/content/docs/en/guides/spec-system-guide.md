@@ -108,10 +108,15 @@ maestro spec load --keyword <kw>             # Cross all files
 
 ### Progressive Fill
 
+Specs are filled progressively across the lifecycle:
+
 ```
-maestro-init    -> maestro-spec setup       /maestro-ralph analyze -> plan, implement
-/maestro-next   -> implement, test  /maestro-ralph -c -> implement, analyze
-(retired; integrated into /maestro-ralph decision gate) -> review
+maestro-init      -> maestro-spec setup (scan codebase, initialize specs)
+analyze           -> architecture-constraints / coding-conventions (progressive)
+plan / execute    -> implementation constraints
+test              -> test-conventions
+review            -> review-standards (after post-review decision gate)
+retrospective     -> learnings (retrospective insights)
 ```
 
 ### Keyword System
@@ -303,7 +308,7 @@ maestro spec list [--scope <scope>] | status [--scope <scope>]
 
 # -- Tool Spec ------------------------------------------------------------
 /maestro-spec add "<description>"
-/maestro-ralph "<name>" | --role <role>
+/maestro-ralph "<name or role intent>"
 
 # -- Wiki -----------------------------------------------------------------
 maestro wiki list [--type <type>] [--role <role>] [--category <cat>] [--tag <tag>] [-q <query>] [--group] [--json]

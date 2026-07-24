@@ -51,7 +51,7 @@ maestro install toggle --type skill --enable scholar-writing
 
 ```bash
 /maestro-init                          # 初始化 .workflow/ 目录
-/maestro "从需求开始做整个项目" -y      # spec-driven 链：init → roadmap → plan → execute → harvest
+/maestro "从需求开始做整个项目" -y      # spec-driven 链：init → roadmap --mode full → plan → execute → harvest
 ```
 
 ### 从头脑风暴开始

@@ -16,7 +16,7 @@ Intent-to-chain planner — classifies user intent, selects the smallest suffici
 1. Parses user intent and the three public flags (`-y` / `-c` / `--amend`)
 2. Reads the deferred `workflows/maestro.md` to perform intent classification (intent → task_type → chain)
 3. Selects the **smallest sufficient initial chain**
-4. Creates a canonical Session via `maestro session create --chain-file --no-dispatch`
+4. Creates a canonical Session via `maestro session create --chain-file`
 5. Enters the shared Run loop for execution
 
 **One chain, executor-neutral**: every task uses the same Session/Run protocol. Whether a chain expands dynamically is decided by whether each Skill contract produces a typed `chain-proposal/1.0`, not by the Session or command mode.
@@ -187,7 +187,7 @@ Set `decomposition_owner = "maestro"`. Downstream ralph only consumes and does n
 4. **Create**:
 
 ```bash
-maestro session create "{intent}" --id maestro-{slug} --chain-file {path} --no-dispatch
+maestro session create "{intent}" --id maestro-{slug} --chain-file {path}
 ```
 
 After deleting temporary files, enter the shared execution loop (`orchestrator-run-loop.md`).
@@ -228,7 +228,7 @@ Storage location: `.workflow/sessions/{session-id}/session.json` (schema `sessio
 ## Execution Flow
 
 ```
-用户输入 → 意图分类 → chain 选择 → session create --chain-file --no-dispatch → 共享 Run 循环
+用户输入 → 意图分类 → chain 选择 → session create --chain-file → 共享 Run 循环
 ```
 
 Shared Run loop (identical to Ralph):

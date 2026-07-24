@@ -273,7 +273,7 @@ v0.5.56 起，Session 状态统一存储于 `.workflow/sessions/{session-id}/ses
 创建命令（编排器/skill 标准建链方式）：
 
 ```bash
-maestro session create "{intent}" --id {slug} --chain-file {path} --no-dispatch
+maestro session create "{intent}" --id {slug} --chain-file {path}
 ```
 
 > **legacy 迁移**：旧的 `.workflow/.maestro/ralph-*/status.json` 与 `ralph-meta.json` 通过 `maestro session migrate` 折叠进 `session.json` 并打 `session/1.3` 标记（幂等）。
@@ -344,7 +344,7 @@ maestro session done {run_id} --verdict ...   ← completion authority 属于 or
 升级后 Session 状态变为 `paused`。恢复仅由显式 `-c` 触发，走 audited recovery：
 
 ```bash
-maestro session status --session <id>        # 读取 exact blocker 与 revisions
+maestro session status <id>        # 读取 exact blocker 与 revisions
 maestro session resolve --session <id> --decision <point> --disposition proceed   # 逐个解决 blocker
 maestro session resume --session <id>        # blockers 清零后恢复（下一 Run 仍需显式 session next）
 ```
@@ -353,7 +353,7 @@ maestro session resume --session <id>        # blockers 清零后恢复（下一
 
 ## Goal Amend（--amend）
 
-读取 `ralph-amend-goal.md`，完成 snapshot → impact audit → confirmation → 通过 `maestro session chain edit --decomposition-file -` 整块更新 decomposition → planning Skill proposal。**高风险修改不受 `-y` 影响**，始终询问。
+读取 `ralph-amend-goal.md`，完成 snapshot → impact audit → confirmation → 通过 `maestro session meta update --session <id> --decomposition-file -` 整块更新 decomposition → planning Skill proposal。**高风险修改不受 `-y` 影响**，始终询问。
 
 ---
 

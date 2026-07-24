@@ -83,7 +83,7 @@ chain 包含 analyze/plan/execute 等执行 stage 且 `.workflow/specs/` 不存�
 
 ### 4. 创建
 
-`maestro session create "{intent}" --id maestro-{slug} --chain-file {path} --no-dispatch`
+`maestro session create "{intent}" --id maestro-{slug} --chain-file {path}`
 
 删除临时文件后进入共享执行循环（orchestrator-run-loop.md）。
 

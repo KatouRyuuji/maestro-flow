@@ -48,7 +48,7 @@ Collect Signals → Diagnose & Classify → Group & Plan → Preview & Confirm �
 /maestro-overlay --amend --from-verify .workflow/phases/1     # Discover gaps from verification
 /maestro-overlay --amend --from-review .workflow/phases/2     # Extract process improvements
 /maestro-overlay --amend --scan                                # Auto-scan all signals
-/maestro-overlay --amend "maestro-ralph continue missing CLI verification step"  # Describe directly
+/maestro-overlay --amend "maestro-ralph -c missing CLI verification step"  # Describe directly
 /maestro-overlay --amend --dry-run                             # Preview mode (no install)
 /maestro-overlay --amend -y                                    # Skip confirmation
 ```

@@ -281,7 +281,7 @@ Maestro 与 Ralph 共享同一套 **canonical Session/Run 链协议**（schema `
 
 - **Session** 是 topic 分组与索引；`session.json.orchestration` 是 chain / goal / decision 的唯一真相源。
 - **Run** 是一次执行尝试（attempt）；Run 的 outputs、handoff、gate、proposal 与 transition receipt 归该 Run。
-- 编排层调用 `maestro session ...`（next/done/decide/seal/status/recover/chain edit），执行层调用 `maestro run ...`（brief/check/create/prepare）。
+- 编排层调用 `maestro session ...`（next/done/decide/seal/status/resolve/resume/chain insert·skip·replace/meta update），执行层调用 `maestro run ...`（brief/check/create/prepare）。
 - 协议文件始终由 Runtime 写入；prompt 不直接写 session.json/run.json。
 
 ### 目录布局
@@ -350,7 +350,7 @@ Run 产物统一写入 `outputs/` 目录，`evidence/` 降级为非正式 traces
 
 ```bash
 maestro session start "修复登录链路" --chain analyze plan execute review   # 人类入口
-maestro session create "修复登录链路" --id maestro-fix-login --chain-file chain.json --no-dispatch   # 编排器建链
+maestro session create "修复登录链路" --id maestro-fix-login --chain-file chain.json   # 编排器建链
 ```
 
 ### legacy 迁移（session migrate）

@@ -291,10 +291,10 @@ discover -> list -> analyze -> plan -> execute -> verify -> close
 /maestro-manage issue status ISS-20260513-001
 
 # 3. Root cause analysis (--gaps injects Issue into Phase pipeline)
-/maestro-ralph analyze --gaps ISS-20260513-001
+/maestro "analyze --gaps ISS-20260513-001"
 
 # 4. Solution planning
-/maestro-ralph --gaps
+/maestro "plan --gaps"
 
 # 5. Execute fix
 /maestro "execute"

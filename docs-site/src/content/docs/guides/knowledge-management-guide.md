@@ -155,7 +155,7 @@ summary: "Use when testing payment endpoints for retry safety."
 | 测试之前 | `/maestro-spec add generate` | 注册验证方法给 test agent |
 | 复盘时 | `/maestro-spec add optimize` | 从产物中提取可复用流程 |
 
-使用方式：按名称执行 `/maestro-ralph integration-test`、按 category 发现 `/maestro-ralph --category test`、Agent 自动发现（`maestro-spec load` 输出包含工具摘要）。
+使用方式：按名称执行 `/maestro "integration-test"`、按 category 发现 `/maestro "test 工具"`、Agent 自动发现（`maestro-spec load` 输出包含工具摘要）。
 
 ---
 
@@ -259,10 +259,10 @@ Progressive Fill——各阶段自动沉淀：
 
 ```bash
 maestro-init    → maestro-spec setup（骨架 + 扫描）
-maestro-ralph → 锁定决策 → arch，代码模式 → coding
-maestro-next    → 设计约定 → coding/arch，测试策略 → test
-maestro-ralph continue → 经验教训 → learning，根因 → debug
-maestro-ralph  → 质量发现 → review
+analyze   → 锁定决策 → arch，代码模式 → coding
+plan      → 设计约定 → coding/arch，测试策略 → test
+execute   → 经验教训 → learning，根因 → debug
+review    → 质量发现 → review
 ```
 
 <details>
@@ -274,7 +274,7 @@ maestro-ralph  → 质量发现 → review
 
 ```bash
 /workflow-lite-plan 用户管理模块 API：注册、登录、JWT 鉴权、用户 CRUD
-/maestro-ralph analyze "API 端点设计模式分析"
+/maestro "分析 API 端点设计模式"
 ```
 
 **2. 实现 + 知识回收**
@@ -302,7 +302,7 @@ harvest 自动路由：
 **4. 测试消费**
 
 ```bash
-/maestro-ralph auto-test --keyword user-api    # 自动测试：发现 tool → 生成测试代码
+/maestro "auto-test user-api"    # 自动测试：发现 tool → 生成测试代码
 /maestro "test user management API"        # 会话式 UAT：按 tool 步骤逐项验证
 ```
 
@@ -320,7 +320,7 @@ harvest 自动路由：
 | `/maestro-manage knowledge harvest` | spec 条目 + wiki 条目 + issue | 被动知识 |
 | `/maestro-manage knowledge capture` | AST-*.md（API 契约） | 被动资产 |
 | `/maestro-spec add` | RCP-*.md（验证流程） | 主动可执行 |
-| `/maestro-ralph auto-test` | 测试代码 | 消费 tool |
+| `/maestro "auto-test"` | 测试代码 | 消费 tool |
 
 </details>
 

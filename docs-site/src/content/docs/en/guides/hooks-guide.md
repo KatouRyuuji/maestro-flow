@@ -162,7 +162,7 @@ Writes heartbeat to `.workflow/collab/activity.jsonl` once per turn.
 
 **Event**: `UserPromptSubmit` | **Level**: `standard`
 
-Matches Skill invocations and injects workflow state + phase artifact tree + prior results via `additionalContext` (does not rewrite prompt). Supported patterns: `/maestro-ralph -c`, `/maestro-next {N}`, `/maestro-ralph analyze`, `/maestro-ralph review`, `/maestro "<test intent>"`, `/maestro`, `/maestro-ralph`
+Matches Skill invocations and injects workflow state + phase artifact tree + prior results via `additionalContext` (does not rewrite prompt). Supported patterns: `/maestro-ralph -c`, `/maestro-ralph "<intent>"`, `/maestro-next "<intent>"`, `/maestro "<test intent>"`, `/maestro`, `/maestro-ralph`
 
 Coordinator Skills additionally inject coordinator-tracker bridge next-step prompt: `Chain: full-lifecycle [3/6] | Status: paused | Next: /maestro-ralph review 2 | Resume: /maestro -c`
 

@@ -156,7 +156,7 @@ Since v0.5.56, Maestro and Ralph share the same **canonical Session/Run chain pr
 
 - A **Session** is the topic grouping and index; `session.json.orchestration` is the single source of truth for the chain / goal / decision.
 - A **Run** is a single execution attempt; a Run's outputs, handoff, gate, and proposal belong to that Run.
-- The orchestration layer invokes `maestro session ...` (next/done/decide/seal/status/recover/chain edit), and the execution layer invokes `maestro run ...` (brief/check/create/prepare).
+- The orchestration layer invokes `maestro session ...` (next/done/decide/seal/status/resolve/resume/chain insert·skip·replace/meta update), and the execution layer invokes `maestro run ...` (brief/check/create/prepare).
 - Chain advancement is **verdict-driven**: an execution step completes via `session done --verdict`, and a decision step completes via `session decide --verdict`.
 
 <details>
@@ -203,7 +203,7 @@ Core lifecycle verbs used by the machine and orchestration layers.
 
 ```bash
 # 建链（不派发）——编排器/skill 的标准建链方式
-maestro session create "修复登录链路" --id maestro-fix-login --chain-file chain.json --no-dispatch
+maestro session create "修复登录链路" --id maestro-fix-login --chain-file chain.json
 
 # 分配下一个 Run（唯一能分配 Run 的动词）；--inline-brief 在 birth packet 内联 Resume Packet
 maestro session next --session <id> --inline-brief --json
@@ -250,10 +250,10 @@ maestro session seal <session-id> --summary "..."   # 所有 Run/gate 完成后�
 **Chain editing** (applies only to pending steps):
 
 ```bash
-maestro session chain insert <after> --command review --stage review   # 在某步后插入
-maestro session chain skip <step-id>                                    # 跳过 pending 步
-maestro session chain replace <step-id> --command test                  # 原地替换字段
-maestro session meta update --position-file pos.json --decomposition-file -   # 整块更新 position/decomposition
+maestro session chain insert --session <id> --after <step_id|index> --command review --stage review   # insert after a step
+maestro session chain skip --session <id> --step <step-id>            # skip a pending step
+maestro session chain replace --session <id> --step <step-id> --command test   # replace fields in place
+maestro session meta update --session <id> --position-file pos.json --decomposition-file -   # integral-replace position/decomposition
 ```
 
 **Recovery and migration**:

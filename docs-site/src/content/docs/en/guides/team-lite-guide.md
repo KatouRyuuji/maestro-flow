@@ -49,7 +49,7 @@ Joined as alice <alice@example.com> on alice-laptop (admin)
 
 $ maestro collab status
 Active in last 30 min:
-  alice@alice-laptop    maestro-ralph continue     P3/TASK-001    2 min ago
+  alice@alice-laptop    execute     P3/TASK-001    2 min ago
   bob@bob-desktop       wiki-update         spec-auth      5 min ago
 
 $ maestro collab sync --with-overlays
@@ -61,7 +61,7 @@ Importing team overlays...
 Sync complete.
 
 $ maestro collab preflight --phase 3
-⚠ bob@bob-desktop is active on phase 3 (last: maestro-ralph continue, 4 min ago)
+⚠ bob@bob-desktop is active on phase 3 (last: execute, 4 min ago)
 exit: 1
 ```
 
@@ -90,7 +90,7 @@ Activation: `join` executed + `activity.jsonl` has non-self events within 30 min
 - Teammate's heartbeat is a historical remnant
 - Temporary patch with no scope overlap
 
-**Do not use `--force`**: When unsure, unconfirmed, or the action is `maestro-ralph continue`.
+**Do not use `--force`**: When unsure, unconfirmed, or the action is `execute`.
 
 ## Incremental Sync Fast Path
 
@@ -195,12 +195,19 @@ First member gets `admin` by default; subsequent members get `member`. Sensitive
 
 ## Testing Notes
 
-All tests use `node:test` (not vitest):
+Tests run with vitest (the project migrated from node:test to vitest):
 
 ```bash
-npx tsx --test src/utils/__tests__/jsonl-log.test.ts \
-  src/tools/__tests__/team-members.test.ts \
+# Run all tests
+npx vitest run
+
+# Run a specific test file
+npx vitest run src/utils/__tests__/jsonl-log.test.ts
+
+# Run team-related tests
+npx vitest run --reporter=verbose src/tools/__tests__/team-members.test.ts \
   src/tools/__tests__/team-activity.test.ts \
+  src/tools/__tests__/namespace-guard.test.ts \
   src/tools/__tests__/namespace-guard.test.ts \
   src/tools/__tests__/spec-loader.test.ts \
   src/hooks/__tests__/team-monitor.test.ts \

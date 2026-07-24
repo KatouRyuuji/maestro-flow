@@ -281,7 +281,7 @@ Maestro and Ralph share the same **canonical Session/Run chain protocol** (schem
 
 - A **Session** is the topic grouping and index; `session.json.orchestration` is the single source of truth for chain / goal / decision.
 - A **Run** is a single execution attempt; a Run's outputs, handoff, gate, proposal, and transition receipt belong to that Run.
-- The orchestration layer invokes `maestro session ...` (next/done/decide/seal/status/recover/chain edit), while the execution layer invokes `maestro run ...` (brief/check/create/prepare).
+- The orchestration layer invokes `maestro session ...` (next/done/decide/seal/status/resolve/resume/chain insert·skip·replace/meta update), while the execution layer invokes `maestro run ...` (brief/check/create/prepare).
 - Protocol files are always written by the Runtime; prompts never write session.json/run.json directly.
 
 ### Directory Layout
@@ -350,7 +350,7 @@ Sealed outputs within the same Session are reused only via the canonical `upstre
 
 ```bash
 maestro session start "修复登录链路" --chain analyze plan execute review   # Human entry point
-maestro session create "修复登录链路" --id maestro-fix-login --chain-file chain.json --no-dispatch   # Orchestrator builds the chain
+maestro session create "修复登录链路" --id maestro-fix-login --chain-file chain.json   # Orchestrator builds the chain
 ```
 
 ### legacy Migration (session migrate)

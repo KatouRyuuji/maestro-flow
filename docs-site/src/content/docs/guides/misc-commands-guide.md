@@ -49,7 +49,7 @@ Maestro 工作流中用于维护、发布和规范管理的辅助命令。
 /maestro-overlay --amend --from-verify .workflow/phases/1    # 从验证结果中发现命令缺口
 /maestro-overlay --amend --from-review .workflow/phases/2    # 从审查结果中提取流程改进
 /maestro-overlay --amend --scan                               # 自动扫描所有信号
-/maestro-overlay --amend "maestro-ralph continue 缺少 CLI 编译验证步骤"  # 直接描述问题
+/maestro-overlay --amend "maestro-ralph -c 缺少 CLI 编译验证步骤"  # 直接描述问题
 /maestro-overlay --amend --dry-run                            # 预览模式（不安装）
 /maestro-overlay --amend -y                                   # 跳过确认
 ```

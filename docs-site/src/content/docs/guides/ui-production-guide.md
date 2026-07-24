@@ -52,7 +52,7 @@ impeccable --chain build  →  impeccable (auto pipeline)  →  impeccable --cod
 
 | 下一步 | 命令 |
 |--------|------|
-| 基于设计规划 | `/maestro-next "{phase}"` |
+| 基于设计规划 | `/maestro "plan {phase}"` |
 | 精调设计 | `/maestro-impeccable "{phase}" --chain improve` |
 
 ---
@@ -194,8 +194,8 @@ S_PARSE → S_SETUP → S_CHAIN → S_GATE → S_REPORT
 
 ```bash
 /maestro-impeccable "1" --chain build  # 设计先行
-/maestro-next "1"                        # 基于设计规划
-/maestro "execute" 1                    # 执行实现
+/maestro "plan 1"                        # 基于设计规划
+/maestro "execute 1"                    # 执行实现
 # 验证已集成到 maestro-ralph 决策门控
 ```
 

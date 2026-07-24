@@ -292,10 +292,10 @@ discover -> list -> analyze -> plan -> execute -> verify -> close
 /maestro-manage issue status ISS-20260513-001
 
 # 3. 根因分析（--gaps 将 Issue 注入 Phase 管线）
-/maestro-ralph analyze --gaps ISS-20260513-001
+/maestro "analyze --gaps ISS-20260513-001"
 
 # 4. 方案规划
-/maestro-ralph --gaps
+/maestro "plan --gaps"
 
 # 5. 执行修复
 /maestro "execute"

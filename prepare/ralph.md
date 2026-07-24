@@ -158,4 +158,4 @@ CONFIDENCE_SCORE: 0-100
 }
 ```
 
-创建命令：`maestro session create "{intent}" --id {slug} --chain-file {path} --no-dispatch`
+创建命令：`maestro session create "{intent}" --id {slug} --chain-file {path}`

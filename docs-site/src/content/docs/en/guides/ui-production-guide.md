@@ -51,7 +51,7 @@ Generate design prototypes with multiple style variants. After user selection, c
 
 | Next Step | Command |
 |-----------|---------|
-| Plan based on design | `/maestro-next "{phase}"` |
+| Plan based on design | `/maestro "plan {phase}"` |
 | Refine design | `/maestro-impeccable "{phase}" --chain improve` |
 
 ---
@@ -193,8 +193,8 @@ Reverse-engineer a design system from existing source code, generate a reference
 
 ```bash
 /maestro-impeccable "1" --chain build  # Design first
-/maestro-next "1"                        # Plan based on design
-/maestro "execute" 1                    # Execute implementation
+/maestro "plan 1"                        # Plan based on design
+/maestro "execute 1"                    # Execute implementation
 # Verification integrated into maestro-ralph decision gate
 ```
 

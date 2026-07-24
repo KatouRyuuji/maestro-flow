@@ -51,7 +51,7 @@ maestro install toggle --type skill --enable scholar-writing
 
 ```bash
 /maestro-init                          # Initialize the .workflow/ directory
-/maestro "从需求开始做整个项目" -y      # spec-driven chain: init → roadmap → plan → execute → harvest
+/maestro "从需求开始做整个项目" -y      # spec-driven chain: init → roadmap --mode full → plan → execute → harvest
 ```
 
 ### Start from Brainstorming

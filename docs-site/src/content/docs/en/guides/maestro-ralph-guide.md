@@ -273,7 +273,7 @@ Since v0.5.56, Session state is stored uniformly in `.workflow/sessions/{session
 Creation command (the standard chain-building method for orchestrator/skill):
 
 ```bash
-maestro session create "{intent}" --id {slug} --chain-file {path} --no-dispatch
+maestro session create "{intent}" --id {slug} --chain-file {path}
 ```
 
 > **legacy migration**: the old `.workflow/.maestro/ralph-*/status.json` and `ralph-meta.json` are folded into `session.json` via `maestro session migrate` and marked with `session/1.3` (idempotent).
@@ -344,7 +344,7 @@ Each decision node carries `retry_count` and `max_retries` (default 2):
 After escalation, the Session state becomes `paused`. Recovery is triggered only by an explicit `-c`, going through audited recovery:
 
 ```bash
-maestro session status --session <id>        # 读取 exact blocker 与 revisions
+maestro session status <id>        # read exact blockers and revisions
 maestro session resolve --session <id> --decision <point> --disposition proceed   # 逐个解决 blocker
 maestro session resume --session <id>        # blockers 清零后恢复（下一 Run 仍需显式 session next）
 ```
@@ -353,7 +353,7 @@ maestro session resume --session <id>        # blockers 清零后恢复（下一
 
 ## Goal Amend (--amend)
 
-Read `ralph-amend-goal.md`, completing snapshot → impact audit → confirmation → update the decomposition as a whole block via `maestro session chain edit --decomposition-file -` → planning Skill proposal. **High-risk modifications are not affected by `-y`** and always ask.
+Read `ralph-amend-goal.md`, completing snapshot → impact audit → confirmation → update the decomposition as a whole block via `maestro session meta update --session <id> --decomposition-file -` → planning Skill proposal. **High-risk modifications are not affected by `-y`** and always ask.
 
 ---
 

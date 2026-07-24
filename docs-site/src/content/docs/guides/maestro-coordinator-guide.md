@@ -16,7 +16,7 @@ icon: "🤖"
 1. 解析用户意图与三个公共 flag（`-y` / `-c` / `--amend`）
 2. 读取 deferred `workflows/maestro.md` 执行意图分类（intent → task_type → chain）
 3. 选择**最小充分初始链**（smallest sufficient initial chain）
-4. 通过 `maestro session create --chain-file --no-dispatch` 创建 canonical Session
+4. 通过 `maestro session create --chain-file` 创建 canonical Session
 5. 进入共享 Run 循环执行
 
 **One chain, executor-neutral**：每个任务都用同一 Session/Run 协议。链是否动态扩展由每个 Skill contract 决定是否产出 typed `chain-proposal/1.0`，而非 Session 或命令模式。
@@ -187,7 +187,7 @@ Roadmap 仅在多 release 证据时推断。Quality 基于 specs 和可观测风
 4. **创建**：
 
 ```bash
-maestro session create "{intent}" --id maestro-{slug} --chain-file {path} --no-dispatch
+maestro session create "{intent}" --id maestro-{slug} --chain-file {path}
 ```
 
 删除临时文件后进入共享执行循环（`orchestrator-run-loop.md`）。
@@ -228,7 +228,7 @@ maestro session create "{intent}" --id maestro-{slug} --chain-file {path} --no-d
 ## 执行流程
 
 ```
-用户输入 → 意图分类 → chain 选择 → session create --chain-file --no-dispatch → 共享 Run 循环
+用户输入 → 意图分类 → chain 选择 → session create --chain-file → 共享 Run 循环
 ```
 
 共享 Run 循环（与 Ralph 一致）：
