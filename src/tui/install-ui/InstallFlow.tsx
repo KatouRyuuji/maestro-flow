@@ -11,6 +11,7 @@ import { ExtraMcpConfig } from './ExtraMcpConfig.js';
 import { StatuslineConfig } from './StatuslineConfig.js';
 import { BackupConfig } from './BackupConfig.js';
 import { EmbeddingPanel } from './EmbeddingPanel.js';
+import { EntryCommandsConfig } from './EntryCommandsConfig.js';
 import { InstallConfirm } from './InstallConfirm.js';
 import { InstallExecution, type InstallFlowResult } from './InstallExecution.js';
 import { InstallResult } from './InstallResult.js';
@@ -72,6 +73,7 @@ export function InstallFlow({ pkgRoot, version, initialStep, initialMode, initia
       case 'extra_mcp_config': return [hub, t.install.groupMcp, t.install.hubLabelExtraMcp];
       case 'backup_config': return [hub, t.install.groupCore, t.install.hubLabelBackup];
       case 'embedding_config': return [hub, t.install.groupEmbedding, 'Embedding Model'];
+      case 'entry_commands_config': return [hub, t.install.groupEntryCommands, 'Entry Commands'];
       default: return null;
     }
   }, [s.step]);
@@ -238,6 +240,15 @@ export function InstallFlow({ pkgRoot, version, initialStep, initialMode, initia
 
         {s.step === 'embedding_config' && (
           <EmbeddingPanel onDone={s.returnFromConfig} />
+        )}
+
+        {s.step === 'entry_commands_config' && (
+          <EntryCommandsConfig
+            eligibleSteps={s.eligibleEntrySteps}
+            selectedSteps={s.selectedEntrySteps}
+            onSelectionChange={s.setSelectedEntrySteps}
+            onDone={s.returnFromConfig}
+          />
         )}
 
         {s.step === 'confirm' && (

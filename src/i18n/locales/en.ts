@@ -49,6 +49,7 @@ export const en: LocaleStrings = {
     groupMcp: 'MCP Server',
     groupAppearance: 'Appearance',
     groupEmbedding: 'Embedding',
+    groupEntryCommands: 'Entry Commands',
     hubScope: 'Scope:',
     hubGlobal: 'Global',
     hubProject: 'Project',

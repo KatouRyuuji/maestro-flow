@@ -50,6 +50,8 @@ export interface InstallFlowConfig {
   installPluginClaude?: boolean;
   installPluginCodex?: boolean;
   configureCodexMultiAgentV2?: boolean;
+  /** Steps to generate entry slash-commands for (empty = skip generation). */
+  entryCommandSteps?: string[];
   /** Subsystems explicitly disabled by a non-interactive/profile install. */
   explicitlyDisabled?: {
     claudeHooks?: boolean;

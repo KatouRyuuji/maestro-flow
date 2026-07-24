@@ -126,7 +126,7 @@ function registerWorkflowsSubcommand(install: Command): void {
 function registerEntryCommandsSubcommand(install: Command): void {
   install
     .command('entry-commands')
-    .description('Generate entry slash commands (thin `maestro run` wrappers) for selected steps')
+    .description('Generate entry skills (thin `maestro run` SKILL.md wrappers) for selected steps')
     .option('--steps <list>', 'Comma-separated step names (default: grill,collab)')
     .option('--list', 'List eligible steps without generating')
     .option('--global', 'Generate into ~/.claude/commands (default)')
@@ -152,8 +152,8 @@ function registerEntryCommandsSubcommand(install: Command): void {
 
       const { mode, projectPath } = resolveMode(opts);
       const targetDir = mode === 'global'
-        ? join(homedir(), '.claude', 'commands')
-        : join(projectPath, '.claude', 'commands');
+        ? join(homedir(), '.pi', 'skills')
+        : join(projectPath, '.pi', 'skills');
       const steps = opts.steps
         ? opts.steps.split(',').map((s) => s.trim()).filter(Boolean)
         : undefined;

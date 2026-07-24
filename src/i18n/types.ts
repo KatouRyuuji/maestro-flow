@@ -52,6 +52,7 @@ export interface LocaleStrings {
     groupMcp: string;
     groupAppearance: string;
     groupEmbedding: string;
+    groupEntryCommands: string;
     hubScope: string;
     hubGlobal: string;
     hubProject: string;

@@ -49,6 +49,7 @@ export const zh: LocaleStrings = {
     groupMcp: 'MCP 服务',
     groupAppearance: '外观',
     groupEmbedding: 'Embedding',
+    groupEntryCommands: '入口命令',
     hubScope: '范围：',
     hubGlobal: '全局',
     hubProject: '项目',

@@ -17,6 +17,7 @@ import { findManifest, type Manifest } from '../../core/manifest.js';
 import { exportProfile, importProfile, listProfiles, configToProfile, profileToStateValues } from '../../core/install-profile.js';
 import { paths } from '../../config/paths.js';
 import { buildGroupedHubItems } from './GroupedHub.js';
+import { scanEntrySteps, DEFAULT_ENTRY_STEPS, type EntryStepInfo } from '../../core/entry-command-generator.js';
 
 export type FlowStep =
   | 'platforms' | 'hub'
@@ -418,6 +419,10 @@ export function useInstallFlowState(opts: UseInstallFlowStateOptions) {
 
   // --- Derived values ---
   const scannedComponents = useMemo(() => scanComponents(pkgRoot, mode, projectPath), [pkgRoot, mode, projectPath]);
+  const eligibleEntrySteps = useMemo<EntryStepInfo[]>(() => scanEntrySteps(pkgRoot), [pkgRoot]);
+  const [selectedEntrySteps, setSelectedEntrySteps] = useState<string[]>(
+    () => DEFAULT_ENTRY_STEPS.filter((s) => eligibleEntrySteps.some((e) => e.step === s)),
+  );
   const selectedComponents = useMemo(
     () => scannedComponents.filter((c) => c.available && selectedComponentIds.includes(c.def.id)),
     [scannedComponents, selectedComponentIds],
@@ -458,13 +463,14 @@ export function useInstallFlowState(opts: UseInstallFlowStateOptions) {
     installPluginCodex: enabledSteps.pluginCodex,
     configureCodexMultiAgentV2: shouldInstallComponents && selectedComponentIds.some((id) =>
       COMPONENT_DEFS.some((def) => def.id === id && def.platform === 'codex')),
+    entryCommandSteps: selectedEntrySteps,
   }), [mode, projectPath, enabledSteps, shouldInstallComponents, hookLevel, selectedComponents.length,
     fileCount, mcpTools, mcpEnabled, selectedComponentIds, mcpProjectRoot,
     codexHookLevel, codexMcpEnabled, codexMcpTools, codexMcpProjectRoot,
     agyHookLevel, extraMcpTargetIds, genericHookLevels,
     installStatusline, statuslineTheme, backupClaudeMd, backupAll,
     claudeHooksSelection, codexHooksSelection, agyHooksSelection,
-    selectedPlatforms, codexDedupeAgents]);
+    selectedPlatforms, codexDedupeAgents, selectedEntrySteps]);
 
   // --- Hub groups ---
   const claudeAllHooks = useMemo(() => getAllHookNames('claude'), []);
@@ -507,6 +513,8 @@ export function useInstallFlowState(opts: UseInstallFlowStateOptions) {
       addonDefs,
       embeddingMode: existsSync(join(homedir(), '.maestro', 'api-embedding.json')) ? 'api' as const : 'local' as const,
       embeddingCached: isEmbeddingReady(),
+      entryCommandSteps: selectedEntrySteps,
+      entryCommandEligible: eligibleEntrySteps.length,
     },
   ), [enabledSteps, selectedComponents.length, fileCount, hookLevel, mcpTools.length,
     mcpEnabled, codexHookLevel, codexMcpTools.length, codexMcpEnabled,
@@ -514,7 +522,7 @@ export function useInstallFlowState(opts: UseInstallFlowStateOptions) {
     statuslineDetected, statuslineTheme, backupClaudeMd, backupAll,
     claudeHooksSelection, codexHooksSelection, agyHooksSelection,
     claudeAllHooks, codexAllHooks, agyAllHooks,
-    selectedPlatforms, selectedAddons, chineseEnabled, addonDefs]);
+    selectedPlatforms, selectedAddons, chineseEnabled, addonDefs, selectedEntrySteps, eligibleEntrySteps.length]);
 
   // --- Actions ---
   const toggleStep = useCallback((id: string) => {
@@ -564,6 +572,7 @@ export function useInstallFlowState(opts: UseInstallFlowStateOptions) {
       agyHooks: 'agy_hooks_config', extraMcp: 'extra_mcp_config',
       statusline: 'statusline_config', backup: 'backup_config',
       embedding: 'embedding_config',
+      entryCommands: 'entry_commands_config',
     };
     if (map[id]) setStep(map[id]);
   }, []);
@@ -638,6 +647,7 @@ export function useInstallFlowState(opts: UseInstallFlowStateOptions) {
     // Derived
     lastManifest, scannedComponents, selectedComponents, fileCount, existingFileCount,
     flowConfig, hubGroups,
+    eligibleEntrySteps, selectedEntrySteps, setSelectedEntrySteps,
 
     // Result
     result, setResult, profileMessage,

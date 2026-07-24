@@ -21,6 +21,8 @@ export interface HubItem {
   summary: string;
   /** Shown in right-side detail panel when focused */
   detail?: string;
+  /** When true, shows a → arrow indicating Enter opens a config sub-step */
+  hasConfig?: boolean;
 }
 
 export interface HubGroup {
@@ -173,6 +175,9 @@ export function GroupedHub({
                         {item.label.padEnd(18)}
                       </Text>
                       <Text color={item.enabled ? C.neutral : C.neutral}>{item.enabled ? item.summary : '—'}</Text>
+                      {item.hasConfig && (
+                        <Text color={hl ? C.primary : C.neutral}> {hl ? '→' : ' '}</Text>
+                      )}
                     </Box>
                   );
                 })}
@@ -254,6 +259,8 @@ export function buildGroupedHubItems(
     addonDefs: Array<{ id: string; label: string; description: string; platform: string }>;
     embeddingMode?: 'local' | 'api';
     embeddingCached?: boolean;
+    entryCommandSteps?: string[];
+    entryCommandEligible?: number;
   },
 ): HubGroup[] {
   const hookSummary = (level: HookLevel, selCount?: number, totalCount?: number, isCustom?: boolean) => {
@@ -305,6 +312,7 @@ export function buildGroupedHubItems(
       enabled: enabled.hooks,
       summary: hookSummary(summaries.hookLevel, summaries.hookSelectedCount, summaries.hookTotalCount, summaries.hookIsCustom),
       detail: t.install.hubDetailHooks.replace('{level}', summaries.hookLevel),
+      hasConfig: true,
     });
   }
   if (platforms.has('codex')) {
@@ -314,6 +322,7 @@ export function buildGroupedHubItems(
       enabled: enabled.codexHooks,
       summary: hookSummary(summaries.codexHookLevel, summaries.codexHookSelectedCount, summaries.codexHookTotalCount, summaries.codexHookIsCustom),
       detail: t.install.hubDetailCodexHooks,
+      hasConfig: true,
     });
   }
   if (platforms.has('agy')) {
@@ -323,6 +332,7 @@ export function buildGroupedHubItems(
       enabled: enabled.agyHooks,
       summary: hookSummary(summaries.agyHookLevel, summaries.agyHookSelectedCount, summaries.agyHookTotalCount, summaries.agyHookIsCustom),
       detail: t.install.hubDetailAgyHooks,
+      hasConfig: true,
     });
   }
   for (const gp of GENERIC_HOOKS_PLATFORMS) {
@@ -348,6 +358,7 @@ export function buildGroupedHubItems(
       enabled: enabled.mcp,
       summary: summaries.mcpEnabled ? t.install.hubTools.replace('{count}', String(summaries.mcpToolCount)) : '—',
       detail: t.install.hubDetailMcp,
+      hasConfig: true,
     });
   }
   if (platforms.has('codex')) {
@@ -357,6 +368,7 @@ export function buildGroupedHubItems(
       enabled: enabled.codexMcp,
       summary: summaries.codexMcpEnabled ? t.install.hubTools.replace('{count}', String(summaries.codexMcpToolCount)) : '—',
       detail: t.install.hubDetailCodexMcp,
+      hasConfig: true,
     });
   }
   // Per-platform MCP targets — only show for selected platforms
@@ -400,6 +412,7 @@ export function buildGroupedHubItems(
           ? t.install.statuslineDetected.replace('{cmd}', summaries.statuslineDetected)
           : (summaries.statuslineTheme || 'notion'),
         detail: t.install.hubDetailStatusline.replace('{theme}', summaries.statuslineTheme || 'notion'),
+        hasConfig: true,
       }],
     });
   }
@@ -414,6 +427,25 @@ export function buildGroupedHubItems(
       enabled: true,
       summary: summaries.embeddingMode === 'api' ? 'API mode' : (summaries.embeddingCached ? 'Local (ready)' : 'Local (no model)'),
       detail: 'Manage local ONNX model for semantic search. Download, configure, rebuild index.',
+      hasConfig: true,
+    }],
+  });
+
+  // --- Entry Commands (always visible) ---
+  const entrySteps = summaries.entryCommandSteps ?? [];
+  const entryEligible = summaries.entryCommandEligible ?? 0;
+  groups.push({
+    id: 'entryCommands',
+    title: t.install.groupEntryCommands,
+    items: [{
+      id: 'entryCommands',
+      label: 'Entry Commands',
+      enabled: entrySteps.length > 0,
+      summary: entrySteps.length > 0
+        ? `${entrySteps.length}/${entryEligible} steps`
+        : '—',
+      detail: `Generate slash-command wrappers for step entry points. Selected: ${entrySteps.join(', ') || 'none'}`,
+      hasConfig: true,
     }],
   });
 
