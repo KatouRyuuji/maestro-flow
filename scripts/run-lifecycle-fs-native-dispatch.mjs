@@ -599,14 +599,15 @@ export async function reconcileRuns({
     if (response.workflow_runs.length < POLL_POLICY.per_page) break;
     if (page === POLL_POLICY.maximum_pages) saturated = true;
   }
-  const exact = rows.filter(run => (
+  const candidates = rows.filter(run => run.head_sha === identity.tuple.head_sha);
+  const exact = candidates.filter(run => (
     run.workflow_id === WORKFLOW_ID
     && run.event === 'workflow_dispatch'
     && run.head_sha === identity.tuple.head_sha
     && run.head_branch === branch
     && run.display_title === expectedDisplayTitle(identity)
   ));
-  const mismatched = rows.filter(run => !exact.includes(run));
+  const mismatched = candidates.filter(run => !exact.includes(run));
   let outcome = 'zero';
   if (saturated) outcome = 'pagination_saturated';
   else if (mismatched.length > 0) outcome = 'mismatch';
@@ -1266,6 +1267,31 @@ function patchNativeNonce(source) {
   return patched;
 }
 
+export function makeAggregateVerifierHermetic(source) {
+  if (source.includes("const YAML = require('yaml');")) return source;
+  const importLine = "import YAML from 'yaml';";
+  if (!source.includes(importLine)) {
+    fail('aggregate verifier does not contain the expected YAML import');
+  }
+  let patched = source.replace(
+    importLine,
+    "import { createRequire } from 'node:module';",
+  );
+  const marker = "export function verifyNativeWorkflowDocument(source) {\n";
+  if (!patched.includes(marker)) {
+    fail('aggregate verifier does not expose verifyNativeWorkflowDocument');
+  }
+  patched = patched.replace(
+    marker,
+    `${marker}  const require = createRequire(import.meta.url);\n  const YAML = require('yaml');\n`,
+  );
+  if (patched.includes(importLine)
+    || !patched.includes("const YAML = require('yaml');")) {
+    fail('aggregate verifier hermetic transform is incomplete');
+  }
+  return patched;
+}
+
 function writeFileDurable(path, bytes) {
   mkdirSync(dirname(path), { recursive: true });
   const tempPath = `${path}.tmp-${process.pid}-${randomBytes(16).toString('hex')}`;
@@ -1379,7 +1405,13 @@ function copyAuthorizedPayload(workspaceRoot, worktree) {
     if (stats.isDirectory()) {
       cpSync(source, target, { recursive: true, errorOnExist: false, force: true });
     } else if (item.startsWith('scripts/')) {
-      writeFileDurable(target, patchNativeNonce(readFileSync(source, 'utf8')));
+      const noncePatched = patchNativeNonce(readFileSync(source, 'utf8'));
+      writeFileDurable(
+        target,
+        item === 'scripts/verify-lifecycle-fs-native-aggregate.mjs'
+          ? makeAggregateVerifierHermetic(noncePatched)
+          : noncePatched,
+      );
     } else {
       mkdirSync(dirname(target), { recursive: true });
       copyFileSync(source, target);
@@ -1414,7 +1446,154 @@ function enumerateAllowlistFiles(worktree) {
   return allowed.sort();
 }
 
-function prepareEphemeralBranch({ workspaceRoot, remote, runKey }) {
+function validateRetainedPayloadCommit({ worktree, branch, remote }) {
+  const existingBranch = runCommand('git', ['branch', '--show-current'], { cwd: worktree });
+  if (existingBranch !== branch) fail('retained worktree branch identity mismatch');
+  if (runCommand('git', ['status', '--porcelain'], { cwd: worktree }) !== '') {
+    fail('retained worktree is not clean');
+  }
+  const overlayCommitSha = runCommand('git', ['rev-parse', 'HEAD'], { cwd: worktree });
+  const remoteSha = runCommand(
+    'git',
+    ['ls-remote', '--heads', remote, `refs/heads/${branch}`],
+    { cwd: worktree },
+  ).split(/\s+/)[0];
+  if (remoteSha !== overlayCommitSha) fail('retained remote ref does not equal the overlay commit');
+  const changed = runCommand(
+    'git',
+    ['diff-tree', '--no-commit-id', '--name-only', '-r', overlayCommitSha],
+    { cwd: worktree },
+  ).split(/\r?\n/).filter(Boolean);
+  if (changed.length === 0 || changed.some(path => !(
+    path === WORKFLOW_PATH
+    || path === 'native/lifecycle-fs/Cargo.toml'
+    || path === 'native/lifecycle-fs/Cargo.lock'
+    || path.startsWith('native/lifecycle-fs/src/')
+    || path.startsWith('native/lifecycle-fs/tests/')
+    || path === 'scripts/write-lifecycle-fs-native-receipt.mjs'
+    || path === 'scripts/verify-lifecycle-fs-native-aggregate.mjs'
+  ))) {
+    fail('retained overlay commit is outside the exact allowlist');
+  }
+  return overlayCommitSha;
+}
+
+function repairRetainedAggregatePayload({ workspaceRoot, remote, runKey }) {
+  const base = assertAuthorizedRoot(workspaceRoot, runKey);
+  const worktrees = readdirSync(base, { withFileTypes: true })
+    .filter(entry => entry.isDirectory() && /^worktree-[0-9a-f]{12}$/.test(entry.name));
+  if (worktrees.length !== 1) {
+    fail('focused retry requires exactly one retained authorized worktree');
+  }
+  const worktree = resolve(base, worktrees[0].name);
+  const branch = runCommand('git', ['branch', '--show-current'], { cwd: worktree });
+  if (!BRANCH.test(branch) || !branch.endsWith(worktrees[0].name.slice('worktree-'.length))) {
+    fail('focused retry retained branch/worktree identity mismatch');
+  }
+  const previousHead = validateRetainedPayloadCommit({ worktree, branch, remote });
+  const verifierPath = resolve(worktree, 'scripts/verify-lifecycle-fs-native-aggregate.mjs');
+  const source = readFileSync(verifierPath, 'utf8');
+  const patched = makeAggregateVerifierHermetic(source);
+  if (patched !== source) {
+    writeFileDurable(verifierPath, patched);
+    const status = runCommand('git', ['status', '--porcelain'], { cwd: worktree });
+    if (status.trim() !== 'M scripts/verify-lifecycle-fs-native-aggregate.mjs') {
+      fail(`focused retry changed bytes outside the verifier: ${status}`);
+    }
+    runCommand(
+      'git',
+      ['add', '--', 'scripts/verify-lifecycle-fs-native-aggregate.mjs'],
+      { cwd: worktree },
+    );
+    const staged = runCommand('git', ['diff', '--cached', '--name-only'], { cwd: worktree });
+    if (staged !== 'scripts/verify-lifecycle-fs-native-aggregate.mjs') {
+      fail('focused retry staged files are not the exact verifier path');
+    }
+    runCommand('git', ['commit', '-m', 'fix: 消除 aggregate 运行时 YAML 依赖'], { cwd: worktree });
+    const nextHead = runCommand('git', ['rev-parse', 'HEAD'], { cwd: worktree });
+    const parent = runCommand('git', ['rev-parse', 'HEAD^'], { cwd: worktree });
+    if (parent !== previousHead) fail('focused retry commit is not a fast-forward child');
+    runCommand('git', ['push', remote, `refs/heads/${branch}:refs/heads/${branch}`], { cwd: worktree });
+    const remoteSha = runCommand(
+      'git',
+      ['ls-remote', '--heads', remote, `refs/heads/${branch}`],
+      { cwd: worktree },
+    ).split(/\s+/)[0];
+    if (remoteSha !== nextHead) fail('focused retry remote ref did not fast-forward to the repair');
+  }
+  const overlayCommitSha = validateRetainedPayloadCommit({ worktree, branch, remote });
+  return {
+    executionBase: worktrees[0].name.slice('worktree-'.length),
+    branch,
+    worktree,
+    overlayCommitSha,
+    reused: true,
+  };
+}
+
+function advanceRetainedHistoricalRetry({ workspaceRoot, remote, runKey }) {
+  const prepared = repairRetainedAggregatePayload({ workspaceRoot, remote, runKey });
+  const verifierPath = resolve(prepared.worktree, 'scripts/verify-lifecycle-fs-native-aggregate.mjs');
+  const source = readFileSync(verifierPath, 'utf8');
+  const marker = "  const YAML = require('yaml');";
+  const comment = '  // YAML is resolved only for workflow authoring validation; aggregate CLI is dependency-free.';
+  if (!source.includes(marker)) fail('retained verifier is missing the lazy YAML boundary');
+  if (!source.includes(comment)) {
+    writeFileDurable(verifierPath, source.replace(marker, `${comment}\n${marker}`));
+    const status = runCommand('git', ['status', '--porcelain'], { cwd: prepared.worktree });
+    if (status.trim() !== 'M scripts/verify-lifecycle-fs-native-aggregate.mjs') {
+      fail(`historical-run retry changed bytes outside the verifier: ${status}`);
+    }
+    runCommand(
+      'git',
+      ['add', '--', 'scripts/verify-lifecycle-fs-native-aggregate.mjs'],
+      { cwd: prepared.worktree },
+    );
+    const staged = runCommand('git', ['diff', '--cached', '--name-only'], { cwd: prepared.worktree });
+    if (staged !== 'scripts/verify-lifecycle-fs-native-aggregate.mjs') {
+      fail('historical-run retry staged files are not the exact verifier path');
+    }
+    runCommand('git', ['commit', '-m', 'chore: 记录 aggregate hermetic 边界'], {
+      cwd: prepared.worktree,
+    });
+    const nextHead = runCommand('git', ['rev-parse', 'HEAD'], { cwd: prepared.worktree });
+    const parent = runCommand('git', ['rev-parse', 'HEAD^'], { cwd: prepared.worktree });
+    if (parent !== prepared.overlayCommitSha) fail('historical-run retry is not a fast-forward child');
+    runCommand(
+      'git',
+      ['push', remote, `refs/heads/${prepared.branch}:refs/heads/${prepared.branch}`],
+      { cwd: prepared.worktree },
+    );
+    const remoteSha = runCommand(
+      'git',
+      ['ls-remote', '--heads', remote, `refs/heads/${prepared.branch}`],
+      { cwd: prepared.worktree },
+    ).split(/\s+/)[0];
+    if (remoteSha !== nextHead) fail('historical-run retry remote ref did not fast-forward');
+  }
+  return {
+    ...prepared,
+    overlayCommitSha: validateRetainedPayloadCommit({
+      worktree: prepared.worktree,
+      branch: prepared.branch,
+      remote,
+    }),
+  };
+}
+
+function prepareEphemeralBranch({
+  workspaceRoot,
+  remote,
+  runKey,
+  retryHermetic = false,
+  retryHistorical = false,
+}) {
+  if (retryHistorical) {
+    return advanceRetainedHistoricalRetry({ workspaceRoot, remote, runKey });
+  }
+  if (retryHermetic) {
+    return repairRetainedAggregatePayload({ workspaceRoot, remote, runKey });
+  }
   const executionBase = runCommand('git', ['rev-parse', 'HEAD'], { cwd: workspaceRoot });
   if (!HEX_40.test(executionBase)) fail('execution base is not a full Git SHA');
   const branch = `maestro/native-lifecycle-${runKey}-${executionBase.slice(0, 12)}`;
@@ -1425,34 +1604,7 @@ function prepareEphemeralBranch({ workspaceRoot, remote, runKey }) {
   const rel = relative(base, worktree);
   if (!rel || rel.startsWith('..') || isAbsolute(rel)) fail('worktree escapes authorized temp root');
   if (existsSync(worktree)) {
-    const existingBranch = runCommand('git', ['branch', '--show-current'], { cwd: worktree });
-    if (existingBranch !== branch) fail('retained worktree branch identity mismatch');
-    if (runCommand('git', ['status', '--porcelain'], { cwd: worktree }) !== '') {
-      fail('retained worktree is not clean');
-    }
-    const overlayCommitSha = runCommand('git', ['rev-parse', 'HEAD'], { cwd: worktree });
-    const remoteSha = runCommand(
-      'git',
-      ['ls-remote', '--heads', remote, `refs/heads/${branch}`],
-      { cwd: worktree },
-    ).split(/\s+/)[0];
-    if (remoteSha !== overlayCommitSha) fail('retained remote ref does not equal the overlay commit');
-    const changed = runCommand(
-      'git',
-      ['diff-tree', '--no-commit-id', '--name-only', '-r', overlayCommitSha],
-      { cwd: worktree },
-    ).split(/\r?\n/).filter(Boolean);
-    if (changed.length === 0 || changed.some(path => !(
-      path === WORKFLOW_PATH
-      || path === 'native/lifecycle-fs/Cargo.toml'
-      || path === 'native/lifecycle-fs/Cargo.lock'
-      || path.startsWith('native/lifecycle-fs/src/')
-      || path.startsWith('native/lifecycle-fs/tests/')
-      || path === 'scripts/write-lifecycle-fs-native-receipt.mjs'
-      || path === 'scripts/verify-lifecycle-fs-native-aggregate.mjs'
-    ))) {
-      fail('retained overlay commit is outside the exact allowlist');
-    }
+    const overlayCommitSha = validateRetainedPayloadCommit({ worktree, branch, remote });
     return { executionBase, branch, worktree, overlayCommitSha, reused: true };
   }
   runCommand('git', ['worktree', 'add', '-b', branch, worktree, executionBase], { cwd: workspaceRoot });
@@ -1475,7 +1627,13 @@ function prepareEphemeralBranch({ workspaceRoot, remote, runKey }) {
 
 function parseArguments(argv) {
   const values = {};
-  const flags = new Set(['--execute-authorized', '--transaction-only', '--test-mode']);
+  const flags = new Set([
+    '--execute-authorized',
+    '--transaction-only',
+    '--test-mode',
+    '--retry-hermetic-authorized',
+    '--retry-historical-authorized',
+  ]);
   const valued = new Set([
     '--repo',
     '--remote',
@@ -1518,6 +1676,9 @@ async function main(argv) {
     fail('--test-mode requires NATIVE_LIFECYCLE_TESTING=1');
   }
   const token = args['--token'] ?? (testMode ? 'test-token' : runCommand('gh', ['auth', 'token']));
+  if (args['--retry-hermetic-authorized'] && args['--retry-historical-authorized']) {
+    fail('focused retry modes are mutually exclusive');
+  }
   let branch;
   let headSha;
   if (args['--transaction-only']) {
@@ -1535,6 +1696,8 @@ async function main(argv) {
       workspaceRoot,
       remote: args['--remote'] ?? 'origin',
       runKey: RUN_KEY,
+      retryHermetic: Boolean(args['--retry-hermetic-authorized']),
+      retryHistorical: Boolean(args['--retry-historical-authorized']),
     });
     branch = prepared.branch;
     headSha = prepared.overlayCommitSha;

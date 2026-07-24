@@ -22,6 +22,7 @@ import {
   createCanonicalFixtureReceipt,
   deriveDispatchIdentity,
   jcs,
+  makeAggregateVerifierHermetic,
   releaseTupleLock,
   sha256,
   validateCanonicalReceipt,
@@ -359,7 +360,8 @@ test('derives tuple and persists exclusive dispatch transaction', () => {
 
 test('reconciles remotely before exactly one dispatch', async () => {
   const workspace = mkdtempSync(join(tmpdir(), 'native-dispatch-once-'));
-  const fake = await startFakeGitHub();
+  const historical = uniqueRun(identity('1'.repeat(40), BRANCH), 7000);
+  const fake = await startFakeGitHub({ initialRuns: [historical] });
   try {
     const result = await spawnDispatch({ apiBase: fake.apiBase, workspace });
     assert.equal(result.code, 0, result.stderr);
@@ -571,6 +573,39 @@ test('emits canonical native dispatch receipt fixture', () => {
   }, fixture.branch);
   assert.equal(fixture.transaction_state, 'receipted');
   assert.deepEqual(fixture.cleanup, { state: 'pending', required: true });
+});
+
+test('loads aggregate verifier without a runtime yaml dependency', () => {
+  const isolated = mkdtempSync(join(tmpdir(), 'native-aggregate-hermetic-'));
+  try {
+    const source = readFileSync(
+      resolve(dirname(SCRIPT), 'verify-lifecycle-fs-native-aggregate.mjs'),
+      'utf8',
+    );
+    const patched = makeAggregateVerifierHermetic(source);
+    assert.equal(patched.includes("import YAML from 'yaml';"), false);
+    assert.equal(patched.includes("const YAML = require('yaml');"), true);
+    writeFileSync(join(isolated, 'verify-lifecycle-fs-native-aggregate.mjs'), patched);
+    writeFileSync(
+      join(isolated, 'write-lifecycle-fs-native-receipt.mjs'),
+      readFileSync(resolve(dirname(SCRIPT), 'write-lifecycle-fs-native-receipt.mjs')),
+    );
+    const result = spawnSync(
+      process.execPath,
+      [join(isolated, 'verify-lifecycle-fs-native-aggregate.mjs')],
+      {
+        cwd: isolated,
+        encoding: 'utf8',
+        windowsHide: true,
+        env: { SystemRoot: process.env.SystemRoot },
+      },
+    );
+    assert.equal(result.status, 1);
+    assert.doesNotMatch(result.stderr, /ERR_MODULE_NOT_FOUND|Cannot find package 'yaml'/);
+    assert.match(result.stderr, /all four named arguments are required/);
+  } finally {
+    rmSync(isolated, { recursive: true, force: true });
+  }
 });
 
 test('enforces native no-publish and cleanup boundary', () => {
