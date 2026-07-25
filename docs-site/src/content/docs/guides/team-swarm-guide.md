@@ -252,5 +252,5 @@ const decision = await agent('You are the REFEREE...', { label: 'referee' })
 ## 相关文档
 
 - [命令参考](../COMMANDS-CARD-REFERENCE.md) — 所有命令的快速参考
-- [工作流增强指南](./workflow-enhancement-guide.md) — 动态工作流和并行加速
+- [Ralph 闭环引擎指南](./maestro-ralph-guide.md) — 动态链与 decision gate
 - [团队协作指南](./team-lite-guide.md) — 多代理协作指南

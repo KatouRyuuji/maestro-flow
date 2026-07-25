@@ -134,6 +134,16 @@ export const guideRegistry: Array<{
     category: 'getting-started',
   },
   {
+    slug: 'maestro-coordinator',
+    file: 'maestro-coordinator-guide.md',
+    title: 'Maestro Intent-to-Chain Planner',
+    description: '/maestro entry — intent classification, chain catalog, decomposition protocol, canonical Session creation',
+    title_zh: 'Maestro 意图到链规划器',
+    description_zh: '/maestro 入口 — 意图分类、链目录、分解协议、canonical Session 创建',
+    icon: 'compass',
+    category: 'getting-started',
+  },
+  {
     slug: 'command-usage',
     file: 'command-usage-guide.md',
     file_en: 'command-usage-guide.en.md',
@@ -189,6 +199,17 @@ export const guideRegistry: Array<{
     category: 'core',
   },
   {
+    slug: 'moa',
+    file: 'moa-guide.md',
+    file_en: 'moa-guide.en.md',
+    title: 'MOA Multi-Model Aggregation',
+    description: 'Mixture-of-Agents exploration — parallel reference endpoints inform an aggregator synthesis',
+    title_zh: 'MOA 多模型聚合',
+    description_zh: 'Mixture-of-Agents 探索 — 多参考端点并行分析后由聚合器综合',
+    icon: 'layers',
+    category: 'core',
+  },
+  {
     slug: 'issue-discover',
     file: 'issue-discover-guide.md',
     file_en: 'issue-discover-guide.en.md',
@@ -230,6 +251,26 @@ export const guideRegistry: Array<{
     title_zh: '蚁群智能探索',
     description_zh: 'ACO 驱动的多 Agent 探索与对抗决策',
     icon: 'bug',
+    category: 'orchestration',
+  },
+  {
+    slug: 'worktree',
+    file: 'worktree-guide.md',
+    title: 'Worktree Parallel Development',
+    description: 'Milestone-level parallel dev — fork, sync, and merge Git worktrees',
+    title_zh: 'Worktree 并行开发',
+    description_zh: '里程碑级并行开发 — fork、同步、合并 Git worktree',
+    icon: 'git-branch',
+    category: 'orchestration',
+  },
+  {
+    slug: 'team-lite-design',
+    file: 'team-lite-design.md',
+    title: 'Team Lite Design Rationale',
+    description: 'Architecture and design rationale for the Git-native small-team collaboration extension',
+    title_zh: 'Team Lite 设计理由',
+    description_zh: 'Git-native 小团队协作扩展的架构与设计理由',
+    icon: 'workflow',
     category: 'orchestration',
   },
   // ─── Knowledge System ──────────────────────────────────────────────────────
@@ -319,6 +360,46 @@ export const guideRegistry: Array<{
     title_zh: '安全审计',
     description_zh: 'OWASP Top 10、STRIDE 威胁建模、供应链分析',
     icon: 'shield',
+    category: 'advanced',
+  },
+  {
+    slug: 'misc-commands',
+    file: 'misc-commands-guide.md',
+    title: 'Auxiliary Commands',
+    description: 'Overlay amend, update/migration, spec remove, knowledge audit, milestone release',
+    title_zh: '辅助命令',
+    description_zh: 'Overlay amend、更新迁移、spec 移除、知识审计、里程碑发布',
+    icon: 'tool',
+    category: 'advanced',
+  },
+  {
+    slug: 'spec-system',
+    file: 'spec-system-guide.md',
+    title: 'Spec System',
+    description: 'Spec entries, roles, keywords, progressive fill, and auto-injection',
+    title_zh: 'Spec 规范系统',
+    description_zh: 'Spec 条目、角色、关键词、渐进填充与自动注入',
+    icon: 'clipboard-list',
+    category: 'advanced',
+  },
+  {
+    slug: 'overlay',
+    file: 'overlay-guide.md',
+    title: 'Overlay Command Extensions',
+    description: 'Non-invasive .claude/commands patches — create, apply, bundle, and share',
+    title_zh: 'Overlay 命令扩展',
+    description_zh: '非侵入式 .claude/commands 补丁 — 创建、应用、打包、共享',
+    icon: 'workflow',
+    category: 'advanced',
+  },
+  {
+    slug: 'hooks',
+    file: 'hooks-guide.md',
+    title: 'Hooks Automation',
+    description: 'Claude Code / Codex / Agy hooks — install, toggle, and run evaluators',
+    title_zh: 'Hooks 自动化',
+    description_zh: 'Claude Code / Codex / Agy Hook — 安装、开关、运行评估器',
+    icon: 'hook',
     category: 'advanced',
   },
 ];
@@ -559,6 +640,12 @@ export async function loadGuide(slug: string, locale: string = 'zh-CN'): Promise
   if (!finalLoader) {
     const zhPath = `/src/content/docs/guides/${entry.file}`;
     finalLoader = guideModules[zhPath] || guideModules[zhPath.replace(/^\//, '')];
+  }
+  // en-only fallback: when a guide has no Chinese file, serve the English
+  // version rather than 404 (graceful degradation for zh-CN locale).
+  if (!finalLoader) {
+    const enOnlyPath = `/src/content/docs/en/guides/${entry.file}`;
+    finalLoader = guideModulesEn[enOnlyPath] || guideModulesEn[enOnlyPath.replace(/^\//, '')];
   }
 
   if (!finalLoader) return null;

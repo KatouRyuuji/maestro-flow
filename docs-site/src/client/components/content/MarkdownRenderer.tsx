@@ -3,9 +3,20 @@ import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import type { Components } from 'react-markdown';
 import { lazy, Suspense } from 'react';
+import { Link } from 'react-router-dom';
 import { TerminalBlock, langToTitle } from './GuideComponents.js';
+import { getAllGuideMeta } from '@/client/data/index.js';
 
 const MermaidBlock = lazy(() => import('./MermaidBlock.js').then(m => ({ default: m.MermaidBlock })));
+
+// Map guide filenames (zh `file` + legacy `file_en`) → registry slug, so internal
+// relative links like ./spec-system-guide.md resolve to the /guides/{slug} route
+// instead of a literal .md path that the SPA router cannot resolve.
+const guideFileToSlug = new Map<string, string>();
+for (const g of getAllGuideMeta()) {
+  guideFileToSlug.set(g.file, g.slug);
+  if (g.file_en) guideFileToSlug.set(g.file_en, g.slug);
+}
 
 // ---------------------------------------------------------------------------
 // MarkdownRenderer — Unified guide styling with Mac-terminal code blocks
@@ -111,6 +122,12 @@ const components: Components = {
     return <p className="text-text-secondary leading-[1.75] my-[var(--spacing-4)]">{children}</p>;
   },
   a({ href, children }) {
+    // Internal guide link (./foo-guide.md) → client-side route to /guides/{slug}
+    const basename = href ? (href.split('/').pop() || '') : '';
+    const guideSlug = basename.endsWith('.md') ? guideFileToSlug.get(basename) : undefined;
+    if (guideSlug && href && !/^[a-z][a-z0-9+.-]*:\/\//i.test(href)) {
+      return <Link to={`/guides/${guideSlug}`} className="text-accent-blue font-[var(--font-weight-medium)] no-underline hover:underline">{children}</Link>;
+    }
     return <a href={href} className="text-accent-blue font-[var(--font-weight-medium)] no-underline hover:underline" target="_blank" rel="noopener noreferrer">{children}</a>;
   },
   strong({ children }) { return <strong className="font-[var(--font-weight-semibold)] text-text-primary">{children}</strong>; },
