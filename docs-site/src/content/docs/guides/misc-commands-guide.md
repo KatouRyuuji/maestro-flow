@@ -16,7 +16,7 @@ Maestro 工作流中用于维护、发布和规范管理的辅助命令。
 ### 使用场景
 
 - `/maestro-ralph` 决策门控暴露了命令步骤缺失
-- `/maestro-ralph --engine swarm --script wf-review` 发现流程层面的不足
+- `review` 决策门（`post-review`）发现流程层面的不足
 - 工作流执行偏差，根因指向命令定义不完整
 - Issue 追踪显示同类问题反复出现
 

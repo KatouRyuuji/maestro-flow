@@ -144,8 +144,8 @@ maestro explore "<PROMPT>" [more prompts...] [options]
 | `-e, --endpoint <names>` | Endpoint name(s), comma-separated | First available |
 | `--all` | Fan out each prompt to all endpoints | — |
 | `--parallel <n>` | Max concurrent endpoint queues | Config or `4` |
-| `--ep-concurrency <n>` | Max concurrent jobs per endpoint | `1` (serial) |
-| `--max-turns <n>` | Max search rounds (overrides config) | Config or `6` |
+| `--ep-concurrency <n>` | Max concurrent jobs per endpoint | Unlimited (or endpoint config `concurrency`) |
+| `--max-turns <n>` | Max search rounds (overrides config) | Config or `5` |
 | `-f, --file <path>` | Load prompts from JSON/text file | — |
 | `--cd <dir>` | Working directory | Current |
 | `-o, --output-dir <dir>` | Custom session save directory | `.workflow/explore/` |
@@ -314,3 +314,188 @@ Circuit breaker summary: qwen tripped during this run
 - Works with `--all` mode: tripped endpoints' remaining jobs switch to fallback
 - Without `circuitBreaker` config, original behavior is preserved (no failover)
 - Endpoints in `fallbackOrder` can also trip, in which case the next healthy endpoint is used
+
+---
+
+## Common Usage
+
+### Quick Code Query
+
+```bash
+maestro explore "Where is the auth middleware defined?"
+```
+
+### Multi-Angle Scan
+
+```bash
+maestro explore \
+  "FIND: security vulnerabilities
+SCOPE: src/api/
+ATTENTION: injection, auth bypass, SSRF" \
+  "FIND: performance bottlenecks
+SCOPE: src/db/
+ATTENTION: N+1, missing indexes" \
+  "FIND: error handling gaps
+SCOPE: src/
+ATTENTION: uncaught exceptions"
+```
+
+### Per-Prompt Endpoint Routing
+
+```bash
+maestro explore -f tasks.json
+```
+
+```json
+[
+  { "prompt": "Deep architecture analysis", "endpoint": "deepseek" },
+  { "prompt": "Quick pattern scan", "endpoint": "qwen" }
+]
+```
+
+### All-Endpoint Comparison
+
+```bash
+maestro explore "How does the auth system work?" --all --json
+```
+
+---
+
+## MOA Multi-model Aggregation
+
+MOA (Mixture of Agents) is an advanced mode of Explore — multiple reference models search in parallel, and an aggregator synthesizes the final answer.
+
+### Quick Start
+
+```bash
+# Use the default preset
+maestro moa "FIND: auth middleware\nSCOPE: src/"
+
+# Specify a preset
+maestro moa "query" --preset thorough
+
+# Multiple prompts (each goes through the MOA flow)
+maestro moa "Find DB patterns" "Check error handling"
+```
+
+### How It Works
+
+```
+prompt ──→ reference 1 (agentLoop + tools) ──┐
+       ──→ reference 2 (agentLoop + tools) ──┤ parallel
+       ──→ reference 3 (agentLoop + tools) ──┘
+                     │
+                     ▼
+           Aggregate all reference outputs
+           Append to the end of the aggregator prompt
+                     │
+                     ▼
+           aggregator (agentLoop + tools) → final result
+```
+
+1. **Reference phase**: Each reference endpoint runs a full agentLoop (with Search/Read tools), independently searching the code and producing an analysis
+2. **Aggregation phase**: All reference outputs are appended to the end of the original prompt and passed to the aggregator
+3. **Aggregator phase**: The aggregator synthesizes the reference analyses, runs its own searches to verify, and produces the final answer
+
+The system prompt stays consistent between reference and aggregator, ensuring a stable cache prefix on the provider side.
+
+### MOA Configuration
+
+Edit `~/.maestro/moa.json` to configure MOA presets (endpoints are defined in `~/.maestro/api.json`):
+
+```json
+{
+  "endpoints": {
+    "qwen": {
+      "baseUrl": "https://api.siliconflow.cn/v1",
+      "apiKey": "sk-xxx",
+      "model": "Qwen/Qwen3-8B"
+    },
+    "gpt-codex": {
+      "baseUrl": "https://api.openai.com/v1",
+      "apiKey": "sk-yyy",
+      "model": "gpt-5.3-codex-spark",
+      "extraBody": { "max_completion_tokens": 4000 }
+    },
+    "sonnet": {
+      "baseUrl": "https://api.anthropic.com",
+      "apiKey": "sk-ant-xxx",
+      "model": "claude-sonnet-4-6",
+      "format": "anthropic"
+    }
+  },
+  "moa": {
+    "defaultPreset": "default",
+    "presets": {
+      "default": {
+        "referenceEndpoints": ["qwen"],
+        "aggregatorEndpoint": "gpt-codex"
+      },
+      "thorough": {
+        "referenceEndpoints": ["qwen", "sonnet"],
+        "aggregatorEndpoint": "gpt-codex"
+      }
+    }
+  }
+}
+```
+
+#### Preset Fields
+
+| Field | Description | Required |
+|-------|-------------|----------|
+| `referenceEndpoints` | List of reference endpoint names (up to 4) | Yes |
+| `aggregatorEndpoint` | Aggregator endpoint name | Yes |
+| `mode` | Orchestration mode: `"initial-only"` (default) | No |
+| `enabled` | Whether this preset is enabled | No |
+
+Model parameters such as temperature and max_tokens are controlled by each endpoint's own `extraBody`; the preset only describes flow orchestration.
+
+#### Design Principles
+
+- **Presets manage flow only**: which endpoints act as reference, which acts as aggregator, and what mode
+- **Endpoints manage model parameters**: temperature, token limits, and special params go in the endpoint's `extraBody`
+- **Configure once, effective everywhere**: changing an endpoint's parameters automatically takes effect in both explore and moa
+
+### MOA Command Usage
+
+```bash
+maestro moa "your search query"              # Basic usage
+maestro moa "query" --preset thorough         # Specify a preset
+maestro moa "query" --max-turns 3             # Limit search rounds
+maestro moa "query" --cd /path/to/project     # Specify working directory
+maestro moa "query" --json                    # JSON output
+maestro moa "query" --no-save                 # Skip session save
+```
+
+#### Session Management
+
+```bash
+maestro moa show                    # View session history
+maestro moa output <session-id>     # View session results
+```
+
+### Explore vs MOA Comparison
+
+| Feature | `maestro explore` | `maestro moa` |
+|---------|-------------------|---------------|
+| Number of agents | 1 agent / prompt | N reference + 1 aggregator |
+| Multi-endpoint | `--all` fan-out (independent runs) | preset collaboration (reference → aggregator) |
+| Tool access | ✅ Full | ✅ Both reference and aggregator have it |
+| Cost | 1x | (N+1)x (N reference + 1 aggregator) |
+| Use case | Quick lookups, simple searches | Complex analysis requiring cross-validation |
+
+Both share endpoint configuration (`~/.maestro/api.json`) and session storage (`.workflow/explore/`). MOA presets are configured separately in `~/.maestro/moa.json`.
+
+### Degradation Behavior
+
+- **Partial reference failure**: Failure info is injected into the aggregator context without interrupting the flow
+- **All references fail**: The aggregator degrades to a single-agent run (marked as `degraded`)
+- **Aggregator endpoint does not exist**: The command errors out and exits
+
+### Best Practices
+
+1. **Use cheap models for reference, a strong model for the aggregator** — best cost-effectiveness
+2. **2-3 references are enough** — more references yield diminishing returns while cost grows linearly
+3. **Use different models as reference** — references from homogeneous models produce highly redundant outputs, wasting resources
+4. **Structured prompts work better** — FIND/SCOPE/EXPECTED make each reference's search more precise

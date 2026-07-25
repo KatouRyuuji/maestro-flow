@@ -380,7 +380,6 @@ maestro load --category coding --keyword auth           # 统一知识加载
 | CLI 命令参考 | [CLI Commands Guide](./cli-commands-guide.md) |
 | 产物目录结构 | [Workflow Structure Guide](./workflow-structure-guide.md) |
 | Spec 规范系统 | [Spec System Guide](./spec-system-guide.md) |
-| Spec 注入机制 | [Spec Injection Guide](./spec-injection-guide.md) |
 | MCP 工具参考 | [MCP Tools Guide](./mcp-tools-guide.md) |
 | Delegate 异步委托 | [Delegate Async Guide](./delegate-async-guide.md) |
 | Overlay 命令扩展 | [Overlay Guide](./overlay-guide.md) |

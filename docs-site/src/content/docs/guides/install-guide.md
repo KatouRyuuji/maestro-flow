@@ -161,7 +161,7 @@ maestro install toggle --path ./my-project --list
 安装到 `~/.maestro/`，所有项目共享：
 
 ```bash
-maestro install --mode global
+maestro install --global
 ```
 
 适合：个人开发机，多项目共享配置
@@ -171,7 +171,7 @@ maestro install --mode global
 安装到项目目录 `.workflow/`，仅当前项目生效：
 
 ```bash
-maestro install --mode project
+maestro install --path <dir>
 ```
 
 适合：团队协作，项目特定配置
@@ -199,7 +199,7 @@ maestro install --mode project
 
 ```bash
 # 查看当前安装状态
-maestro install --status
+maestro install toggle --list
 
 # 强制重新安装
 maestro install --force
@@ -270,7 +270,7 @@ maestro uninstall --yes
 maestro install --force
 
 # 检查组件状态
-maestro install --status
+maestro install toggle --list
 ```
 
 ### 权限错误
@@ -290,7 +290,7 @@ npm install -g maestro-flow
 
 ```bash
 # 安装管理
-maestro install [--mode global|project] [--force] [--status]
+maestro install [--global|--path <dir>] [--force]
 maestro uninstall [--yes]
 maestro update [--dry-run] [--force]
 

@@ -149,7 +149,7 @@ maestro explore "<PROMPT>" [more prompts...] [options]
 | `--all` | 每个 prompt 扇出到所有端点 | — |
 | `--parallel <n>` | 最大并行端点队列数 | 配置或 `4` |
 | `--ep-concurrency <n>` | 同一端点最大并发 job 数 | 无限制（或端点配置 `concurrency`） |
-| `--max-turns <n>` | 最大搜索轮数（覆盖配置） | 配置或 `6` |
+| `--max-turns <n>` | 最大搜索轮数（覆盖配置） | 配置或 `5` |
 | `-f, --file <path>` | 从 JSON/文本文件加载 prompt | — |
 | `--cd <dir>` | 工作目录 | 当前目录 |
 | `-o, --output-dir <dir>` | 自定义 session 保存目录 | `.workflow/explore/` |

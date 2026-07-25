@@ -151,14 +151,14 @@ deep 级别包含 STRIDE 威胁建模：
 }
 ```
 
-### 与 /maestro-ralph --engine swarm --script wf-review 集成
+### 与 review 决策门集成
 
 ```bash
 # 先执行安全审计
 /security-audit standard --scope src/auth
 
 # 再执行代码审查（包含安全维度）
-/maestro-ralph --engine swarm --script wf-review 1 --dimensions security
+/maestro "review phase 1"
 ```
 
 ## 最佳实践

@@ -93,7 +93,7 @@ Command --role analyze → cli-tools.json → fallbackChain: [codex, gemini, cla
 
 ## Domain Tags
 
-Used by `maestro execute` to auto-assign execution tools by file domain:
+Used by the `execute` Skill step to auto-assign execution tools by file domain:
 
 | Tag | Matching Scenario |
 |-----|-------------------|

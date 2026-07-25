@@ -15,7 +15,7 @@ Unlike `/maestro-overlay` (explicit single creation), `/maestro-overlay --amend`
 ### Use Cases
 
 - `/maestro-ralph` decision gate exposed missing command steps
-- `/maestro-ralph --engine swarm --script wf-review` identified process-level deficiencies
+- The `review` decision gate (`post-review`) identified process-level deficiencies
 - Workflow execution deviations traced to incomplete command definitions
 - Issue tracking shows recurring problems rooted in command design
 

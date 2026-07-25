@@ -380,7 +380,6 @@ maestro load --category coding --keyword auth           # Unified knowledge load
 | CLI command reference | [CLI Commands Guide](./cli-commands-guide.md) |
 | Artifact directory structure | [Workflow Structure Guide](./workflow-structure-guide.md) |
 | Spec system | [Spec System Guide](./spec-system-guide.md) |
-| Spec injection mechanism | [Spec Injection Guide](./spec-injection-guide.md) |
 | MCP tools reference | [MCP Tools Guide](./mcp-tools-guide.md) |
 | Delegate async tasks | [Delegate Async Guide](./delegate-async-guide.md) |
 | Overlay command extension | [Overlay Guide](./overlay-guide.md) |

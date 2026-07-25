@@ -1,3 +1,8 @@
+---
+title: "Installation Guide"
+icon: "📦"
+---
+
 # Installation Guide
 
 Maestro-Flow installation has two steps: global CLI install and project initialization.
@@ -149,7 +154,7 @@ maestro install toggle --path ./my-project --list
 Install to `~/.maestro/`, shared across all projects:
 
 ```bash
-maestro install --mode global
+maestro install --global
 ```
 
 Best for: personal dev machine, multi-project shared config
@@ -159,7 +164,7 @@ Best for: personal dev machine, multi-project shared config
 Install to the project directory `.workflow/`, scoped to the current project:
 
 ```bash
-maestro install --mode project
+maestro install --path <dir>
 ```
 
 Best for: team collaboration, project-specific config
@@ -187,7 +192,7 @@ To manually update the manifest:
 
 ```bash
 # View current install status
-maestro install --status
+maestro install toggle --list
 
 # Force reinstall
 maestro install --force
@@ -258,7 +263,7 @@ To install through a proxy, configure `~/.maestro/cli-tools.json`:
 maestro install --force
 
 # Check component status
-maestro install --status
+maestro install toggle --list
 ```
 
 ### Permission errors
@@ -278,7 +283,7 @@ npm install -g maestro-flow
 
 ```bash
 # Install management
-maestro install [--mode global|project] [--force] [--status]
+maestro install [--global|--path <dir>] [--force]
 maestro uninstall [--yes]
 maestro update [--dry-run] [--force]
 
