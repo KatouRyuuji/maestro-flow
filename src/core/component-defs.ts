@@ -762,6 +762,27 @@ export function migrateComponentIds(ids: string[]): string[] {
 }
 
 /**
+ * Partition a raw requested component-ID list (e.g. from `--components` or a
+ * replayed manifest/profile) into three buckets:
+ *  - `unknown`: IDs that name no defined component even after legacy migration
+ *    (caller should hard-error on these).
+ *  - `unavailable`: IDs that name a defined component but are absent from
+ *    `availableIds` — i.e. the component's source files are not present in this
+ *    package build (empty source dir, or not shipped). Reinstall/upgrade flows
+ *    replay the prior selection, so these must be soft-skipped, not fatal.
+ *  - `requested`: the migrated, de-duplicated ID list (defined IDs only).
+ */
+export function partitionRequestedComponentIds(
+  rawIds: string[],
+  availableIds: Set<string>,
+): { unknown: string[]; unavailable: string[]; requested: string[] } {
+  const unknown = rawIds.filter((id) => migrateComponentIds([id]).length === 0);
+  const requested = Array.from(new Set(migrateComponentIds(rawIds)));
+  const unavailable = requested.filter((id) => !availableIds.has(id));
+  return { unknown, unavailable, requested };
+}
+
+/**
  * Migrate old IDs + merge new default-selected components.
  * Used during `maestro update` reinstall so new-version components
  * with `defaultSelected !== false` are automatically included.

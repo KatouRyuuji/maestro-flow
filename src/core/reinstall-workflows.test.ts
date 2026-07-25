@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { createManifest, recordClaudeHooks, recordCodexHooks, recordGenericHooks, recordStatusline, recordClaudeMcp, recordExtraMcp } from '../core/manifest.js';
 import { manifestToProfile } from '../core/install-profile.js';
-import { mergeNewDefaults, migrateComponentIds, COMPONENT_DEFS } from '../core/component-defs.js';
+import { mergeNewDefaults, migrateComponentIds, partitionRequestedComponentIds, COMPONENT_DEFS } from '../core/component-defs.js';
 
 // ---------------------------------------------------------------------------
 // manifestToProfile
@@ -234,5 +234,54 @@ describe('reinstall spawn args', () => {
     expect(args).not.toContain('--hooks');
     expect(args).not.toContain('--components');
     expect(args).not.toContain('--force');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// partitionRequestedComponentIds — reinstall/upgrade resilience
+// ---------------------------------------------------------------------------
+
+describe('partitionRequestedComponentIds', () => {
+  const allIds = new Set(COMPONENT_DEFS.map((d) => d.id));
+
+  it('treats defined-but-unavailable components as soft skips, not unknown', () => {
+    // ref/chains/overlays are defined components; simulate a build where their
+    // source files are absent (not in availableIds). They must NOT be unknown.
+    const available = new Set(allIds);
+    available.delete('ref');
+    available.delete('chains');
+    available.delete('overlays');
+
+    const { unknown, unavailable, requested } = partitionRequestedComponentIds(
+      ['workflows', 'ref', 'chains', 'overlays'],
+      available,
+    );
+
+    expect(unknown).toEqual([]);
+    expect(unavailable.sort()).toEqual(['chains', 'overlays', 'ref']);
+    expect(requested).toContain('workflows');
+    expect(requested).toContain('ref');
+  });
+
+  it('flags IDs that name no defined component as unknown', () => {
+    const { unknown, unavailable } = partitionRequestedComponentIds(
+      ['workflows', 'definitely-not-a-component'],
+      allIds,
+    );
+
+    expect(unknown).toEqual(['definitely-not-a-component']);
+    expect(unavailable).toEqual([]);
+  });
+
+  it('migrates legacy skill IDs and de-duplicates the requested set', () => {
+    const { unknown, requested } = partitionRequestedComponentIds(
+      ['commands-odyssey', 'commands', 'workflows'],
+      allIds,
+    );
+
+    expect(unknown).toEqual([]);
+    // commands-odyssey migrates to commands; duplicates collapse
+    expect(requested.filter((id) => id === 'commands')).toHaveLength(1);
+    expect(requested).toContain('workflows');
   });
 });

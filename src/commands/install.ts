@@ -474,7 +474,7 @@ async function forceInstall(
   opts: ForceInstallOpts,
 ): Promise<void> {
   const { executeInstallPipeline } = await import('../core/install-executor.js');
-  const { migrateComponentIds } = await import('./install-backend.js');
+  const { migrateComponentIds, partitionRequestedComponentIds } = await import('./install-backend.js');
   const { findManifest } = await import('../core/manifest.js');
   const { paths } = await import('../config/paths.js');
 
@@ -502,15 +502,24 @@ async function forceInstall(
     throw new Error('--components requires at least one component ID.');
   }
 
-  const invalidComponentIds = rawComponentIds?.filter((id) => {
-    const migrated = migrateComponentIds([id]);
-    return migrated.length === 0 || migrated.some((candidate) => !availableIds.has(candidate));
-  }) ?? [];
-  if (invalidComponentIds.length > 0) {
-    throw new Error(`Unknown or unavailable component IDs: ${invalidComponentIds.join(', ')}`);
+  // Distinguish truly-unknown IDs (hard error) from IDs that name a defined
+  // component whose source files are absent from this package build (soft skip).
+  // Reinstall/upgrade flows replay the prior manifest selection, so a component
+  // that became unavailable (empty source dir, or not shipped in this build)
+  // must not abort the whole install — `toInstall` below already intersects the
+  // selection with `available`.
+  const partition = rawComponentIds
+    ? partitionRequestedComponentIds(rawComponentIds, availableIds)
+    : undefined;
+  if (partition && partition.unknown.length > 0) {
+    throw new Error(`Unknown component IDs: ${partition.unknown.join(', ')}`);
   }
-
-  const requestedIds = rawComponentIds ? migrateComponentIds(rawComponentIds) : undefined;
+  if (partition && partition.unavailable.length > 0) {
+    console.error(
+      `Warning: skipping component(s) not available in this package build: ${partition.unavailable.join(', ')}`,
+    );
+  }
+  const requestedIds = partition?.requested;
   const priorIds = prior?.selectedComponentIds === undefined
     ? undefined
     : migrateComponentIds(prior.selectedComponentIds);
