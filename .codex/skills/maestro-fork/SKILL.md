@@ -28,7 +28,6 @@ version: 0.5.56
 
 <required_reading>
 @~/.maestro/workflows/run-mode.md
-@~/.maestro/workflows/codex-run-mode.md
 </required_reading>
 
 <purpose>
@@ -43,6 +42,10 @@ Supports `--sync` mode to pull latest main changes into an active worktree.
 
 <context>
 $ARGUMENTS -- session ID (or slug) and optional flags.
+
+Terminology: this command uses 'session' throughout. The underlying workflow file (fork.md) may use 'milestone' as a legacy alias for 'session'. Treat them as equivalent: `--session` maps to workflow's `-m`, `state.json.sessions[]` maps to `state.json.milestones[]`.
+
+`--base <ref>`: git ref (branch, tag, or commit hash) to fork from. Default: HEAD.
 
 Modes (`Fork` / `Sync`), flags (`--session`, `--base`, `--sync`), session resolution, worktree layout, and artifact scoping are defined in workflow `fork.md`.
 </context>
@@ -68,7 +71,7 @@ Fork and sync algorithm steps are defined in workflow `fork.md`.
 - BLOCKED if missing: worktree creation failed or shared files not copied — do not proceed to artifact scoping.
 
 **GATE 3: Artifact Copy → Completion**
-- REQUIRED: request_user_input confirmation before registry writes — show session scope, worktree path, and state entries to be written. User must confirm or abort.
+- REQUIRED: AskUserQuestion confirmation before registry writes — show session scope, worktree path, and state entries to be written. User must confirm or abort.
 - REQUIRED: `worktree-scope.json` written with session scope (after confirmation).
 - REQUIRED: Scoped `state.json` written (only this session's data) (after confirmation).
 - REQUIRED: `worktrees.json` registry updated in main worktree (after confirmation).
@@ -88,7 +91,7 @@ Fork and sync algorithm steps are defined in workflow `fork.md`.
 
 | Condition | Suggestion |
 |-----------|-----------|
-| Fork complete | `cd {wt.path}` then step `analyze` (`maestro run prepare --platform codex analyze` + `maestro run create analyze --session YYYYMMDD-analyze-{topic} --intent "{goal}"`) |
+| Fork complete | `cd {wt.path}` then step `analyze` (`maestro run prepare analyze` + `maestro run create analyze --session YYYYMMDD-analyze-{topic} --intent "{goal}"`) |
 | Fork + automated | `maestro delegate "run full lifecycle for session" --cd {wt.path} --mode write` |
 | Fork + status check | Recommend `/maestro-manage status` |
 | Sync complete | Resume work in worktree |
@@ -99,10 +102,10 @@ Fork and sync algorithm steps are defined in workflow `fork.md`.
 | Code | Severity | Condition | Recovery |
 |------|----------|-----------|----------|
 | E001 | error | Project not initialized | Run maestro-init first |
-| E002 | error | No roadmap found | Run step `roadmap` first (`maestro run prepare --platform codex roadmap` + `maestro run create roadmap --session YYYYMMDD-roadmap-{topic} --intent "{goal}"`) |
+| E002 | error | No roadmap found | Run step `roadmap` first (`maestro run prepare roadmap` + `maestro run create roadmap --session YYYYMMDD-roadmap-{topic} --intent "{goal}"`) |
 | E003 | error | Running inside a worktree | Run from main worktree |
 | E004 | error | No session ID provided | Provide `--session <session_id>` |
-| E005 | error | No sessions defined in state.json | Run step `roadmap` first (`maestro run prepare --platform codex roadmap` + `maestro run create roadmap --session YYYYMMDD-roadmap-{topic} --intent "{goal}"`) |
+| E005 | error | No sessions defined in state.json | Run step `roadmap` first (`maestro run prepare roadmap` + `maestro run create roadmap --session YYYYMMDD-roadmap-{topic} --intent "{goal}"`) |
 | E006 | error | Session not found in state.json.sessions[] | Check available sessions |
 | E007 | error | No active worktree for session (--sync) | Check worktrees.json |
 | E008 | error | Session already has active worktree | Merge or cleanup first |
@@ -113,11 +116,11 @@ Fork mode:
 - [ ] Session resolved from state.json.sessions[]
 - [ ] Git worktree created with branch (`session/{slug}`)
 - [ ] Shared `.workflow/` files copied (project.md, config.json, specs/)
-- [ ] Session Run artifacts copied (filtered from artifact registry)
+- [ ] Session artifacts copied (matched by session/milestone name from workflow)
 - [ ] `worktree-scope.json` written with session scope
 - [ ] Scoped `state.json` written (only this session's data)
 - [ ] `worktrees.json` registry updated in main worktree
-- [ ] Session lifecycle recorded (`session.json.lifecycle.forked_from`)
+- [ ] Session lifecycle recorded in worktrees.json registry (fork_sessions entry)
 - [ ] Summary displayed with next-step commands
 
 Sync mode:

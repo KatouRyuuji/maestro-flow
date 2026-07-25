@@ -20,11 +20,6 @@ allowed-tools:
 session-mode: bootstrap
 version: 0.5.56
 ---
-
-<bootstrap_mode>
-This skill initializes protected project state before a Session exists. It MUST NOT call `maestro run create`; bootstrap files remain owned by their protected stores.
-</bootstrap_mode>
-
 <purpose>
 Initialize project: detect state, create `.workflow/` with project.md, state.json, config.json.
 Entry point; downstream: step `roadmap` or step `brainstorm`.
@@ -142,9 +137,11 @@ Verdicts:
 
 | Condition | Suggestion |
 |-----------|-----------|
-| Roadmap needed (default light) | step `roadmap` (`maestro run prepare --platform codex roadmap` + `maestro run create roadmap --session YYYYMMDD-roadmap-{topic} --intent "{goal}"`) |
-| Full spec package | step `blueprint` (`maestro run prepare --platform codex blueprint` + `maestro run create blueprint --session YYYYMMDD-blueprint-{topic} --intent "{goal}"`) |
-| Explore ideas first | step `brainstorm` (`maestro run prepare --platform codex brainstorm` + `maestro run create brainstorm --session YYYYMMDD-brainstorm-{topic} --intent "{goal}"`) |
+| Roadmap needed (default light) | step `roadmap` (`maestro run prepare roadmap` + `maestro run create roadmap --session YYYYMMDD-roadmap-{topic} --intent "{goal}"`) |
+
+Note: roadmap step is responsible for creating `state.json.sessions[]` entries and setting the first `active_session_id`.
+| Full spec package | step `blueprint` (`maestro run prepare blueprint` + `maestro run create blueprint --session YYYYMMDD-blueprint-{topic} --intent "{goal}"`) |
+| Explore ideas first | step `brainstorm` (`maestro run prepare brainstorm` + `maestro run create brainstorm --session YYYYMMDD-brainstorm-{topic} --intent "{goal}"`) |
 | View project dashboard | `/maestro-manage status` |
 | Quick ad-hoc task | `/maestro-companion "{goal}"` |
 </completion>
@@ -153,14 +150,16 @@ Verdicts:
 | Code | Severity | Condition | Recovery |
 |------|----------|-----------|----------|
 | E001 | error | No arguments provided when -y requires @ reference | Check arguments format, re-run with correct input |
-| E002 | error | .workflow/ already exists for greenfield init | Check .workflow/ directory state, resolve conflicts |
+| E002 | error | .workflow/ already exists (greenfield init) | Use --from to import existing state, or remove .workflow/ to start fresh |
 | E003 | error | Context source not found (--from / --from-brainstorm) | Check arguments format, re-run with correct input |
+| E004 | error | Template file missing in ~/.maestro/templates/ | Run maestro-update to restore templates |
+| E005 | warning | .workflow/ already exists (existing codebase onboarding) | Merge with existing state or overwrite; user chooses via AskUserQuestion |
 | W001 | warning | Research agent failed, continuing with partial results | Retry research or proceed with partial results |
 </error_codes>
 
 <success_criteria>
 - [ ] `.workflow/project.md` created with Core Value, Requirements (Validated/Active/Out of Scope), Key Decisions
-- [ ] `.workflow/state.json` created with artifacts[] array, initialized to idle state
+- [ ] `.workflow/state.json` created with artifacts[] array and empty sessions[] array, initialized to idle state
 - [ ] `.workflow/config.json` created with workflow / execution / git / gates / codebase / guard / collab / specInjection / dashboard segments
 - [ ] `.workflow/specs/` initialized with convention files
 - [ ] All interview decisions written to project.md / config.json before proceeding

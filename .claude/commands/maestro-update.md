@@ -58,6 +58,8 @@ $ARGUMENTS — optional flags.
 - REQUIRED: User confirmation via [@ask] AskUserQuestion (unless `--force`).
 - BLOCKED if: already up to date (display message and exit) or user cancels.
 
+--dry-run short-circuit: execute GATE 1 (version detection) + dry-run migration check, display preview, EXIT before GATE 2 confirmation and GATE 3 execution.
+
 **GATE 3: Execute → Summary**
 - REQUIRED: Backup created at `.workflow/state.json.backup-v{current}-{timestamp}`.
 - REQUIRED: Schema migration completed successfully.
@@ -77,6 +79,8 @@ IF `--setup-only`:
   → Glob: ~/.maestro/workflows/updates/update-v{version}-setup.md
   → IF exists: follow that document completely, then EXIT
   → IF not exists: display "No setup script for v{version}" → EXIT
+
+1a. Check for active worktrees: read worktrees.json. If active entries exist, warn: 'Active worktrees detected ({N}). Schema migration may cause merge incompatibility. Consider merging active worktrees first.' (W003)
 
 ### Step 2: Check for Updates
 
@@ -144,6 +148,7 @@ Next steps:
 | E003 | error | Version-specific setup doc failed to execute | Manual setup: read `~/.maestro/workflows/updates/update-v{target}-setup.md` |
 | W001 | warning | No version-specific setup doc found for target version | Proceed without setup; schema migration alone is sufficient |
 | W002 | warning | `--setup-only` but no setup script exists for current version | Display message and exit |
+| W003 | warning | Active worktrees detected during update | Consider merging worktrees before migration |
 </error_codes>
 
 <success_criteria>

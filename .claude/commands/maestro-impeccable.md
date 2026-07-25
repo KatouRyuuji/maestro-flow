@@ -46,11 +46,13 @@ $ARGUMENTS first word determines mode:
 |------------|------|
 | `--codify` / `codify` | Codify — extract design system from existing code (see `<codify_mode>`) |
 | Known command (see routing table) | Direct |
+
+> Disambiguation for overlapping names (`harden`, `live`): bare keyword without target → Chain; keyword + explicit target/path → Direct. Override: `--chain` forces Chain, `--direct` forces Direct.
+
 | Chain name: build, redesign, improve, enhance, launch, harden, foundation, live | Chain |
 | continue / next / -c | Resume |
 | search | Search: `maestro impeccable search "$REST"` |
-| Free text (concrete task) | Direct craft — has specific target + specs/reference |
-| Free text (project intent) | Intent → classify → chain |
+| Free text (any) | Free Text Routing (3-layer system below) |
 | (empty) | Menu: show commands by category |
 
 ## Command Routing
@@ -108,7 +110,7 @@ Chain step names below reuse Command Routing names but resolve through the chain
 - `[refine]` = quality gate loop: gate fails → auto-select fix commands from findings → re-gate
 - `{cmd...}` = enhance supports multiple commands, comma-separated: `enhance colorize,typeset landing-page`
 
-Chain flags: --threshold <N> (default 26/40), --max-loops <N> (default 3), --skip-design, --styles <N>, -y
+Chain flags: --threshold <N> (default 26/40), --max-loops <N> (default 3), --skip-design, --styles <N>, -y (skip Layer 2 ambiguity AskUserQuestion — select first matching chain; skip chain session confirmation; skip quality gate refine confirmations. Does NOT skip prerequisite checks.)
 
 ## Free Text Routing
 
@@ -118,7 +120,7 @@ Three-layer priority matching. Stop on first match — do not continue to lower 
 
 Semantically match user description against the Command Routing table's Description column. Match the closest **single** command.
 
-**Skip condition**: If the prompt also contains a Layer 2 chain keyword AND does not focus on a single design dimension, skip this layer.
+**Skip condition**: If the prompt matches a Layer 2 chain keyword AND matches MORE THAN ONE row in the Layer 1 intent signal table, skip this layer.
 Example: `enhance colors and typography` — "enhance" is a chain keyword + multiple design dimensions → skip to Layer 2.
 
 | Intent signal | Command |
@@ -149,6 +151,8 @@ Example: `enhance colors and typography` — "enhance" is a chain keyword + mult
 
 ### Layer 2: Project intent → Chain
 
+Override: if the user explicitly uses a chain name as the primary verb (improve, enhance, redesign, build, launch), prefer Layer 2 chain even if Layer 1 matched a single command.
+
 Layer 1 did not match. Check for chain-level keywords — even if the prompt also contains a specific target/path, chain matching takes priority.
 
 | Pattern | Chain |
@@ -172,10 +176,12 @@ Ambiguous + no `-y`:
 
 Layer 1+2 both did not match, but intent is to build/create a specific thing:
 - Contains a specific file path or target (`d:\path`, `src/pages/`, `index.html`)
-- Contains detailed visual specs (layout, style, color scheme)
+- Contains ≥2 specific visual attributes (e.g., exact color values, font names, spacing numbers, layout structure description)
 - Contains reference material (`based on...`, `like...`, `similar to...`)
 
 → Route to **craft** (Direct)
+
+If all three layers produce no match → E001 (No command or intent resolved). Before raising E001, attempt [@ask] AskUserQuestion with top 2-3 closest matches from Layer 1+2 tables.
 
 ## Prerequisites
 
@@ -237,6 +243,10 @@ Before reading any command workflow:
    - **Step start**: TodoWrite marks current step in_progress
    - **Step done**: TodoWrite marks completed + update status.json (`current_step`, step `status`)
    - **Step failed**: TodoWrite marks completed (with note) + record reason
+   - **Failure classification**:
+     - **Blocking** (chain stops): craft, shape, teach (if PRODUCT.md required)
+     - **Non-blocking** (chain continues with W003): polish, delight, animate, colorize, typeset, layout, clarify, adapt, optimize, bolder, quieter, distill, harden, onboard
+     - **Gate steps** (critique/audit): gate failure triggers refine loop, not step failure
 6. **Quality gate** (critique/audit steps):
    - Parse score: critique `**Total** | | **N/40**`, audit `**Total** | | **N/20**`
    - Count `[P0]` / `[P1]` tags
@@ -353,6 +363,7 @@ Never auto-select: teach, shape, craft, live, document, extract, overdrive, crit
 - REQUIRED: If gate fails, refine commands executed and re-gate attempted.
 - BLOCKED if: score not parsed from actual output, or P0 > 0 and max refine loops not exhausted — do not advance past gate.
 - Do NOT skip quality gate steps or mark as "passed" without parsing actual score.
+- If score unparseable from output: retry the gate step once. If still unparseable → treat as gate fail (enter refine loop). Emit W005.
 
 **GATE: Chain → Completion**
 - REQUIRED: All non-skipped steps executed (TodoWrite all completed).
@@ -373,6 +384,7 @@ Never auto-select: teach, shape, craft, live, document, extract, overdrive, crit
 | E101 | error | Codify: source path not found or not a directory | Verify `--codify <source-path>` exists |
 | E102 | error | Codify: package directory exists without `--overwrite` | Re-run with `--overwrite` or a new `--output-dir` |
 | W004 | warning | Codify: animation-tokens.json not found (optional) | Extraction continues without animation tokens |
+| W005 | warning | Quality gate score unparseable from output | Retry gate step; if still fails, treat as gate fail |
 </error_codes>
 
 <success_criteria>

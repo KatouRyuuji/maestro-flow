@@ -2,7 +2,7 @@
 name: maestro
 disable-model-invocation: false
 description: "Intent-to-chain planner over the canonical Session/Run lifecycle"
-argument-hint: "<intent> [-y] [-c] [--amend]"
+argument-hint: "<intent> [-y] [-c] [--amend] [--executor <agent|direct>] [--dry-run]"
 allowed-tools:
   - Read
   - Write
@@ -34,13 +34,13 @@ contract:
 </deferred_reading>
 
 <purpose>
-Turn a user intent into the initial Skill chain, create one canonical topic Session through `maestro session create --chain-file`, then execute the shared Run loop. Static versus dynamic is not a Session or command mode: each Skill contract decides whether it emits a typed chain proposal.
+Turn a user intent into the initial Skill chain, create one canonical topic Session through `maestro session create --chain-file`, then execute the shared Run loop. Static versus dynamic is not a Session or command mode: each Skill contract decides whether it emits a typed chain proposal. For new intents, use this command. For policy-driven execution over existing Sessions, use `/maestro-ralph`.
 </purpose>
 
 <interface>
 Only these user flags are accepted:
 
-- `-y` — auto-confirm low-risk classification and proposal decisions.
+- `-y` — skip all confirmation/clarification interactions, use default choices. Does NOT change data semantics (no auto-deferred decisions). Never bypasses: high-risk classification, confidence <60, ambiguity requiring user input, failed gates, or drift escalation.
 - `-c` — continue the unique live compatible Session.
 - `--amend` — amend that Session's goal; remaining text is the change request.
 - `--executor <agent|direct>` — select executor: `agent` (default) dispatches run-executor; `direct` executes inline. Never changes Session type or chain semantics.
@@ -66,7 +66,7 @@ All other text is intent. Unknown flags are not silently reinterpreted. Platform
 <state_machine>
 
 <states>
-S_PARSE — parse intent and the three public flags
+S_PARSE — parse intent and flags
 S_CONTINUE — locate the unique live Session
 S_AMEND — audited goal amendment
 S_CLASSIFY — select the smallest sufficient initial chain
@@ -86,6 +86,7 @@ S_PARSE:
 
 S_CONTINUE:
   → S_RUN_LOOP WHEN: exactly one live compatible Session
+  → S_FALLBACK WHEN: Session is paused (suggest /maestro-ralph -c for audited recovery)
   → S_FALLBACK WHEN: none or multiple
 
 S_AMEND:
@@ -93,15 +94,18 @@ S_AMEND:
   → END WHEN: cancelled or blocked
 
 S_CLASSIFY:
+  → S_RUN_LOOP WHEN: existing compatible Session found (do not rebuild)
   → S_DECOMPOSE WHEN: multi-step chain
   → S_CREATE WHEN: narrow/single-step chain
-  → S_FALLBACK WHEN: confidence insufficient
+  → S_FALLBACK WHEN: confidence < 60
 
 S_DECOMPOSE → S_CREATE
-S_CREATE → S_RUN_LOOP WHEN: `-y`
+S_CREATE → S_RUN_LOOP WHEN: `-y` AND risk ≠ high AND confidence ≥ 60
+S_CREATE → S_CONFIRM WHEN: `-y` AND (risk == high OR confidence < 60)
 S_CREATE → S_CONFIRM OTHERWISE
+S_CREATE → S_FALLBACK WHEN: creation fails (delete temp file, report error)
 S_CONFIRM → S_RUN_LOOP WHEN: confirmed
-S_CONFIRM → S_CLASSIFY WHEN: revised
+S_CONFIRM → S_CLASSIFY WHEN: revised (maestro re-classifies the revised intent from scratch because a changed intent may reshape the chain; ralph returns to S_BUILD instead since its chain shape is already fixed)
 S_CONFIRM → END WHEN: cancelled
 </transitions>
 
@@ -126,7 +130,7 @@ Roadmap is inferred only for multi-release evidence. Quality depth follows proje
 
 ### A_DECOMPOSE
 
-For broad intent, ask at most 3 questions covering scope, constraints and observable done criteria; broad ambiguity is not skipped by `-y`. Produce:
+For broad intent, ask at most 3 questions covering scope, constraints and observable done criteria; broad ambiguity is not skipped by `-y`. (broad = affects ≥3 modules OR requires cross-package interface changes OR ≥2 of 3 decomposition questions remain unanswered.) Produce:
 
 ```json
 {
@@ -143,7 +147,7 @@ Goals describe outcomes, not lifecycle stages.
 
 ### A_CREATE
 
-Build a chain definition with execution steps and formal decision nodes whenever the selected Ralph policy requires quality/goal/scope or reground evaluation. Every Ralph-created chain has at least one decision node before Session seal. Write it to a temporary JSON file and call:
+Build a chain definition with execution steps and formal decision nodes whenever the shared orchestration policy (see orchestrator-run-loop.md) requires quality/goal/scope or reground evaluation. Every created chain has at least one decision node before Session seal. For narrow/single-step chains, generate a minimal implicit boundary_contract: in_scope = [intent], out_of_scope = [], constraints = [], definition_of_done = 'step completed with passing gates'. Write it to a temporary JSON file and call:
 
 `maestro session create "{intent}" --id maestro-{slug} --chain-file {path}`
 
@@ -162,7 +166,7 @@ Read `ralph-amend-goal.md`, use `session status` for the snapshot, perform read-
 </state_machine>
 
 <success_criteria>
-- Public flags are exactly `-y`, `-c`, `--amend`.
+- Public flags are `-y`, `-c`, `--amend`, `--executor`, `--dry-run`.
 - Initial classification is auditable and the Session exists before step execution.
 - Every step follows next → brief → execute → check → done; decision nodes use decide.
 - Chain adaptation is Skill-proposed and atomically applied by the producing Run.

@@ -27,7 +27,7 @@ Spec management toolkit. Four subcommands:
 </purpose>
 
 <dispatch>
-Parse the first token of $ARGUMENTS. Run `maestro run skill --platform codex <step>` to load the matched workflow, then follow it completely.
+Parse the first token of $ARGUMENTS. Run `maestro run skill <step>` to load the matched workflow, then follow it completely.
 
 | Subcommand | Step | Description |
 |------------|------|-------------|
@@ -35,6 +35,8 @@ Parse the first token of $ARGUMENTS. Run `maestro run skill --platform codex <st
 | `load` | `specs-load` | Load specs filtered by scope, category, keyword |
 | `remove` | `specs-remove` | Remove spec entry by ID |
 | `setup` | `specs-setup` | Initialize specs by scanning codebase |
+
+Note: `.workflow/specs/learnings.md` contains `<learning-entry>` blocks written by `/maestro-learn`. These are NOT managed by `spec add/load/remove` (different tag, different lifecycle). `spec load` may read learnings.md for context but does not modify it.
 
 ### Routing rules
 

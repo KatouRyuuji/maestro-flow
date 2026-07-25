@@ -30,7 +30,6 @@ version: 0.5.56
 <required_reading>
 @~/.maestro/workflows/run-mode.md
 @~/.maestro/workflows/orchestrator-run-loop.md
-@~/.maestro/workflows/codex-run-mode.md
 </required_reading>
 
 <deferred_reading>
@@ -38,13 +37,13 @@ version: 0.5.56
 </deferred_reading>
 
 <purpose>
-Apply retry, confidence, drift, goal-audit and stopping policy over any compatible canonical Session. Ralph does not own a CLI driver, private Session type or second state store; it calls only `maestro run ...` and follows the shared Run loop.
+Apply retry, confidence, drift, goal-audit and stopping policy over any compatible canonical Session. Ralph does not own a CLI driver, private Session type or second state store; it calls only `maestro run ...` and follows the shared Run loop. Primary path: locate and drive an existing Session. Session creation is a fallback when no compatible Session exists.
 </purpose>
 
 <interface>
 Only these user flags are accepted:
 
-- `-y` — auto-confirm low-risk policy decisions.
+- `-y` — skip all confirmation/clarification interactions, use default choices. Does NOT change data semantics (no auto-deferred decisions). Never bypasses: high-risk classification, confidence <60, ambiguity requiring user input, failed gates, or drift escalation.
 - `-c` — continue the unique live compatible Session; paused state enters audited recovery.
 - `--amend` — amend the live Session goal; remaining text is the change request.
 
@@ -77,11 +76,11 @@ S_DECOMPOSE — derive boundary and observable goals for a new Session
 S_BUILD — build initial Skill chain
 S_CREATE — `session create --chain-file`
 S_CONFIRM — confirm unless `-y`
-S_LOOP — shared Run lifecycle
+S_RUN_LOOP — shared Run lifecycle
 S_EVALUATE — quality/goal/scope/reground decision
 S_AMEND — audited goal amendment
 S_RECOVER — audited paused recovery
-S_FAIL — retry or pause
+S_FAIL — retry or pause; retry budget exhausted implies Session auto-paused. (Distinct from maestro's S_FALLBACK, which requests missing intent/disambiguation before any Session exists; S_FAIL operates on an already-created Session.)
 S_DONE — seal Session
 </states>
 
@@ -93,33 +92,42 @@ S_PARSE:
 
 S_RESOLVE:
   → S_RECOVER WHEN: exact compatible Session is paused and `-c`
-  → S_LOOP WHEN: exact compatible Session is running with a chain
+  → S_RUN_LOOP WHEN: exact compatible Session is running with a chain
+  → S_DECOMPOSE WHEN: only paused Session exists and no `-c` (treat as new intent; paused Session remains untouched)
   → S_DECOMPOSE WHEN: no live Session and intent present
   → S_FAIL WHEN: multiple candidates or incompatible terminal Session
 
 S_DECOMPOSE → S_BUILD → S_CREATE
-S_CREATE → S_LOOP WHEN: `-y`
+S_CREATE → S_RUN_LOOP WHEN: `-y` AND risk ≠ high AND confidence ≥ 60
+S_CREATE → S_CONFIRM WHEN: `-y` AND (risk == high OR confidence < 60)
 S_CREATE → S_CONFIRM OTHERWISE
-S_CONFIRM → S_LOOP WHEN: confirmed
+S_CREATE → S_FAIL WHEN: creation fails (delete temp file, report error)
+S_CONFIRM → S_RUN_LOOP WHEN: confirmed
 S_CONFIRM → S_BUILD WHEN: revised
 S_CONFIRM → END WHEN: cancelled
 
-S_LOOP:
+S_RUN_LOOP:
   → S_EVALUATE WHEN: next node is a decision
   → S_FAIL WHEN: executor/check/drift reports retry or blocker
   → S_DONE WHEN: `CHAIN_COMPLETE`
-  → S_LOOP WHEN: Run sealed and another pending step exists
+  → S_DONE WHEN: no pending steps and no `CHAIN_COMPLETE` (implicit completion)
+  → S_RUN_LOOP WHEN: Run sealed and another pending step exists
 
 S_EVALUATE:
-  → S_LOOP WHEN: proceed or accepted fix proposal
+  → S_RUN_LOOP WHEN: proceed or accepted fix proposal
   → S_RECOVER WHEN: escalate pauses Session
+  → S_FAIL WHEN: escalate but Session not paused (user declined pause)
 
 S_FAIL:
-  → S_LOOP WHEN: retry budget remains
+  → S_RUN_LOOP WHEN: retry budget remains
+  → END WHEN: retry budget exhausted (Session auto-paused)
   → END WHEN: Session paused or user aborts
 
-S_AMEND → S_LOOP WHEN: shared amend protocol committed
-S_RECOVER → S_LOOP WHEN: blockers resolved and resume committed
+S_AMEND → S_RUN_LOOP WHEN: shared amend protocol committed
+S_RECOVER → S_RUN_LOOP WHEN: blockers resolved and resume committed
+S_RECOVER → S_FAIL WHEN: blockers unresolvable
+S_RECOVER → END WHEN: user aborts recovery
+S_DONE → S_RUN_LOOP WHEN: seal fails due to unmet gates
 S_DONE → END
 </transitions>
 
@@ -133,7 +141,7 @@ Read-only lookup via `run recall`. Explicit birth `session_id/run_id` wins. Mult
 
 ### A_BUILD
 
-Infer lifecycle start from intent and same-Session sealed outputs. New Sessions start from analysis unless intent explicitly calls for grill, brainstorm or blueprint. Roadmap is inferred only for multi-release evidence. Quality is quick/standard/full based on specs and observable risk, not a user flag.
+Infer lifecycle start from intent and same-Session sealed outputs. New Sessions start from analysis unless intent explicitly calls for grill, brainstorm or blueprint. Roadmap is inferred only for multi-release evidence. Quality is quick/standard/full based on specs and observable risk, not a user flag. Quality criteria: quick = single-file + existing tests; standard = multi-file + new logic; full = cross-module + no existing coverage.
 
 Build outcome-oriented decomposition. For broad work, boundary clarification remains mandatory even with `-y`. Every chain includes at least one final quality/goal/scope decision node before seal; long chains also include periodic reground decision nodes. Step execution strategy is defined by each Skill, never by Ralph flags.
 
@@ -155,10 +163,11 @@ CONFIDENCE: high|medium|low
 
 Ralph policy thresholds:
 - Parse failure → `fix`, low confidence, `parse_failed=true`.
+- Confidence mapping: low = <60, medium = 60-79, high = ≥80.
 - Confidence below 60 → cannot proceed.
 - Retry budget exhaustion → escalate.
 - Goal audit: compare every pending goal's `done_when` against evidence; missing evidence means unmet.
-- Reground: compare cumulative handoffs against intent and boundary; confident drift halts even under `-y`.
+- Reground: compare cumulative handoffs against intent and boundary; confident drift halts even under `-y`. drift = cumulative handoffs deviate from ≥2 boundary_contract.in_scope items or introduce ≥1 out_of_scope item; confident drift = drift detected with confidence ≥80%.
 
 Apply through `session decide --json` and follow the Continuation Router in `orchestrator-run-loop.md`.
 
@@ -187,7 +196,7 @@ When every execution Run is sealed, every decision is terminal, every goal is do
 <success_criteria>
 - Public flags are exactly `-y`, `-c`, `--amend`.
 - No legacy Ralph driver, private Session type, or independent Skills CLI appears in normal flow.
-- Each Run follows `session next --inline-brief` → execute → `run check` → `session done`; backtracking uses `run brief`. Every decision uses `session decide`.
+- Each Run follows `session next --inline-brief` → execute → `run check` → `session done --verdict`; backtracking uses `run brief`. Every decision uses `session decide`.
 - Proposal acceptance is pathless from Ralph's perspective and atomic with Run completion.
 - Retry, confidence, drift, goal audit, recovery and terminal semantics remain explicit.
 </success_criteria>

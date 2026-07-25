@@ -33,7 +33,6 @@ version: 0.5.56
 
 <required_reading>
 @~/.maestro/workflows/run-mode.md
-@~/.maestro/workflows/codex-run-mode.md
 </required_reading>
 
 <deferred_reading>
@@ -54,20 +53,22 @@ and iterate exhaustively until the mode's exit condition is met or escalation is
 
 <mode_dispatch>
 
-**Mode selection precedence:** explicit `--mode <name>` > intent keyword auto-detection > request_user_input (Normal) / error E000 (`-y`).
+**Mode selection precedence:** explicit `--mode <name>` > intent keyword auto-detection > AskUserQuestion (Normal) / error E000 (`-y`).
 
 **Auto-detection from `<intent>` keywords** (first match wins, ordered):
+
+Keyword matching: case-insensitive substring match against the intent text. Multi-word keywords require all words present (not necessarily adjacent). First matching row wins (ordered by specificity).
 
 | Keywords in intent | Detected mode |
 |--------------------|---------------|
 | bug, crash, error, broken, fails, regression, race, leak, "why does" | `debug` |
-| requirement, implement, build, add feature, deliver, "I need", user story | `planex` |
-| ui, visual, layout, style, component, page, responsive, a11y, accessibility, design | `ui` |
-| security audit, OWASP, vulnerability, CVE, secrets scan, STRIDE, threat model, supply chain | `security` |
+| requirement, implement, build, add feature, I need to implement, I need to build, I need to add, deliver feature, user story | `planex` |
+| ui, visual, layout, style, component, page, responsive, a11y, accessibility, UI design, visual design, design system, design tokens | `ui` |
+| security audit, OWASP, vulnerability, CVE, secrets scan, STRIDE, threat model, supply chain, dependency audit, dependencies, supply chain audit | `security` |
 | improve, optimize, performance, refactor quality, reliability, observability | `improve` |
-| review, audit, check, inspect, "look over", zero-residual | `review` |
+| review, audit, code check, check the code, inspect the code, inspect changes, "look over", zero-residual | `review` |
 
-Ambiguous / no match → Normal: request_user_input (6-way mode pick) | `-y`: E000.
+Ambiguous / no match → Normal: AskUserQuestion (6-way mode pick) | `-y`: E000.
 
 **Mode registry:**
 
@@ -80,6 +81,8 @@ Ambiguous / no match → Normal: request_user_input (6-way mode pick) | `-y`: E0
 | `security` | Read-only tiered security audit → severity matrix | RECON | SCAN (OWASP + deps + secrets + CI/CD + STRIDE + git) | (none — read-only) | — |
 | `ui` | Visual survey → 6-dim audit → diverge → fix | SURVEY | AUDIT (6 dims) + DIVERGE | FIX → VERIFY | — |
 
+CONFIRM and VERIFY are synonymous — both refer to the post-fix validation phase. Mode workflow files use mode-specific naming; semantics are identical.
+
 The **back half is identical across all modes**: `GENERALIZE → DISCOVER → RECORD → END` (see odyssey-base.md §Shared Back-Half).
 
 On mode resolved: read the deferred workflow file for that mode + odyssey-base.md, then execute.
@@ -89,7 +92,7 @@ On mode resolved: read the deferred workflow file for that mode + odyssey-base.m
 <context>
 $ARGUMENTS
 
-**Universal flags:** `--mode <name>` mode selector | `--skip-fix` audit/diagnose only, skip fix+verify | `--skip-generalize` skip GENERALIZE+DISCOVER | `--auto` no delegate confirmation | `-y` auto-confirm (decisions → `deferred`) | `-c` resume most recent session | `--heartbeat` /loop periodic progress
+**Universal flags:** `--mode <name>` mode selector | `--skip-fix` audit/diagnose only, skip fix+verify | `--skip-generalize` skip GENERALIZE+DISCOVER | `--auto` skip delegate/agent confirmation in execution phases only (decisions → `deferred`); does NOT affect mode selection or INTAKE interactions — mode ambiguity still triggers or E000 | `-y` skip all confirmation interactions, use default choices; does NOT auto-mark decisions as deferred (use `--auto` for delegate confirmation skip); never bypasses mode ambiguity (E000), INTAKE gate blockers, escalation | `-c` resume most recent unfinished session of the SAME mode; if --mode conflicts with resumed session's mode → E003 (mode mismatch); no history → ignore -c, create new session | `--heartbeat` /loop periodic progress
 
 **Mode-scoped flags:**
 
@@ -104,6 +107,10 @@ $ARGUMENTS
 | `--executor <tool>` | planex | Explicit CLI executor | first enabled |
 | `--skip-verify` | planex | Skip post-execution validation gate | false |
 
+`--skip-fix` applicability: security mode ignores (read-only, no fix phase); planex skips FIX loop but retains EXECUTE+VERIFY; debug/review/improve/ui skip FIX+VERIFY/CONFIRM. `--skip-fix` + `--skip-verify` on planex = PLAN only (no execution).
+
+Mode-scoped flags passed to inapplicable mode: emit W008 warning and ignore the flag.
+
 **Run creation** (per run-mode.md §Start or Resume):
 ```bash
 # command-name is odyssey-{mode} — resolves the mode's own prepare contract and workflow
@@ -112,6 +119,8 @@ maestro run create odyssey-<mode> \
   --intent "<short goal phrase>" \
   [-- flags...]
 ```
+
+Compatibility: `maestro session start` is an alias for `maestro run create` (see companion.md). Both resolve the same lifecycle.
 
 **Session**: `{run_dir}/outputs/`
 **Output**: `session.json` | `evidence.ndjson` | `understanding.md` | `explore.json` (debug/review only)
@@ -145,16 +154,7 @@ All base invariants apply (evidence append-only, session-as-state, phase goal tr
 </invariants>
 
 <task_tracking>
-
-**时机与操作**（plan 是 session 权威状态的 UI 镜像，不替代 session 状态）：
-
-| 时机 | 操作 | 示例 |
-|------|------|------|
-| Session 创建后 | update_plan 初始化步骤清单 | `update_plan({ plan: [{ step: "Step {index}: {step.skill}", status: "pending" }, ...] })` |
-| Step 派发时 | update_plan 标记当前 step | `update_plan({ plan: [..., 当前 step status: "in_progress"] })` |
-| Step 完成时 | update_plan 标记完成 | `update_plan({ plan: [..., 该 step status: "completed"] })` |
-| Step 失败时 | update_plan + explanation 说明 | `update_plan({ explanation: "Step {index} failed: {reason}", plan: [...] })` |
-
+@~/.maestro/workflows/task-tracking.md
 </task_tracking>
 
 <self_iteration>
@@ -189,6 +189,8 @@ Mode-specific phase gates (Discovery, Audit, FIX, VERIFY/CONFIRM) are defined in
 | E000 | error | Mode unresolved (`-y`, ambiguous intent, no `--mode`) | Provide `--mode` |
 | E001 | error | No target / no requirement (planex) / no issue (debug) | Provide target or -c |
 | E002 | error | Target path not found | Check path |
+| E003 | error | -c mode mismatch (resumed session is different mode) | Use correct --mode or omit -c |
+| E004 | error | Mode workflow file not found (~/.maestro/workflows/odyssey-{mode}.md) | Verify workflow installation or select another mode |
 | W001 | warning | No relevant git history / no dependency manifest / no design system | Proceed with defaults |
 | W002 | warning | Some dimension agents failed / 3 retries exhausted | Partial coverage / INCONCLUSIVE |
 | W003 | warning | Archaeology agent or delegate failure (debug/review) | Proceed with available results, log failed agent |
@@ -196,6 +198,7 @@ Mode-specific phase gates (Discovery, Audit, FIX, VERIFY/CONFIRM) are defined in
 | W005 | warning | Pending decisions | Filter evidence phase=decision |
 | W006 | warning | No CLI tools (debug/review explore) | Skip explore |
 | W007 | warning | planex CLI review regression concern | Review before next iteration |
+| W008 | warning | Mode-scoped flag ignored (not applicable to resolved mode) | Remove flag or use correct mode |
 </error_codes>
 
 <success_criteria>
@@ -213,6 +216,7 @@ Mode-specific phase gates (Discovery, Audit, FIX, VERIFY/CONFIRM) are defined in
 <next_step_routing>
 | Condition | Next |
 |-----------|------|
+| Single-file mechanical fix discovered | `/maestro-companion "<fix>"` |
 | Discovery issues created | `/maestro-manage issue list --source {mode}-odyssey` |
 | Deeper debug needed (from any mode) | `/maestro-odyssey <finding> --mode debug` |
 | Security findings need remediation | `/maestro-odyssey <finding> --mode improve` |

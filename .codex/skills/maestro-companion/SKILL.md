@@ -28,11 +28,8 @@ contract:
 version: 0.5.56
 ---
 
-> **Agent timeout**: `spawn_agent` 异步执行且无内置超时 — 除明确短任务外一律 `spawn_agent` 后立即 `wait_agent({ timeout_ms: 3600000 })`（上限 1 小时）阻塞等待，绝不依赖 30000 默认值；`timed_out: true` 且 Agent 未完成时再次 `wait_agent` 续等，不丢弃。批量场景使用 `spawn_agents_on_csv({ max_runtime_seconds: 3600, ... })`。
-
 <required_reading>
 @~/.maestro/workflows/run-mode.md
-@~/.maestro/workflows/codex-run-mode.md
 </required_reading>
 
 <purpose>
@@ -42,6 +39,13 @@ Use when:
 - Intent is mechanically clear (no design decisions needed; file count irrelevant)
 - No typed artifact consumed by downstream steps
 - No gate/verdict needed for lifecycle tracking
+
+Lightweight self-check (all must hold):
+- Intent specifies a concrete, bounded action with named target (file, function, error message)
+- No typed artifact consumed by downstream steps
+- No gate/verdict for lifecycle tracking
+- Single concern, no multi-phase span
+If self-check fails mid-execution, stop and suggest `/maestro-next` for re-routing.
 </purpose>
 
 <context>
@@ -54,11 +58,11 @@ $ARGUMENTS — intent text + optional flags.
 | `--log <run_id>` | View evidence log for a specific run |
 | `--promote` | Promote run insights to spec/knowhow |
 
-Mode detection: `--note` → note | `--log` → log | `--promote` → promote | intent → execute | empty → ask
+Mode detection: `--note` → note | `--log` → log | `--promote` → promote | intent → execute | empty → AskUserQuestion: request intent text; if still empty → display usage hint and exit
 </context>
 
 <invariants>
-1. Only `session start` + `session done` — no prepare/brief/check/gates
+1. Execute mode uses only `session start` + `session done`. Utility modes (--note/--log/--promote) use `run recall` for read-only queries and do not create new lifecycle entries.
 2. Evidence is append-only, non-formal (never enters gates or artifact registry)
 3. `--promote` delegates to `maestro-spec add` / knowhow capture, never writes directly
 4. No auto-orchestration — executes directly, never creates chains
@@ -92,7 +96,7 @@ Locate targets and gather evidence before touching anything. Methods (pick what 
 
 - `maestro explore "FIND: ...\nSCOPE: ..."` — codebase search
 - `maestro search "<keywords>" --type spec --type knowhow` — knowledge recall
-- spawn_agent(subagent) — multi-file analysis, cross-reference, pattern discovery
+- Agent (subagent) — multi-file analysis, cross-reference, pattern discovery
 - Direct Read/Grep/Glob — known targets, quick lookups
 
 Record findings under `## Evidence`:
@@ -110,7 +114,7 @@ Before executing, verify evidence is sufficient:
 - Change scope clear (what to modify, what to leave alone)?
 - No ambiguity requiring design decisions?
 
-If insufficient → continue exploring or ask user. If `-y` → skip confirmation, proceed directly.
+If insufficient → continue exploring or ask user. If `-y` → skip user confirmation interaction, but still perform evidence sufficiency self-check. If critical targets are unlocated, continue exploring (without asking user); only the 'ask user' branch is skipped.
 
 ### 4. Do
 
@@ -142,6 +146,8 @@ Display: `Companion done. Run: {run_id} | Evidence: {path}`
 If reusable insights emerged, suggest (never auto-execute):
 `/maestro-spec add ...` or `/manage-knowhow-capture`
 
+If execution revealed the task requires multi-phase audit/diagnosis (e.g., root cause unknown, >3 files need coordinated changes), suggest: `/maestro-odyssey "<scope>" --mode debug|improve` for re-planning.
+
 </flow>
 
 <utilities>
@@ -161,7 +167,18 @@ If run_id not found, error: "Run not found. Use `maestro run list --command comp
 
 1. `maestro run recall companion --json` → read latest evidence log
 2. Identify promotable insights (patterns, decisions, pitfalls)
+   If no promotable insights identified, display 'No promotable insights found in this run.' and exit.
 3. For each, ask user: promote to spec / knowhow / skip
 4. Delegate to appropriate command, never write directly
 
 </utilities>
+
+<error_codes>
+| Code | Severity | Condition | Recovery |
+|------|----------|-----------|----------|
+| E001 | error | `session start` failed (CLI unavailable, invalid args) | Check maestro CLI installation |
+| E002 | error | run_id not found (--log) | Use `maestro run list --command companion` to find ids |
+| E003 | error | Evidence log creation failed | Check run_dir permissions |
+| W001 | warning | Explore tools unavailable (maestro explore/search) | Degrade to direct Read/Grep |
+| W002 | warning | No promotable insights found (--promote) | Display message and exit |
+</error_codes>

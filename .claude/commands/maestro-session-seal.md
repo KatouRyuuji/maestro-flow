@@ -44,17 +44,21 @@ $ARGUMENTS -- optional session ID and flags.
 
 ### Step 1: Session Readiness Check
 
+Note: maestro-next suggests session-seal when 'Tests green + active session'. This command additionally requires verify/review gates (or W002 if absent). Both conditions should be met for clean seal.
+
 1. Resolve target session from `--session` flag or `active_session_id`
 2. Read `session.json` — verify status is `running` or `paused`
 3. Verify no active runs (all runs completed or sealed)
-4. Verify critical gates passed (entry/exit gates from last verify/review run)
+4. Verify critical gates passed (entry/exit gates from last verify/review run). If no verify/review run exists in this session, treat gate check as not applicable (pass) but emit W002.
 5. If not ready → display blockers, suggest next action (e.g., "run the `review` step first")
 
 ### Step 2: Knowledge Extraction
 
+This step is a session-scoped lightweight knowledge extraction. For comprehensive artifact-based extraction, use `/maestro-manage knowledge harvest --session {session_id}`. `--skip-knowledge` can be compensated later via harvest.
+
 Skip if `--skip-knowledge`. Otherwise:
 
-1. **Scan session artifacts** — read all sealed run outputs across the session
+1. **Scan session artifacts** — read all sealed run outputs across the session. Per-run error handling: if a run's output files are missing or run.json is malformed, skip that run with W003 and continue extraction from remaining runs.
 2. **Extract candidates**:
    - Decisions with `status: accepted` from `runs/*/run.json.handoff.decisions[]` → spec candidates
    - Patterns/recipes discovered during execution → knowhow candidates
@@ -69,7 +73,7 @@ Skip if `--skip-knowledge`. Otherwise:
    ```
 4. **Persist** selected items:
    - Specs → recommend `/maestro-spec add ...`
-   - Knowhow → recommend `/maestro-manage knowledge capture ...`
+   - Knowhow → recommend `/maestro-manage knowledge harvest --session {session_id}` for extraction, then `/maestro-manage knowledge capture` for manual recording of extracted insights
    - Record promoted IDs in `session.json.lifecycle.promoted[]`（前缀区分 spec:/knowhow:）
 
 ### Step 3: Seal Session
@@ -120,6 +124,8 @@ Status: DONE
 | E003 | error | Active runs exist | Complete or seal pending runs first |
 | E004 | error | Critical gates failed | Run verify/review to resolve |
 | W001 | warning | No knowledge candidates found | Proceed to seal |
+| W002 | warning | No verify/review run in session — gate check skipped | Consider running verify before seal |
+| W003 | warning | Some run outputs unreadable/malformed, skipped during extraction | Check run integrity |
 </error_codes>
 
 <success_criteria>

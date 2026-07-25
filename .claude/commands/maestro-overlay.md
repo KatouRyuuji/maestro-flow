@@ -64,7 +64,7 @@ Amend output: `~/.maestro/overlays/amend-{slug}.json` + optional `~/.maestro/ove
 2. **Idempotent** — re-running `maestro overlay apply` with the same overlay JSON MUST produce no file changes
 3. **Creation only** — this skill MUST only create overlays; listing and removal are handled by `maestro overlay list` (ink TUI)
 4. **Pristine source preferred** — injection point analysis MUST read from `$PKG_ROOT/.claude/commands/` (untouched originals) first, fall back to `~/.claude/commands/` only if pristine unavailable
-5. **User approval before write** — overlay JSON MUST be shown and approved via [@ask] AskUserQuestion before writing to disk; NEVER auto-install without confirmation
+5. **User approval before write** — overlay JSON MUST be shown and approved via [@ask] AskUserQuestion before writing to disk, unless `-y` is explicitly provided (amend mode only)
 6. **Chain skip option mandatory** — if a skill chain is configured, the injected content MUST include a "Skip" option in [@ask] AskUserQuestion; NEVER force the user into a chain
 
 **Amend mode only** (when `--amend`):
@@ -267,6 +267,12 @@ Per signal, determine: signal_id, source, description, target_command, target_se
 
 Read pristine source from `$PKG_ROOT/.claude/commands/<name>.md` to confirm section.
 Classify: command deficiency → proceed; code bug → skip (suggest `/maestro-companion`).
+
+**Classification decision tree**:
+- Signal points to 'command file missing a section/gate/step/routing rule' → **command deficiency** → proceed with overlay
+- Signal points to 'code implementation does not match existing command requirements' → **code bug** → skip, route to `/maestro-companion` or step `plan --gaps`
+- Signal involves both → split: deficiency part → overlay; bug part → route to companion
+- Uncertain → default to [@ask] AskUserQuestion for user classification
 
 ### C. Group overlays
 

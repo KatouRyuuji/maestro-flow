@@ -32,13 +32,15 @@ Parse the first token(s) of $ARGUMENTS. Run `maestro run skill <step>` to load t
 | _(empty)_ or `status` | `status` | Project dashboard |
 | `issue` [action] | `issue` | Issue CRUD: create, list, status, update, close, link |
 | `issue discover` | `issue-discover` | Automated multi-perspective issue discovery |
-| `knowledge capture` | `knowhow` | Capture reusable knowledge by type (Part B) |
-| `knowledge knowhow` | `knowhow` | Manage knowhow entries (Part A) |
+| `knowledge` _(empty)_ | — | Display knowledge subcommand list (capture, knowhow, audit, harvest, wiki, extractors, domain) |
+| `knowledge capture` | `knowhow` | Capture reusable knowledge by type (interactive recording) |
+| `knowledge knowhow` | `knowhow` | Manage existing knowhow entries (list/edit/delete) |
 | `knowledge audit` | `knowledge-audit` | Audit/prune spec, knowhow, artifact stores |
 | `knowledge harvest` | `harvest` | Extract knowledge from workflow artifacts |
 | `knowledge wiki` [action] | Wiki routing (below) | Wiki graph management |
 | `knowledge extractors` | `extractors` | Auto-generate KG extractor rules |
 | `knowledge domain` | `domain-add` | Register a domain term |
+| `sync` _(empty)_ | — | Display sync subcommand list (codebase, drift, rebuild) |
 | `sync codebase` | `sync` | Incremental codebase doc sync |
 | `sync drift` | `drift-realign` | Detect and realign artifact drift |
 | `sync rebuild` | `codebase-rebuild` | Full codebase doc rebuild |
@@ -47,15 +49,18 @@ Parse the first token(s) of $ARGUMENTS. Run `maestro run skill <step>` to load t
 
 For `knowledge wiki [action]`, parse the third token:
 
-| Wiki action | Step |
-|-------------|------|
-| `health` / `search` / `cleanup` / `stats` / _(empty)_ | `wiki-manage` |
-| `connect` | `wiki-connect` |
-| `digest` | `wiki-digest` |
+| Wiki action | Step | Description |
+|-------------|------|-------------|
+| `health` / `search` / `cleanup` / `stats` / _(empty)_ | `wiki-manage` | Wiki graph management |
+| `connect` | `wiki-connect` | Connect wiki entries |
+| `digest` | `wiki-digest` | Generate wiki digest |
+| _(unrecognized)_ | — | Display wiki action list (health, search, cleanup, stats, connect, digest) |
 
 ### Routing rules
 
 - No subcommand → default to `status`.
 - Unrecognized top-level token → display this dispatch table.
 - Remaining tokens after routing become the workflow's own arguments.
+- The second token (`capture`/`knowhow`) is passed as the first argument to the `knowhow` step workflow, which routes internally to Part A or Part B.
+- Issue action validation is handled by the `issue` step workflow internally. Dispatch layer does not validate issue sub-actions; unrecognized actions are forwarded to the workflow for error handling.
 </dispatch>

@@ -2,7 +2,7 @@
 name: maestro-fork
 disable-model-invocation: true
 description: Create or sync session worktree for parallel dev
-argument-hint: "--session <session_id> [--base <branch>] [--sync]"
+argument-hint: "--session <session_id> [--base <ref>] [--sync]"
 allowed-tools:
   - Read
   - Write
@@ -35,6 +35,10 @@ Supports `--sync` mode to pull latest main changes into an active worktree.
 
 <context>
 $ARGUMENTS -- session ID (or slug) and optional flags.
+
+Terminology: this command uses 'session' throughout. The underlying workflow file (fork.md) may use 'milestone' as a legacy alias for 'session'. Treat them as equivalent: `--session` maps to workflow's `-m`, `state.json.sessions[]` maps to `state.json.milestones[]`.
+
+`--base <ref>`: git ref (branch, tag, or commit hash) to fork from. Default: HEAD.
 
 Modes (`Fork` / `Sync`), flags (`--session`, `--base`, `--sync`), session resolution, worktree layout, and artifact scoping are defined in workflow `fork.md`.
 </context>
@@ -105,11 +109,11 @@ Fork mode:
 - [ ] Session resolved from state.json.sessions[]
 - [ ] Git worktree created with branch (`session/{slug}`)
 - [ ] Shared `.workflow/` files copied (project.md, config.json, specs/)
-- [ ] Session Run artifacts copied (filtered from artifact registry)
+- [ ] Session artifacts copied (matched by session/milestone name from workflow)
 - [ ] `worktree-scope.json` written with session scope
 - [ ] Scoped `state.json` written (only this session's data)
 - [ ] `worktrees.json` registry updated in main worktree
-- [ ] Session lifecycle recorded (`session.json.lifecycle.forked_from`)
+- [ ] Session lifecycle recorded in worktrees.json registry (fork_sessions entry)
 - [ ] Summary displayed with next-step commands
 
 Sync mode:

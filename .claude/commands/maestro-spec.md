@@ -1,7 +1,7 @@
 ---
 name: maestro-spec
 disable-model-invocation: true
-description: Manage project specs — add, load, remove entries, or initialize the spec system. Spec = 项目约束规则（编码规范、架构约束、质量标准）；可复用知识文档走 /maestro-manage knowledge capture。Triggers on "maestro-spec add", "记录规范", "添加约束", "添加规则", "加载规范", "maestro-spec setup", "初始化规范".
+description: Manage project specs — add, load, remove entries, or initialize the spec system. Spec = 项目约束规则（编码规范、架构约束、质量标准）；可复用知识文档走 /maestro-manage knowledge capture。Triggers on "maestro-spec add", "记录规范", "添加约束", "添加规则", "加载规范", "maestro-spec setup", "初始化规范". Terminology：spec = project constraints/rules (<spec-entry>). Reusable knowledge documents use /maestro-manage knowledge capture. Learning discoveries from /maestro-learn use <learning-entry> tags in learnings.md (separate from spec entries).
 argument-hint: "add|load|remove|setup [args...]"
 allowed-tools:
   - Read
@@ -31,6 +31,8 @@ Parse the first token of $ARGUMENTS. Run `maestro run skill <step>` to load the 
 | `load` | `specs-load` | Load specs filtered by scope, category, keyword |
 | `remove` | `specs-remove` | Remove spec entry by ID |
 | `setup` | `specs-setup` | Initialize specs by scanning codebase |
+
+Note: `.workflow/specs/learnings.md` contains `<learning-entry>` blocks written by `/maestro-learn`. These are NOT managed by `spec add/load/remove` (different tag, different lifecycle). `spec load` may read learnings.md for context but does not modify it.
 
 ### Routing rules
 

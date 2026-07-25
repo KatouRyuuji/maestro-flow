@@ -24,13 +24,12 @@ version: 0.5.56
 
 <required_reading>
 @~/.maestro/workflows/run-mode.md
-@~/.maestro/workflows/codex-run-mode.md
 </required_reading>
 
 <purpose>
 Unified interactive entry for all development intents. Pure router: parse intent + project state → classify → assess complexity → route to the appropriate channel:
 - **Companion** (lightweight): route to `/maestro-companion "<intent>"` — minimal run lifecycle, continuous evidence recording
-- **Standard** (single run): recommend a step → confirm → execute via `maestro run prepare --platform codex` + `maestro run create`
+- **Standard** (single run): recommend a step → confirm → execute via `maestro run prepare` + `maestro run create`
 - **Multi-step**: route to `/maestro "<intent>"` with engine hint (manual for stepwise control, ralph for closed-loop orchestration)
 
 This command is the single entry point. It classifies and routes. Multi-step execution loops (manual or orchestrated) live in `/maestro`.
@@ -56,7 +55,7 @@ $ARGUMENTS — intent text + optional flags.
 2. `--suggest` → S_RANK → S_PRESENT (suggest only, never execute)
 3. `--list` → S_LIST
 4. Intent text present → S_STATE → S_RANK → route by complexity verdict
-5. No arguments → lifecycle inference for natural next step
+5. No arguments at all → 1 clarify round; "continue"/"next"/"go" → lifecycle inference for natural next step
 
 **Candidate pool:** All 14 first-tier steps registered in `prepare/` + `workflows/`. Companion is a routing channel, not a first-tier step. Pipeline orchestrators (`maestro`, `maestro-ralph*`) are NEVER in the candidate pool.
 </context>
@@ -64,7 +63,7 @@ $ARGUMENTS — intent text + optional flags.
 <invariants>
 1. **Pure router for multi-step** — this command never runs execution loops (manual chain or orchestrated). All multi-step execution is delegated to `/maestro`
 2. **Pipeline orchestrators excluded** — only recommend registered steps as single-run targets
-3. **Empty intent or "continue"/"next"** → lifecycle_position inference for natural next step
+3. **Lifecycle continuation** — "continue"/"next"/"go" are explicit continuation signals → lifecycle_position inference (S_STATE). Truly empty arguments (no text at all) → 1 clarify round via AskUserQuestion; still empty → S_FALLBACK (E001)
 4. **Literal match priority** — keyword match takes precedence; lifecycle is tie-breaker
 5. **Argument pass-through** — `--intent` is Session metadata only; the selected step's domain payload becomes command input through repeatable `--arg <value>` or arguments after `--`. The user can modify command inputs at confirmation; `-y` only passes through when the user provided it
 6. **--suggest never executes** — show recommendation + prepare content only
@@ -72,6 +71,8 @@ $ARGUMENTS — intent text + optional flags.
 8. **Retained commands are suggest-only** — route retained commands to an exact slash command. Never execute them in this turn; `-y` applies only to first-tier steps
 9. **Companion routing is suggest-or-execute** — when complexity == lightweight, output `/maestro-companion "<intent>"` invocation. With `-y`, invoke it directly; otherwise present it as the recommended channel for user confirmation
 10. **Multi-step always routes to /maestro** — when intent spans ≥2 steps or needs orchestration, output `/maestro "<intent>"` with appropriate engine hint. This command never creates sessions or manages chains itself
+11. **Cross-category keyword priority** — when an intent keyword matches both a first-tier step and a retained command, the first-tier step wins for candidate selection; complexity assessment still applies independently. Auxiliary clusters are advisory grouping for display, never routing overrides
+12. **`-y` means skip-confirmation, not auto-execute** — for standard channel, skipping confirmation proceeds to S_EXECUTE (this command runs the step). For companion/multi-step channels, this command is a router: skipping confirmation means outputting the target invocation text directly. The target command owns its own execution semantics
 </invariants>
 
 <state_machine>
@@ -82,7 +83,7 @@ S_STATE    — Read project state, infer lifecycle_position
 S_RANK     — Score candidates, assess complexity, determine channel
 S_LIST     — --list mode: grouped display of all steps
 S_PRESENT  — Show top pick + alternatives + reasoning + channel verdict
-S_CONFIRM  — request_user_input for confirmation (skipped by -y)
+S_CONFIRM  — AskUserQuestion for confirmation (skipped by -y)
 S_EXECUTE  — Run prepare + create for selected single step
 S_FALLBACK — Intent empty after clarification
 </states>
@@ -92,8 +93,8 @@ S_FALLBACK — Intent empty after clarification
 S_PARSE:
   → S_LIST     WHEN: --list flag
   → S_STATE    WHEN: intent present / "continue"/"next"/"go" / --lite / --run
-  → S_PARSE    WHEN: no intent (1 clarify round via request_user_input)
-  → S_FALLBACK WHEN: clarification empty
+  → S_PARSE    WHEN: no arguments at all (1 clarify round via AskUserQuestion)
+  → S_FALLBACK WHEN: clarification still empty
 
 S_STATE:
   → S_RANK     DO: A_INFER_LIFECYCLE
@@ -133,7 +134,7 @@ S_FALLBACK:
 Read project state to infer `lifecycle_position`:
 
 ```bash
-maestro run prepare --platform codex --workflow-root .   # check if prepare command works
+maestro run prepare --workflow-root .   # check if prepare command works
 cat .workflow/state.json 2>/dev/null
 ```
 
@@ -161,6 +162,8 @@ init → {brainstorm | blueprint | analyze-macro} → roadmap
   → session-seal → next dep-ready session
 ```
 
+**Multi-session resolution:** "Latest artifact" refers to the `active_session_id` in state.json. If no active session is set, use the most recently modified session. If multiple sessions are active, lifecycle inference applies only to the active one; surface others as context in S_PRESENT.
+
 ### A_SCORE_CANDIDATES
 
 **Scoring signals (high → low):**
@@ -186,23 +189,34 @@ init → {brainstorm | blueprint | analyze-macro} → roadmap
 **Routing preference: prefer the lightest channel that satisfies the task.** Default to Companion for anything that looks like a quick fix/lookup/exploration. Only upgrade to Standard when there is concrete evidence the task produces artifacts a downstream step will consume, or needs a gate/verdict for lifecycle tracking. Only route to /maestro when the intent genuinely spans ≥2 distinct lifecycle steps. When in doubt between Companion and Standard, ask the user via the confirmation menu rather than auto-upgrading.
 
 **Lightweight signals (all must hold):**
-- Intent is mechanically clear — user knows exactly what to change, no design decisions or multi-angle analysis needed (file count is irrelevant; a 20-file rename is still lightweight)
+- Intent specifies a concrete, bounded action — the user names what to change and where (file, function, error message). "Fix the login bug" is NOT lightweight (unbounded diagnosis); "change the timeout from 30s to 60s in auth.ts" IS lightweight. File count is irrelevant; a 20-file rename with a known pattern is still lightweight
 - No typed artifact needs to be consumed by a downstream step
 - No gate/verdict needs to be recorded for lifecycle tracking
 - Task does not require pre-task thinking (prepare) or structured brief to execute correctly
+- Single concern — intent does not span multiple lifecycle phases (e.g., analyze+plan, execute+review)
 
-**Multi-step detection:** intent matches keywords of ≥2 distinct steps in the routing table → set `multi_step`.
+**Multi-step detection:** intent matches keywords of ≥2 distinct steps in the routing table → classify the relationship before setting `multi_step`:
+
+| Pattern | Classification | Channel |
+|---------|---------------|--------|
+| Sequential lifecycle steps ("analyze then plan", "review and fix") | Multi-step | `/maestro` |
+| Single action with multiple aspects ("review and improve the auth module") | Single intent, pick dominant step | Standard or Companion |
+| Ambiguous compound ("test and deploy") | Present both as alternatives in S_CONFIRM | — |
+
+Dominant step = the step whose keyword appears first or carries the primary verb. When in doubt, present both as alternatives rather than auto-selecting.
 
 **Engine hint logic (for /maestro routing):**
-- Manual: user explicitly asks for stepwise/per-step control, or intent is a simple sequential pipeline without quality gates
-- Ralph (default): intent implies closed-loop quality (broad refactoring, migration, "end-to-end", "full lifecycle"), or needs decision gates/drift analysis
+- Manual: user explicitly asks for stepwise/per-step control ("one step at a time", "confirm each step"), or intent is a simple sequential pipeline of ≤3 steps without quality gates
+- Ralph (default): intent implies iterative quality convergence — broad refactoring (>5 files), migration, "end-to-end", "full lifecycle", or needs decision gates/drift analysis/auto-retry. When in doubt, default to ralph
 
 **Override flags:**
-- `--lite` forces Companion channel regardless of complexity assessment
+- `--lite` forces Companion channel regardless of complexity assessment. If multi-step keywords are detected, warn: "Intent spans multiple steps; companion will execute as a single task without lifecycle tracking." Proceed with companion routing
 - `--run` forces Standard channel (single run) regardless of complexity assessment
 - Neither flag: auto-detect from the signals above; verdict shown to user before routing
 
 **Intent routing table:** first-tier rows enter the executable candidate pool. Retained-command rows are advisory routes: show the exact slash command and stop.
+
+> **Cross-category priority:** first-tier step keywords take precedence over retained-command keywords when both match. Example: "security test" → `test` (first-tier) wins over `security/OWASP` (odyssey campaign), unless the intent explicitly says "security audit" or "OWASP". Auxiliary cluster triggers are the lowest priority — they group retained commands for display but never override individual keyword matches.
 
 > **Scope guard:** keyword match identifies the *candidate step*, but the complexity verdict still applies independently. A keyword hit does NOT override lightweight signals. Example: "rename this variable" matches `execute/implement` keywords → candidate = execute step, but complexity = lightweight (1 file, no handoff) → channel = `/maestro-companion`. The routing table answers "which step?", the complexity assessment answers "which channel?".
 
@@ -254,7 +268,7 @@ For first-tier steps (those with prepare/ + workflows/ files):
 
 ```bash
 # 1. Run prepare to get pre-task thinking content
-maestro run prepare --platform codex <step> --workflow-root .
+maestro run prepare <step> --workflow-root .
 
 # 2. LLM performs pre-task thinking using prepare content
 #    Produces prep YAML (goal/approach/scope/risks/gates/reads)
@@ -274,8 +288,15 @@ maestro run create <step> --session YYYYMMDD-<step>-<topic> --intent "<short goa
 #        - No alternative upstream → seal run as blocked, surface E001 + suggest /plan
 #      Do NOT proceed to step 4 with a blocked execute run.
 
+# 3b. Entry blocker handling (general, non-execute steps)
+#    IF step != execute AND entry_blockers is non-empty:
+#      Display each blocker with recovery suggestion:
+#        - Missing upstream artifact → suggest the producing step (e.g., "run analyze first")
+#        - Gate failure → suggest the gate step (review/verify/auto-test)
+#      Seal run as blocked. Do NOT proceed to step 4.
+
 # 4. Load the execution manual (follow the `next` hint from create)
-maestro run brief --platform codex <run_id> --workflow-root .
+maestro run brief <run_id> --workflow-root .
 #    Returns: workflow content, run-mode summary, goal, gate status
 
 # 5. LLM executes the workflow (core process)
@@ -364,7 +385,7 @@ When `multi_step`:
 | E001 | error | Intent empty after clarification | Provide intent or use --list |
 | E002 | error | No steps found in registry | Check prepare/ and workflows/ directories |
 | E003 | error | Selected step has no prepare/workflow files | Verify step installation |
-| W001 | warning | Top-1 and top-2 scores too close | Force show top 3 for user decision |
+| W001 | warning | Top-1 and top-2 score difference < 15% of max score | Force show top 3 for user decision |
 | W002 | warning | No good match for intent | Suggest /maestro for orchestration |
 
 </error_codes>
