@@ -81,6 +81,16 @@ const commandLoaders: Record<string, () => Promise<(p: Command) => void>> = {
 
 // Determine which command is being invoked from argv (if any)
 const argv = process.argv.slice(2);
+
+// `maestro -V` carries no non-flag token, so it would fall through to the
+// register-everything branch below and eager-load every command module (254 vs
+// 139 for a single command, +2s measured) purely to print a string that is
+// already in hand. Nothing here depends on a command module.
+if (argv.length === 1 && (argv[0] === '-V' || argv[0] === '--version')) {
+  console.log(getPackageVersion());
+  process.exit(0);
+}
+
 const requestedCommand = argv.find(a => !a.startsWith('-'));
 const runMachineSubcommands = new Set([
   'create', 'new', 'next', 'complete', 'brief', 'recall', 'recall-confirm', 'fork', 'import',
