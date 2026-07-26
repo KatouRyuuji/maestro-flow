@@ -20,6 +20,11 @@ allowed-tools:
 session-mode: bootstrap
 version: 0.5.56
 ---
+
+<bootstrap_mode>
+This skill initializes protected project state before a Session exists. It MUST NOT call `maestro run create`; bootstrap files remain owned by their protected stores.
+</bootstrap_mode>
+
 <purpose>
 Initialize project: detect state, create `.workflow/` with project.md, state.json, config.json.
 Entry point; downstream: step `roadmap` or step `brainstorm`.
@@ -137,12 +142,12 @@ Verdicts:
 
 | Condition | Suggestion |
 |-----------|-----------|
-| Roadmap needed (default light) | step `roadmap` (`maestro run prepare roadmap` + `maestro run create roadmap --session YYYYMMDD-roadmap-{topic} --intent "{goal}"`) |
+| Roadmap needed (default light) | step `roadmap` (`maestro run prepare --platform codex roadmap` + `maestro run create roadmap --session YYYYMMDD-roadmap-{topic} --intent "{goal}"`) |
 
 Note: roadmap step is responsible for creating `state.json.sessions[]` entries and setting the first `active_session_id`.
-| Full spec package | step `blueprint` (`maestro run prepare blueprint` + `maestro run create blueprint --session YYYYMMDD-blueprint-{topic} --intent "{goal}"`) |
-| Explore ideas first | step `brainstorm` (`maestro run prepare brainstorm` + `maestro run create brainstorm --session YYYYMMDD-brainstorm-{topic} --intent "{goal}"`) |
-| View project dashboard | `/maestro-manage status` |
+| Full spec package | step `blueprint` (`maestro run prepare --platform codex blueprint` + `maestro run create blueprint --session YYYYMMDD-blueprint-{topic} --intent "{goal}"`) |
+| Explore ideas first | step `brainstorm` (`maestro run prepare --platform codex brainstorm` + `maestro run create brainstorm --session YYYYMMDD-brainstorm-{topic} --intent "{goal}"`) |
+| View project dashboard | `/maestro-next` |
 | Quick ad-hoc task | `/maestro-companion "{goal}"` |
 </completion>
 
@@ -153,7 +158,7 @@ Note: roadmap step is responsible for creating `state.json.sessions[]` entries a
 | E002 | error | .workflow/ already exists (greenfield init) | Use --from to import existing state, or remove .workflow/ to start fresh |
 | E003 | error | Context source not found (--from / --from-brainstorm) | Check arguments format, re-run with correct input |
 | E004 | error | Template file missing in ~/.maestro/templates/ | Run maestro-update to restore templates |
-| E005 | warning | .workflow/ already exists (existing codebase onboarding) | Merge with existing state or overwrite; user chooses via AskUserQuestion |
+| E005 | warning | .workflow/ already exists (existing codebase onboarding) | Merge with existing state or overwrite; user chooses via request_user_input |
 | W001 | warning | Research agent failed, continuing with partial results | Retry research or proceed with partial results |
 </error_codes>
 

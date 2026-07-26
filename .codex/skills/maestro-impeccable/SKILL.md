@@ -29,8 +29,11 @@ contract:
 version: 0.5.56
 ---
 
+> **Plan tracking**: codex 无 TaskCreate/TaskUpdate/TodoWrite 任务板。进度清单用 `update_plan({ explanation?, plan: [{ step, status }] })` 维护（整体提交步骤数组，status: `pending` | `in_progress` | `completed`），权威状态始终在 session 工件中；依赖/认领（addBlockedBy/owner）是工件字段，不是工具参数。
+
 <required_reading>
 @~/.maestro/workflows/run-mode.md
+@~/.maestro/workflows/codex-run-mode.md
 </required_reading>
 
 <deferred_reading>
@@ -118,7 +121,7 @@ Chain step names below reuse Command Routing names but resolve through the chain
 - `[refine]` = quality gate loop: gate fails → auto-select fix commands from findings → re-gate
 - `{cmd...}` = enhance supports multiple commands, comma-separated: `enhance colorize,typeset landing-page`
 
-Chain flags: --threshold <N> (default 26/40), --max-loops <N> (default 3), --skip-design, --styles <N>, -y (skip Layer 2 ambiguity AskUserQuestion — select first matching chain; skip chain session confirmation; skip quality gate refine confirmations. Does NOT skip prerequisite checks.)
+Chain flags: --threshold <N> (default 26/40), --max-loops <N> (default 3), --skip-design, --styles <N>, -y (skip Layer 2 ambiguity request_user_input — select first matching chain; skip chain session confirmation; skip quality gate refine confirmations. Does NOT skip prerequisite checks.)
 
 ## Free Text Routing
 
@@ -176,7 +179,7 @@ Layer 1 did not match. Check for chain-level keywords — even if the prompt als
 
 Ambiguous + no `-y`:
 
-AskUserQuestion (single-select, header: "意图确认"):
+request_user_input (single-select, header: "意图确认"):
 - Options: top 2-3 matched chains from Layer 2 table, each with label = chain name, description = matched keywords
 - Last option: **"直接构建"** — skip chain, route to Layer 3 craft
 
@@ -189,7 +192,7 @@ Layer 1+2 both did not match, but intent is to build/create a specific thing:
 
 → Route to **craft** (Direct)
 
-If all three layers produce no match → E001 (No command or intent resolved). Before raising E001, attempt AskUserQuestion with top 2-3 closest matches from Layer 1+2 tables.
+If all three layers produce no match → E001 (No command or intent resolved). Before raising E001, attempt request_user_input with top 2-3 closest matches from Layer 1+2 tables.
 
 ## Prerequisites
 
@@ -209,7 +212,7 @@ Before reading any command workflow:
    ─────────────────────────────────────────
    ```
 3. Read `~/.maestro/workflows/impeccable/{command}.md`
-4. **TodoWrite tracking**: create todo items for each major phase in the workflow file
+4. **update_plan tracking**: create todo items for each major phase in the workflow file
    - Format: `[{command}] {phase description}`
    - Mark each phase completed immediately upon finishing
 5. Follow workflow file instructions
@@ -236,21 +239,21 @@ Before reading any command workflow:
    - `↺` marks refine loop with max iteration count
    - Conditional steps show trigger condition
    - Skipped conditional steps marked `(skipped)`
-3. **Confirm chain session**: AskUserQuestion "Create chain session for '{chain_type}' targeting '{target}'?" — proceed only if user confirms. On decline, abort chain.
+3. **Confirm chain session**: request_user_input "Create chain session for '{chain_type}' targeting '{target}'?" — proceed only if user confirms. On decline, abort chain.
    Create session: `.workflow/.maestro/ui-craft-{YYYYMMDD-HHmmss}/status.json`
    ```json
    { "chain_type": "...", "target": "...", "steps": [...], "current_step": 0,
      "gate_history": [], "loop_count": 0, "status": "running" }
    ```
-4. **TodoWrite init**: create todo items for all chain steps
+4. **update_plan init**: create todo items for all chain steps
    - One item per step, format: `[chain] step N: impeccable:{command} — {description}` (use `impeccable:` prefix to disambiguate from Direct command items)
    - If conditional step is skipped, immediately mark completed
    - Quality gate steps include threshold: `[chain] step 5: impeccable:critique ◆ gate ≥26/40`
 5. For each step:
    - Read `~/.maestro/workflows/impeccable/{command}.md` → execute
-   - **Step start**: TodoWrite marks current step in_progress
-   - **Step done**: TodoWrite marks completed + update status.json (`current_step`, step `status`)
-   - **Step failed**: TodoWrite marks completed (with note) + record reason
+   - **Step start**: update_plan marks current step in_progress
+   - **Step done**: update_plan marks completed + update status.json (`current_step`, step `status`)
+   - **Step failed**: update_plan marks completed (with note) + record reason
    - **Failure classification**:
      - **Blocking** (chain stops): craft, shape, teach (if PRODUCT.md required)
      - **Non-blocking** (chain continues with W003): polish, delight, animate, colorize, typeset, layout, clarify, adapt, optimize, bolder, quieter, distill, harden, onboard
@@ -261,7 +264,7 @@ Before reading any command workflow:
    - Pass: score ≥ threshold AND P0 == 0 → advance
    - Fail: collect suggested commands from findings → execute → re-gate
    - Max loops exceeded → force advance with warning
-   - TodoWrite: record gate result in current step notes (score, P0/P1 count, pass/fail)
+   - update_plan: record gate result in current step notes (score, P0/P1 count, pass/fail)
 7. Final report: scores + trend + commands executed
 
 ## Codify Execution
@@ -282,7 +285,7 @@ Extract a design system from existing source code into tokens, a reference packa
 ### Codify Invariants
 1. **Source read-only** — the source path being analyzed MUST NOT be modified; extraction is purely read-only
 2. **Phase-sequential loading** — workflow files (ui-codify-extract, ui-codify-package, ui-codify-knowhow) MUST be read only when their phase starts; NEVER load all phases eagerly
-3. **User confirmation before knowhow** — Phase 3→4 gate MUST present AskUserQuestion before generating knowledge assets; NEVER auto-proceed to knowhow generation
+3. **User confirmation before knowhow** — Phase 3→4 gate MUST present request_user_input before generating knowledge assets; NEVER auto-proceed to knowhow generation
 4. **Overwrite protection** — existing package directory MUST NOT be overwritten without `--overwrite` flag (E102)
 5. **Artifact completeness** — all 5 required artifacts MUST exist before reporting completion; NEVER skip artifact verification
 6. **Token-first extraction** — design-tokens.json MUST be generated before layout-templates.json; layout extraction depends on token foundation
@@ -309,7 +312,7 @@ Route to `~/.maestro/workflows/ui-codify.md` and follow completely. The workflow
 **GATE Phase 3 → Phase 4: Package → Knowhow**
 - REQUIRED: preview.html + preview.css generated as interactive showcase.
 - BLOCKED if missing: preview artifacts not generated — knowhow phase needs rendered reference for validation.
-- REQUIRED: AskUserQuestion confirmation before proceeding to knowhow generation:
+- REQUIRED: request_user_input confirmation before proceeding to knowhow generation:
   ```
   question: "Preview 生成完成。是否继续将设计系统持久化为 knowhow 知识资产？"
   options:
@@ -374,7 +377,7 @@ Never auto-select: teach, shape, craft, live, document, extract, overdrive, crit
 - If score unparseable from output: retry the gate step once. If still unparseable → treat as gate fail (enter refine loop). Emit W005.
 
 **GATE: Chain → Completion**
-- REQUIRED: All non-skipped steps executed (TodoWrite all completed).
+- REQUIRED: All non-skipped steps executed (update_plan all completed).
 - REQUIRED: status.json updated with `status: "completed"` and final scores.
 - REQUIRED: If any step failed: documented in status.json with reason.
 - BLOCKED if missing: steps not all completed or status.json not updated — chain is incomplete.
@@ -400,13 +403,13 @@ Direct mode:
 - [ ] Command resolved from input (routing table or free text matching)
 - [ ] Prerequisites satisfied (UI specs loaded, PRODUCT.md present)
 - [ ] Workflow file read and executed completely
-- [ ] TodoWrite tracking created and all phases marked completed
+- [ ] update_plan tracking created and all phases marked completed
 - [ ] Next-step suggestion provided
 
 Chain mode:
 - [ ] Chain steps resolved and preview displayed
 - [ ] Session status.json created in `.workflow/.maestro/ui-craft-*/`
-- [ ] TodoWrite items created for all chain steps
+- [ ] update_plan items created for all chain steps
 - [ ] Each step executed with workflow file read
 - [ ] Quality gates parsed with actual scores (not estimated)
 - [ ] Refine loops executed when gate fails (up to max-loops)

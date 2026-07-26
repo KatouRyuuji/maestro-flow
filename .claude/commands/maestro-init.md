@@ -135,7 +135,6 @@ Verdicts:
 Note: roadmap step is responsible for creating `state.json.sessions[]` entries and setting the first `active_session_id`.
 | Full spec package | step `blueprint` (`maestro run prepare blueprint` + `maestro run create blueprint --session YYYYMMDD-blueprint-{topic} --intent "{goal}"`) |
 | Explore ideas first | step `brainstorm` (`maestro run prepare brainstorm` + `maestro run create brainstorm --session YYYYMMDD-brainstorm-{topic} --intent "{goal}"`) |
-| View project dashboard | `/maestro-manage status` |
 | Quick ad-hoc task | `/maestro-companion "{goal}"` |
 </completion>
 

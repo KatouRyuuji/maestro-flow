@@ -2,7 +2,7 @@
 name: maestro-fork
 disable-model-invocation: true
 description: Create or sync session worktree for parallel dev
-argument-hint: --session <session_id> [--base <branch>] [--sync]
+argument-hint: --session <session_id> [--base <ref>] [--sync]
 allowed-tools:
   - Bash
   - Edit
@@ -28,6 +28,7 @@ version: 0.5.56
 
 <required_reading>
 @~/.maestro/workflows/run-mode.md
+@~/.maestro/workflows/codex-run-mode.md
 </required_reading>
 
 <purpose>
@@ -71,7 +72,7 @@ Fork and sync algorithm steps are defined in workflow `fork.md`.
 - BLOCKED if missing: worktree creation failed or shared files not copied — do not proceed to artifact scoping.
 
 **GATE 3: Artifact Copy → Completion**
-- REQUIRED: AskUserQuestion confirmation before registry writes — show session scope, worktree path, and state entries to be written. User must confirm or abort.
+- REQUIRED: request_user_input confirmation before registry writes — show session scope, worktree path, and state entries to be written. User must confirm or abort.
 - REQUIRED: `worktree-scope.json` written with session scope (after confirmation).
 - REQUIRED: Scoped `state.json` written (only this session's data) (after confirmation).
 - REQUIRED: `worktrees.json` registry updated in main worktree (after confirmation).
@@ -91,9 +92,9 @@ Fork and sync algorithm steps are defined in workflow `fork.md`.
 
 | Condition | Suggestion |
 |-----------|-----------|
-| Fork complete | `cd {wt.path}` then step `analyze` (`maestro run prepare analyze` + `maestro run create analyze --session YYYYMMDD-analyze-{topic} --intent "{goal}"`) |
+| Fork complete | `cd {wt.path}` then step `analyze` (`maestro run prepare --platform codex analyze` + `maestro run create analyze --session YYYYMMDD-analyze-{topic} --intent "{goal}"`) |
 | Fork + automated | `maestro delegate "run full lifecycle for session" --cd {wt.path} --mode write` |
-| Fork + status check | Recommend `/maestro-manage status` |
+| Fork + status check | Recommend `/maestro-next` |
 | Sync complete | Resume work in worktree |
 | Sync conflicts found | Resolve manually, then retry |
 </completion>
@@ -102,10 +103,10 @@ Fork and sync algorithm steps are defined in workflow `fork.md`.
 | Code | Severity | Condition | Recovery |
 |------|----------|-----------|----------|
 | E001 | error | Project not initialized | Run maestro-init first |
-| E002 | error | No roadmap found | Run step `roadmap` first (`maestro run prepare roadmap` + `maestro run create roadmap --session YYYYMMDD-roadmap-{topic} --intent "{goal}"`) |
+| E002 | error | No roadmap found | Run step `roadmap` first (`maestro run prepare --platform codex roadmap` + `maestro run create roadmap --session YYYYMMDD-roadmap-{topic} --intent "{goal}"`) |
 | E003 | error | Running inside a worktree | Run from main worktree |
 | E004 | error | No session ID provided | Provide `--session <session_id>` |
-| E005 | error | No sessions defined in state.json | Run step `roadmap` first (`maestro run prepare roadmap` + `maestro run create roadmap --session YYYYMMDD-roadmap-{topic} --intent "{goal}"`) |
+| E005 | error | No sessions defined in state.json | Run step `roadmap` first (`maestro run prepare --platform codex roadmap` + `maestro run create roadmap --session YYYYMMDD-roadmap-{topic} --intent "{goal}"`) |
 | E006 | error | Session not found in state.json.sessions[] | Check available sessions |
 | E007 | error | No active worktree for session (--sync) | Check worktrees.json |
 | E008 | error | Session already has active worktree | Merge or cleanup first |

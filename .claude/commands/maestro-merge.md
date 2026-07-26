@@ -83,7 +83,6 @@ User selects "记录经验" → prompt for title/insight, then recommend `/maest
 
 | Condition | Suggestion |
 |-----------|-----------|
-| Merge complete | Recommend `/maestro-manage status` |
 | Next dep-ready session | step `analyze` for session (`maestro run prepare analyze --session {next-dep-ready-slug}` + `maestro run create analyze --session {next-dep-ready-slug} --intent "{goal}"`) |
 </completion>
 

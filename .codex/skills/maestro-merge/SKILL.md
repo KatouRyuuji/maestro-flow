@@ -28,6 +28,7 @@ version: 0.5.56
 
 <required_reading>
 @~/.maestro/workflows/run-mode.md
+@~/.maestro/workflows/codex-run-mode.md
 </required_reading>
 
 <purpose>
@@ -73,7 +74,7 @@ Note on --force: skips user confirmation for incomplete phase artifacts (W002). 
 <completion>
 ### Knowledge inquiry
 
-After successful merge, use `AskUserQuestion` to confirm knowledge persistence:
+After successful merge, use `request_user_input` to confirm knowledge persistence:
 
 ```
 question: "Merge 完成。是否记录本次工作经验教训？"
@@ -90,8 +91,8 @@ User selects "记录经验" → prompt for title/insight, then recommend `/maest
 
 | Condition | Suggestion |
 |-----------|-----------|
-| Merge complete | Recommend `/maestro-manage status` |
-| Next dep-ready session | step `analyze` for session (`maestro run prepare analyze --session {next-dep-ready-slug}` + `maestro run create analyze --session {next-dep-ready-slug} --intent "{goal}"`) |
+| Merge complete | Recommend `/maestro-next` |
+| Next dep-ready session | step `analyze` for session (`maestro run prepare --platform codex analyze --session {next-dep-ready-slug}` + `maestro run create analyze --session {next-dep-ready-slug} --intent "{goal}"`) |
 </completion>
 
 <error_codes>
