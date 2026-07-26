@@ -37,7 +37,6 @@ Parse $ARGUMENTS:
 
 Empty requirement → AskUserQuestion for the requirement text (E001 path).
 
-**Session Resolution**: Runtime handles session resolution, artifact registration, and state updates via `maestro run create`.
 
 **Output directories**:
 ```
@@ -192,8 +191,6 @@ Write 3 files to `{output_dir}`:
 ---
 
 ## Step 9: Wrap-up
-
-Artifact registration and state updates are handled by `maestro session done`.
 
 ### Completion Report
 

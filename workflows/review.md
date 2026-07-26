@@ -207,7 +207,7 @@ Code is the single source of truth. Determination and handling details see `ref/
 
 ## Step 10: Write review-findings.json
 
-When an old file exists, archive first → `outputs/.history/review-findings-{YYYY-MM-DDTHH-mm-ss}.json`. Artifact paths and metadata are declared in `prepare/review.md` contract.
+When an old file exists, archive first → `outputs/.history/review-findings-{YYYY-MM-DDTHH-mm-ss}.json`.
 
 ```
 Write outputs/review-findings.json:

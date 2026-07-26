@@ -257,9 +257,9 @@ Dimensions (4): scenario_coverage, diagnostic_depth, observation_quality, closur
 
 **Evidence lineage** — `evidence_lineage = full` when `EVIDENCE_SOURCE=verification`, otherwise `degraded`. When degraded: `closure_completeness` is capped (cannot reach its top band), the composite confidence cannot reach the highest tier, and the confidence summary + `uat.md` must carry `[DEGRADED EVIDENCE: no independent verification — source={EVIDENCE_SOURCE}]` (mirror retrospective `[LOW CONFIDENCE]` / auto-test `SPEC_MODE=degraded`). Degradation lowers the confidence tier and annotates lineage; it does **not** waive the Readiness Gate or the exit gates, and it never licenses guessing outcomes.
 
-Quality mechanisms: **Pressure Pass** — >80% pass → ask the user to try an edge case; **Devil's Advocate** — >70% first-pass → challenge scenario difficulty; **Stall Detection** — 2 rounds of gap-fix with no improvement → stop. **GATE: pass-rate-met** — each scenario has a real observed outcome (timeout / no-response / missing-entry may never be scored as pass); under `--frontend-verify`, any `[UI-observable]` failure or a write endpoint with no UI entry forces NEEDS_RETRY. (The pressure-pass mechanism above is a separate quality lever, not the gate's definition.)
+Quality mechanisms: **Pressure Pass** — >80% pass → ask the user to try an edge case; **Devil's Advocate** — >70% first-pass → challenge scenario difficulty; **Stall Detection** — 2 rounds of gap-fix with no improvement → stop. **GATE: pass-rate-met** (definition in `prepare/test.md` §Gate Intent; the pressure-pass mechanism above is a separate quality lever, not part of the gate).
 
-**Readiness Gate** (blocks Step 13): scenario_coverage < 40% | blocker gap not diagnosed | no pressure pass (if >80%) | unconfirmed remaining gap. The confidence summary is appended to `uat.md`. **GATE: coverage-met** — two components must both hold: (1) every mapped scenario source has a corresponding UAT scenario, and (2) the Readiness Gate passes (scenario_coverage ≥ 40%).
+**Readiness Gate** (blocks Step 13): scenario_coverage < 40% | blocker gap not diagnosed | no pressure pass (if >80%) | unconfirmed remaining gap. The confidence summary is appended to `uat.md`. **GATE: coverage-met** (definition in `prepare/test.md` §Gate Intent).
 
 ---
 

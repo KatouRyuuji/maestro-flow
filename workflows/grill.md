@@ -16,7 +16,7 @@ Step 3: Terminology Alignment (code vs proposal)
 Step 4: Branch Walking (Socratic grilling loop)
 Step 5: Synthesis (report + terminology)
 Step 6: Context Package (context-package.json)
-Step 7: Register Artifact + Wrap-up
+Step 7: Wrap-up
 ```
 
 ---
@@ -37,7 +37,6 @@ Parse $ARGUMENTS to determine execution mode:
 - `--from <source>`: upstream material to grill against
 - Missing/empty args without `--from` or `--continue` = error
 
-**Session Resolution**: Runtime handles session resolution, artifact registration, and state updates. Contract inputs are resolved and injected by the runtime via `maestro run create`.
 
 **Output Directory Resolution**:
 ```
@@ -417,11 +416,7 @@ If any missing: produce the missing artifact before Step 7. Do NOT register comp
 
 ## Step 7: Wrap-up
 
-### 7.1: Artifact Registration
-
-Artifact registration and state updates are handled by `maestro session done`.
-
-### 7.2: Domain Knowledge Flow
+### 7.1: Domain Knowledge Flow
 
 Domain terms produced by Grill settle into the project knowledge base via the following path:
 
@@ -434,7 +429,7 @@ context-package.json#domain.terminology[]  ──→  wrap-up domain extraction 
 - After all terms are locked via Step 5 synthesis, extraction is automatically triggered by `harvest --auto` at the end of the chain
 - Domain extraction always requires interactive confirmation (`-y` has no effect on domain registration)
 
-### 7.3: Completion Report
+### 7.2: Completion Report
 
 ```
 Grill session {artifact_id} completed.

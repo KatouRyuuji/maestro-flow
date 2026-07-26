@@ -31,22 +31,7 @@ Back-half: `S_GENERALIZE → S_DISCOVER → S_RECORD → END` (see odyssey-base.
 
 ## Context
 
-### Target Resolution
-
-| Input | Resolution |
-|-------|-----------|
-| Module/dir path | Audit that module |
-| `--scope <path>` | Limit scan to directory |
-| Project root (default) | Full project scan |
-| `HEAD` / `staged` | Review changes in diff |
-
-### Tier Coverage
-
-| Tier | OWASP | Dependencies | Secrets | CI/CD | STRIDE | Git History |
-|------|-------|-------------|---------|-------|--------|-------------|
-| quick | ✓ | ✓ | — | — | — | — |
-| standard | ✓ | ✓ | ✓ | ✓ | — | — |
-| deep | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+Target resolution (input → audit scope) and tier coverage (which audits each tier runs) are defined in `prepare/odyssey-security.md` §Input Interpretation — that is the canonical wording.
 
 ### Session Fields
 

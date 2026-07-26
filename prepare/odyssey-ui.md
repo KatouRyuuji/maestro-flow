@@ -59,7 +59,7 @@ When prior UI sessions of the same target exist, check their audit results and d
 - **Priority-ordered fixing** — findings and ideas are fixed by priority tier (critical → high → medium → low + high-impact ideas). No partial-tier advancement.
 - **Evidence append-only** — evidence.ndjson entries are immutable observations; modifying or deleting them is forbidden.
 - **Fix scope** — source code modifications during fix phase are in-scope but MUST be committed per action. Session artifacts target `{run_dir}/outputs/` only.
-- **Generalize is mandatory** unless `skip_generalize == true`; generalize source is audit findings + diverge ideas (severity >= medium OR impact = high).
+- **Generalize is mandatory** unless `skip_generalize == true`; prior-phase convergence is NOT a valid skip reason.
 
 ## Risk Checklist
 

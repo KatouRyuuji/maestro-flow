@@ -150,8 +150,6 @@ Only check `task.files[]` (write targets); `read_first[]` (read-only references)
 
 ## Output Skeleton
 
-Artifact paths and metadata are declared in `prepare/plan.md` contract.
-
 **outputs/plan.json**:
 ```json
 {

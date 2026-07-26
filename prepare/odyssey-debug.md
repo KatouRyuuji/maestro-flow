@@ -60,7 +60,7 @@ When prior debug artifacts of the same scope exist, check their root cause first
 ## Boundaries and Invariants
 
 - **State chain:** `S_INTAKE → S_ARCHAEOLOGY → S_EXPLORE → S_DIAGNOSE → S_FIX → S_CONFIRM → [back-half]`
-- **Evidence is append-only** — never delete or overwrite evidence.ndjson entries; each entry is an immutable observation.
+- **Evidence append-only** — evidence.ndjson entries are immutable observations; modifying or deleting them is forbidden.
 - **Phase goal tracking** — mark each goal done/failed before transition; no silent skips.
 - **Root cause confirmation requires evidence** — a hypothesis without reproduction or code/log evidence stays "suspected", never promoted to confirmed.
 - **3-strike escalation** — stop after 3 failed hypotheses and escalate (delegate or ask user); do not free-associate a 4th.
@@ -71,9 +71,9 @@ When prior debug artifacts of the same scope exist, check their root cause first
 
 ## Risk Checklist
 
-- Is every confirmed root cause backed by a reproduction or code/log evidence? A hypothesis without evidence must stay "suspected".
+- Is every confirmed root cause backed by a reproduction or code/log evidence? A hypothesis without evidence must stay "suspected", never promoted to confirmed.
 - Did you change only one variable at a time during diagnosis? Simultaneous changes make attribution impossible.
-- Have 3 hypotheses failed? Stop and escalate — do not propose a 4th hypothesis on your own.
+- Have 3 hypotheses failed? Stop and escalate to architecture inspection — do not propose a 4th hypothesis on your own.
 - Did the trace reach the true source? Fixing at the symptom rather than where correct data first turned wrong leaves the root cause live.
 - Are archaeology/explore results properly logged even on partial failure (W003/W006)? Missing evidence must be flagged, not silently omitted.
 - Is every discovery hit individually classified with a reason? Blanket "pre-existing" skips are forbidden.

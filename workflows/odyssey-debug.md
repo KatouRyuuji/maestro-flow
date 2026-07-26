@@ -25,13 +25,7 @@ Back-half: `S_GENERALIZE → S_DISCOVER → S_RECORD → END` (see odyssey-base.
 
 ## `--template <name>`
 
-| Template | Strategy | Use case |
-|----------|----------|----------|
-| `performance` | profiling → hot path → allocation → cache | Performance degradation |
-| `memory-leak` | heap snapshot → retention chain → lifecycle | Memory leaks |
-| `race-condition` | timeline → concurrent access → lock analysis | Race conditions |
-| `regression` | git bisect → diff analysis → boundary check | Regressions |
-| `crash` | stack trace → null chain → error propagation | Crashes / exceptions |
+Template strategies are defined in `prepare/odyssey-debug.md` §Input Interpretation — that is the canonical wording.
 
 ---
 

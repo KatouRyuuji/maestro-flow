@@ -73,7 +73,6 @@ All brainstorm output goes to scratch:
 - `--style-skill PKG`: validate `.claude/skills/style-{PKG}/SKILL.md` exists
 - Missing/empty args without flags = error
 
-**Session Resolution**: Runtime handles session resolution, artifact registration, and state updates. Contract inputs are resolved and injected by the runtime via `maestro run create`. `--session ID` is forwarded to the runtime for explicit selection.
 
 **Output Directory Resolution**:
 - Phase mode (number): resolve the plan artifact from the returned `upstream` map (ERROR if the required alias is absent).
@@ -461,8 +460,6 @@ Write `{output_dir}/context-package.json` by extracting from session artifacts:
 - `insights[]`: from each `{role}/analysis.md` §3 Cross-Cutting subsections → `{ role, area, summary, ref: "{role}/analysis.md#§3-{heading}" }`
 - `open_questions[]`: from §4-N SHOULD/MAY items → `{ area, question, options[], ref }`
 - `references[]`: `{ type: "guidance", path: "guidance-specification.md" }` + `{ type: "role-analysis", path: "{role}/analysis.md" }` per role
-
-Artifact registration and state updates are handled by `maestro session done`.
 
 **GATE Step 7.5→complete**: Glob `{output_dir}/context-package.json` MUST exist before workflow report; BLOCKED if missing.
 

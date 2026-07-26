@@ -242,8 +242,6 @@ The self-check only records the smoke conclusion as supporting evidence for veri
 
 ## Step 8: Write artifacts
 
-Artifact paths and metadata are declared in `prepare/execute.md` contract.
-
 ```
 outputs/execution.json:
 { "plan_ref":"current-plan", "status":"completed|partial|blocked",

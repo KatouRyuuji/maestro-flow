@@ -61,7 +61,7 @@ When prior review artifacts of the same scope exist, check their findings first 
 
 - **State chain:** `S_INTAKE → S_ARCHAEOLOGY → S_EXPLORE → S_REVIEW → S_FIX → S_CONFIRM → [back-half]`
 - **Zero-residual applies** — fix ALL findings within fix_threshold (default: all severity levels). No partial-tier advancement.
-- **Evidence is append-only** — never delete or overwrite evidence.ndjson entries; each entry is an immutable observation.
+- **Evidence append-only** — evidence.ndjson entries are immutable observations; modifying or deleting them is forbidden.
 - **Phase goal tracking** — mark each goal done/failed before transition; no silent skips.
 - **4-dimension mandatory** — all dimensions (correctness, security, performance, architecture) must be reviewed. Zero dimensions reviewed is BLOCKED.
 - **Exhaustive fix by severity** — descend through [critical, high, medium, low], each tier fully addressed before advancing. Blanket "pre-existing" classification forbidden; each finding must be individually assessed.

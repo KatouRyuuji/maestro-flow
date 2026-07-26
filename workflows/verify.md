@@ -169,7 +169,7 @@ blocked — critical path cannot be verified (missing dependency/environment)
 score = verified_truths / total_truths
 ```
 
-When an old file exists, archive first → `outputs/.history/verification-{YYYY-MM-DDTHH-mm-ss}.json`. Artifact paths and metadata are declared in `prepare/verify.md` contract.
+When an old file exists, archive first → `outputs/.history/verification-{YYYY-MM-DDTHH-mm-ss}.json`.
 
 ```
 Write outputs/verification.json:

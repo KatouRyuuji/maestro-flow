@@ -45,7 +45,7 @@ Pre-load (optional, continue if missing):
 
 ## Boundaries and Invariants
 
-- All file writes must land in `.workflow/blueprint/BLP-{slug}-{date}/` or `.workflow/state.json`; modifying source code or files outside this is forbidden.
+- **Output boundary**: all file writes must land in `{run_dir}/outputs/` (per the `produces` contract above) or `.workflow/state.json`; modifying source code or files outside this is forbidden.
 - Scope guard: define only the spec shape, do not pre-resolve roadmap phases or plan tasks.
 - Flowback target: blueprint-config.json (each decision is persisted before the next question).
 - Interaction style: **convergent menu-driven, depth-first**; decision tree strictly depth-first: scope (full product / feature set / single feature) → spec type (service / api / library / platform) → focus areas → whether to run codebase exploration → requirement priority.

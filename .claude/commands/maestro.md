@@ -149,11 +149,11 @@ Goals describe outcomes, not lifecycle stages.
 
 ### A_CREATE
 
-Build a chain definition out of executable Skill steps. Maestro does not emit formal decision nodes: `decision_points` is retained only for reading and continuing legacy Sessions, and new chains express quality/goal/scope checks as Skill steps that own a Run and may return a proposal. (The closed-loop policy that mandates decision nodes before seal belongs to `/maestro-ralph`; route there when the work needs it.) For narrow/single-step chains, generate a minimal implicit boundary_contract: in_scope = [intent], out_of_scope = [], constraints = [], definition_of_done = 'step completed with passing gates'. Write it to a temporary JSON file and call:
+Assemble and create per `prepare/maestro.md` §3–§4. Maestro-specific policy:
 
-`maestro session create "{intent}" --id maestro-{slug} --chain-file {path}`
-
-Delete the temporary file after success. Do not inline unescaped JSON. Then enter the shared loop using the returned `session_id`.
+- Maestro does not emit formal decision nodes; new chains express quality/goal/scope checks as Skill steps that own a Run and may return a proposal. (The closed-loop policy that mandates decision nodes before seal belongs to `/maestro-ralph`; route there when the work needs it.)
+- For narrow/single-step chains, generate a minimal implicit boundary_contract: in_scope = [intent], out_of_scope = [], constraints = [], definition_of_done = 'step completed with passing gates'.
+- Do not inline unescaped JSON.
 
 ### A_CONTINUE
 

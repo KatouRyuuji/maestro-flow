@@ -63,6 +63,7 @@ When prior security audit sessions of the same target exist, check their finding
 - **Secrets are never logged** — if secrets are discovered, report their location (file:line) and type but NEVER include the actual secret value in the report output.
 - **No fix loop** — this mode has NO S_FIX or S_CONFIRM states. Findings are reported with remediation suggestions; actual fixes route to `--mode improve` or `--mode debug`.
 - **Evidence append-only** — evidence.ndjson entries are immutable observations; modifying or deleting them is forbidden.
+- **Generalize is mandatory** unless `skip_generalize == true`; prior-phase convergence is NOT a valid skip reason.
 
 ## Risk Checklist
 
