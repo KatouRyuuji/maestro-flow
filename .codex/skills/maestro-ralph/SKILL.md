@@ -30,6 +30,8 @@ version: 0.5.56
 <required_reading>
 @~/.maestro/workflows/run-mode.md
 @~/.maestro/workflows/orchestrator-run-loop.md
+@~/.maestro/prepare/ralph.md
+@~/.maestro/workflows/codex-run-mode.md
 </required_reading>
 
 <deferred_reading>

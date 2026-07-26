@@ -5,7 +5,7 @@ This file is the single Session/Run lifecycle contract for every command, workfl
 
 Lifecycle verbs: **prepare → start/create → brief → check → done/complete**.
 
-Human-facing usage should prefer `session create`, `session done`, and `session chain edit`. The lower-level `run create` / `session done` verbs remain the stable machine protocol and advanced compatibility surface.
+Human-facing usage should prefer `session create`, `session done`, and `session meta update`. The lower-level `run create` / `run complete` verbs remain the stable machine protocol and advanced compatibility surface.
 
 ## Authority and Reuse
 
@@ -89,7 +89,7 @@ maestro run create odyssey --session 20260715-odyssey-planex-todo -- --mode plan
 
 `maestro run recall-confirm`, `run fork`, `run import`, `run new`, and `run rebind` are deprecated admin-only compatibility commands. They may remain callable while legacy records exist, but normal topic resolution, output reuse, recall recommendations, and next-action routing MUST NOT invoke or recommend them. They provide no force bypass; durability and recovery internals remain runtime-owned.
 
-`maestro session recover` is the canonical audited recovery path for a paused Session: resolve each exact escalated decision/failed step, then call `session recover --resume`, then explicitly invoke `session next`. Recovery is not normal topic resolution or artifact reuse.
+`maestro session resolve` followed by `maestro session resume` is the canonical audited recovery path for a paused Session: call `session resolve` once per exact escalated decision (`--decision <point-id>`) or failed step (`--step <step-id>`) with its `--disposition`, then call `session resume` after every blocker is cleared, then explicitly invoke `session next`. Both verbs require the full audit guard set (`--session --request-id --actor --reason --expected-identity-revision --expected-activity-revision`). Recovery is not normal topic resolution or artifact reuse.
 
 **Workflow-specific finish norms**: declare a `finish:` list in the workflow file's YAML frontmatter; each entry is one norm line appended to the `run check` finish checklist.
 

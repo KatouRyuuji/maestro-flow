@@ -25,6 +25,7 @@ contract:
 <required_reading>
 @~/.maestro/workflows/run-mode.md
 @~/.maestro/workflows/orchestrator-run-loop.md
+@~/.maestro/prepare/ralph.md
 </required_reading>
 
 <deferred_reading>

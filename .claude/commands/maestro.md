@@ -2,7 +2,7 @@
 name: maestro
 disable-model-invocation: false
 description: "Intent-to-chain planner over the canonical Session/Run lifecycle"
-argument-hint: "<intent> [-y] [-c] [--amend] [--executor <agent|direct>] [--dry-run]"
+argument-hint: "<intent> [-y] [-c] [--amend] [--dry-run]"
 allowed-tools:
   - Read
   - Write
@@ -26,6 +26,7 @@ contract:
 <required_reading>
 @~/.maestro/workflows/run-mode.md
 @~/.maestro/workflows/orchestrator-run-loop.md
+@~/.maestro/prepare/maestro.md
 </required_reading>
 
 <deferred_reading>
@@ -43,8 +44,9 @@ Only these user flags are accepted:
 - `-y` — skip all confirmation/clarification interactions, use default choices. Does NOT change data semantics (no auto-deferred decisions). Never bypasses: high-risk classification, confidence <60, ambiguity requiring user input, failed gates, or drift escalation.
 - `-c` — continue the unique live compatible Session.
 - `--amend` — amend that Session's goal; remaining text is the change request.
-- `--executor <agent|direct>` — select executor: `agent` (default) dispatches run-executor; `direct` executes inline. Never changes Session type or chain semantics.
 - `--dry-run` — show chain without executing.
+
+Execution always dispatches run-executor (the default behavior); this never changes Session type or chain semantics.
 
 All other text is intent. Unknown flags are not silently reinterpreted. Platform, roadmap, quality, template reuse, parallelism and adversarial depth are inferred.
 </interface>
@@ -159,14 +161,14 @@ Use read-only `run recall` plus `session status`. A paused Session follows share
 
 ### A_AMEND
 
-Read `ralph-amend-goal.md`, use `session status` for the snapshot, perform read-only impact analysis, confirm, then commit the whole decomposition with `session chain edit --decomposition-file -`. Any pending-tail change must come from a planning Skill proposal.
+Read `ralph-amend-goal.md`, use `session status` for the snapshot, perform read-only impact analysis, confirm, then commit the whole decomposition with `session meta update --session {session_id} --decomposition-file -` (the decomposition object must carry all three of `execution_criteria`, `goals`, `changelog` — the schema is strict). Any pending-tail change must come from a planning Skill proposal.
 
 </actions>
 
 </state_machine>
 
 <success_criteria>
-- Public flags are `-y`, `-c`, `--amend`, `--executor`, `--dry-run`.
+- Public flags are `-y`, `-c`, `--amend`, `--dry-run`.
 - Initial classification is auditable and the Session exists before step execution.
 - Every step follows next → brief → execute → check → done; decision nodes use decide.
 - Chain adaptation is Skill-proposed and atomically applied by the producing Run.

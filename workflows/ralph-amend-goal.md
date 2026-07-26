@@ -47,7 +47,9 @@ Validate the full object before persistence. Goals describe outcomes; lifecycle 
 
 After confirmation, write the full JSON object to stdin or a temporary file and call:
 
-`maestro session chain edit --session {session_id} --decomposition-file -`
+`maestro session meta update --session {session_id} --decomposition-file - --request-id {request_id} --expected-identity-revision {n} --expected-activity-revision {n}`
+
+The decomposition object must carry all three required keys — `execution_criteria`, `goals`, `changelog` — even when a list is empty. The `--decomposition-file` schema is strict and rejects a goals-only object.
 
 Runtime performs the audited metadata update. Never write `session.json`, `status.json`, or any secondary goal store.
 

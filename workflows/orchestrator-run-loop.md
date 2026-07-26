@@ -40,7 +40,7 @@ Maestro 与 Ralph 共享这一执行循环。编排层调用 `maestro session ..
 | `dispatch_next` | 校验 preconditions 后立即 `session next --json`；尤其是 `complete` 或 `decide` 后不得只展示命令 |
 | `evaluate_decision` | `command` 非空时只执行一次以读取 decision card；`reason_code=DECISION_CARD_READY` 时不得再次 `session next`，直接派发只读 evaluator，再调用 `session decide` |
 | `accept_reuse` | 按下述正式 reuse 流程处理 exact assessment |
-| `recover_session` | 只走 audited `session recover`；不得隐式 resume |
+| `recover_session` | 只走 audited `session resolve` → `session resume`；不得隐式 resume |
 | `seal_session` | 校验 Runs、decisions、goals 与 Session gates 后 seal |
 | `offer_recommendations` | 只展示 chain 外建议；不得隐式创建新 Run |
 | `repair_chain` / `stop` | 停止续跑并报告结构化原因，不绕过 authority |
@@ -80,7 +80,7 @@ Maestro 与 Ralph 共享这一执行循环。编排层调用 `maestro session ..
 
    `maestro session create "{intent}" --id {slug} --chain-file {path}`
 
-4. Runtime resolver 在 `session next` 分配 Run 前校验 command、Skill 和 lifecycle step；prompt 不调用独立 catalog CLI。
+4. 建链前 prompt 必须用 `maestro skills --steps --json --platform claude` 预校验每个 step 名（省略 `--platform` 会返回全平台混合注册表）；未命中即 E005，阻断建链。Runtime resolver 在 `session next` 分配 Run 前独立复校 command、Skill 和 lifecycle step。两级校验都不可省略。
 
 ### 2. Locate and allocate
 
@@ -147,11 +147,11 @@ Runtime 返回的 next 仅为 `suggest_only`，因此 Runtime 自身不执行它
 Paused recovery 仅由显式 `-c` 触发：
 
 1. `session status` 读取 exact blocker 与 revisions。
-2. 每个 blocker 经用户选择后调用 `maestro session recover --session {id} ... (--decision {point}|--step {step}) --disposition {value}`。
-3. blockers 清零后调用 `maestro session recover --resume --session {id} ...`。
+2. 每个 blocker 经用户选择后调用 `maestro session resolve --session {id} --request-id {rid} --actor {actor} --reason "{reason}" --expected-identity-revision {n} --expected-activity-revision {n} (--decision {point}|--step {step}) --disposition {value}`（decision 用 `proceed|retry`，step 用 `retry|skip`）。
+3. blockers 清零后调用 `maestro session resume --session {id} --request-id {rid} --actor {actor} --reason "{reason}" --expected-identity-revision {n} --expected-activity-revision {n}`。
 4. resume 只恢复 Session；下一 Run 仍由显式 `session next` 分配。
 
-Goal amend：读取 `ralph-amend-goal.md`，完成 snapshot → impact audit → confirmation → 通过 `maestro session chain edit --decomposition-file -` 整块更新 → planning Skill proposal。高风险修改不受 `-y` 影响。
+Goal amend：读取 `ralph-amend-goal.md`，完成 snapshot → impact audit → confirmation → 通过 `maestro session meta update --session {session_id} --decomposition-file -` 整块更新（decomposition 必须含 `execution_criteria`/`goals`/`changelog` 三个键，schema 为 strict） → planning Skill proposal。高风险修改不受 `-y` 影响。
 
 ### 8. Seal
 

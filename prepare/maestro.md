@@ -2,7 +2,7 @@
 name: maestro
 description: "Intent-to-chain planner over the canonical Session/Run lifecycle"
 goal: true
-argument-hint: "<intent> [-y] [-c] [--amend] [--executor agent|direct] [--dry-run]"
+argument-hint: "<intent> [-y] [-c] [--amend] [--dry-run]"
 contract:
   consumes: []
   produces: []
@@ -23,7 +23,6 @@ Maestro 是意图到链的规划器。本文件定义 **公共接口**、**分�
 | `-y` | 自动确认低风险分类和 proposal；不越高风险、低置信度、边界歧义、drift 熔断 |
 | `-c` | 继续唯一 live compatible Session；多候选必须询问；paused 进入 audited recovery |
 | `--amend` | 修改唯一 live Session 的目标；剩余文本为 change request |
-| `--executor <agent\|direct>` | 选择执行方式：`agent`（默认）派发 run-executor；`direct` 主 LLM 内联执行。不改变 Session 类型或链语义 |
 | `--dry-run` | 显示 chain 后结束，不执行 |
 
 其余文本全部视为 intent。Platform、roadmap、quality、模板复用、并行与对抗策略由 intent、Session state、Skill contract 和 host runtime 推断。
@@ -32,7 +31,7 @@ Maestro 是意图到链的规划器。本文件定义 **公共接口**、**分�
 
 读取 deferred `workflows/maestro.md`，执行意图分类：
 
-1. **Exact match**：`continue/next/go/继续` → state_continue；`status/状态` → status
+1. **Exact match**：`continue/next/go/继续` → state_continue
 2. **Semantic match**：LLM 语义理解匹配 task_type（见 maestro.md Chain Catalog）
 3. **Selection priorities**：issue_id > team > UI/design > multi-step > single-step > companion fallback
 4. **State validation（W003）**：execute 无 plan → 警告并前置 plan；test 未执行 → 警告并前置 execute
@@ -44,11 +43,11 @@ Maestro 是意图到链的规划器。本文件定义 **公共接口**、**分�
 
 ### 1. Specs 预检
 
-chain 包含 analyze/plan/execute 等执行 stage 且 `.workflow/specs/` 不存在 → 在 steps 最前面插入 `spec-setup`。chain ∈ {grill, brainstorm, blueprint, init, status} 时跳过。
+chain 包含 analyze/plan/execute 等执行 stage 且 `.workflow/specs/` 不存在 → 在 steps 最前面插入 `spec-setup`。chain ∈ {grill, brainstorm, blueprint, init} 时跳过。
 
 ### 2. Skill 名预校验
 
-所有 step 的 skill 名通过 `maestro run skill --steps --json` 预校验（project 覆盖 global）。未命中 → 报错 E005，阻断建链。
+所有 step 的 skill 名通过 `maestro skills --steps --json --platform claude` 预校验（project 覆盖 global）。省略 `--platform` 会返回全平台混合注册表并打 WARNING，必须显式指定。未命中 → 报错 E005，阻断建链。
 
 ### 3. 组装 chain-file
 
@@ -91,7 +90,7 @@ chain 包含 analyze/plan/execute 等执行 stage 且 `.workflow/specs/` 不存�
 
 设 `decomposition_owner = "maestro"`。下游 ralph 只消费不二次提问。
 
-1. 分类意图广度：narrow / 单步 / {status, init} 链 → 跳过分解
+1. 分类意图广度：narrow / 单步 / {init} 链 → 跳过分解
 2. broad/medium → 最多问 3 轮：Scope / Constraints / Definition of Done（`-y` 不跳过广泛歧义）
 3. 派生 `execution_criteria` + `goals`（每个含 `done_when` + `evidence` + `lifecycle`）
 4. `boundary_contract` 随 `session create` 建入；goals 装入 chain-file 的 `decomposition` 块
@@ -133,7 +132,7 @@ Roadmap 仅在多 release 证据时推断。Quality 基于 specs 和可观测风
 
 ## Invariants（Maestro 特有）
 
-1. **One chain, executor-neutral** — `agent|direct` 只选择 executor，不产生 Session 分型
+1. **One chain, executor-neutral** — 执行始终派发 run-executor（默认行为），不产生 Session 分型
 2. **Session before execution** — session.json 经 `session create --chain-file` 创建后才执行
 3. **Creator owns decomposition** — Maestro 创建 boundary_contract + goals；后续 orchestrator 只消费不覆盖
 4. **Classification evidence** — 分类必须留痕（匹配 pattern、排除备选、confidence）
