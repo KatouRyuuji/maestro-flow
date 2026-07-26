@@ -385,11 +385,11 @@ body{
 <header class="site-header">
   <div>
     <h1>Maestro Command Reference</h1>
-    <p>53 slash commands · 9 categories · workflow orchestration CLI</p>
+    <p>18 slash commands · orchestrator-dispatched steps · workflow orchestration CLI</p>
     <div class="stats">
-      <span><b>16</b> core</span>
-      <span><b>12</b> manage</span>
-      <span><b>9</b> quality</span>
+      <span><b>14</b> core</span>
+      <span><b>11</b> manage</span>
+      <span><b>7</b> quality</span>
       <span><b>3</b> spec</span>
       <span><b>5</b> learn</span>
       <span><b>2</b> wiki</span>
@@ -427,9 +427,9 @@ body{
 <section class="cat-section reveal" id="cat-core">
   <div class="cat-header">
     <div class="cat-bar" style="background:var(--cat-core)"></div>
-    <h2>核心工作流 <span class="cat-count">16 commands</span></h2>
+    <h2>核心工作流 <span class="cat-count">14 项（命令 + step）</span></h2>
   </div>
-  <p class="cat-desc">项目初始化、规划、执行、验证、协调、milestones 与 overlays。全局入口 <code>/maestro</code> 是智能协调器。</p>
+  <p class="cat-desc">项目初始化、规划、执行、验证、协调、封存与 overlays。全局入口 <code>/maestro</code> 是智能协调器；<code>analyze</code>/<code>plan</code>/<code>execute</code>/<code>verify</code>/<code>brainstorm</code>/<code>roadmap</code>/<code>blueprint</code>/<code>collab</code> 为一级 step，由编排器经 <code>/maestro</code> 派发，不能直接键入斜杠形态。</p>
   <div class="card-grid">
 
     <div class="cmd-card">
@@ -461,9 +461,9 @@ body{
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/maestro-brainstorm</div>
-      <div class="cmd-desc">多角色头脑风暴，产出 guidance-specification.md。可选的初始化前置步骤。</div>
-      <div class="cmd-usage">/maestro-brainstorm "&lt;topic&gt;"</div>
+      <div class="cmd-name">brainstorm 步骤</div>
+      <div class="cmd-desc">多角色头脑风暴，产出 guidance-specification.md。可选的初始化前置步骤（step，经 /maestro 派发）。</div>
+      <div class="cmd-usage">brainstorm "&lt;topic&gt;"</div>
       <div class="cmd-chain">
         <code>brainstorm</code><span class="arrow">→</span>
         <code>init --from</code>
@@ -471,9 +471,9 @@ body{
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/maestro-roadmap</div>
-      <div class="cmd-desc">交互式路线图生成。轻量方案，适合需求明确的小型项目。</div>
-      <div class="cmd-usage">/maestro-roadmap "&lt;desc&gt;" -y</div>
+      <div class="cmd-name">roadmap 步骤</div>
+      <div class="cmd-desc">交互式路线图生成。轻量方案，适合需求明确的小型项目（step，经 /maestro 派发）。</div>
+      <div class="cmd-usage">roadmap "&lt;desc&gt;" -y</div>
       <div class="cmd-chain">
         <code>init</code><span class="arrow">→</span>
         <code>roadmap</code><span class="arrow">→</span>
@@ -482,9 +482,9 @@ body{
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/maestro-blueprint</div>
-      <div class="cmd-desc">6 阶段规范蓝图，产出 产品简报 + PRD + 架构文档 + 史诗。适合大型项目。</div>
-      <div class="cmd-usage">/maestro-blueprint</div>
+      <div class="cmd-name">blueprint 步骤</div>
+      <div class="cmd-desc">6 阶段规范蓝图，产出 产品简报 + PRD + 架构文档 + 史诗。适合大型项目（step，经 /maestro 派发）。</div>
+      <div class="cmd-usage">blueprint</div>
       <div class="cmd-chain">
         <code>init</code><span class="arrow">→</span>
         <code>blueprint</code><span class="arrow">→</span>
@@ -504,13 +504,13 @@ body{
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/maestro-analyze</div>
-      <div class="cmd-desc">分析阶段。消费 roadmap + project.md，产出 context.md 和 analysis.md。支持多次分析。</div>
-      <div class="cmd-usage">/maestro-analyze
-/maestro-analyze 1
-/maestro-analyze "topic"
-/maestro-analyze --gaps ISS-xxx
-/maestro-analyze -q "topic"</div>
+      <div class="cmd-name">analyze 步骤</div>
+      <div class="cmd-desc">分析阶段。消费 roadmap + project.md，产出 context.md 和 analysis.md。支持多次分析（step，经 /maestro 派发）。</div>
+      <div class="cmd-usage">analyze
+analyze 1
+analyze "topic"
+analyze --gaps ISS-xxx
+analyze -q "topic"</div>
       <div class="cmd-chain">
         <code>roadmap</code><span class="arrow">→</span>
         <code>analyze</code><span class="arrow">↻</span>
@@ -520,12 +520,12 @@ body{
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/maestro-plan</div>
-      <div class="cmd-desc">规划阶段。消费 context.md，产出 plan.json + TASK-*.json。支持 revise 和碰撞检测。</div>
-      <div class="cmd-usage">/maestro-plan
-/maestro-plan 1
-/maestro-plan --gaps
-/maestro-plan --dir scratch/xxx</div>
+      <div class="cmd-name">plan 步骤</div>
+      <div class="cmd-desc">规划阶段。消费 context.md，产出 plan.json + TASK-*.json。支持 revise 和碰撞检测（step，经 /maestro 派发）。</div>
+      <div class="cmd-usage">plan
+plan 1
+plan --gaps
+plan --dir scratch/xxx</div>
       <div class="cmd-chain">
         <code>analyze</code><span class="arrow">→</span>
         <code>plan</code><span class="arrow">↻</span>
@@ -535,10 +535,10 @@ body{
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/maestro-execute</div>
-      <div class="cmd-desc">执行阶段。消费 plan.json，产出代码变更和 .summaries/。逐个 plan 执行，plan 内 wave 并行。</div>
-      <div class="cmd-usage">/maestro-execute
-/maestro-execute --dir scratch/xxx</div>
+      <div class="cmd-name">execute 步骤</div>
+      <div class="cmd-desc">执行阶段。消费 plan.json，产出代码变更和 .summaries/。逐个 plan 执行，plan 内 wave 并行（step，经 /maestro 派发）。</div>
+      <div class="cmd-usage">execute
+execute --dir scratch/xxx</div>
       <div class="cmd-chain">
         <code>plan</code><span class="arrow">→</span>
         <code>execute</code><span class="arrow">→</span>
@@ -547,9 +547,9 @@ body{
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/maestro-verify</div>
-      <div class="cmd-desc">验证阶段。消费 .summaries/，产出 verification.json。发现 gaps 时回退到 analyze。</div>
-      <div class="cmd-usage">/maestro-verify</div>
+      <div class="cmd-name">verify 步骤</div>
+      <div class="cmd-desc">验证阶段。消费 .summaries/，产出 verification.json。发现 gaps 时回退到 analyze（step，也内聚为 execute 的 E2.7 验证门）。</div>
+      <div class="cmd-usage">verify</div>
       <div class="cmd-chain">
         <code>execute</code><span class="arrow">→</span>
         <code>verify</code><span class="arrow">→</span>
@@ -559,11 +559,11 @@ body{
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/maestro-collab</div>
-      <div class="cmd-desc">多 CLI 协作分析。自动或手动选择多个 AI 工具并行分析同一主题。</div>
-      <div class="cmd-usage">/maestro-collab "&lt;topic&gt;"
-/maestro-collab "&lt;topic&gt;" --tools gemini,qwen,claude
-/maestro-collab -y "&lt;topic&gt;"</div>
+      <div class="cmd-name">collab 步骤</div>
+      <div class="cmd-desc">多 CLI 协作分析。自动或手动选择多个 AI 工具并行分析同一主题（step，经 /maestro 派发）。</div>
+      <div class="cmd-usage">collab "&lt;topic&gt;"
+collab "&lt;topic&gt;" --tools gemini,qwen,claude
+collab -y "&lt;topic&gt;"</div>
       <div class="cmd-chain">
         <code>collab</code><span class="arrow">→</span>
         <code>plan --dir</code>
@@ -571,31 +571,12 @@ body{
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/maestro-quick</div>
-      <div class="cmd-desc">最短路径快速任务。跳过可选 agent，产出存放在 scratch/ 不影响主干。</div>
-      <div class="cmd-usage">/maestro-quick "修复 bug"
-/maestro-quick --full "重构 API"
-/maestro-quick --discuss "方案讨论"</div>
-    </div>
-
-    <div class="cmd-card">
-      <div class="cmd-name">/maestro-milestone-audit</div>
-      <div class="cmd-desc">里程碑审计。基于 artifact registry 检查 phase 覆盖度和跨 artifact 集成验证。</div>
-      <div class="cmd-usage">/maestro-milestone-audit</div>
+      <div class="cmd-name">/maestro-session-seal</div>
+      <div class="cmd-desc">封存里程碑：verify 所有 run 完成 → 归档 scratch 到 milestones/ → 推进下一里程碑。</div>
+      <div class="cmd-usage">/maestro-session-seal</div>
       <div class="cmd-chain">
         <code>test</code><span class="arrow">→</span>
-        <code>milestone-audit</code><span class="arrow">→</span>
-        <code>milestone-complete</code>
-      </div>
-    </div>
-
-    <div class="cmd-card">
-      <div class="cmd-name">/maestro-milestone-complete</div>
-      <div class="cmd-desc">归档 scratch 到 milestones/，推进到下一里程碑。需 audit 通过。</div>
-      <div class="cmd-usage">/maestro-milestone-complete</div>
-      <div class="cmd-chain">
-        <code>milestone-audit</code><span class="arrow">→</span>
-        <code>milestone-complete</code><span class="arrow">→</span>
+        <code>session-seal</code><span class="arrow">→</span>
         <code>analyze (next M)</code>
       </div>
     </div>
@@ -625,12 +606,12 @@ body{
   <div class="card-grid">
 
     <div class="cmd-card">
-      <div class="cmd-name">/manage-issue</div>
+      <div class="cmd-name">/maestro-issue</div>
       <div class="cmd-desc">Issue CRUD 操作。创建、查看、更新、关闭、关联 Issue。</div>
-      <div class="cmd-usage">/manage-issue create --title "..." --severity high
-/manage-issue list --status open
-/manage-issue close ISS-xxx --resolution "fixed"
-/manage-issue link ISS-xxx --task TASK-001</div>
+      <div class="cmd-usage">/maestro-issue create --title "..." --severity high
+/maestro-issue list --status open
+/maestro-issue close ISS-xxx --resolution "fixed"
+/maestro-issue link ISS-xxx --task TASK-001</div>
       <div class="cmd-chain">
         <code>discover</code><span class="arrow">→</span>
         <code>create</code><span class="arrow">→</span>
@@ -639,10 +620,10 @@ body{
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/manage-issue-discover</div>
+      <div class="cmd-name">/maestro-issue discover</div>
       <div class="cmd-desc">问题发现。8 视角全扫描或按提示词定向发现，去重后写入 issues.jsonl。</div>
-      <div class="cmd-usage">/manage-issue-discover
-/manage-issue-discover by-prompt "&lt;query&gt;"</div>
+      <div class="cmd-usage">/maestro-issue discover
+/maestro-issue discover by-prompt "&lt;query&gt;"</div>
       <div class="cmd-chain">
         <code>discover</code><span class="arrow">→</span>
         <code>create</code><span class="arrow">→</span>
@@ -651,59 +632,59 @@ body{
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/manage-status</div>
+      <div class="cmd-name">maestro session status</div>
       <div class="cmd-desc">项目仪表板。展示进度、活跃任务和下一步建议。</div>
-      <div class="cmd-usage">/manage-status</div>
+      <div class="cmd-usage">maestro session status</div>
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/manage-codebase-rebuild</div>
+      <div class="cmd-name">maestro kg index</div>
       <div class="cmd-desc">全量重建 .workflow/codebase/ 文档。</div>
-      <div class="cmd-usage">/manage-codebase-rebuild</div>
+      <div class="cmd-usage">maestro kg index</div>
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/manage-codebase-refresh</div>
+      <div class="cmd-name">maestro kg index</div>
       <div class="cmd-desc">增量刷新代码库文档，基于 git diff。</div>
-      <div class="cmd-usage">/manage-codebase-refresh</div>
+      <div class="cmd-usage">maestro kg index</div>
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/manage-knowhow</div>
-      <div class="cmd-desc">知识复用管理。搜索、列出和管理 knowhow 条目。</div>
-      <div class="cmd-usage">/manage-knowhow list --store workflow
-/manage-knowhow search "&lt;query&gt;"</div>
+      <div class="cmd-name">/maestro-knowhow</div>
+      <div class="cmd-desc">知识复用。/maestro-knowhow 为沉淀入口；检索与列出走 maestro search / maestro load。</div>
+      <div class="cmd-usage">maestro load --type knowhow --list
+maestro search "&lt;query&gt;" --type knowhow</div>
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/manage-knowhow-capture</div>
+      <div class="cmd-name">/maestro-knowhow</div>
       <div class="cmd-desc">捕获并压缩当前知识复用条目。</div>
-      <div class="cmd-usage">/manage-knowhow-capture compact</div>
+      <div class="cmd-usage">/maestro-knowhow compact</div>
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/manage-learn</div>
-      <div class="cmd-desc">学习洞察管理。浏览和过滤学习记录。</div>
-      <div class="cmd-usage">/manage-learn list --tag git-retro</div>
+      <div class="cmd-name">/maestro-learn</div>
+      <div class="cmd-desc">学习工具集入口（follow / investigate / decompose / consult）；浏览学习记录走 maestro search。</div>
+      <div class="cmd-usage">maestro search "&lt;关键词&gt;" --tag git-retro</div>
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/manage-harvest</div>
+      <div class="cmd-name">/maestro-knowledge harvest</div>
       <div class="cmd-desc">收获工作产物中的知识，提取为可复用条目。</div>
-      <div class="cmd-usage">/manage-harvest</div>
+      <div class="cmd-usage">/maestro-knowledge harvest</div>
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/manage-memory /manage-memory-capture</div>
-      <div class="cmd-desc">记忆管理。持久化和检索会话间的上下文记忆。</div>
-      <div class="cmd-usage">/manage-memory
-/manage-memory-capture</div>
+      <div class="cmd-name">/maestro-knowhow</div>
+      <div class="cmd-desc">记忆管理已并入 knowhow：持久化和检索会话间的上下文记忆。</div>
+      <div class="cmd-usage">/maestro-knowhow
+/maestro-knowhow compact</div>
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/manage-wiki</div>
+      <div class="cmd-name">/maestro-knowledge wiki</div>
       <div class="cmd-desc">Wiki 知识图谱管理。维护和查询项目知识索引。</div>
-      <div class="cmd-usage">/manage-wiki</div>
+      <div class="cmd-usage">/maestro-knowledge wiki</div>
     </div>
 
   </div>
@@ -715,16 +696,15 @@ body{
     <div class="cat-bar" style="background:var(--cat-quality)"></div>
     <h2>质量 <span class="cat-count">7 commands</span></h2>
   </div>
-  <p class="cat-desc">代码审查、自动测试、UAT、调试、重构、复盘和同步。测试三轨并行：spec/gap/code 智能路由。</p>
+  <p class="cat-desc">代码审查、自动测试、UAT、调试、重构、复盘和同步。测试三轨并行：spec/gap/code 智能路由。注：<code>auto-test</code>/<code>review</code>/<code>test</code>/<code>debug</code>/<code>retrospective</code> 已改为一级 step，由编排器通过 session chain 派发，用户经 <code>/maestro-next</code> 或 <code>/maestro "&lt;意图&gt;"</code> 触发，不能直接调用。</p>
   <div class="card-grid">
 
     <div class="cmd-card">
-      <div class="cmd-name">/quality-auto-test</div>
+      <div class="cmd-name">auto-test 步骤</div>
       <div class="cmd-desc">统一自动测试。智能路由 spec/gap/code 三轨，CSV 并行写测试 + 诊断迭代。</div>
-      <div class="cmd-usage">/quality-auto-test {N}
-/quality-auto-test {N} --max-iter 5
-/quality-auto-test {N} --layer L0-L3
-/quality-auto-test {N} --re-run</div>
+      <div class="cmd-usage">auto-test --max-iter 5
+auto-test --layer L0-L3
+auto-test --re-run</div>
       <div class="cmd-chain">
         <code>verify</code><span class="arrow">→</span>
         <code>auto-test</code><span class="arrow">→</span>
@@ -733,10 +713,10 @@ body{
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/quality-review</div>
+      <div class="cmd-name">review 步骤</div>
       <div class="cmd-desc">分层代码审查。支持 quick/standard/deep 三级深度。自动为 critical/high 发现创建 Issue。</div>
-      <div class="cmd-usage">/quality-review {N}
-/quality-review {N} --level deep</div>
+      <div class="cmd-usage">review
+review --level deep</div>
       <div class="cmd-chain">
         <code>auto-test</code><span class="arrow">→</span>
         <code>review</code><span class="arrow">→</span>
@@ -745,24 +725,24 @@ body{
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/quality-test</div>
+      <div class="cmd-name">test 步骤</div>
       <div class="cmd-desc">会话式 UAT 验收测试。支持 smoke 模式和 auto-fix 循环。</div>
-      <div class="cmd-usage">/quality-test {N}
-/quality-test {N} --smoke
-/quality-test {N} --auto-fix</div>
+      <div class="cmd-usage">test
+test --smoke
+test --auto-fix</div>
       <div class="cmd-chain">
         <code>review</code><span class="arrow">→</span>
         <code>test</code><span class="arrow">→</span>
-        <code>milestone-audit</code>
+        <code>session-seal</code>
       </div>
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/quality-debug</div>
+      <div class="cmd-name">debug 步骤</div>
       <div class="cmd-desc">假设驱动调试。科学方法（假设→实验→验证），支持并行假设验证。</div>
-      <div class="cmd-usage">/quality-debug
-/quality-debug --from-uat {N}
-/quality-debug --parallel</div>
+      <div class="cmd-usage">debug
+debug --from-uat {N}
+debug --parallel</div>
       <div class="cmd-chain">
         <code>test(失败)</code><span class="arrow">→</span>
         <code>debug</code><span class="arrow">→</span>
@@ -778,15 +758,15 @@ body{
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/quality-sync</div>
+      <div class="cmd-name">maestro kg index</div>
       <div class="cmd-desc">文档同步。代码变更后同步相关文档。</div>
-      <div class="cmd-usage">/quality-sync --since HEAD~5</div>
+      <div class="cmd-usage">maestro kg index</div>
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/quality-retrospective</div>
+      <div class="cmd-name">retrospective 步骤</div>
       <div class="cmd-desc">质量复盘。回顾质量指标和改进机会。</div>
-      <div class="cmd-usage">/quality-retrospective</div>
+      <div class="cmd-usage">retrospective</div>
     </div>
 
   </div>
@@ -802,22 +782,22 @@ body{
   <div class="card-grid">
 
     <div class="cmd-card">
-      <div class="cmd-name">/spec-setup</div>
+      <div class="cmd-name">maestro spec init</div>
       <div class="cmd-desc">扫描项目生成约定。已有项目自动触发，新项目可选。</div>
-      <div class="cmd-usage">/spec-setup</div>
+      <div class="cmd-usage">maestro spec init</div>
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/spec-add</div>
+      <div class="cmd-name">/maestro-spec</div>
       <div class="cmd-desc">录入设计决策或代码模式到规范库。</div>
-      <div class="cmd-usage">/spec-add arch "使用 JSONL 格式存储 Issue"
-/spec-add coding "所有 API 使用 Hono 框架"</div>
+      <div class="cmd-usage">/maestro-spec arch "使用 JSONL 格式存储 Issue"
+/maestro-spec coding "所有 API 使用 Hono 框架"</div>
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/spec-load</div>
+      <div class="cmd-name">maestro spec load</div>
       <div class="cmd-desc">加载指定角色的规范上下文。agent 执行前调用。</div>
-      <div class="cmd-usage">/spec-load --role plan</div>
+      <div class="cmd-usage">maestro spec load --role plan</div>
     </div>
 
   </div>
@@ -833,47 +813,47 @@ body{
   <div class="card-grid">
 
     <div class="cmd-card">
-      <div class="cmd-name">/learn-retro</div>
+      <div class="cmd-name">retrospective 步骤</div>
       <div class="cmd-desc">统一复盘。--lens 切换 Git 活动分析和决策质量评估。</div>
-      <div class="cmd-usage">/learn-retro
-/learn-retro --lens git --days 14
-/learn-retro --lens decision --phase 2</div>
+      <div class="cmd-usage">retrospective
+retrospective --lens git --days 14
+retrospective --lens decision --phase 2</div>
       <div class="cmd-chain">
-        <code>retro</code><span class="arrow">→</span>
+        <code>retrospective</code><span class="arrow">→</span>
         <code>lessons.jsonl</code><span class="arrow">→</span>
-        <code>spec-add</code>
+        <code>/maestro-spec</code>
       </div>
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/learn-follow</div>
+      <div class="cmd-name">/maestro-learn follow</div>
       <div class="cmd-desc">跟读学习。逐段施加 4 个强制提问，提取模式并构建理解图。</div>
-      <div class="cmd-usage">/learn-follow src/commands/wiki.ts
-/learn-follow spec-auth
-/learn-follow src/mcp/ --depth deep</div>
+      <div class="cmd-usage">/maestro-learn follow src/commands/wiki.ts
+/maestro-learn follow spec-auth
+/maestro-learn follow src/mcp/ --depth deep</div>
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/learn-decompose</div>
+      <div class="cmd-name">/maestro-learn decompose</div>
       <div class="cmd-desc">4 维度并行分析（结构/行为/数据/错误模式），产出模式目录。</div>
-      <div class="cmd-usage">/learn-decompose src/commands/
-/learn-decompose src/ --save-spec
-/learn-decompose src/ --save-wiki</div>
+      <div class="cmd-usage">/maestro-learn decompose src/commands/
+/maestro-learn decompose src/ --save-spec
+/maestro-learn decompose src/ --save-wiki</div>
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/learn-investigate</div>
+      <div class="cmd-name">/maestro-learn investigate</div>
       <div class="cmd-desc">系统化探究。带假说测试、证据日志、3-strike 升级。</div>
-      <div class="cmd-usage">/learn-investigate "BM25 搜索如何工作"
-/learn-investigate "并发控制" --scope src/mcp/</div>
+      <div class="cmd-usage">/maestro-learn investigate "BM25 搜索如何工作"
+/maestro-learn investigate "并发控制" --scope src/mcp/</div>
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/learn-second-opinion</div>
+      <div class="cmd-name">/maestro-learn consult</div>
       <div class="cmd-desc">多视角分析。review / challenge / consult 三种模式。</div>
-      <div class="cmd-usage">/learn-second-opinion src/server.ts
-/learn-second-opinion HEAD --mode challenge
-/learn-second-opinion spec-auth --mode consult</div>
+      <div class="cmd-usage">/maestro-learn consult src/server.ts
+/maestro-learn consult HEAD --mode challenge
+/maestro-learn consult spec-auth --mode consult</div>
     </div>
 
   </div>
@@ -889,19 +869,19 @@ body{
   <div class="card-grid">
 
     <div class="cmd-card">
-      <div class="cmd-name">/wiki-connect</div>
+      <div class="cmd-name">/maestro-knowledge wiki connect</div>
       <div class="cmd-desc">知识图谱连接发现。找出孤立节点、缺失连接，建议或自动应用新链接。</div>
-      <div class="cmd-usage">/wiki-connect
-/wiki-connect --scope spec
-/wiki-connect --fix</div>
+      <div class="cmd-usage">/maestro-knowledge wiki connect
+/maestro-knowledge wiki connect --scope spec
+/maestro-knowledge wiki connect --fix</div>
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/wiki-digest</div>
+      <div class="cmd-name">/maestro-knowledge wiki digest</div>
       <div class="cmd-desc">知识摘要生成。主题聚类、覆盖热图和缺口分析。</div>
-      <div class="cmd-usage">/wiki-digest
-/wiki-digest "authentication"
-/wiki-digest --recent 7</div>
+      <div class="cmd-usage">/maestro-knowledge wiki digest
+/maestro-knowledge wiki digest "authentication"
+/maestro-knowledge wiki digest --recent 7</div>
     </div>
 
   </div>
@@ -927,15 +907,15 @@ body{
     <span class="flow-node">verify</span><span class="flow-arrow">→</span>
     <span class="flow-node">review</span><span class="flow-arrow">→</span>
     <span class="flow-node">test</span><span class="flow-arrow">→</span>
-    <span class="flow-node">milestone-audit</span>
+    <span class="flow-node">session-seal</span>
   </div>
   <div class="example-steps">
-    <div class="step"><span class="step-num">1</span><div><code>/maestro-analyze</code><div class="step-note">全量分析当前里程碑，产出 ANL artifact</div></div></div>
-    <div class="step"><span class="step-num">2</span><div><code>/maestro-plan</code><div class="step-note">消费 analyze 产出，生成 plan.json + TASK 文件，含碰撞检测</div></div></div>
-    <div class="step"><span class="step-num">3</span><div><code>/maestro-execute</code><div class="step-note">逐个 plan 执行，plan 内 wave 并行，产出 EXC artifact</div></div></div>
-    <div class="step"><span class="step-num">4</span><div><code>/maestro-verify</code><div class="step-note">验证执行结果。有 gaps 时回退到 analyze</div></div></div>
-    <div class="step"><span class="step-num">5</span><div><code>/quality-auto-test → /quality-review → /quality-test</code><div class="step-note">质量三件套：自动测试 → 代码审查 → UAT</div></div></div>
-    <div class="step"><span class="step-num">6</span><div><code>/maestro-milestone-audit → /maestro-milestone-complete</code><div class="step-note">审计通过后归档，推进下一里程碑</div></div></div>
+    <div class="step"><span class="step-num">1</span><div><code>analyze</code><div class="step-note">全量分析当前里程碑，产出 ANL artifact（step）</div></div></div>
+    <div class="step"><span class="step-num">2</span><div><code>plan</code><div class="step-note">消费 analyze 产出，生成 plan.json + TASK 文件，含碰撞检测</div></div></div>
+    <div class="step"><span class="step-num">3</span><div><code>execute</code><div class="step-note">逐个 plan 执行，plan 内 wave 并行，产出 EXC artifact</div></div></div>
+    <div class="step"><span class="step-num">4</span><div><code>verify</code><div class="step-note">验证执行结果。有 gaps 时回退到 analyze</div></div></div>
+    <div class="step"><span class="step-num">5</span><div><code>review → auto-test → test</code><div class="step-note">质量三件套（编排器派发的 step）：代码审查 → 自动测试 → UAT</div></div></div>
+    <div class="step"><span class="step-num">6</span><div><code>/maestro-session-seal</code><div class="step-note">封存里程碑：verify 所有 run 完成后归档，推进下一里程碑</div></div></div>
   </div>
 </div>
 
@@ -952,12 +932,12 @@ body{
     <span class="flow-node">close</span>
   </div>
   <div class="example-steps">
-    <div class="step"><span class="step-num">1</span><div><code>/manage-issue-discover by-prompt "检查 API 错误处理"</code><div class="step-note">8 视角全扫描或按提示词定向发现</div></div></div>
-    <div class="step"><span class="step-num">2</span><div><code>/manage-issue create --title "内存泄漏" --severity high</code><div class="step-note">创建 Issue，状态 open</div></div></div>
-    <div class="step"><span class="step-num">3</span><div><code>/maestro-analyze --gaps ISS-xxx</code><div class="step-note">根因分析 → 状态 diagnosed</div></div></div>
-    <div class="step"><span class="step-num">4</span><div><code>/maestro-plan --gaps</code><div class="step-note">生成 TASK-*.json → 状态 planned</div></div></div>
-    <div class="step"><span class="step-num">5</span><div><code>/maestro-execute</code><div class="step-note">执行修复 → 状态 resolved</div></div></div>
-    <div class="step"><span class="step-num">6</span><div><code>/manage-issue close ISS-xxx --resolution "fixed"</code><div class="step-note">关闭 Issue</div></div></div>
+    <div class="step"><span class="step-num">1</span><div><code>/maestro-issue discover by-prompt "检查 API 错误处理"</code><div class="step-note">8 视角全扫描或按提示词定向发现</div></div></div>
+    <div class="step"><span class="step-num">2</span><div><code>/maestro-issue create --title "内存泄漏" --severity high</code><div class="step-note">创建 Issue，状态 open</div></div></div>
+    <div class="step"><span class="step-num">3</span><div><code>analyze --gaps ISS-xxx</code><div class="step-note">根因分析 → 状态 diagnosed（step）</div></div></div>
+    <div class="step"><span class="step-num">4</span><div><code>plan --gaps</code><div class="step-note">生成 TASK-*.json → 状态 planned（step）</div></div></div>
+    <div class="step"><span class="step-num">5</span><div><code>execute</code><div class="step-note">执行修复 → 状态 resolved（step）</div></div></div>
+    <div class="step"><span class="step-num">6</span><div><code>/maestro-issue close ISS-xxx --resolution "fixed"</code><div class="step-note">关闭 Issue</div></div></div>
   </div>
 </div>
 
@@ -972,10 +952,10 @@ body{
     <span class="flow-node">verify</span><span class="flow-branch">re-check</span>
   </div>
   <div class="example-steps">
-    <div class="step"><span class="step-num">1</span><div><code>/maestro-verify</code><div class="step-note">发现 gaps → 触发修复循环</div></div></div>
-    <div class="step"><span class="step-num">2</span><div><code>/maestro-plan --gaps</code><div class="step-note">基于 gap 产出修复计划</div></div></div>
-    <div class="step"><span class="step-num">3</span><div><code>/maestro-execute</code><div class="step-note">执行修复</div></div></div>
-    <div class="step"><span class="step-num">4</span><div><code>/maestro-verify</code><div class="step-note">重新验证，直到无 gaps</div></div></div>
+    <div class="step"><span class="step-num">1</span><div><code>verify</code><div class="step-note">发现 gaps → 触发修复循环（step）</div></div></div>
+    <div class="step"><span class="step-num">2</span><div><code>plan --gaps</code><div class="step-note">基于 gap 产出修复计划</div></div></div>
+    <div class="step"><span class="step-num">3</span><div><code>execute</code><div class="step-note">执行修复</div></div></div>
+    <div class="step"><span class="step-num">4</span><div><code>verify</code><div class="step-note">重新验证，直到无 gaps</div></div></div>
   </div>
 </div>
 
@@ -984,11 +964,11 @@ body{
   <h3>新项目从零开始</h3>
   <p class="ex-desc">完整的初始化到里程碑完成流程。可选 brainstorm 前置。</p>
   <div class="example-steps">
-    <div class="step"><span class="step-num">1</span><div><code>/maestro-brainstorm "在线教育平台"</code><div class="step-note">可选：多角色头脑风暴</div></div></div>
+    <div class="step"><span class="step-num">1</span><div><code>brainstorm "在线教育平台"</code><div class="step-note">可选：多角色头脑风暴（step，经 /maestro 派发）</div></div></div>
     <div class="step"><span class="step-num">2</span><div><code>/maestro-init --from brainstorm:ANL-xxx</code><div class="step-note">初始化项目</div></div></div>
-    <div class="step"><span class="step-num">3</span><div><code>/maestro-roadmap -y</code><div class="step-note">创建路线图</div></div></div>
-    <div class="step"><span class="step-num">4</span><div><code>/maestro-plan 1 → /maestro-execute 1 → /maestro-verify 1</code><div class="step-note">逐 Phase 推进</div></div></div>
-    <div class="step"><span class="step-num">5</span><div><code>/maestro-milestone-audit → /maestro-milestone-complete</code><div class="step-note">审计并归档</div></div></div>
+    <div class="step"><span class="step-num">3</span><div><code>roadmap -y</code><div class="step-note">创建路线图</div></div></div>
+    <div class="step"><span class="step-num">4</span><div><code>plan 1 → execute 1 → verify 1</code><div class="step-note">逐 Phase 推进</div></div></div>
+    <div class="step"><span class="step-num">5</span><div><code>/maestro-session-seal</code><div class="step-note">封存并归档里程碑</div></div></div>
   </div>
 </div>
 
@@ -997,7 +977,7 @@ body{
   <h3>一键全自动</h3>
   <p class="ex-desc">使用 /maestro 协调器全自动推进，无需手动衔接。</p>
   <div class="example-steps">
-    <div class="step"><span class="step-num">1</span><div><code>/maestro -y "实现用户认证系统"</code><div class="step-note">自动执行: init → roadmap → plan → execute → verify → review → test → milestone-audit</div></div></div>
+    <div class="step"><span class="step-num">1</span><div><code>/maestro -y "实现用户认证系统"</code><div class="step-note">自动执行: init → roadmap → plan → execute → verify → review → auto-test → test → session-seal</div></div></div>
   </div>
 </div>
 
@@ -1006,11 +986,11 @@ body{
   <h3>测试失败后的修复循环</h3>
   <p class="ex-desc">质量管线中发现问题后的标准修复路径。</p>
   <div class="example-steps">
-    <div class="step"><span class="step-num">1</span><div><code>/quality-auto-test 3</code><div class="step-note">统一自动测试，智能路由 spec/gap/code</div></div></div>
-    <div class="step"><span class="step-num">2</span><div><code>/quality-debug --from-uat 3</code><div class="step-note">从 UAT 失败诊断根因，假设驱动</div></div></div>
-    <div class="step"><span class="step-num">3</span><div><code>/maestro-plan 3 --gaps</code><div class="step-note">生成修复计划</div></div></div>
-    <div class="step"><span class="step-num">4</span><div><code>/maestro-execute 3</code><div class="step-note">执行修复</div></div></div>
-    <div class="step"><span class="step-num">5</span><div><code>/quality-auto-test 3 --re-run</code><div class="step-note">只重跑失败场景验证</div></div></div>
+    <div class="step"><span class="step-num">1</span><div><code>auto-test</code><div class="step-note">统一自动测试，智能路由 spec/gap/code（编排器派发的 step）</div></div></div>
+    <div class="step"><span class="step-num">2</span><div><code>debug --from-uat 3</code><div class="step-note">从 UAT 失败诊断根因，假设驱动（编排器派发的 step）</div></div></div>
+    <div class="step"><span class="step-num">3</span><div><code>plan 3 --gaps</code><div class="step-note">生成修复计划</div></div></div>
+    <div class="step"><span class="step-num">4</span><div><code>execute 3</code><div class="step-note">执行修复</div></div></div>
+    <div class="step"><span class="step-num">5</span><div><code>auto-test --re-run</code><div class="step-note">只重跑失败场景验证（编排器派发的 step）</div></div></div>
   </div>
 </div>
 
@@ -1019,8 +999,8 @@ body{
   <h3>多 CLI 协作分析</h3>
   <p class="ex-desc">使用多个 AI 工具并行分析同一主题，综合不同视角。</p>
   <div class="example-steps">
-    <div class="step"><span class="step-num">1</span><div><code>/maestro-collab "分析 auth 模块安全漏洞"</code><div class="step-note">自动选择前 3 个 CLI 工具</div></div></div>
-    <div class="step"><span class="step-num">2</span><div><code>/maestro-collab "设计缓存策略" --tools gemini,qwen,claude</code><div class="step-note">指定工具组合</div></div></div>
+    <div class="step"><span class="step-num">1</span><div><code>collab "分析 auth 模块安全漏洞"</code><div class="step-note">自动选择前 3 个 CLI 工具（step，经 /maestro 派发）</div></div></div>
+    <div class="step"><span class="step-num">2</span><div><code>collab "设计缓存策略" --tools gemini,qwen,claude</code><div class="step-note">指定工具组合</div></div></div>
   </div>
 </div>
 
@@ -1029,7 +1009,7 @@ body{
   <h3>快速修复一个 bug</h3>
   <p class="ex-desc">最短路径，不走 Phase 管线。</p>
   <div class="example-steps">
-    <div class="step"><span class="step-num">1</span><div><code>/maestro-quick "修复登录页面在移动端的样式错乱"</code><div class="step-note">产出存放在 scratch/ 不影响主干</div></div></div>
+    <div class="step"><span class="step-num">1</span><div><code>/maestro "修复登录页面在移动端的样式错乱"</code><div class="step-note">协调器建最短链，产出存放在 scratch/ 不影响主干</div></div></div>
   </div>
 </div>
 
@@ -1038,10 +1018,10 @@ body{
   <h3>接手新项目，快速理解代码</h3>
   <p class="ex-desc">学习工具集组合使用，快速建立代码理解。</p>
   <div class="example-steps">
-    <div class="step"><span class="step-num">1</span><div><code>/learn-follow src/</code><div class="step-note">从入口跟读代码</div></div></div>
-    <div class="step"><span class="step-num">2</span><div><code>/learn-decompose src/ --save-spec</code><div class="step-note">拆解模式，入库到 specs</div></div></div>
-    <div class="step"><span class="step-num">3</span><div><code>/wiki-digest</code><div class="step-note">生成知识摘要</div></div></div>
-    <div class="step"><span class="step-num">4</span><div><code>/wiki-connect --fix</code><div class="step-note">修复图谱连接</div></div></div>
+    <div class="step"><span class="step-num">1</span><div><code>/maestro-learn follow src/</code><div class="step-note">从入口跟读代码</div></div></div>
+    <div class="step"><span class="step-num">2</span><div><code>/maestro-learn decompose src/ --save-spec</code><div class="step-note">拆解模式，入库到 specs</div></div></div>
+    <div class="step"><span class="step-num">3</span><div><code>/maestro-knowledge wiki digest</code><div class="step-note">生成知识摘要</div></div></div>
+    <div class="step"><span class="step-num">4</span><div><code>/maestro-knowledge wiki connect --fix</code><div class="step-note">修复图谱连接</div></div></div>
   </div>
 </div>
 
@@ -1050,9 +1030,9 @@ body{
   <h3>周末复盘</h3>
   <p class="ex-desc">定期回顾 Git 活动和架构决策质量。</p>
   <div class="example-steps">
-    <div class="step"><span class="step-num">1</span><div><code>/learn-retro --lens git</code><div class="step-note">Git 活动复盘：提交指标、工作会话、趋势</div></div></div>
-    <div class="step"><span class="step-num">2</span><div><code>/learn-retro --lens decision</code><div class="step-note">决策复盘：多源收集，3 视角评估</div></div></div>
-    <div class="step"><span class="step-num">3</span><div><code>/manage-learn list --tag git-retro</code><div class="step-note">浏览复盘洞察</div></div></div>
+    <div class="step"><span class="step-num">1</span><div><code>retrospective --lens git</code><div class="step-note">Git 活动复盘：提交指标、工作会话、趋势（编排器派发的 step）</div></div></div>
+    <div class="step"><span class="step-num">2</span><div><code>retrospective --lens decision</code><div class="step-note">决策复盘：多源收集，3 视角评估（编排器派发的 step）</div></div></div>
+    <div class="step"><span class="step-num">3</span><div><code>maestro search "&lt;关键词&gt;" --tag git-retro</code><div class="step-note">浏览复盘洞察</div></div></div>
   </div>
 </div>
 
