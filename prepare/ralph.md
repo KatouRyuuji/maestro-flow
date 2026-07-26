@@ -25,7 +25,7 @@ Ralph 是闭环编排策略层。本文件定义 **命令选择**（Stage Mappin
 | brainstorm | `brainstorm "{intent}" [--from grill:{grill_id}]` | — | all |
 | blueprint | `blueprint "{intent}"` | — | all |
 | init | `maestro-init` | — | all |
-| spec-setup | `maestro-spec setup` | — | all（仅当 `.workflow/specs/` 不存在时插入） |
+| specs-setup | `maestro-spec setup` | — | all（仅当 `.workflow/specs/` 不存在时插入） |
 | analyze-macro | `analyze "{intent}"` | `post-analyze-scope` | all |
 | roadmap | `roadmap --from analyze:{analyze_macro_id}` | — | all（仅 scope_verdict=large + wants_roadmap） |
 | analyze | `analyze --session {session}` | — | all |
@@ -42,7 +42,7 @@ Ralph 是闭环编排策略层。本文件定义 **命令选择**（Stage Mappin
 
 ## Build Rules（按顺序应用）
 
-0.5. **specs 预检**：`lifecycle_position ∉ {grill, brainstorm, blueprint, init}` 且 `.workflow/specs/` 不存在 → 链路最前面插入 `spec-setup`。
+0.5. **specs 预检**：`lifecycle_position ∉ {grill, brainstorm, blueprint, init}` 且 `.workflow/specs/` 不存在 → 链路最前面插入 `specs-setup`（step 名是复数 `specs-setup`，对应 `workflows/specs-setup.md`；`spec-setup` 不是可解析 step 名）。
 1. **起点**：从 `lifecycle_position` 开始。
 2. **跳过已完成**：跳过当前 session 下已有 completed artifact 的 stage。
 3. **quality_mode 过滤**：按 `quality_mode` 排除不匹配 stage。

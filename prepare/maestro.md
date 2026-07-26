@@ -43,7 +43,7 @@ Maestro 是意图到链的规划器。本文件定义 **公共接口**、**分�
 
 ### 1. Specs 预检
 
-chain 包含 analyze/plan/execute 等执行 stage 且 `.workflow/specs/` 不存在 → 在 steps 最前面插入 `spec-setup`。chain ∈ {grill, brainstorm, blueprint, init} 时跳过。
+chain 包含 analyze/plan/execute 等执行 stage 且 `.workflow/specs/` 不存在 → 在 steps 最前面插入 `specs-setup`（step 名是复数，对应 `workflows/specs-setup.md`；`spec-setup` 不是可解析 step 名）。chain ∈ {grill, brainstorm, blueprint, init} 时跳过。
 
 ### 2. Skill 名预校验
 

@@ -136,7 +136,7 @@
     {"command": "maestro coordinate", "description": "图工作流协调器（别名 coord）", "category": "execution"},
     {"command": "maestro cli", "description": "运行 CLI 智能体工具", "category": "execution"},
     {"command": "maestro run", "description": "Session/Run 生命周期 — prepare/create/complete/seal-session", "category": "execution"},
-    {"command": "maestro ralph", "description": "Ralph 链运行时 — next/complete/skills/session", "category": "execution"},
+    {"command": "maestro session", "description": "Session 编排 — create/start/next/done/decide/resolve/resume/chain/meta/seal", "category": "execution"},
     {"command": "maestro serve", "description": "启动工作流服务器", "category": "execution"},
     {"command": "maestro launcher", "description": "Claude Code 启动器", "category": "setup"},
     {"command": "maestro spec", "description": "项目 Spec 管理", "category": "knowledge"},
