@@ -318,29 +318,6 @@ export function evaluateSpecInjection(
     inject: true,
   }, config?.analytics);
 
-  // Credibility: increment consumption for injected spec category nodes (best-effort, async)
-  (async () => {
-    let mg: import('../graph/kg/engine.js').MaestroGraph | null = null;
-    try {
-      const { MaestroGraph } = await import('../graph/kg/engine.js');
-      if (MaestroGraph.isInitialized(projectPath)) {
-        mg = await MaestroGraph.open(resolve(projectPath));
-        if (mg) {
-          const { CredibilityStore } = await import('../graph/kg/credibility.js');
-          const store = new CredibilityStore(mg.rawDb);
-          const nodes = mg.rawDb.prepare(
-            `SELECT id FROM nodes WHERE source_type = 'spec' AND category IN (${allCategories.map(() => '?').join(',')})`,
-          ).all(...allCategories) as Array<{ id: string }>;
-          if (nodes.length > 0) {
-            store.incrementSearchHits(nodes.map(n => n.id));
-          }
-        }
-      }
-    } catch { /* best-effort */ } finally {
-      mg?.close();
-    }
-  })().catch(() => {});
-
   return {
     inject: true,
     content: budget.content,
@@ -348,6 +325,45 @@ export function evaluateSpecInjection(
     specCount: totalCount,
     budgetAction: budget.action,
   };
+}
+
+/**
+ * Record consumption of the injected spec categories in the credibility table.
+ *
+ * Split out of `evaluateSpecInjection` and awaited by the caller instead of
+ * running as a fire-and-forget IIFE inside it: the `maestro hooks run` dispatcher
+ * ends with `process.exit(0)`, so an unawaited promise here was not
+ * "best-effort" — it was reliably killed mid-write, paying the sqlite open for a
+ * row update that never landed. Measured cost of doing it properly: ~24ms
+ * (engine import ~18 + open ~3 + one SELECT + 21 UPDATEs inside a transaction).
+ *
+ * Still best-effort in the sense that any failure is swallowed — analytics must
+ * never break injection.
+ */
+export async function recordSpecInjectionCredibility(
+  projectPath: string,
+  categories: string[],
+): Promise<void> {
+  if (categories.length === 0) return;
+  let mg: import('../graph/kg/engine.js').MaestroGraph | null = null;
+  try {
+    const { MaestroGraph } = await import('../graph/kg/engine.js');
+    if (!MaestroGraph.isInitialized(projectPath)) return;
+    mg = await MaestroGraph.open(resolve(projectPath));
+    if (!mg) return;
+    const { CredibilityStore } = await import('../graph/kg/credibility.js');
+    const store = new CredibilityStore(mg.rawDb);
+    const nodes = mg.rawDb.prepare(
+      `SELECT id FROM nodes WHERE source_type = 'spec' AND category IN (${categories.map(() => '?').join(',')})`,
+    ).all(...categories) as Array<{ id: string }>;
+    if (nodes.length === 0) return;
+    const ids = nodes.map(n => n.id);
+    // One transaction for the batch — same shape as the CLI search path in
+    // src/commands/search.ts, and ~10x cheaper than N implicit transactions.
+    mg.getConnection().transaction(() => store.incrementSearchHits(ids));
+  } catch { /* analytics must never break injection */ } finally {
+    mg?.close();
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -1101,7 +1101,8 @@ const HOOK_RUNNERS: Record<string, HookRunner> = {
 
     const raw = await readStdin();
     const data = JSON.parse(raw);
-    const { evaluateSpecInjection } = await import('../hooks/spec-injector.js');
+    const { evaluateSpecInjection, recordSpecInjectionCredibility } =
+      await import('../hooks/spec-injector.js');
     const hookEventName: string = data.hook_event_name ?? '';
     const isSessionStart = hookEventName === 'SessionStart';
 
@@ -1119,6 +1120,7 @@ const HOOK_RUNNERS: Record<string, HookRunner> = {
           },
         }));
       }
+      await recordSpecInjectionCredibility(cwd, result.categories ?? []);
       return;
     }
 
@@ -1148,6 +1150,8 @@ const HOOK_RUNNERS: Record<string, HookRunner> = {
         },
       }));
     }
+    // After stdout, so the credibility write never delays the injected prompt.
+    await recordSpecInjectionCredibility(cwd, result.categories ?? []);
   },
 
   'session-context': async () => {

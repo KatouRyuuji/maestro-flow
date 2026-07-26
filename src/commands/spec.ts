@@ -902,12 +902,16 @@ export function registerSpecCommand(program: Command): void {
     .action(async (agent: string, opts: { json?: boolean }) => {
       const { logCliEndpoint } = await import('../hooks/spec-analytics.js');
       logCliEndpoint(process.cwd(), 'spec injection preview', { agentType: agent });
-      const { evaluateSpecInjection } = await import('../hooks/spec-injector.js');
+      const { evaluateSpecInjection, recordSpecInjectionCredibility } =
+        await import('../hooks/spec-injector.js');
       const { loadSpecInjectionConfig } = await import('../config/index.js');
 
       const cwd = process.cwd();
       const config = loadSpecInjectionConfig(cwd);
       const result = evaluateSpecInjection(agent, cwd, undefined, config);
+      // Preview used to trigger this as a side effect inside evaluateSpecInjection;
+      // kept here so the observable behaviour of `spec preview` is unchanged.
+      if (result.inject) await recordSpecInjectionCredibility(cwd, result.categories ?? []);
 
       if (opts.json) {
         console.log(JSON.stringify({
