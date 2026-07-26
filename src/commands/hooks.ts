@@ -1175,7 +1175,7 @@ const HOOK_RUNNERS: Record<string, HookRunner> = {
     const cwd = data.cwd ?? process.cwd();
     const sessionId: string = data.session_id ?? '';
     const { evaluateSkillContext } = await import('../hooks/skill-context.js');
-    const result = evaluateSkillContext({ user_prompt: prompt, cwd, session_id: sessionId });
+    const result = await evaluateSkillContext({ user_prompt: prompt, cwd, session_id: sessionId });
     if (result) {
       process.stdout.write(JSON.stringify(result));
     }

@@ -108,20 +108,20 @@ describe('evaluateSkillContext', () => {
   beforeEach(() => cleanup());
   afterEach(() => cleanup());
 
-  it('returns null for non-skill prompts', () => {
-    const result = evaluateSkillContext({ user_prompt: 'fix a bug', cwd: TEST_DIR });
+  it('returns null for non-skill prompts', async () => {
+    const result = await evaluateSkillContext({ user_prompt: 'fix a bug', cwd: TEST_DIR });
     assert.strictEqual(result, null);
   });
 
-  it('returns null when no workflow exists', () => {
+  it('returns null when no workflow exists', async () => {
     mkdirSync(TEST_DIR, { recursive: true });
-    const result = evaluateSkillContext({ user_prompt: '/maestro-ralph continue', cwd: TEST_DIR });
+    const result = await evaluateSkillContext({ user_prompt: '/maestro-ralph continue', cwd: TEST_DIR });
     assert.strictEqual(result, null);
   });
 
-  it('returns canonical Session context', () => {
+  it('returns canonical Session context', async () => {
     setupWorkflow();
-    const result = evaluateSkillContext({ user_prompt: '/maestro-ralph continue', cwd: TEST_DIR });
+    const result = await evaluateSkillContext({ user_prompt: '/maestro-ralph continue', cwd: TEST_DIR });
     assert.ok(result);
     const ctx = result.hookSpecificOutput.additionalContext;
     assert.ok(ctx.includes('Session Context'));
@@ -129,9 +129,9 @@ describe('evaluateSkillContext', () => {
     assert.ok(ctx.includes('20260713-002-execute'));
   });
 
-  it('returns sealed artifact aliases', () => {
+  it('returns sealed artifact aliases', async () => {
     setupWorkflow();
-    const result = evaluateSkillContext({ user_prompt: '/maestro-ralph continue', cwd: TEST_DIR });
+    const result = await evaluateSkillContext({ user_prompt: '/maestro-ralph continue', cwd: TEST_DIR });
     assert.ok(result);
     const ctx = result.hookSpecificOutput.additionalContext;
     assert.ok(ctx.includes('current-plan → ART-001-001'));
@@ -139,16 +139,16 @@ describe('evaluateSkillContext', () => {
     assert.ok(ctx.includes('runs/20260713-001-plan/outputs/plan.json'));
   });
 
-  it('uses correct hookEventName', () => {
+  it('uses correct hookEventName', async () => {
     setupWorkflow();
-    const result = evaluateSkillContext({ user_prompt: '/maestro-ralph continue', cwd: TEST_DIR });
+    const result = await evaluateSkillContext({ user_prompt: '/maestro-ralph continue', cwd: TEST_DIR });
     assert.ok(result);
     assert.strictEqual(result.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
   });
 
-  it('injects a canonical continuation card for an exact continue prompt', () => {
+  it('injects a canonical continuation card for an exact continue prompt', async () => {
     const sessionId = setupCanonicalManualWorkflow(true);
-    const result = evaluateSkillContext({ user_prompt: '继续', cwd: TEST_DIR });
+    const result = await evaluateSkillContext({ user_prompt: '继续', cwd: TEST_DIR });
     assert.ok(result);
     const ctx = result.hookSpecificOutput.additionalContext;
     assert.ok(ctx.includes('Canonical Run Continuation'));
@@ -157,10 +157,10 @@ describe('evaluateSkillContext', () => {
     assert.ok(ctx.includes('Auto: true'));
   });
 
-  it('does not let an unrelated prompt resume a live Session', () => {
+  it('does not let an unrelated prompt resume a live Session', async () => {
     setupCanonicalManualWorkflow();
     assert.strictEqual(
-      evaluateSkillContext({ user_prompt: '解释这个函数', cwd: TEST_DIR }),
+      await evaluateSkillContext({ user_prompt: '解释这个函数', cwd: TEST_DIR }),
       null,
     );
   });

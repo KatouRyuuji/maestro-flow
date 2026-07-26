@@ -14,8 +14,6 @@ import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { resolveWorkspace } from './workspace.js';
-import { inspectSessionContinuation, renderContinuationCard } from '../run/continuation.js';
-import { SessionStore } from '../run/store.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -216,7 +214,7 @@ function buildParamInjectionSection(
  * 1. Workflow context (state, artifacts, outcomes) — requires workflow state.json
  * 2. Skill config param injection — works for ANY /command, no workflow required
  */
-export function evaluateSkillContext(data: SkillContextInput): HookOutput | null {
+export async function evaluateSkillContext(data: SkillContextInput): Promise<HookOutput | null> {
   const prompt = data.user_prompt ?? '';
   if (!prompt) return null;
 
@@ -234,7 +232,7 @@ export function evaluateSkillContext(data: SkillContextInput): HookOutput | null
       try {
         const state: WorkflowState = JSON.parse(readFileSync(statePath, 'utf8'));
 
-        const sessionSection = buildCanonicalSessionSection(cwd, state, skill);
+        const sessionSection = await buildCanonicalSessionSection(cwd, state, skill);
         if (sessionSection) sections.push(sessionSection);
       } catch {
         // state.json unreadable — skip workflow context
@@ -258,10 +256,16 @@ export function evaluateSkillContext(data: SkillContextInput): HookOutput | null
     },
   };
 }
-function buildCanonicalSessionSection(cwd: string, state: WorkflowState, skill: SkillMatch): string | null {
+/**
+ * The `run/*` modules are imported lazily: their chain costs ~100ms to load,
+ * which on a UserPromptSubmit hook was paid for every prompt even though only
+ * `/command` invocations against a live Session ever reach them.
+ */
+async function buildCanonicalSessionSection(cwd: string, state: WorkflowState, skill: SkillMatch): Promise<string | null> {
   let sessionId = state.active_session_id;
   if (!sessionId) {
     try {
+      const { SessionStore } = await import('../run/store.js');
       const candidates = new SessionStore(cwd)
         .listSessions({ statuses: ['running', 'paused'] })
         .candidates;
@@ -295,6 +299,7 @@ function buildCanonicalSessionSection(cwd: string, state: WorkflowState, skill: 
       }
     }
     try {
+      const { inspectSessionContinuation, renderContinuationCard } = await import('../run/continuation.js');
       lines.push('', renderContinuationCard(inspectSessionContinuation(cwd, sessionId)));
     } catch {
       // Legacy or partially initialized Session: keep the basic context only.
