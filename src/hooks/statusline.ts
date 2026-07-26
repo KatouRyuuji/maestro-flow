@@ -772,11 +772,17 @@ export function runStatusline(): void {
   process.stdin.on('data', (chunk) => (input += chunk));
   process.stdin.on('end', () => {
     clearTimeout(timeout);
+    // Exit explicitly once the output is flushed. Clearing the timeout removes
+    // the only forced exit, so any handle still held further down the render
+    // path would keep this process resident forever — observed in the wild as
+    // 19 statusline processes alive for up to 9 hours.
     try {
       const data: StatuslineInput = JSON.parse(input);
-      process.stdout.write(formatStatusline(data));
+      process.stdout.write(formatStatusline(data), () => process.exit(0));
+      return;
     } catch {
       // Silent fail
     }
+    process.exit(0);
   });
 }
