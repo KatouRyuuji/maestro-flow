@@ -1,12 +1,13 @@
 // ---------------------------------------------------------------------------
 // Chain navigation + mutation — engine-agnostic helpers over
 // `session.orchestration.chain[]`. These operate purely on SessionState and the
-// canonical SessionStore, so any step-driving caller (`run next`, and later the
-// ralph adapter) can share them without an engine dependency.
+// canonical SessionStore, so any step-driving caller (`run next`) can share them
+// without an engine dependency.
 //
-// The ralph engine keeps its own copies in src/ralph/session-adapter.ts today;
-// P2 folds ralph onto these. src/run must never import src/ralph, so the logic
-// lives here as the canonical source.
+// These semantics originated from the retired ralph engine, which once kept its
+// own copies in src/ralph/session-adapter.ts (the whole src/ralph/ tree was
+// removed in the Session/Run unification). run is now the sole canonical home, so
+// no separate engine remains that could import them.
 // ---------------------------------------------------------------------------
 
 import { randomBytes } from 'node:crypto';
@@ -54,8 +55,8 @@ export function nextPendingDecisionIndex(session: SessionState): number | null {
 
 /**
  * Set a chain step's status (and optionally its run_id) through the canonical
- * store transaction. Mirrors src/ralph/session-adapter.updateChainStepStatus
- * without the ralph-meta side channel.
+ * store transaction. Originally mirrored updateChainStepStatus from the retired
+ * src/ralph/session-adapter.ts (removed), minus the ralph-meta side channel.
  */
 export function updateChainStepStatus(
   projectRoot: string,
@@ -120,7 +121,8 @@ export function issueRetryToken(
  * Requeue a chain step for retry in one store transaction: status back to
  * `pending`, run_id cleared, and `retry.count` incremented (seeding the block
  * with the default ceiling when the step had none). Equivalent to the ralph
- * NEEDS_RETRY path (`retry_count = (retry_count ?? 0) + 1`); the CLI does not cap
+ * policy's NEEDS_RETRY path (defined in maestro-ralph.md;
+ * `retry_count = (retry_count ?? 0) + 1`); the CLI does not cap
  * the count — the retry ceiling is a prompt-layer FSM decision — but the returned
  * `exhausted` flag lets the caller report when count has met max.
  */

@@ -30,8 +30,9 @@
 //   1 — generic error (unresolvable session, ambiguous session, bad content,
 //       bad --pick target)
 //
-// src/run must not depend on src/ralph, so the chain helpers live in
-// src/run/chain.ts (canonical) rather than being imported from the ralph adapter.
+// The chain helpers live in src/run/chain.ts as the canonical source; the ralph
+// adapter that once reused them (via a ralph → run dependency) was removed with
+// the rest of the src/ralph/ tree.
 // ---------------------------------------------------------------------------
 
 import { existsSync, readdirSync, statSync } from 'node:fs';
@@ -99,8 +100,9 @@ export interface NextCmdOptions {
   sessionId?: string;
   json?: boolean;
   /**
-   * Command args forwarded to `createRun` (stored in run.command.args). Used by
-   * the ralph adapter to carry per-step args from ralph-meta; `run next` leaves
+   * Command args forwarded to `createRun` (stored in run.command.args). The
+   * retired ralph adapter used this to carry per-step args from ralph-meta;
+   * `run next` leaves
    * this unset so its own behaviour is unchanged.
    */
   args?: string[];
@@ -113,7 +115,8 @@ export interface NextCmdOptions {
   /**
    * Lease claim checked against session.orchestration.lease before advancing.
    * A null lease (or a lease with a null owner) skips verification entirely, so
-   * non-leased sessions are unaffected. A mismatch is exit 1 (mirrors ralph).
+   * non-leased sessions are unaffected. A mismatch is exit 1 (mirrors the
+   * retired ralph lease behaviour).
    */
   executionOwner?: string;
   ownerEpoch?: number;

@@ -3,10 +3,10 @@
 // chain definition, plus the three chain-edit verbs (insert / skip / replace).
 //
 // This is the canonical home for chain building and mutation that the CLI
-// (`maestro session create` / `maestro session chain …`) drives. The ralph
-// adapter reuses `createChainSession` (dependency direction ralph → run only;
-// src/run must never import src/ralph), so `chainStepId` lives here rather than
-// in src/ralph/session-adapter.ts.
+// (`maestro session create` / `maestro session chain …`) drives. The retired
+// ralph adapter once reused `createChainSession` (the dependency ran ralph → run
+// only; the src/ralph/ tree has since been removed), so `chainStepId` lives here
+// rather than in the former src/ralph/session-adapter.ts.
 //
 // Retryable edits go through SessionStore.replayOrApplyTransition so authority
 // and the idempotency receipt share one StoreTransaction.

@@ -61,9 +61,9 @@ const orchestrationStepSchema = z.object({
 }).strict();
 
 // ── ralph-meta decomposition types, zod-ified locally ────────────────────────
-// Migrated from RalphTaskDecompositionItem / GoalChangelogEntry in
-// src/ralph/status-schema.ts. Defined here (not imported) because src/run must
-// never depend on src/ralph.
+// Migrated from RalphTaskDecompositionItem / GoalChangelogEntry, which lived in
+// the now-removed src/ralph/status-schema.ts. Defined locally in run rather than
+// imported — the src/ralph/ tree no longer exists to depend on.
 
 const taskDecompositionItemSchema = z.object({
   id: nonEmptyString,

@@ -24,8 +24,8 @@
 // and its projection record commit with the transition receipt; decisions.ndjson
 // is then deterministically rebuilt from receipts and may be repaired on replay.
 //
-// src/run must never import src/ralph — this lives here so the ralph adapter can
-// reuse it (direction ralph → run only).
+// This lives in run so the retired ralph adapter could reuse it (the dependency
+// ran ralph → run only; the src/ralph/ tree has since been removed).
 // ---------------------------------------------------------------------------
 
 import { randomUUID } from 'node:crypto';

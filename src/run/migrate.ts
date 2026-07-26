@@ -9,8 +9,9 @@
 // in place — verification_ledger and the excluded fields keep living there until
 // a later milestone retires it.
 //
-// src/run must never import src/ralph, so ralph-meta.json is read here through a
-// deliberately loose local shape rather than the RalphMeta type.
+// ralph-meta.json is read here through a deliberately loose local shape rather
+// than a shared RalphMeta type: that type lived in the now-removed src/ralph/
+// tree, so run defines its own read-only view of the legacy file.
 // ---------------------------------------------------------------------------
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
@@ -34,7 +35,7 @@ export interface MigrateResult {
   mapped_steps: number;
 }
 
-// ── Loose ralph-meta shape (read-only, no src/ralph dependency) ──────────────
+// ── Loose ralph-meta shape (read-only local view of the legacy file) ─────────
 
 interface RalphStepDetailLoose {
   args?: string;

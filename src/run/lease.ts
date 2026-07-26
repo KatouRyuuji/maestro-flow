@@ -4,8 +4,9 @@
 // non-empty owner, `run next` / `run complete` must present the matching
 // execution-owner / owner-epoch / lease-id triple or be refused.
 //
-// Semantics mirror the ralph lease rejection path (src/ralph/cmd-next.ts /
-// cmd-complete.ts): a mismatch is a plain "lease conflict: ..." message that the
+// Semantics come from the retired ralph engine's lease rejection path (formerly
+// src/ralph/cmd-next.ts / cmd-complete.ts, removed in the Session/Run
+// unification): a mismatch is a plain "lease conflict: ..." message that the
 // caller surfaces on stderr with exit code 1. A null lease (or one with a null
 // owner) imposes zero verification — non-leased sessions are unaffected.
 // ---------------------------------------------------------------------------
@@ -25,8 +26,8 @@ export interface LeaseClaim {
  * A lease is inert unless it exists and names an owner: `null` lease or
  * `owner === null` short-circuits to null (no verification, no effect). When
  * active, each set field of the lease must match the claim:
- *   - `owner` ≠ executionOwner  → conflict (mirrors ralph execution_owner check)
- *   - `id`    ≠ leaseId         → conflict (mirrors ralph lease_id check)
+ *   - `owner` ≠ executionOwner  → conflict (mirrors the retired ralph engine's execution_owner check)
+ *   - `id`    ≠ leaseId         → conflict (mirrors the retired ralph engine's lease_id check)
  *   - `epoch` ≠ ownerEpoch      → conflict (epoch fencing; an active lease
  *                                 requires the complete owner/epoch/id claim)
  */
@@ -52,8 +53,9 @@ export function checkLease(
 }
 
 /**
- * The lease value after a claim, or null when nothing should be written. Mirrors
- * the ralph cmd-next claim path (`m.execution_owner = ...` after the step goes
+ * The lease value after a claim, or null when nothing should be written.
+ * Originally modelled on the retired ralph cmd-next claim path (removed;
+ * `m.execution_owner = ...` after the step goes
  * live): a claim is written only when the caller supplies an executionOwner and
  * either the session has no active lease owner (fresh claim) or the existing
  * owner matches (renewal). A conflicting claim never reaches here — checkLease
