@@ -16,6 +16,7 @@ const docsSite = join(root, 'docs-site');
 const claudeCommands = join(root, '.claude', 'commands');
 const claudeSkills = join(root, '.claude', 'skills');
 const inventoryPath = join(docsSite, 'src/client/data/inventory-v2.json');
+const inventoryV1Path = join(docsSite, 'src/client/data/inventory.json');
 const referencePath = join(docsSite, 'src/content/docs/commands/reference.md');
 
 function parseFrontmatter(markdown) {
@@ -138,18 +139,27 @@ function generateReference() {
     'Skill tooling and prompt engineering in `.claude/skills/`.');
 
   // Migration footer
+  const v1Count = JSON.parse(readFileSync(inventoryV1Path, 'utf8')).commands.length;
   out += '## v1 → v2 Migration\n\n';
-  out += `> v0.5.51 consolidated 66 v1 commands into ${commands.length} v2 unified commands. `;
+  out += `> v0.5.51 consolidated ${v1Count} v1 commands into ${commands.length} v2 unified commands. `;
   out += 'For legacy v1 references, see `inventory.json` (v1 inventory). ';
   out += 'Key replacements:\n';
   out += '>\n';
-  out += '> - `/maestro-plan`, `/maestro-execute`, `/maestro-quick` → `/maestro`, `/maestro-next`, or `/maestro-companion`\n';
-  out += '> - `/spec-add`, `/spec-load`, `/spec-remove`, `/spec-setup` → `/maestro-spec` subcommands\n';
-  out += '> - `/manage-status`, `/manage-knowhow`, `/manage-issue`, `/manage-harvest` → `/maestro-manage` subcommands\n';
-  out += '> - `/quality-review`, `/quality-test`, `/quality-debug` → `/maestro-ralph --engine swarm` or `/maestro-odyssey`\n';
-  out += '> - `/learn-decompose`, `/learn-follow`, `/learn-investigate` → `/maestro-learn` subcommands\n';
-  out += '> - `/odyssey-debug`, `/odyssey-improve`, `/odyssey-planex` → `/maestro-odyssey --mode <name>`\n';
-  out += '> - `/wiki-connect`, `/wiki-digest` → `/maestro-manage knowledge wiki` subcommands\n';
+  out += '> - `/maestro-plan`, `/maestro-execute`, `/maestro-analyze` → first-tier steps `plan`/`execute`/`analyze`, reached through `/maestro "<intent>"`, `/maestro-next`, or `/maestro-companion`\n';
+  out += '> - `/quality-review`, `/quality-test`, `/quality-auto-test`, `/quality-debug`, `/quality-retrospective` → first-tier steps `review`/`test`/`auto-test`/`debug`/`retrospective`, dispatched by an orchestrator inside a Session chain (no slash form)\n';
+  out += '> - `/quality-refactor` → `/maestro-odyssey --mode improve`; `/security-audit` → `/maestro-odyssey --mode security` (`--tier quick|standard|deep`, `--scope`)\n';
+  out += '> - `/odyssey-debug`, `/odyssey-improve`, `/odyssey-planex`, `/odyssey-ui` → `/maestro-odyssey --mode <name>`; `/odyssey-review-test-fix` → `/maestro-odyssey --mode review`\n';
+  out += '> - `/spec-add` → `/maestro-spec "<constraint>"`; `/spec-load` → `maestro spec load`; `/spec-setup` → `maestro spec init`; `/spec-remove` → step `specs-remove`. `/maestro-spec` only adds — it has no load/remove/setup subcommands\n';
+  out += '> - `/manage-issue` → `/maestro-issue`; `/manage-knowhow` → `/maestro-knowhow`; `/manage-harvest`, `/manage-wiki`, `/wiki-connect`, `/wiki-digest` → `/maestro-knowledge <op>`\n';
+  out += '> - `/manage-status` → `maestro session status`; `/manage-codebase-rebuild`, `/manage-codebase-refresh`, `/manage-drift-realign`, `/quality-sync` → `maestro kg index`\n';
+  out += '> - `/learn-follow`, `/learn-investigate`, `/learn-decompose` → `/maestro-learn <sub>`; `/learn-second-opinion` → `/maestro-learn consult`; `/learn-retro` → step `retrospective`\n';
+  out += '> - `/maestro-collab` → first-tier step `collab`; `/maestro-ui-codify` → `/maestro-impeccable --codify`\n';
+  out += '> - `/maestro-verify` → first-tier step `verify`; per-phase verification is also a built-in gate inside `execute`. `/maestro-quick`, `/workflow-lite-plan`, `/workflow-lite-execute` → `/maestro "<intent>"` (the coordinator picks the shortest chain)\n';
+  out += '> - `/maestro-milestone-complete` → `/maestro-session-seal`. `/maestro-milestone-audit` has no 1:1 successor: the completion gate is `/maestro-session-seal` (it verifies every run is done); a deep cross-run audit is `/maestro-odyssey --mode review`\n';
+  out += '> - `/maestro-amend` split in two: amending a Session goal → `/maestro-ralph`; generating a command overlay → `/maestro-overlay --amend`\n';
+  out += '> - **Removed with no successor** — `/maestro-swarm-workflow`, `/maestro-universal-workflow`, `/maestro-tools-register`, `/maestro-tools-execute`, `/maestro-composer`, `/maestro-player`, `/maestro-link-coordinate` (now internalised as a hook). Do not substitute another command for these.\n';
+  out += '>\n';
+  out += '> First-tier steps have no `/xxx` slash form — an orchestrator dispatches them inside a Session chain. User entry is `/maestro "<intent>"` or `/maestro-next`.\n';
   out += '\n';
 
   return out;
