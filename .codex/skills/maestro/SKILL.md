@@ -154,7 +154,7 @@ Goals describe outcomes, not lifecycle stages.
 
 ### A_CREATE
 
-Build a chain definition with execution steps and formal decision nodes whenever the shared orchestration policy (see orchestrator-run-loop.md) requires quality/goal/scope or reground evaluation. Every created chain has at least one decision node before Session seal. For narrow/single-step chains, generate a minimal implicit boundary_contract: in_scope = [intent], out_of_scope = [], constraints = [], definition_of_done = 'step completed with passing gates'. Write it to a temporary JSON file and call:
+Build a chain definition out of executable Skill steps. Maestro does not emit formal decision nodes: `decision_points` is retained only for reading and continuing legacy Sessions, and new chains express quality/goal/scope checks as Skill steps that own a Run and may return a proposal. (The closed-loop policy that mandates decision nodes before seal belongs to `$maestro-ralph`; route there when the work needs it.) For narrow/single-step chains, generate a minimal implicit boundary_contract: in_scope = [intent], out_of_scope = [], constraints = [], definition_of_done = 'step completed with passing gates'. Write it to a temporary JSON file and call:
 
 `maestro session create "{intent}" --id maestro-{slug} --chain-file {path}`
 
