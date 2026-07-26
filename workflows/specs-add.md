@@ -15,7 +15,8 @@ Add a `<spec-entry>` closed-tag entry to a single target spec file by category.
 ## Arguments
 
 ```
-$ARGUMENTS: "[--scope <scope>] [--uid <uid>] <category> <content>"
+$ARGUMENTS: free-form intent, OR the explicit shortcut form:
+            "[--scope <scope>] [--uid <uid>] <category> <content>"
 
 --scope  -- target scope: project (default) | global | team | personal
 --uid    -- user id for personal scope (auto-detected from git if omitted)
@@ -55,20 +56,31 @@ content  -- free-text description of the entry
 
 ## Execution Steps
 
-### Step 1: Parse Arguments
+### Step 1: Parse Intent
 
 ```
-Parse $ARGUMENTS:
-  1. Extract --scope <value> (default: project)
-  2. Extract --uid <value> if present
-  3. category = first remaining word
-  4. content = remaining text
-Validate:
-  - scope ∈ {project, global, team, personal}
-  - category ∈ {coding, arch, quality, debug, test, review, learning, ui}
-  - content non-empty
-  - personal scope requires uid (resolve from `maestro collab whoami` if --uid not given)
-On failure: show usage `/maestro-spec add [--scope <scope>] <category> <content>`, exit
+$ARGUMENTS is free-form intent. Resolve scope / category / content:
+
+1. Extract explicit --scope <value> (default: project) and --uid <value> if present.
+2. If the explicit form is used (first remaining word is a known category),
+   category = that word, content = remaining text.
+3. Otherwise infer from the intent:
+   - category from the constraint’s nature, e.g.:
+       命名/禁止用 any/代码风格 → coding
+       服务间/依赖方向/分层/接口 → arch
+       覆盖率/质量/可维护性 → quality
+       测试约定/mock → test
+       调试/排查规范 → debug
+       评审/review 标准 → review
+       UI/组件/样式规范 → ui
+   - content = the constraint statement itself (strip leading “加一条规范/记录约束” phrasing).
+   - scope: “团队/global/个人” hints → team/global/personal, else project.
+4. Validate:
+   - scope ∈ {project, global, team, personal}
+   - category ∈ {coding, arch, quality, debug, test, review, learning, ui}
+   - content non-empty
+   - personal scope requires uid (resolve from `maestro collab whoami` if --uid not given)
+5. Category unclear → AskUserQuestion to pick; content empty → ask for the constraint text.
 ```
 
 ### Step 2: Resolve Target File
