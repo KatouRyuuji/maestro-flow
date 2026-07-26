@@ -70,6 +70,11 @@ function tryGitConfig(key: string): string | null {
     const out = execSync(`git config ${key}`, {
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'ignore'],
+      // Reached from interactive hooks (team-monitor, preflight-guard,
+      // spec-injector), where an unbounded git spawn stalls the turn. A missing
+      // identity already degrades to null, so a timeout is a safe outcome.
+      timeout: 2000,
+      windowsHide: true,
     }).trim();
     return out || null;
   } catch {
@@ -143,10 +148,16 @@ export function getMemberByUid(uid: string): MemberRecord | null {
  * Returns null if git identity is unavailable or no record matches.
  */
 export function resolveSelf(): MemberRecord | null {
+  // Member lookup first: it is pure local fs (and short-circuits on a missing
+  // directory), whereas the identity probe spawns two `git config` processes.
+  // With no members joined there is nothing to match, so the old order paid
+  // both spawns on every hook invocation only to return null from the loop.
+  const members = listMembers();
+  if (members.length === 0) return null;
   const ident = readGitIdentity();
   if (!ident) return null;
   const target = ident.email.toLowerCase();
-  for (const m of listMembers()) {
+  for (const m of members) {
     if (m.email.toLowerCase() === target) return m;
   }
   return null;
