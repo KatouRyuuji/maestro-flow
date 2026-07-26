@@ -4,14 +4,22 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 const tryDaemonSearch = vi.fn();
+const readDaemonInfo = vi.fn<() => { pid: number; port: number; startedAt: string } | null>(() => null);
+const isDaemonAlive = vi.fn(() => false);
 
-vi.mock('../../search/daemon-client.js', () => ({ tryDaemonSearch }));
+vi.mock('../../search/daemon-client.js', () => ({
+  tryDaemonSearch,
+  readDaemonInfo,
+  isDaemonAlive,
+}));
 
 import { searchWiki } from '../wiki-search-bridge.js';
 
 describe('wiki search bridge lifecycle filtering', () => {
   beforeEach(() => {
     tryDaemonSearch.mockReset();
+    readDaemonInfo.mockReset().mockReturnValue(null);
+    isDaemonAlive.mockReset().mockReturnValue(false);
   });
 
   it('uses BM25 daemon search with a hook-bounded timeout', async () => {
@@ -28,7 +36,7 @@ describe('wiki search bridge lifecycle filtering', () => {
       'knowledge',
       10,
       true,
-      { timeoutMs: 400 },
+      { timeoutMs: 700 },
     );
   });
 
@@ -64,6 +72,18 @@ describe('wiki search bridge lifecycle filtering', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it('does not duplicate a live daemon with the in-process indexer when it times out', async () => {
+    // A live daemon owns the same index; paying seconds to rebuild it in-process
+    // on the prompt hot path is the outcome this branch exists to prevent.
+    readDaemonInfo.mockReturnValue({ pid: 1, port: 1234, startedAt: 'x' });
+    isDaemonAlive.mockReturnValue(true);
+    tryDaemonSearch.mockResolvedValue(null);
+
+    const result = await searchWiki('D:/tmp/.workflow', 'knowledge');
+
+    expect(result).toEqual({ hits: [], source: 'none' });
   });
 
   it('excludes deprecated and superseded daemon hits', async () => {

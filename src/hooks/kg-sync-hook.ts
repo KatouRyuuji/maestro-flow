@@ -7,7 +7,8 @@
  * clean working tree). Uses CooldownGuard for cross-process debouncing.
  */
 
-import { execSync } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { kgSyncGuard } from '../utils/cooldown-guard.js';
 import { invalidateSearchIndex } from '../search/daemon-client.js';
@@ -16,6 +17,21 @@ import { readSyncState, getGitHead } from '../graph/kg/sync-state.js';
 const SOURCE_EXTENSIONS = new Set([
   '.ts', '.tsx', '.js', '.jsx', '.py', '.go', '.rs', '.java',
 ]);
+
+/**
+ * Set on the detached worker that performs the actual sync. The hook fires on
+ * UserPromptSubmit, where a full tree-sitter re-index costs tens of seconds — far
+ * beyond an interactive budget — so the prompt-side invocation only does the cheap
+ * change detection and hands the heavy work to a background copy of itself.
+ *
+ * This preserves the observable contract: the hook writes nothing to stdout, and
+ * the UserPromptSubmit hooks already run as independent parallel processes, so no
+ * consumer ever had an ordering guarantee against this sync.
+ */
+const WORKER_ENV = 'MAESTRO_KG_SYNC_WORKER';
+
+/** Advisory single-flight marker for the detached worker. */
+const WORKER_PID_FILE = 'kg-sync-worker.pid';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -42,13 +58,25 @@ export async function evaluateKgSync(
       return { synced: false, reason: 'maestrograph-not-initialized' };
     }
 
-    if (!kgSyncGuard.shouldRun(sessionId)) {
-      return { synced: false, reason: 'cooldown' };
-    }
+    // The worker was already authorized by the prompt-side invocation that spawned
+    // it — re-running the guard there would let the parent's own cooldown mark
+    // cancel the work it just delegated.
+    if (process.env[WORKER_ENV] !== '1') {
+      if (!kgSyncGuard.shouldRun(sessionId)) {
+        return { synced: false, reason: 'cooldown' };
+      }
 
-    if (!detectSourceChanges(projectPath) && !headMovedSinceLastSync(projectPath)) {
-      kgSyncGuard.markDone(sessionId);
-      return { synced: false, reason: 'no-changes' };
+      if (!detectSourceChanges(projectPath) && !headMovedSinceLastSync(projectPath)) {
+        kgSyncGuard.markDone(sessionId);
+        return { synced: false, reason: 'no-changes' };
+      }
+
+      // Hot path: delegate and return. Falls through to a synchronous sync when
+      // no worker could be spawned, so the graph is never left silently stale.
+      if (spawnSyncWorker(projectPath, sessionId)) {
+        kgSyncGuard.markDone(sessionId);
+        return { synced: false, reason: 'delegated' };
+      }
     }
 
     const start = Date.now();
@@ -86,6 +114,61 @@ export async function evaluateKgSync(
 // ---------------------------------------------------------------------------
 // Internal
 // ---------------------------------------------------------------------------
+
+/**
+ * Re-invoke this same hook as a detached background process that owns the heavy
+ * sync. Best-effort: on any failure the caller falls through to a synchronous
+ * sync, so the graph is never silently left stale.
+ *
+ * Returns false when no usable CLI entry point could be resolved.
+ */
+function spawnSyncWorker(projectPath: string, sessionId: string): boolean {
+  const entry = process.argv[1];
+  if (!entry || !/\.[cm]?js$/.test(entry)) return false;
+  if (workerAlreadyRunning(projectPath)) return true;
+  try {
+    const child = spawn(
+      process.execPath,
+      [entry, 'hooks', 'run', 'kg-sync'],
+      {
+        cwd: projectPath,
+        env: { ...process.env, [WORKER_ENV]: '1' },
+        detached: true,
+        stdio: ['pipe', 'ignore', 'ignore'],
+        windowsHide: true,
+      },
+    );
+    child.stdin?.end(JSON.stringify({ session_id: sessionId, cwd: projectPath }));
+    child.unref();
+    if (child.pid) {
+      try { writeFileSync(workerPidPath(projectPath), String(child.pid)); } catch { /* advisory only */ }
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function workerPidPath(projectPath: string): string {
+  return resolve(projectPath, '.workflow', WORKER_PID_FILE);
+}
+
+/**
+ * Single-flight guard. A sync runs far longer than the cooldown window, so
+ * without this every cooldown expiry would stack another concurrent indexer on
+ * top of the one still running. Advisory: a missing or stale pid file simply
+ * allows the spawn.
+ */
+function workerAlreadyRunning(projectPath: string): boolean {
+  try {
+    const pid = parseInt(readFileSync(workerPidPath(projectPath), 'utf-8').trim(), 10);
+    if (!Number.isInteger(pid) || pid <= 0) return false;
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * True when git HEAD differs from the recorded sync watermark — catches
