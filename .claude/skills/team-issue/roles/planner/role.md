@@ -38,7 +38,7 @@ Read("{run_dir}/work/team/explorations/context-<issueId>.json")
 Bash("maestro delegate \\\"
 PURPOSE: Design solution for issue <issueId> and decompose into implementation tasks; success = canonical Run solution artifact with task breakdown
 
-TASK: • Load issue details via Maestro maestro-manage issue status • Analyze explorer context • Design solution approach • Break down into implementation tasks • Generate solution JSON • Record the Run artifact path on the issue
+TASK: • Load issue details via Maestro maestro-issue status • Analyze explorer context • Design solution approach • Break down into implementation tasks • Generate solution JSON • Record the Run artifact path on the issue
 
 MODE: analysis
 

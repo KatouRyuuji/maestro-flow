@@ -33,6 +33,7 @@ version: 0.5.56
 
 <required_reading>
 @~/.maestro/workflows/run-mode.md
+@~/.maestro/workflows/codex-run-mode.md
 </required_reading>
 
 <deferred_reading>
@@ -53,7 +54,7 @@ and iterate exhaustively until the mode's exit condition is met or escalation is
 
 <mode_dispatch>
 
-**Mode selection precedence:** explicit `--mode <name>` > intent keyword auto-detection > AskUserQuestion (Normal) / error E000 (`-y`).
+**Mode selection precedence:** explicit `--mode <name>` > intent keyword auto-detection > request_user_input (Normal) / error E000 (`-y`).
 
 **Auto-detection from `<intent>` keywords** (first match wins, ordered):
 
@@ -68,7 +69,7 @@ Keyword matching: case-insensitive substring match against the intent text. Mult
 | improve, optimize, performance, refactor quality, reliability, observability | `improve` |
 | review, audit, code check, check the code, inspect the code, inspect changes, "look over", zero-residual | `review` |
 
-Ambiguous / no match → Normal: AskUserQuestion (6-way mode pick) | `-y`: E000.
+Ambiguous / no match → Normal: request_user_input (6-way mode pick) | `-y`: E000.
 
 **Mode registry:**
 
@@ -154,7 +155,16 @@ All base invariants apply (evidence append-only, session-as-state, phase goal tr
 </invariants>
 
 <task_tracking>
-@~/.maestro/workflows/task-tracking.md
+
+**时机与操作**（plan 是 session 权威状态的 UI 镜像，不替代 session 状态）：
+
+| 时机 | 操作 | 示例 |
+|------|------|------|
+| Session 创建后 | update_plan 初始化步骤清单 | `update_plan({ plan: [{ step: "Step {index}: {step.skill}", status: "pending" }, ...] })` |
+| Step 派发时 | update_plan 标记当前 step | `update_plan({ plan: [..., 当前 step status: "in_progress"] })` |
+| Step 完成时 | update_plan 标记完成 | `update_plan({ plan: [..., 该 step status: "completed"] })` |
+| Step 失败时 | update_plan + explanation 说明 | `update_plan({ explanation: "Step {index} failed: {reason}", plan: [...] })` |
+
 </task_tracking>
 
 <self_iteration>
@@ -217,7 +227,7 @@ Mode-specific phase gates (Discovery, Audit, FIX, VERIFY/CONFIRM) are defined in
 | Condition | Next |
 |-----------|------|
 | Single-file mechanical fix discovered | `/maestro-companion "<fix>"` |
-| Discovery issues created | `/maestro-manage issue list --source {mode}-odyssey` |
+| Discovery issues created | `/maestro-issue list --source {mode}-odyssey` |
 | Deeper debug needed (from any mode) | `/maestro-odyssey <finding> --mode debug` |
 | Security findings need remediation | `/maestro-odyssey <finding> --mode improve` |
 | Formal review of changes | `/maestro-odyssey <changed-files> --mode review` |

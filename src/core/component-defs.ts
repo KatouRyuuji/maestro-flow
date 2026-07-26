@@ -206,7 +206,7 @@ export const COMPONENT_DEFS: ComponentDef[] = [
   {
     id: 'commands',
     label: 'Commands',
-    description: 'All Claude slash commands (maestro, maestro-manage, maestro-odyssey, maestro-learn, maestro-spec, quality, security)',
+    description: 'All Claude slash commands (maestro, maestro-issue, maestro-odyssey, maestro-learn, maestro-spec, quality, security)',
     sourcePath: join('.claude', 'commands'),
     target: (mode, projectPath) =>
       mode === 'global'

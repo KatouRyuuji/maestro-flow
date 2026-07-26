@@ -2003,8 +2003,8 @@ function buildFinishChecklist(projectRoot: string, run: CommandRun, frontmatter:
   if (!frontmatter.summary.trim()) {
     lines.push('report.md handoff frontmatter is empty — fill summary (plus concerns/decisions) before completing; the sealed handoff is derived from it.');
   }
-  lines.push('Record new knowledge before sealing: constraints/rules → `maestro spec add`, reusable recipes/pitfalls → `/maestro-manage knowledge capture`; skip only if nothing new was learned.');
-  lines.push('Mark every spec/knowhow entry this Run contradicted: replaced by a better rule → `maestro spec add ... --json` then `maestro spec supersede <old-sid> --by <new-sid>`; both sides defensible → `maestro spec conflict mark <file> <line> --note "<reason>"` and let `/maestro-manage knowledge audit` adjudicate. Never seal with a known-stale entry unmarked.');
+  lines.push('Record new knowledge before sealing: constraints/rules → `maestro spec add`, reusable recipes/pitfalls → `/maestro-knowhow capture`; skip only if nothing new was learned.');
+  lines.push('Mark every spec/knowhow entry this Run contradicted: replaced by a better rule → `maestro spec add ... --json` then `maestro spec supersede <old-sid> --by <new-sid>`; both sides defensible → `maestro spec conflict mark <file> <line> --note "<reason>"` and let `/maestro-knowledge audit` adjudicate. Never seal with a known-stale entry unmarked.');
   lines.push('Pick the verdict honestly: `done` (clean) or `done-with-concerns` (works but carries caveats — list every caveat in concerns).');
   lines.push(...resolveStepContent(projectRoot, run.command.name).finish);
   return lines;

@@ -207,7 +207,7 @@ Mode-specific phase gates (Discovery, Audit, FIX, VERIFY/CONFIRM) are defined in
 | Condition | Next |
 |-----------|------|
 | Single-file mechanical fix discovered | `/maestro-companion "<fix>"` |
-| Discovery issues created | `/maestro-manage issue list --source {mode}-odyssey` |
+| Discovery issues created | `/maestro-issue list --source {mode}-odyssey` |
 | Deeper debug needed (from any mode) | `/maestro-odyssey <finding> --mode debug` |
 | Security findings need remediation | `/maestro-odyssey <finding> --mode improve` |
 | Formal review of changes | `/maestro-odyssey <changed-files> --mode review` |

@@ -217,23 +217,20 @@ $ARGUMENTS → Parse:
 | `auto-test` | 自动测试 |
 | `test` | 业务测试 |
 | `debug` | 质量调试 |
-| `/quality-refactor` | 重构 |
 | `retrospective` | 复盘 |
 
 ### 管理命令 (manage)
 
 | 命令 | 用途 |
 |------|------|
-| `/maestro-manage issue` | Issue 管理 |
-| `/maestro-manage issue discover` | Issue 发现 |
-| `/maestro-manage knowledge knowhow` | 知识管理 |
-| `/maestro-manage knowledge capture` | 知识捕获 |
-| `/maestro-manage status` | 状态查看 |
-| `/maestro-manage knowledge wiki` | Wiki 管理 |
-| `/maestro-manage knowledge harvest` | 收获 |
-| `/maestro-manage sync rebuild` | 代码库重建 |
-| `/maestro-manage knowledge extractors` | 知识图谱提取器管理 |
-| `/maestro-manage knowledge audit` | 知识审计 |
+| `/maestro-issue` | Issue 管理 |
+| `/maestro-issue discover` | Issue 发现 |
+| `/maestro-knowhow` | 知识沉淀（knowhow capture） |
+| `/maestro-knowledge wiki` | Wiki 管理 |
+| `/maestro-knowledge harvest` | 收获 |
+| `/maestro-knowledge sync rebuild` | 代码库重建 |
+| `/maestro-knowledge extractors` | 知识图谱提取器管理 |
+| `/maestro-knowledge audit` | 知识审计 |
 
 ### Odyssey 长周期循环 (odyssey)
 
@@ -294,7 +291,7 @@ Odyssey 长周期循环（独立路径）
 | Path E | 纯规格文档 | `blueprint "project idea"` → (供人阅读) |
 | Path F | 纯探索 | `brainstorm "idea"` → (供人决策) |
 | 轻量修复 | 已知简单问题 | `/maestro-companion "修复描述"` |
-| Bug 追踪 | Issue 闭环 | `/maestro-manage issue discover` → `/maestro-manage issue create` → analyze/plan/execute → close |
+| Bug 追踪 | Issue 闭环 | `/maestro-issue discover` → `/maestro-issue create` → analyze/plan/execute → close |
 | 全自动 | /maestro 入口 | `/maestro -y "任务描述"` |
 | 代码审查 | 质量管线 | `review` → `auto-test` → `test` |
 | 多 CLI 交叉验证 | Collab step | `collab "需求描述"` |

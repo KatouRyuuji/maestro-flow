@@ -54,7 +54,7 @@ Note: maestro-next suggests session-seal when 'Tests green + active session'. Th
 
 ### Step 2: Knowledge Extraction
 
-This step is a session-scoped lightweight knowledge extraction. For comprehensive artifact-based extraction, use `/maestro-manage knowledge harvest --session {session_id}`. `--skip-knowledge` can be compensated later via harvest.
+This step is a session-scoped lightweight knowledge extraction. For comprehensive artifact-based extraction, use `/maestro-knowledge harvest --session {session_id}`. `--skip-knowledge` can be compensated later via harvest.
 
 Skip if `--skip-knowledge`. Otherwise:
 
@@ -73,7 +73,7 @@ Skip if `--skip-knowledge`. Otherwise:
    ```
 4. **Persist** selected items:
    - Specs → recommend `/maestro-spec add ...`
-   - Knowhow → recommend `/maestro-manage knowledge harvest --session {session_id}` for extraction, then `/maestro-manage knowledge capture` for manual recording of extracted insights
+   - Knowhow → recommend `/maestro-knowledge harvest --session {session_id}` for extraction, then `/maestro-knowhow capture` for manual recording of extracted insights
    - Record promoted IDs in `session.json.lifecycle.promoted[]`（前缀区分 spec:/knowhow:）
 
 ### Step 3: Seal Session
@@ -112,8 +112,7 @@ Status: DONE
 | Condition | Suggestion |
 |-----------|-----------|
 | Next session activated | step `analyze` (`maestro run prepare analyze` + `maestro run create analyze --session {next-slug} --intent "{goal}"`) |
-| DAG complete (all sealed) | `/maestro-manage status` |
-| Knowledge review needed | `/maestro-manage knowledge audit` |
+| Knowledge review needed | `/maestro-knowledge audit` |
 </completion>
 
 <error_codes>

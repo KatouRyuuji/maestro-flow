@@ -69,7 +69,6 @@ const knownCommands = [
   "status", "wiki", "harvest", "codebase-rebuild",
   "extractors", "knowledge-audit",
   "review", "auto-test", "test", "debug", "refactor", "sync", "retrospective",
-  "security-audit",
   "setup", "load", "add", "remove",
   "follow", "decompose", "investigate", "second-opinion",
   "odyssey"

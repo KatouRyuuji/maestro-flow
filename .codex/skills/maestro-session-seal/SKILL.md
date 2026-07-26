@@ -28,6 +28,7 @@ version: 0.5.56
 
 <required_reading>
 @~/.maestro/workflows/run-mode.md
+@~/.maestro/workflows/codex-run-mode.md
 </required_reading>
 
 <purpose>
@@ -61,7 +62,7 @@ Note: maestro-next suggests session-seal when 'Tests green + active session'. Th
 
 ### Step 2: Knowledge Extraction
 
-This step is a session-scoped lightweight knowledge extraction. For comprehensive artifact-based extraction, use `/maestro-manage knowledge harvest --session {session_id}`. `--skip-knowledge` can be compensated later via harvest.
+This step is a session-scoped lightweight knowledge extraction. For comprehensive artifact-based extraction, use `/maestro-knowledge harvest --session {session_id}`. `--skip-knowledge` can be compensated later via harvest.
 
 Skip if `--skip-knowledge`. Otherwise:
 
@@ -70,7 +71,7 @@ Skip if `--skip-knowledge`. Otherwise:
    - Decisions with `status: accepted` from `runs/*/run.json.handoff.decisions[]` → spec candidates
    - Patterns/recipes discovered during execution → knowhow candidates
    - Risks that materialized or were mitigated → learning candidates
-3. **Present to user** via `AskUserQuestion`:
+3. **Present to user** via `request_user_input`:
    ```
    question: "以下知识候选项值得持久化吗？"
    options:
@@ -80,7 +81,7 @@ Skip if `--skip-knowledge`. Otherwise:
    ```
 4. **Persist** selected items:
    - Specs → recommend `/maestro-spec add ...`
-   - Knowhow → recommend `/maestro-manage knowledge harvest --session {session_id}` for extraction, then `/maestro-manage knowledge capture` for manual recording of extracted insights
+   - Knowhow → recommend `/maestro-knowledge harvest --session {session_id}` for extraction, then `/maestro-knowhow` for manual recording of extracted insights
    - Record promoted IDs in `session.json.lifecycle.promoted[]`（前缀区分 spec:/knowhow:）
 
 ### Step 3: Seal Session
@@ -118,9 +119,9 @@ Status: DONE
 
 | Condition | Suggestion |
 |-----------|-----------|
-| Next session activated | step `analyze` (`maestro run prepare analyze` + `maestro run create analyze --session {next-slug} --intent "{goal}"`) |
-| DAG complete (all sealed) | `/maestro-manage status` |
-| Knowledge review needed | `/maestro-manage knowledge audit` |
+| Next session activated | step `analyze` (`maestro run prepare --platform codex analyze` + `maestro run create analyze --session {next-slug} --intent "{goal}"`) |
+| DAG complete (all sealed) | `/maestro-next` |
+| Knowledge review needed | `/maestro-knowledge audit` |
 </completion>
 
 <error_codes>

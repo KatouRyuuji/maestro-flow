@@ -12,12 +12,26 @@
 
 ---
 
-### Step 1: Parse Subcommand
+### Step 1: Classify Intent
 
 ```
-Extract SUBCOMMAND (first token) and ARGS (remaining) from $ARGUMENTS.
-Valid: create | list | status | update | close | link
-Missing/invalid → error with usage: /maestro-manage issue <create|list|status|update|close|link> [options]
+$ARGUMENTS is free-form intent. Classify it into one OPERATION:
+  create | list | show | update | close | link | discover
+
+1. Explicit keyword present (create/list/status|show/update/close/link/discover) → that operation.
+   (`status` is an alias of `show`.)
+2. Otherwise infer from the intent (zh/en), e.g.:
+   - create  : 新建/记录/报告/提一个/报 bug/create/new/report
+   - list    : 列出/有哪些/查看开放/list/open/多少 issue
+   - show    : 详情/看一下/展开/show/详情 ISS-
+   - update  : 改状态/更新/开始处理/设为/update
+   - close   : 关闭/解决/关掉/搁置/close/resolve/defer
+   - link    : 关联/绑定/挂到 task/link
+   - discover: 发现/扫描/找问题/审计/discover
+3. Contains an ISS- id but no clear verb → default to show.
+4. Still ambiguous → AskUserQuestion to pick the operation.
+
+Extract parameters from the intent as well; explicit --flags override inferred values.
 ```
 
 ---
@@ -31,30 +45,31 @@ Auto-create if missing: .workflow/issues/, issues.jsonl, issue-history.jsonl
 
 ---
 
-### Step 3: Route to Subcommand Handler
+### Step 3: Route to Operation Handler
 
 ```
-Route: create→Step 4, list→Step 5, status→Step 6, update→Step 7, close→Step 8, link→Step 9
+Route: create→Step 4, list→Step 5, show/status→Step 6, update→Step 7, close→Step 8, link→Step 9
+       discover→ run the `issue-discover` step instead of this workflow
 ```
 
 ---
 
 ### Step 4: Create Issue
 
-Parse options from ARGS:
+Parse options from ARGS. Parameters may come from explicit `--flags` OR be inferred from the user's intent (e.g. “严重一点” → priority high; “bug/缺陷” → source bug; a quoted phrase → title). Flags override inferred values.
 
 ```
-Options:
-  --title TEXT        Issue title (required)
+Options (all optional if inferable from intent):
+  --title TEXT        Issue title (required — infer from intent, else prompt)
   --severity VALUE    critical|high|medium|low (default: medium)
   --source VALUE      planned|supplement|bug|review|verification|discovery|manual (default: manual)
   --phase VALUE       Phase reference, e.g. "01-auth" (optional)
   --milestone VALUE   Milestone reference, e.g. "MVP" (optional, auto-derived from state.json if omitted)
-  --description TEXT  Detailed description (optional, prompted if missing)
+  --description TEXT  Detailed description (optional)
   --priority NUMBER   1-5, lower is higher priority (default: 3)
   --tags TAG1,TAG2    Comma-separated tags (optional)
 
-If --title is missing:
+If title cannot be inferred from intent:
   AskUserQuestion({ question: "What is the issue title?" })
 
 Derive milestone_ref if not provided:
@@ -182,8 +197,8 @@ If no issues found:
 ```
 No issues found{with applied filters}.
 
-Create one: recommend `/maestro-manage issue create --title "..."`
-Discover issues: recommend `/maestro-manage issue discover`
+Create one: recommend `/maestro-issue create --title "..."`
+Discover issues: recommend `/maestro-issue discover`
 ```
 
 ---
