@@ -805,7 +805,7 @@ ${actions.sort((a, b) => (b.priority || 0) - (a.priority || 0)).map(a =>
 function generatePhase0Spec(config) {
   const skillRoot = '.claude/skills/skill-generator';
   const specsToRead = [
-    '../_shared/SKILL-DESIGN-SPEC.md',
+    'specs/skill-requirements.md',
     `${skillRoot}/templates/*.md`
   ];
 
@@ -841,7 +841,7 @@ Complete reading
 
 \`\`\`javascript
 // Universal design standards (MUST READ)
-const designSpec = Read('.claude/skills/_shared/SKILL-DESIGN-SPEC.md');
+const designSpec = Read('.claude/skills/skill-generator/specs/skill-requirements.md');
 
 // Key content checkpoints:
 const checkpoints = {
@@ -886,8 +886,8 @@ const specs = [];
 
 // 1. Design specification (P0)
 specs.push({
-  file: '../_shared/SKILL-DESIGN-SPEC.md',
-  content: Read('.claude/skills/_shared/SKILL-DESIGN-SPEC.md'),
+  file: 'specs/skill-requirements.md',
+  content: Read('.claude/skills/skill-generator/specs/skill-requirements.md'),
   priority: 'P0'
 });
 

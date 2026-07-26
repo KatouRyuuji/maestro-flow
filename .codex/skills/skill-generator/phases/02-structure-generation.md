@@ -186,7 +186,7 @@ ${config.autonomous_config.actions.slice(0, 3).map(a =>
 
 function generateDesignPrinciples(config) {
   const common = [
-    "1. **Specification Compliance**: Strictly follow `_shared/SKILL-DESIGN-SPEC.md`",
+    "1. **Specification Compliance**: Strictly follow `specs/skill-requirements.md`",
     "2. **Brief Return**: Agent returns path+summary, avoiding context overflow"
   ];
 

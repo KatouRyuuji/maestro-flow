@@ -85,7 +85,7 @@ Generate Phase files for Sequential execution mode, defining fixed-order executi
 ## Completion Status
 
 Return one of: DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT with structured reason.
-See [Completion Status Protocol](./../_shared/SKILL-DESIGN-SPEC.md#13) for output format.
+Return one of: DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT with structured reason.
 
 ## Next Phase
 
@@ -466,7 +466,7 @@ Write(\`${workDir}/${phaseConfig.output}\`, JSON.stringify(result, null, 2));
 ## Completion Status
 
 Return one of: DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT with structured reason.
-See [Completion Status Protocol](./../_shared/SKILL-DESIGN-SPEC.md#13) for output format.
+Return one of: DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT with structured reason.
 
 ${nextPhase ?
   `## Next Phase\n\n→ [Phase ${index + 2}: ${nextPhase.name}](${nextPhase.id}.md)` :

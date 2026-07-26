@@ -362,7 +362,7 @@ ${config.execution_mode === 'sequential' ?
 
 ## Related Documents
 
-- [Design Specification](../_shared/SKILL-DESIGN-SPEC.md)
+- [Design Specification](../specs/skill-requirements.md)
 - [Execution Modes Specification](specs/../../../skill-generator/specs/execution-modes.md)
 
 ---

@@ -86,7 +86,7 @@ const workDir = \`${runStart.run_dir}/outputs\`;
 
 ## Completion Protocol
 
-Follow [Completion Status Protocol](./../_shared/SKILL-DESIGN-SPEC.md#13) and [Escalation Protocol](./../_shared/SKILL-DESIGN-SPEC.md#14).
+Follow the Completion Status Protocol (return DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT with structured reason) and the Escalation Protocol (escalate blockers with context to the orchestrator).
 
 ## Reference Documents by Phase
 
