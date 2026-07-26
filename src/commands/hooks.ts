@@ -1262,24 +1262,30 @@ const HOOK_RUNNERS: Record<string, HookRunner> = {
 
     const workflowRoot = join(projectRoot, '.workflow');
 
-    // Notify daemon to invalidate (rebuilds wiki + BM25 + embedding in the long-lived process)
-    const { readDaemonInfo, isDaemonAlive, queryDaemon } = await import('../search/daemon-client.js');
+    const { readDaemonInfo, isDaemonAlive, queryDaemon, invalidateSearchIndex, spawnDaemon } =
+      await import('../search/daemon-client.js');
+
+    // Notify the daemon, which rebuilds wiki + BM25 + embedding in its long-lived
+    // process. Its invalidate handler rebuilds *before* replying, so awaiting the
+    // ack means awaiting the whole rebuild on a PostToolUse hook. Only delivery
+    // matters here: once the request is written the daemon will rebuild whether or
+    // not this process is still listening (it destroys the socket on hang-up), so
+    // this budget covers a localhost connect + write and nothing more.
     const daemonInfo = readDaemonInfo(workflowRoot);
     if (daemonInfo && isDaemonAlive(daemonInfo)) {
-      const resp = await queryDaemon(daemonInfo.port, { action: 'invalidate' }).catch(() => null);
-      if (resp?.ok) return;
+      const ACK_BUDGET_MS = 500;
+      await queryDaemon(daemonInfo.port, { action: 'invalidate' }, { timeoutMs: ACK_BUDGET_MS })
+        .catch(() => null);
+      return;
     }
 
-    // No daemon running — rebuild index directly so disk cache is fresh for next search
-    const { WikiIndexer } = await import('#maestro-dashboard/wiki/wiki-indexer.js');
-    const { loadWorkspaceConfig, resolveWorkspaceLinks } = await import('../config/index.js');
-    const wsConfig = loadWorkspaceConfig(projectRoot);
-    const resolved = resolveWorkspaceLinks(projectRoot, wsConfig);
-    const linkedWorkspaces = resolved
-      .filter((lw: { valid: boolean }) => lw.valid)
-      .map((lw: { name: string; workflowRoot: string; share: Array<'spec' | 'knowhow' | 'domain' | 'codebase'> }) => ({ name: lw.name, workflowRoot: lw.workflowRoot, shareTypes: lw.share }));
-    const indexer = new WikiIndexer({ workflowRoot, linkedWorkspaces });
-    await indexer.rebuild();
+    // No daemon. A WikiIndexer.rebuild() inline here is unbounded work on the
+    // tool-call path — every Write/Edit under .workflow/ would stall on a full
+    // knowledge-tree reindex. Drop the stale on-disk cache so no reader serves
+    // outdated hits, then hand the rebuild to the daemon's own process. If the
+    // spawn fails, the next `maestro search` rebuilds lazily.
+    await invalidateSearchIndex(workflowRoot);
+    await spawnDaemon(workflowRoot).catch(() => { /* lazy rebuild on next search */ });
   },
 
   'search-daemon-start': async () => {
