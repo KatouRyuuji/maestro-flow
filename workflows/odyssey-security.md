@@ -156,10 +156,10 @@ Security findings with severity >= medium + vulnerability patterns across scan p
 
 | Category | Content | Follow-up |
 |----------|---------|-----------|
-| Vulnerability pattern | CWE + trigger + detection pattern + remediation | `/maestro-spec add debug` |
-| Security constraint | Trust boundary + validation rule + enforcement | `/maestro-spec add arch` |
-| Dependency risk | Package + CVE + safe version + migration path | `/maestro-spec add coding` |
-| CI/CD hardening | Misconfiguration + fix + prevention check | `/maestro-spec add coding` |
+| Vulnerability pattern | CWE + trigger + detection pattern + remediation | `/maestro-spec debug` |
+| Security constraint | Trust boundary + validation rule + enforcement | `/maestro-spec arch` |
+| Dependency risk | Package + CVE + safe version + migration path | `/maestro-spec coding` |
+| CI/CD hardening | Misconfiguration + fix + prevention check | `/maestro-spec coding` |
 
 ---
 
@@ -242,5 +242,5 @@ Goals:       {done}/{total} ({skipped} skipped)
 | Need deeper audit tier | `/maestro-odyssey <target> --mode security --tier deep` |
 | Document pattern | `/maestro-learn decompose <module>` |
 | Second opinion | `/maestro-learn consult <understanding.md>` |
-| Security pattern to persist | `/maestro-spec add debug "..."` |
+| Security pattern to persist | `/maestro-spec debug "..."` |
 | Pending decisions | Filter evidence phase=decision status=pending |

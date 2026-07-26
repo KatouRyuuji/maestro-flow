@@ -10,7 +10,7 @@ The Maestro command system exposes **18 slash commands**, plus first-tier steps 
 |----------|-------|----------|----------------|
 | **Core Orchestration** | 6 | `/maestro`, `/maestro-ralph`, `/maestro-next`, `/maestro-companion`, `/maestro-init`, `/maestro-session-seal` | Intent-to-chain planning, closed-loop policy, routing, lightweight execution, project init, Session seal |
 | **Issues & Knowledge** | 4 | `/maestro-issue`, `/maestro-knowledge`, `/maestro-knowhow`, `/maestro-learn` | Issue lifecycle and discovery; knowledge-store audit/harvest/wiki/domain; knowhow capture; learning toolkit |
-| **Specification** | 1 | `/maestro-spec` | Spec setup, add, load, remove |
+| **Specification** | 1 | `/maestro-spec` | Records constraint rules (init via `maestro spec init`, load via `maestro spec load`, remove via step `specs-remove`) |
 | **Deep Cycle & UI** | 2 | `/maestro-odyssey`, `/maestro-impeccable` | Six-mode long-running iteration (debug/improve/planex/review/security/ui); UI design and codify |
 | **Worktree** | 2 | `/maestro-fork`, `/maestro-merge` | Create and merge parallel-development worktrees |
 | **System** | 3 | `/maestro-update`, `/maestro-overlay`, `/maestro-guard` | Self-update, command overlays, guard rules |
@@ -231,8 +231,6 @@ analyze "Auth module" --from brainstorm:BRN-001
 
 ```bash
 /maestro-next "Fix login page bug"             # Pure router: classify intent → companion / single Run / /maestro
-/maestro-next --list                           # List routable channels
-/maestro-next --suggest "Refactor API layer"   # Suggest only, no execution
 
 # Scratch mode (no init required; analyze/plan/execute are steps dispatched via /maestro)
 analyze "Implement JWT auth"                   # scope=standalone

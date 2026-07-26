@@ -204,10 +204,10 @@ Review findings with severity >= medium.
 
 | Category | Content | Follow-up |
 |----------|---------|-----------|
-| Cross-dimension recurring pattern | Pattern + affected dimensions + coding standard | `$maestro-spec add review` |
-| Security finding | Vulnerability type + triggers + fix approach | `$maestro-spec add debug` |
-| Architecture violation pattern | Violation + correct boundary + verification | `$maestro-spec add arch` |
-| Reusable generalization pattern | Signature + risk + fix template + scope | `$maestro-spec add coding` |
+| Cross-dimension recurring pattern | Pattern + affected dimensions + coding standard | `$maestro-spec review` |
+| Security finding | Vulnerability type + triggers + fix approach | `$maestro-spec debug` |
+| Architecture violation pattern | Violation + correct boundary + verification | `$maestro-spec arch` |
+| Reusable generalization pattern | Signature + risk + fix template + scope | `$maestro-spec coding` |
 
 ---
 

@@ -153,10 +153,10 @@ A_RECORD extra: §8 improvement metrics — re-capture and build before/after co
 
 | Category | Content | Follow-up |
 |----------|---------|-----------|
-| Performance pattern | Bottleneck type + fix approach + measurement | `/maestro-spec add coding` |
-| Security rule | Vulnerability class + fix + prevention | `/maestro-spec add debug` |
-| Architecture constraint | Violation + correct boundary + check | `/maestro-spec add arch` |
-| Reliability pattern | Failure mode + handling strategy + verification | `/maestro-spec add coding` |
+| Performance pattern | Bottleneck type + fix approach + measurement | `/maestro-spec coding` |
+| Security rule | Vulnerability class + fix + prevention | `/maestro-spec debug` |
+| Architecture constraint | Violation + correct boundary + check | `/maestro-spec arch` |
+| Reliability pattern | Failure mode + handling strategy + verification | `/maestro-spec coding` |
 
 ---
 
@@ -241,5 +241,5 @@ Goals:       {done}/{total} ({skipped} skipped)
 | UI-related findings | `/maestro-odyssey <component> --mode ui` |
 | Document pattern | `/maestro-learn decompose <module>` |
 | Second opinion | `/maestro-learn consult <understanding.md>` |
-| Design/perf/arch pattern to persist | `/maestro-spec add coding\|arch "..."` |
+| Design/perf/arch pattern to persist | `/maestro-spec coding\|arch "..."` |
 | Pending decisions | Filter evidence phase=decision status=pending |

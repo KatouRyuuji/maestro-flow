@@ -205,7 +205,7 @@
 
 ### `maestro-next` — 单命令推荐
 
-**Usage:** `/maestro-next <intent> [-y] [--dry-run] [--top N] [--list]`
+**Usage:** `/maestro-next <intent> [-y]`
 
 单链推荐引擎：解析 intent + 项目状态 → 路由表评分 → 推荐单个原子命令 → 确认后通过 Skill() 执行。不创建 session，不构建 chain，不写 status.json。适用于意图清晰且单步即可完成的场景
 

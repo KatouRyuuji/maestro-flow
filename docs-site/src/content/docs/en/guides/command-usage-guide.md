@@ -13,7 +13,7 @@ The Maestro command system exposes **18 slash commands**, backed by 45 skills an
 |----------|-------|----------|----------------|
 | **Core Orchestration** | 6 | `/maestro`, `/maestro-ralph`, `/maestro-next`, `/maestro-companion`, `/maestro-init`, `/maestro-session-seal` | Intent-to-chain planning, closed-loop policy, routing, lightweight execution, project init, Session seal |
 | **Issues & Knowledge** | 4 | `/maestro-issue`, `/maestro-knowledge`, `/maestro-knowhow`, `/maestro-learn` | Issue lifecycle and discovery; knowledge-store audit/harvest/wiki/domain; knowhow capture; learning toolkit |
-| **Specification** | 1 | `/maestro-spec` | Spec setup, add, load, remove |
+| **Specification** | 1 | `/maestro-spec` | Records constraint rules (init via `maestro spec init`, load via `maestro spec load`, remove via step `specs-remove`) |
 | **Deep Cycle & UI** | 2 | `/maestro-odyssey`, `/maestro-impeccable` | Six-mode long-running iteration (debug/improve/planex/review/security/ui); UI design and codify |
 | **Worktree** | 2 | `/maestro-fork`, `/maestro-merge` | Create and merge parallel-development worktrees |
 | **System** | 3 | `/maestro-update`, `/maestro-overlay`, `/maestro-guard` | Self-update, command overlays, guard rules |
@@ -214,8 +214,6 @@ Each `◆` is a **decision node** inserted by the Ralph policy, evaluated by a r
 
 ```bash
 /maestro-next "fix login page bug"        # Pure router: classify intent → route to companion / single Run / /maestro
-/maestro-next --list                    # List routable channels
-/maestro-next --suggest "refactor API layer"   # Suggest only, do not execute
 
 /maestro-companion "fix README typo"   # Lightweight execution: minimal Run lifecycle (start + done) + evidence recording
 /maestro "implement user authentication feature"              # Intent-to-chain: create a canonical Session and execute
@@ -432,7 +430,7 @@ Detects the schema version of the current `.workflow/`, displays available migra
 
 Removes the specified `<spec-entry>` entry from the specs file. Entry ID format: `spec-{file-stem}-{NNN}`.
 
-`specs-remove` is an orchestrator-dispatched step (no `/xxx` form), reached through `/maestro "<intent>"` or `/maestro-next`; `/maestro-spec` only adds and has no remove subcommand.
+`specs-remove` is an orchestrator-dispatched step (no `/xxx` form), reached through `/maestro "<intent>"` or `/maestro-next`; `/maestro-spec` only records (it has no remove subcommand); loading is `maestro spec load`, initialization is `maestro spec init` / `maestro run skill specs-setup`.
 
 ```bash
 maestro wiki list --type spec --json    # List all spec entries

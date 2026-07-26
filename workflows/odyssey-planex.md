@@ -225,10 +225,10 @@ Max iterations (default 3) prevents infinite loops.
 
 | Category | Content | Follow-up |
 |----------|---------|-----------|
-| Multi-round fix cycle pattern | Problem scenario + fix iteration + final approach | `/maestro-spec add debug` |
-| Reusable implementation pattern | Pattern + applicable scope + code template | `/maestro-spec add coding` |
-| Acceptance criteria template | Standard template + verify_method suggestion | `/maestro-spec add review` |
-| Generalization pattern | Signature + risk + fix template | `/maestro-spec add coding` |
+| Multi-round fix cycle pattern | Problem scenario + fix iteration + final approach | `/maestro-spec debug` |
+| Reusable implementation pattern | Pattern + applicable scope + code template | `/maestro-spec coding` |
+| Acceptance criteria template | Standard template + verify_method suggestion | `/maestro-spec review` |
+| Generalization pattern | Signature + risk + fix template | `/maestro-spec coding` |
 
 ---
 
@@ -305,5 +305,5 @@ Status:      {ALL_PASSED|PARTIAL|ESCALATED}
 | UI-related findings | `/maestro-odyssey <component> --mode ui` |
 | Document pattern | `/maestro-learn decompose <module>` |
 | Second opinion | `/maestro-learn consult <understanding.md>` |
-| Reusable pattern to persist | `/maestro-spec add coding "..."` |
+| Reusable pattern to persist | `/maestro-spec coding "..."` |
 | Pending decisions | Filter evidence phase=decision status=pending |

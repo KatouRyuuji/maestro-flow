@@ -10,7 +10,7 @@ Maestro 命令系统包含 **18 个 slash 命令**，另有由编排器在 Sessi
 |------|--------|------|------|
 | **核心编排** | 6 | `/maestro`、`/maestro-ralph`、`/maestro-next`、`/maestro-companion`、`/maestro-init`、`/maestro-session-seal` | 意图到链规划、闭环策略、路由、轻量执行、项目初始化、Session 封存 |
 | **Issue 与知识** | 4 | `/maestro-issue`、`/maestro-knowledge`、`/maestro-knowhow`、`/maestro-learn` | Issue 生命周期与发现；知识存储 audit/harvest/wiki/domain；knowhow 捕获；学习工具集 |
-| **规范** | 1 | `/maestro-spec` | 规范初始化、录入、加载、移除 |
+| **规范** | 1 | `/maestro-spec` | 约束规则录入（初始化 `maestro spec init`、加载 `maestro spec load`、移除 step `specs-remove`） |
 | **深度循环与 UI** | 2 | `/maestro-odyssey`、`/maestro-impeccable` | 六模式长周期迭代（debug/improve/planex/review/security/ui）；UI 设计与 codify |
 | **Worktree** | 2 | `/maestro-fork`、`/maestro-merge` | 创建与合并并行开发 worktree |
 | **系统** | 3 | `/maestro-update`、`/maestro-overlay`、`/maestro-guard` | 自更新、命令 overlay、编辑边界 |
@@ -231,8 +231,6 @@ analyze "认证模块" --from brainstorm:BRN-001
 
 ```bash
 /maestro-next "修复登录页面 bug"        # 纯路由：分类意图 → companion / 单 Run / /maestro
-/maestro-next --list                    # 列出可路由渠道
-/maestro-next --suggest "重构 API 层"   # 仅建议，不执行
 
 # Scratch 模式（无需 init；analyze/plan/execute 为 step，经 /maestro 派发）
 analyze "实现 JWT 认证"                 # scope=standalone

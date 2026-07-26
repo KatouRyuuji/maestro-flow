@@ -198,10 +198,10 @@ Confirmed root cause + applied fix.
 
 | Category | Content | Follow-up |
 |----------|---------|-----------|
-| Recurring root cause pattern | Type + triggers + fix + detection | `/maestro-spec add debug` |
-| Non-obvious workaround | Problem + steps + why obvious fix fails | `/maestro-spec add learning` |
-| Architecture boundary violation | Violation + correct boundary + verification | `/maestro-spec add arch` |
-| Reusable generalization pattern | Signature + risk + fix template + scope | `/maestro-spec add coding` |
+| Recurring root cause pattern | Type + triggers + fix + detection | `/maestro-spec debug` |
+| Non-obvious workaround | Problem + steps + why obvious fix fails | `/maestro-spec learning` |
+| Architecture boundary violation | Violation + correct boundary + verification | `/maestro-spec arch` |
+| Reusable generalization pattern | Signature + risk + fix template + scope | `/maestro-spec coding` |
 
 ---
 

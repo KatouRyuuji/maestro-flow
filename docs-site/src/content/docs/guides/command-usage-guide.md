@@ -3,22 +3,25 @@ title: "Maestro 命令使用指南"
 icon: "📝"
 ---
 
-Maestro 命令系统包含 60+ 个 slash 命令，分为 10 大类。本文档提供命令全景图和核心工作流导航。
+Maestro 命令系统包含 **18 个 slash 命令**，另有由编排器在 Session chain 内派发的一级 step，以及可直接调用的 `team-*`、`scholar-*` 等 skill。本文档提供命令全景图和核心工作流导航。
 
 > **v0.5.56 编排模型**：Maestro 与 Ralph 合并为统一的 **canonical Session/Run 链协议**。`/maestro` 是**意图到链规划器**（intent → 初始 Skill 链 → `maestro session create --chain-file`），`/maestro-ralph` 是**闭环策略层**（Stage Mapping + decision gate + retry/drift/goal-audit）。`/maestro-next` 是**纯路由器**（分类意图 → 路由到 companion / 单 Run / `/maestro`），不再是规划器。旧的 `--engine swarm --script wf-*` 语法已全部退役。
 
 ## 命令总览
 
-| 类别 | 命令数 | 前缀 | 职责 |
+| 类别 | 命令数 | 命令 | 职责 |
 |------|--------|------|------|
-| **核心编排** | 6 | `maestro-*` | `/maestro`（意图到链）、`/maestro-ralph`（闭环策略）、`/maestro-next`（路由）、`/maestro-companion`（轻量执行）、`/maestro-init`、`/maestro-session-seal` |
-| **管理** | 13 | `manage-*` | Issue 生命周期、代码库文档、知识捕获、记忆管理、harvest、status、knowledge-audit |
-| **质量** | 9 | `quality-*` / stage | 代码审查、业务测试、UAT、调试、重构、复盘、同步 |
-| **Odyssey 深度循环** | 6 | `odyssey-*` | 长周期穷尽迭代——调试、改进、需求交付、审查修复、安全、UI 优化 |
-| **规范** | 3 | `spec-*` | 项目规范初始化、加载、录入 |
-| **学习** | 5 | `learn-*` | 统一复盘（git+决策）、跟读学习、模式拆解、系统探究、多视角分析 |
-| **知识图谱** | 2 | `wiki-*` | 连接发现、知识摘要 |
-| **团队智能** | 1 | `team-*` | ACO 蚁群智能、群体优化 |
+| **核心编排** | 6 | `/maestro`、`/maestro-ralph`、`/maestro-next`、`/maestro-companion`、`/maestro-init`、`/maestro-session-seal` | 意图到链规划、闭环策略、路由、轻量执行、项目初始化、Session 封存 |
+| **Issue 与知识** | 4 | `/maestro-issue`、`/maestro-knowledge`、`/maestro-knowhow`、`/maestro-learn` | Issue 生命周期与发现；知识存储 audit/harvest/wiki/domain；knowhow 捕获；学习工具集 |
+| **规范** | 1 | `/maestro-spec` | 约束规则录入（初始化 `maestro spec init`、加载 `maestro spec load`、移除 step `specs-remove`） |
+| **深度循环与 UI** | 2 | `/maestro-odyssey`、`/maestro-impeccable` | 六模式长周期迭代（debug/improve/planex/review/security/ui）；UI 设计与 codify |
+| **Worktree** | 2 | `/maestro-fork`、`/maestro-merge` | 创建与合并并行开发 worktree |
+| **系统** | 3 | `/maestro-update`、`/maestro-overlay`、`/maestro-guard` | 自更新、命令 overlay、编辑边界 |
+
+除 slash 命令外还有两层，均不以 `/` 开头直接调用：
+
+- **一级 step**（`workflows/`）——`analyze`、`plan`、`execute`、`review`、`test`、`auto-test`、`debug`、`grill`、`brainstorm`、`blueprint`、`roadmap`、`harvest`、`retrospective`、`verify`、`collab` 等，由编排器在 Session chain 内派发，经 `/maestro "<意图>"` 或 `/maestro-next` 触达，不能直接键入形如 `/maestro-…` 的斜杠命令。
+- **Skill**（`.claude/skills/`，其中 25 个为 `team-*`）——可直接调用的团队与工具技能，如 `/team-swarm`。
 
 全局入口 `/maestro` 是**意图到链规划器**，根据用户意图和项目状态自动选择最优命令链，创建 canonical Session 并进入共享 Run 循环。
 
@@ -211,8 +214,6 @@ analyze → plan → execute → ◆post-execute → review → ◆post-review �
 
 ```bash
 /maestro-next "修复登录页面 bug"        # 纯路由：分类意图 → 路由到 companion / 单 Run / /maestro
-/maestro-next --list                    # 列出可路由渠道
-/maestro-next --suggest "重构 API 层"   # 仅建议，不执行
 
 /maestro-companion "修正 README 拼写"   # 轻量执行：最小 Run 生命周期（start + done）+ 证据记录
 /maestro "实现用户认证功能"              # 意图到链：创建 canonical Session 并执行
@@ -429,7 +430,7 @@ maestro load --category coding --keyword auth           # 统一知识加载
 
 从 specs 文件中移除指定的 `<spec-entry>` 条目。Entry ID 格式：`spec-{file-stem}-{NNN}`。
 
-`specs-remove` 是编排器派发的 step（无 `/xxx` 形态），经 `/maestro "<意图>"` 或 `/maestro-next` 进入；`/maestro-spec` 只负责录入，没有 remove 子命令。
+`specs-remove` 是编排器派发的 step（无 `/xxx` 形态），经 `/maestro "<意图>"` 或 `/maestro-next` 进入；`/maestro-spec` 只负责录入（没有 remove 子命令）；加载走 `maestro spec load`，初始化走 `maestro spec init` / `maestro run skill specs-setup`。
 
 ```bash
 maestro wiki list --type spec --json    # 列出所有 spec 条目
