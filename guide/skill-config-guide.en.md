@@ -8,17 +8,17 @@ Set default parameters for 51 commands/skills, auto-injected via Hook — no man
 
 ## Overview
 
-Maestro Skill Config solves a common pain point: manually typing `--auto-commit --method auto -y` every time you call `/maestro-execute`.
+Maestro Skill Config solves a common pain point: manually typing `--auto-commit --method auto -y` every time you run the `execute` skill.
 
 ```
-User calls /maestro-execute 3
+Calls execute 3 (skill, dispatched by lifecycle)
        ↓
 skill-context hook (UserPromptSubmit)
        ↓ Match skill → Load config → Compare existing params
        ↓
 additionalContext injects defaults
        ↓
-Equivalent to /maestro-execute 3 --auto-commit --method auto -y
+Equivalent to execute 3 --auto-commit --method auto -y
 ```
 
 ---
@@ -50,7 +50,7 @@ maestro hooks install --level standard  # Install
 {
   "version": "1.0.0",
   "skills": {
-    "maestro-execute": {
+    "execute": {
       "params": {
         "--auto-commit": true,
         "--method": "auto",
@@ -58,7 +58,7 @@ maestro hooks install --level standard  # Install
       },
       "updated": "2026-05-01T12:00:00Z"
     },
-    "maestro-plan": {
+    "plan": {
       "params": {
         "--auto": true
       }
@@ -76,12 +76,12 @@ Merge strategy: Project-level overrides global, deep-merged at skill granularity
 ## CLI Usage
 
 ```bash
-maestro config list                        # List all configurable skills
-maestro config set <skill> <param> <value> [-g]  # Set (-g for global)
-maestro config show [skill]                # View configuration
-maestro config show --json                 # JSON format
-maestro config unset <skill> <param> [-g]  # Remove single parameter
-maestro config reset [skill] [-g]          # Reset configuration
+maestro config skills list                              # List all configurable skills
+maestro config skills set <skill> <param> <value> [-g]  # Set (-g for global)
+maestro config skills show [skill]                      # View configuration
+maestro config skills show --json                       # JSON format
+maestro config skills unset <skill> <param> [-g]        # Remove single parameter
+maestro config skills reset [skill] [-g]                # Reset configuration
 ```
 
 > Parameter names don't need the `--` prefix; CLI auto-completes.
@@ -91,8 +91,8 @@ maestro config reset [skill] [-g]          # Reset configuration
 ## TUI Interactive Interface
 
 ```bash
-maestro config                    # Launch dashboard
-maestro config edit <skill>       # Edit specific skill
+maestro config skills               # Launch dashboard
+maestro config skills edit <skill>  # Edit specific skill
 ```
 
 ### Dashboard
@@ -139,20 +139,20 @@ The `skill-context` hook triggers on `UserPromptSubmit`:
 
 ```bash
 # Development mode (auto-commit + skip confirmation)
-maestro config set maestro-execute auto-commit true -g
-maestro config set maestro-execute y true -g
-maestro config set maestro-execute method auto -g
+maestro config skills set execute auto-commit true -g
+maestro config skills set execute y true -g
+maestro config skills set execute method auto -g
 
 # Review mode (deep review)
-maestro config set quality-review level deep -g
+maestro config skills set review level deep -g
 
 # Planning mode (auto + collaborative)
-maestro config set maestro-plan auto true -g
-maestro config set maestro-plan collab true
+maestro config skills set plan auto true -g
+maestro config skills set plan collab true
 
 # Analysis mode (silent)
-maestro config set maestro-analyze y true -g
-maestro config set maestro-analyze c true -g
+maestro config skills set analyze y true -g
+maestro config skills set analyze c true -g
 ```
 
 ---
@@ -170,11 +170,11 @@ maestro config set maestro-analyze c true -g
 
 | Command | Description |
 |---------|-------------|
-| `maestro config` | TUI dashboard |
-| `maestro config list` | List all configurable skills |
-| `maestro config show [skill]` | View configuration |
-| `maestro config set <skill> <param> <value> [-g]` | Set parameter default |
-| `maestro config unset <skill> <param> [-g]` | Remove parameter default |
-| `maestro config reset [skill] [-g]` | Reset configuration |
-| `maestro config edit <skill>` | TUI edit specific skill |
+| `maestro config skills` | TUI dashboard |
+| `maestro config skills list` | List all configurable skills |
+| `maestro config skills show [skill]` | View configuration |
+| `maestro config skills set <skill> <param> <value> [-g]` | Set parameter default |
+| `maestro config skills unset <skill> <param> [-g]` | Remove parameter default |
+| `maestro config skills reset [skill] [-g]` | Reset configuration |
+| `maestro config skills edit <skill>` | TUI edit specific skill |
 | `maestro cfg ...` | Alias for `config` |

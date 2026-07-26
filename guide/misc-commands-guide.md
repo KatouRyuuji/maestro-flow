@@ -2,11 +2,11 @@
 title: "杂项命令指南"
 ---
 
-Maestro 工作流中用于维护、发布和规范管理的辅助命令。
+Maestro 工作流中用于维护和规范管理的辅助命令。
 
 ---
 
-## 一、maestro-amend — 增量修改
+## 一、maestro-overlay --amend — 增量修改
 
 信号驱动的 Overlay 生成器。从多种来源收集工作流缺陷信号，诊断哪些命令需要补充修改，批量生成针对性的 Overlay 补丁。所有修改通过 Overlay 系统（`~/.maestro/overlays/*.json`）完成——不侵入原始命令文件，幂等且重装后保留。
 
@@ -15,7 +15,7 @@ Maestro 工作流中用于维护、发布和规范管理的辅助命令。
 ### 使用场景
 
 - `execute` 步骤内置验证门控（E2.7）暴露了命令步骤缺失
-- `/quality-review` 发现流程层面的不足
+- `review` 步骤发现流程层面的不足
 - 工作流执行偏差，根因指向命令定义不完整
 - Issue 追踪显示同类问题反复出现
 
@@ -48,7 +48,7 @@ Maestro 工作流中用于维护、发布和规范管理的辅助命令。
 /maestro-overlay --amend --from-verify .workflow/phases/1    # 从验证结果中发现命令缺口
 /maestro-overlay --amend --from-review .workflow/phases/2    # 从审查结果中提取流程改进
 /maestro-overlay --amend --scan                               # 自动扫描所有信号
-/maestro-overlay --amend "maestro-execute 缺少 CLI 编译验证步骤"  # 直接描述问题
+/maestro-overlay --amend "execute 步骤缺少 CLI 编译验证"  # 直接描述问题
 /maestro-overlay --amend --dry-run                            # 预览模式（不安装）
 /maestro-overlay --amend -y                                   # 跳过确认
 ```
@@ -88,9 +88,9 @@ Maestro 工作流中用于维护、发布和规范管理的辅助命令。
 
 ---
 
-## 三、spec-remove — 规范移除
+## 三、specs-remove — 规范移除
 
-从 specs 文件中移除指定的 `<spec-entry>` 条目。与 `/maestro-spec add` 对称，使用 `maestro wiki remove-entry` 原子删除并自动更新索引。
+从 specs 文件中移除指定的 `<spec-entry>` 条目。作为 `/maestro-spec`（录入）的对称操作，`specs-remove` 是编排器派发的 step，使用 `maestro wiki remove-entry` 原子删除并自动更新索引。
 
 ### Entry ID 格式
 
@@ -102,19 +102,19 @@ spec-{file-stem}-{NNN}  （如 spec-learnings-003）
 
 ```bash
 maestro wiki list --type spec --json    # 列出所有 spec 条目
-/maestro-spec load --keyword auth               # 按关键词搜索
-/maestro-spec remove spec-learnings-003          # 移除指定条目
+maestro spec load --keyword auth        # 按关键词搜索（CLI）
+specs-remove spec-learnings-003         # 移除指定条目（step，由编排器派发）
 ```
 
 ### 注意事项
 
-- 需先通过 `/maestro-spec setup` 初始化 `.workflow/specs/`
+- 需先通过 `maestro spec init` 初始化 `.workflow/specs/`
 - Entry ID 必须是 spec 类型子节点
-- 移除不可逆（建议先用 `/maestro-spec load` 预览）
+- 移除不可逆（建议先用 `maestro spec load` 预览）
 
 ---
 
-## 四、manage-knowledge-audit — 知识审计淘汰
+## 四、maestro-knowledge audit — 知识审计淘汰
 
 审计 spec / knowhow / artifact 三存储，识别矛盾、过期、孤立和元数据质量问题。与 `/maestro-knowledge harvest`（写入/提取）对称——harvest 积累知识，audit 清理知识。
 
@@ -176,61 +176,7 @@ maestro wiki list --type spec --json    # 列出所有 spec 条目
 
 ---
 
-## 五、maestro-milestone-release — 里程碑发布
-
-将已完成里程碑打包发布。执行 semver 版本提升、生成 Changelog、创建 git tag，可选推送远端。是 SDLC 最终交付步骤。
-
-### 前置条件
-
-| 条件 | 说明 |
-|------|------|
-| 里程碑已完成 | `/maestro-milestone-complete` 已执行 |
-| 审计通过 | audit report verdict 为 PASS |
-| 工作区干净 | 无未提交变更（`--dry-run` 例外） |
-
-### 标志
-
-| 标志 | 说明 |
-|------|------|
-| `<version>` | 显式指定版本号 |
-| `--bump patch\|minor\|major` | 递增版本（默认 `minor`） |
-| `--dry-run` | 预览，不写入 |
-| `--no-tag` | 跳过 git tag |
-| `--no-push` | 跳过推送 |
-
-### 发布流程
-
-```
-验证前置条件 → 解析版本 → 收集变更 → 生成 Changelog → 写入版本 → 创建 Tag → 推送
-```
-
-### 里程碑生命周期
-
-```
-/maestro-milestone-complete → /maestro-milestone-audit → /maestro-milestone-release
-```
-
-顺序不可颠倒：complete 产出 summary → audit 基于 summary 验证 → release 基于 audit 发布。
-
-### 常见用法
-
-```bash
-/maestro-milestone-release                  # 标准发布（minor 递增）
-/maestro-milestone-release --bump patch     # 补丁版本
-/maestro-milestone-release 2.0.0            # 显式版本号
-/maestro-milestone-release --dry-run        # 仅预览
-/maestro-milestone-release --no-push        # 发布但不推送
-```
-
-### 注意事项
-
-- manifest 文件不存在时，可手动指定版本并使用 `--no-tag`
-- 推送失败时可手动执行 `git push --follow-tags`
-- `--dry-run` 不写入任何文件或创建 tag
-
----
-
-## 六、Boundary Grill 协议
+## 五、Boundary Grill 协议
 
 嵌入式迷你审查协议，在管线阶段间触发，用于检测和解决冲突。
 
@@ -246,10 +192,10 @@ maestro wiki list --type spec --json    # 列出所有 spec 条目
 
 Boundary Grill 在以下场景自动触发：
 
-- `maestro-analyze` 完成后
-- `maestro-plan` 完成后
-- `maestro-brainstorm` 完成后
-- `maestro-collab` 阶段间
+- `analyze` 步骤完成后
+- `plan` 步骤完成后
+- `brainstorm` 步骤完成后
+- `collab` 阶段间
 - 管线阶段间的 mini-grill 审查
 
 ### 协议流程
@@ -292,11 +238,11 @@ Auto Mode 下，Grill 使用代码分析结果自动回答问题，无需人工�
 
 ### 集成命令
 
-| 命令 | 集成方式 |
+| 步骤 | 集成方式 |
 |------|----------|
-| `maestro-analyze` | 分析完成后触发 |
-| `maestro-plan` | 计划完成后触发 |
-| `maestro-brainstorm` | 头脑风暴完成后触发 |
-| `maestro-collab` | 协作阶段间触发 |
+| `analyze` | 分析完成后触发 |
+| `plan` | 计划完成后触发 |
+| `brainstorm` | 头脑风暴完成后触发 |
+| `collab` | 协作阶段间触发 |
 
 > 完整协议定义见 `workflows/boundary-grill.md`

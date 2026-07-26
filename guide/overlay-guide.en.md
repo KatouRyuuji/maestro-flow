@@ -31,8 +31,8 @@ Overlay = JSON file, declaring "what content to inject into which section of whi
 ```json
 {
   "name": "cli-verify",
-  "description": "Add CLI verification after execution",
-  "targets": ["maestro-execute", "maestro-plan"],
+  "description": "Add CLI verification after maestro-companion finishes",
+  "targets": ["maestro-companion", "maestro-ralph"],
   "priority": 50,
   "enabled": true,
   "patches": [
@@ -151,7 +151,7 @@ Run `maestro overlay list` to enter the terminal UI, supporting `[d] Delete` and
 
 ```bash
 # Create using natural language
-/maestro-overlay "Add CLI code quality verification after maestro-execute finishes"
+/maestro-overlay "Add CLI code quality verification after maestro-companion finishes"
 
 # Create manually
 # 1. Write the overlay JSON file
@@ -170,94 +170,3 @@ Run `maestro overlay list` to enter the terminal UI, supporting `[d] Delete` and
 **Priority**: `10-30` Infrastructure, `40-60` Standard steps, `70-90` Post-checks
 
 **Team Collaboration**: Use `bundle` / `import-bundle` to share, put project-level overlays under version control
-
----
-
-## Workflow Composer & Player
-
-Composer + Player translates natural language descriptions into reusable workflow templates for repeated execution.
-
-### Composer: Design Templates
-
-```bash
-/maestro-composer "First analyze code architecture, then formulate a plan, implement features, and finally test and review"
-/maestro-composer --resume                              # Resume interrupted design
-/maestro-composer -- edit ~/.maestro/templates/workflows/feature-plan-test.json  # Edit
-```
-
-5-stage interaction: Parse → Resolve → Enrich → Confirm → Persist
-
-<details>
-<summary>Mapping Steps to Executors</summary>
-
-| User Expression | Mapped Executor |
-|----------|-----------|
-| "Analyze", "Review", "Explore" | `maestro delegate` |
-| "Plan", "Design" | `maestro-plan` |
-| "Implement", "Develop" | `maestro-execute` |
-| "Test", "Verify" | `quality-test` |
-| "Code review" | `quality-review` |
-
-</details>
-
-<details>
-<summary>Checkpoint Auto-Injection Rules</summary>
-
-- After producing artifacts (plan, spec, analysis, etc.)
-- Before execution-type nodes
-- Before Agent-type nodes
-- Before long-running nodes
-- After testing completes
-- Pause points explicitly specified by the user
-
-</details>
-
-### Player: Execute Templates
-
-```bash
-/maestro-player --list                                  # List available templates
-/maestro-player feature-plan-test --context goal="Implement user authentication"  # Execute
-/maestro-player feature-plan-test --context goal="..." --dry-run  # Preview
-/maestro-player -c                                      # Resume interrupted execution
-```
-
-| Node Type | Execution Method |
-|---------|---------|
-| skill | `Skill(skill=..., args=...)` |
-| cli | `maestro delegate` (background) |
-| agent | `Agent(subagent_type=...)` |
-| checkpoint | Inline state saving + Optional pause |
-
-**Variable Binding**: `--context goal="..." scope="..."`, missing required variables will be interactively prompted
-
-**Runtime References**: `{goal}` User variable, `{N-001.session_id}` Upstream node output, `{prev_session_id}` Previous node
-
-<details>
-<summary>Session Tracking and Error Handling</summary>
-
-**Session Directory**: `.workflow/.maestro/player-<YYYYMMDD>-<HHmmss>/` (status.json, checkpoints/, artifacts/)
-
-**Codex Version**: Uses the `spawn_agents_on_csv` wave model, barrier nodes are executed individually, non-barrier nodes are executed in parallel
-
-**Error Handling**:
-| on_fail | Behavior |
-|---------|------|
-| `abort` | Ask the user: Retry/Skip/Abort |
-| `skip` | Mark as skipped, continue |
-| `retry` | Retry once, if still fails then abort |
-
-</details>
-
-### Example
-
-```bash
-# 1. Create template
-/maestro-composer "Analyze architecture → Formulate plan → Execute development → Test → Review"
-
-# 2. Reuse across different projects
-/maestro-player feature-full-lifecycle --context goal="Implement payment module"
-/maestro-player feature-full-lifecycle --context goal="Add notification system"
-
-# 3. Iterative optimization
-/maestro-composer --edit ~/.maestro/templates/workflows/feature-full-lifecycle.json
-```

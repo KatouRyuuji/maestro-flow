@@ -2,20 +2,20 @@
 title: "Miscellaneous Commands Guide"
 ---
 
-Auxiliary commands for maintenance, release, and spec management in Maestro workflows.
+Auxiliary commands for maintenance and spec management in Maestro workflows.
 
 ---
 
-## 1. maestro-amend — Incremental Patching
+## 1. maestro-overlay --amend — Incremental Patching
 
 Signal-driven Overlay generator. Collects workflow defect signals from multiple sources, diagnoses which commands need amendments, and batch-generates targeted Overlay patches. All modifications go through the Overlay system (`~/.maestro/overlays/*.json`) — no changes to original command files, idempotent and persists across reinstalls.
 
-Unlike `/maestro-overlay` (explicit single creation), `/maestro-amend` automatically **discovers** what needs fixing by analyzing workflow artifacts.
+Unlike `/maestro-overlay` (explicit single creation), `/maestro-overlay --amend` automatically **discovers** what needs fixing by analyzing workflow artifacts.
 
 ### Use Cases
 
-- `/maestro-execute` built-in verification gate (E2.7) exposed missing command steps
-- `/quality-review` identified process-level deficiencies
+- `execute` step built-in verification gate (E2.7) exposed missing command steps
+- `review` step identified process-level deficiencies
 - Workflow execution deviations traced to incomplete command definitions
 - Issue tracking shows recurring problems rooted in command design
 
@@ -45,12 +45,12 @@ Collect Signals → Diagnose & Classify → Group & Plan → Preview & Confirm �
 ### Common Usage
 
 ```bash
-/maestro-amend --from-verify .workflow/phases/1     # Discover gaps from verification
-/maestro-amend --from-review .workflow/phases/2      # Extract process improvements
-/maestro-amend --scan                                # Auto-scan all signals
-/maestro-amend "maestro-execute missing CLI verification step"  # Describe directly
-/maestro-amend --dry-run                             # Preview mode (no install)
-/maestro-amend -y                                    # Skip confirmation
+/maestro-overlay --amend --from-verify .workflow/phases/1    # Discover gaps from verification
+/maestro-overlay --amend --from-review .workflow/phases/2    # Extract process improvements
+/maestro-overlay --amend --scan                             # Auto-scan all signals
+/maestro-overlay --amend "execute step missing CLI verification"  # Describe directly
+/maestro-overlay --amend --dry-run                          # Preview mode (no install)
+/maestro-overlay --amend -y                                 # Skip confirmation
 ```
 
 ---
@@ -88,9 +88,9 @@ Detect Version → Preview Plan → Step-by-Step Confirm → Execute Migration �
 
 ---
 
-## 3. spec-remove — Spec Removal
+## 3. specs-remove — Spec Removal
 
-Removes a specified `<spec-entry>` from specs files. Symmetric counterpart to `/spec-add`, using `maestro wiki remove-entry` for atomic deletion with automatic index updates.
+Removes a specified `<spec-entry>` from specs files. The symmetric counterpart to `/maestro-spec` (recording), `specs-remove` is an orchestrator-dispatched step that uses `maestro wiki remove-entry` for atomic deletion with automatic index updates.
 
 ### Entry ID Format
 
@@ -102,66 +102,12 @@ spec-{file-stem}-{NNN}  (e.g., spec-learnings-003)
 
 ```bash
 maestro wiki list --type spec --json    # List all spec entries
-/spec-load --keyword auth               # Search by keyword
-/spec-remove spec-learnings-003          # Remove specific entry
+maestro spec load --keyword auth        # Search by keyword (CLI)
+specs-remove spec-learnings-003         # Remove specific entry (step, orchestrator-dispatched)
 ```
 
 ### Notes
 
-- Requires `.workflow/specs/` initialized via `/spec-setup`
+- Requires `.workflow/specs/` initialized via `maestro spec init`
 - Entry ID must be a spec type child node
-- Removal is irreversible (preview with `/spec-load` first)
-
----
-
-## 4. maestro-milestone-release — Milestone Release
-
-Packages a completed milestone as a releasable version. Performs semver bumping, generates Changelog, creates annotated git tag, and optionally pushes to remote. Final SDLC delivery step.
-
-### Prerequisites
-
-| Condition | Description |
-|-----------|-------------|
-| Milestone completed | `/maestro-milestone-complete` executed |
-| Audit passed | Audit report verdict is PASS |
-| Clean workspace | No uncommitted changes (except `--dry-run`) |
-
-### Flags
-
-| Flag | Description |
-|------|-------------|
-| `<version>` | Explicitly specify version |
-| `--bump patch\|minor\|major` | Increment version (default: `minor`) |
-| `--dry-run` | Preview only, no writes |
-| `--no-tag` | Skip git tag |
-| `--no-push` | Skip push |
-
-### Release Flow
-
-```
-Verify Prerequisites → Resolve Version → Collect Changes → Generate Changelog → Write Version → Create Tag → Push
-```
-
-### Milestone Lifecycle
-
-```
-/maestro-milestone-complete → /maestro-milestone-audit → /maestro-milestone-release
-```
-
-Order cannot be reversed: complete produces summary → audit validates → release publishes.
-
-### Common Usage
-
-```bash
-/maestro-milestone-release                  # Standard release (minor bump)
-/maestro-milestone-release --bump patch     # Patch version
-/maestro-milestone-release 2.0.0            # Explicit version
-/maestro-milestone-release --dry-run        # Preview only
-/maestro-milestone-release --no-push        # Release without pushing
-```
-
-### Notes
-
-- If manifest file doesn't exist, manually specify version and use `--no-tag`
-- Push failure: manually run `git push --follow-tags`
-- `--dry-run` writes nothing and creates no tags
+- Removal is irreversible (preview with `maestro spec load` first)

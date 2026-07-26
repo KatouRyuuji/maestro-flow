@@ -8,17 +8,17 @@ title: "Skill 参数配置指南"
 
 ## 概览
 
-Maestro Skill Config 解决常见痛点：每次运行 `maestro-execute` skill 都要手动输入 `--auto-commit --method auto -y`。
+Maestro Skill Config 解决常见痛点：每次运行 `execute` skill 都要手动输入 `--auto-commit --method auto -y`。
 
 ```
-调用 maestro-execute 3（skill，由生命周期派发）
+调用 execute 3（skill，由生命周期派发）
        ↓
 skill-context hook (UserPromptSubmit)
        ↓ 匹配 skill → 加载配置 → 对比已有参数
        ↓
 additionalContext 注入默认参数
        ↓
-等同于 maestro-execute 3 --auto-commit --method auto -y
+等同于 execute 3 --auto-commit --method auto -y
 ```
 
 ---
@@ -50,7 +50,7 @@ maestro hooks install --level standard  # 安装
 {
   "version": "1.0.0",
   "skills": {
-    "maestro-execute": {
+    "execute": {
       "params": {
         "--auto-commit": true,
         "--method": "auto",
@@ -58,7 +58,7 @@ maestro hooks install --level standard  # 安装
       },
       "updated": "2026-05-01T12:00:00Z"
     },
-    "maestro-plan": {
+    "plan": {
       "params": {
         "--auto": true
       }
@@ -76,12 +76,12 @@ maestro hooks install --level standard  # 安装
 ## CLI 使用
 
 ```bash
-maestro config list                        # 列出所有可配置 skill
-maestro config set <skill> <param> <value> [-g]  # 设置（-g 全局）
-maestro config show [skill]                # 查看配置
-maestro config show --json                 # JSON 格式
-maestro config unset <skill> <param> [-g]  # 移除单个参数
-maestro config reset [skill] [-g]          # 重置配置
+maestro config skills list                              # 列出所有可配置 skill
+maestro config skills set <skill> <param> <value> [-g]  # 设置（-g 全局）
+maestro config skills show [skill]                      # 查看配置
+maestro config skills show --json                       # JSON 格式
+maestro config skills unset <skill> <param> [-g]        # 移除单个参数
+maestro config skills reset [skill] [-g]                # 重置配置
 ```
 
 > 参数名无需 `--` 前缀，CLI 自动补全。
@@ -91,8 +91,8 @@ maestro config reset [skill] [-g]          # 重置配置
 ## TUI 交互界面
 
 ```bash
-maestro config                    # 启动仪表盘
-maestro config edit <skill>       # 编辑特定 skill
+maestro config skills               # 启动仪表盘
+maestro config skills edit <skill>  # 编辑特定 skill
 ```
 
 ### 仪表盘
@@ -139,20 +139,20 @@ maestro config edit <skill>       # 编辑特定 skill
 
 ```bash
 # 开发模式（自动提交 + 跳过确认）
-maestro config set maestro-execute auto-commit true -g
-maestro config set maestro-execute y true -g
-maestro config set maestro-execute method auto -g
+maestro config skills set execute auto-commit true -g
+maestro config skills set execute y true -g
+maestro config skills set execute method auto -g
 
 # 审查模式（深度审查）
-maestro config set quality-review level deep -g
+maestro config skills set review level deep -g
 
 # 规划模式（自动 + 协作）
-maestro config set maestro-plan auto true -g
-maestro config set maestro-plan collab true
+maestro config skills set plan auto true -g
+maestro config skills set plan collab true
 
 # 分析模式（静默）
-maestro config set maestro-analyze y true -g
-maestro config set maestro-analyze c true -g
+maestro config skills set analyze y true -g
+maestro config skills set analyze c true -g
 ```
 
 ---
@@ -170,11 +170,11 @@ maestro config set maestro-analyze c true -g
 
 | 命令 | 说明 |
 |------|------|
-| `maestro config` | TUI 仪表盘 |
-| `maestro config list` | 列出所有可配置 skill |
-| `maestro config show [skill]` | 查看配置 |
-| `maestro config set <skill> <param> <value> [-g]` | 设置参数默认值 |
-| `maestro config unset <skill> <param> [-g]` | 移除参数默认值 |
-| `maestro config reset [skill] [-g]` | 重置配置 |
-| `maestro config edit <skill>` | TUI 编辑特定 skill |
+| `maestro config skills` | TUI 仪表盘 |
+| `maestro config skills list` | 列出所有可配置 skill |
+| `maestro config skills show [skill]` | 查看配置 |
+| `maestro config skills set <skill> <param> <value> [-g]` | 设置参数默认值 |
+| `maestro config skills unset <skill> <param> [-g]` | 移除参数默认值 |
+| `maestro config skills reset [skill] [-g]` | 重置配置 |
+| `maestro config skills edit <skill>` | TUI 编辑特定 skill |
 | `maestro cfg ...` | `config` 的别名 |
