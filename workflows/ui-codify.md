@@ -65,7 +65,7 @@ Completion report
 # 验证 source_path 存在
 if [ -z "$source_path" ]; then
   echo "E001: Source path argument required"
-  echo "USAGE: /maestro-ui-codify <source-path> [--package-name <name>] [--output-dir <path>] [--overwrite]"
+  echo "USAGE: /maestro-impeccable --codify <source-path> [--package-name <name>] [--output-dir <path>] [--overwrite]"
   exit 1
 fi
 

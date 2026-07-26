@@ -242,7 +242,7 @@ maestro load --type spec --category coding
 | What | Command |
 |------|---------|
 | Spec | `/maestro-spec add <category> "title" "content" --keywords kw1,kw2 --description "summary"` |
-| Knowhow | `/maestro-manage knowledge capture` (`--spec-category <cat>` for agent injection) |
+| Knowhow | `/maestro-knowhow` (`--spec-category <cat>` for agent injection) |
 
 Category routing: decisions→`arch`, patterns→`coding`, pitfalls→`debug`/`learning`, rules→`review`, tests→`test`.
 Entry routing: skill commands run guided workflows; `maestro spec add` CLI writes directly (use `--json` in the supersede flow to obtain the sid).
@@ -256,7 +256,7 @@ Entry routing: skill commands run guided workflows; `maestro spec add` CLI write
 | **conflict** | Both rules are valid | `maestro spec conflict mark <file> <line> --note "<reason>"` | Old entry `contested` (search ×0.5), human adjudicates |
 
 Confidence levels: `high` → `medium` (default) → `low` (`[LOW CONFIDENCE]`) → `contested` (`[CONTESTED]`).
-Resolution: `/maestro-manage knowledge audit`
+Resolution: `/maestro-knowledge audit`
 
 ### Health & Maintenance
 

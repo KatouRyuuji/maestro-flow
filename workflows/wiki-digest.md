@@ -25,12 +25,12 @@ Unlike `maestro wiki list` which shows raw entries, this workflow synthesizes an
 ## Argument Shape
 
 ```
-/maestro-manage knowledge wiki digest                                  → digest entire wiki
-/maestro-manage knowledge wiki digest auth                             → topic-scoped digest
-/maestro-manage knowledge wiki digest --recent 14                      → entries updated in last 14 days
-/maestro-manage knowledge wiki digest --type spec                      → spec entries only
-/maestro-manage knowledge wiki digest --format full                    → detailed per-entry summaries
-/maestro-manage knowledge wiki digest auth --create-issues             → digest + auto-create gap issues
+/maestro-knowledge wiki digest                                  → digest entire wiki
+/maestro-knowledge wiki digest auth                             → topic-scoped digest
+/maestro-knowledge wiki digest --recent 14                      → entries updated in last 14 days
+/maestro-knowledge wiki digest --type spec                      → spec entries only
+/maestro-knowledge wiki digest --format full                    → detailed per-entry summaries
+/maestro-knowledge wiki digest auth --create-issues             → digest + auto-create gap issues
 ```
 
 | Flag | Effect |
@@ -178,8 +178,8 @@ For each knowledge gap from Stage 5: dedup against `.workflow/issues/issues.json
 | Action | Command |
 |--------|---------|
 | Deep dive on a theme | `/maestro-learn follow <wiki-id>` |
-| Fix graph connectivity | `/maestro-manage knowledge wiki connect --fix` |
+| Fix graph connectivity | `/maestro-knowledge wiki connect --fix` |
 | Decompose for patterns | `/maestro-learn decompose <path>` |
 | Create missing entries | `maestro wiki create --type <type> --slug <slug>` |
-| Triage gap issues | `/maestro-manage issue list --source wiki-digest` |
+| Triage gap issues | `/maestro-issue list --source wiki-digest` |
 

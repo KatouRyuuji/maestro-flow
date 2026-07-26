@@ -124,6 +124,5 @@ Display:
   Session: .workflow/sessions/{sessionId}/ synced
 
   Next steps:
-    /maestro-manage status          -- View dashboard
     /maestro-session-seal           -- Seal merged session (knowledge extraction + DAG progression)
 ```

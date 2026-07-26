@@ -285,7 +285,7 @@ Goals:      {done}/{total} ({skipped} skipped)
 
 | Condition | Next |
 |-----------|------|
-| Discovery issues created | `$maestro-manage issue list --source ui-odyssey` |
+| Discovery issues created | `$maestro-issue list --source ui-odyssey` |
 | Backend/data issue found | `$maestro-odyssey <target> --mode planex` |
 | Deep bug investigation | `$maestro-odyssey <target> --mode debug` |
 | Code quality review | `$maestro-odyssey <changed-files> --mode review` |

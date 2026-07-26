@@ -19,14 +19,14 @@
 ## Argument Shape
 
 ```
-/maestro-manage knowledge audit --scope all                       → 全量审查三存储（交互式）
-/maestro-manage knowledge audit --scope spec --level P0           → 仅扫 spec 的 P0 问题
-/maestro-manage knowledge audit --scope artifact --timeline T2,T3 → 仅查 milestone 失效与时间倒挂
-/maestro-manage knowledge audit --scope all --since 2026-03-01    → 增量审查
-/maestro-manage knowledge audit --scope spec --milestone M2       → 限定 milestone 上下文
-/maestro-manage knowledge audit --scope all --report              → 仅出报告不动盘
-/maestro-manage knowledge audit --scope all --dry-run             → 完整预演含交互
-/maestro-manage knowledge audit --scope artifact --purge          → 物理擦除（需双重确认）
+/maestro-knowledge audit --scope all                       → 全量审查三存储（交互式）
+/maestro-knowledge audit --scope spec --level P0           → 仅扫 spec 的 P0 问题
+/maestro-knowledge audit --scope artifact --timeline T2,T3 → 仅查 milestone 失效与时间倒挂
+/maestro-knowledge audit --scope all --since 2026-03-01    → 增量审查
+/maestro-knowledge audit --scope spec --milestone M2       → 限定 milestone 上下文
+/maestro-knowledge audit --scope all --report              → 仅出报告不动盘
+/maestro-knowledge audit --scope all --dry-run             → 完整预演含交互
+/maestro-knowledge audit --scope artifact --purge          → 物理擦除（需双重确认）
 ```
 
 | Flag | Effect |
@@ -236,7 +236,7 @@ Action?  [k]eep / [d]eprecate / [D]elete / [s]kip / [a]ll-keep / [q]uit
 
 | 条件 | 二次确认 |
 |---|---|
-| `[D]elete` 一个 artifact 且 harvest-log 无该 artifact | `This artifact has NO harvest records. Run /maestro-manage knowledge harvest first? [Y/n]` |
+| `[D]elete` 一个 artifact 且 harvest-log 无该 artifact | `This artifact has NO harvest records. Run /maestro-knowledge harvest first? [Y/n]` |
 | `--purge` 任意 artifact | `WARNING: --purge will permanently destroy {path} from disk. Type the artifact id to confirm:` |
 | `[D]elete` 一个被其他 spec `supersedes` 引用的条目 | `This spec is referenced by N supersedes chains. Deleting will dangle them. Continue? [y/N]` |
 
@@ -338,7 +338,7 @@ Scope: all
   Backup:  .workflow/.trash/knowledge-audit-20260522T154500/
 
 Next:
-  → 抢救未抽取 artifact:   /maestro-manage knowledge harvest <ids>
+  → 抢救未抽取 artifact:   /maestro-knowledge harvest <ids>
   → 验证现状:              /maestro-spec load --role implement
   → 复审 wiki 状态:        maestro wiki list --status deprecated
   → 周期巡检 (建议):       milestone 结束时跑 --scope all --report
@@ -352,7 +352,7 @@ Next:
 2. **Backup before mutate** — Stage 6 失败则禁止 Stage 7；state.json 原子写（备份 → 写新 → re-read 校验）
 3. **Purge restricted** — `--purge` 仅限 artifact scope；spec/knowhow 永不物理删除（最多 delete 到 `.trash/`）
 4. **Double confirmation** — `--purge` 需 flag + 交互输入 artifact id 双重确认
-5. **Rescue before delete** — 删 artifact 前若 harvest-log 无记录，强制提示先跑 `/maestro-manage knowledge harvest`
+5. **Rescue before delete** — 删 artifact 前若 harvest-log 无记录，强制提示先跑 `/maestro-knowledge harvest`
 6. **No dedup re-run** — audit 不做"是否重复"判断（harvest 负责），只做"是否矛盾/失效/老化"
 7. **Graceful degradation** — LLM detector 不可用时跳过 B/G 类语义场景，A/D/F 类正则+图算法仍可执行; Stage 8 报告加 partial_audit: true, skipped: [B,G] 并标 [LOW CONFIDENCE]
 8. **Idempotent** — 同一存储状态下重跑 `--dry-run` 必须输出一致的 finding 集

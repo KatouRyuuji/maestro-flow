@@ -336,7 +336,7 @@ Blueprint specification package is complete (all 6 phases done). Suggest next wo
 | Analyze specification | `analyze --from blueprint:{artifact_id}` |
 | Generate roadmap | `roadmap --from blueprint:{artifact_id}` |
 | Plan first phase | `plan 1 --from blueprint:{artifact_id}` |
-| Create issues | Recommend `/maestro-manage issue create ...` per Epic |
+| Create issues | Recommend `/maestro-issue create ...` per Epic |
 | Export only | Blueprint complete, no further action |
 
 ### Step 11: Final Report

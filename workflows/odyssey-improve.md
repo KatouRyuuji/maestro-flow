@@ -235,7 +235,7 @@ Goals:       {done}/{total} ({skipped} skipped)
 
 | Condition | Next |
 |-----------|------|
-| Discovery issues created | `/maestro-manage issue list --source improve-odyssey` |
+| Discovery issues created | `/maestro-issue list --source improve-odyssey` |
 | Deeper debug needed | `/maestro-odyssey <finding> --mode debug` |
 | Formal review of changes | `/maestro-odyssey <changed-files> --mode review` |
 | UI-related findings | `/maestro-odyssey <component> --mode ui` |

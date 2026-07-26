@@ -381,7 +381,7 @@ MANDATORY: apply ~/.maestro/workflows/roadmap-common.md **Roadmap Template** for
 |--------|--------|
 | Initialize project | Recommend `/maestro-init` |
 | Plan first phase | step `plan 1` |
-| Create issues | Recommend `/maestro-manage issue create ...` per phase |
+| Create issues | Recommend `/maestro-issue create ...` per phase |
 | Export only | Spec + roadmap complete, no further action |
 
 ### Step 12: Final Report

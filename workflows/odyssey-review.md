@@ -240,7 +240,7 @@ Goals:      {done}/{total} ({skipped} skipped)
 
 | Condition | Next |
 |-----------|------|
-| Discovery issues | `/maestro-manage issue list --source review-odyssey` |
+| Discovery issues | `/maestro-issue list --source review-odyssey` |
 | Document pattern | `/maestro-learn decompose <module>` |
 | Debug root cause | `/maestro-odyssey <issue> --mode debug` |
 | Second opinion | `/maestro-learn consult <understanding.md>` |

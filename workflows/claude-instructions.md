@@ -216,7 +216,7 @@ maestro load --type spec --category coding
 | What | Command |
 |------|---------|
 | Spec | `/maestro-spec add <category> "title" "content" --keywords kw1,kw2 --description "summary"` |
-| Knowhow | `/maestro-manage knowledge capture` (`--spec-category <cat>` for agent injection) |
+| Knowhow | `/maestro-knowhow` (`--spec-category <cat>` for agent injection) |
 
 Category routing: decisions→`arch`, patterns→`coding`, pitfalls→`debug`/`learning`, rules→`review`, tests→`test`.
 Entry routing: slash commands run guided workflows; `maestro spec add` CLI writes directly (use `--json` in the supersede flow to obtain the sid).
@@ -229,7 +229,7 @@ New knowledge relates to old entries in two ways — different semantics, differ
 | Relation | Scenario | Command | Effect |
 |----------|----------|---------|--------|
 | **supersede** | New rule replaces old rule (evolution) | `maestro spec supersede <old-sid> --by <new-sid>` | Old entry `deprecated` (excluded from search/load), evolution chain preserved |
-| **conflict** | Both rules are valid (dispute) | `maestro spec conflict mark <file> <line> --note "<reason>"` | Old entry `contested` (search ×0.5, `[CONTESTED]` badge, still injected), human adjudicates — resolution via `/maestro-manage knowledge audit` |
+| **conflict** | Both rules are valid (dispute) | `maestro spec conflict mark <file> <line> --note "<reason>"` | Old entry `contested` (search ×0.5, `[CONTESTED]` badge, still injected), human adjudicates — resolution via `/maestro-knowledge audit` |
 
 Supersede flow: `maestro spec add ... --json` (→ new-sid) → `spec supersede <old-sid> --by <new-sid>`; view the evolution chain with `spec history <sid>`.
 

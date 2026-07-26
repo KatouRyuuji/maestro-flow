@@ -22,13 +22,13 @@ Complements `wiki-connect.md` (link discovery) and `wiki-digest.md` (synthesis) 
 ## Argument Shape
 
 ```
-/maestro-manage knowledge wiki                                   → health dashboard (default)
-/maestro-manage knowledge wiki health                            → health dashboard
-/maestro-manage knowledge wiki search auth                       → search for "auth" with follow-up actions
-/maestro-manage knowledge wiki cleanup                           → find orphans, broken links, stale entries
-/maestro-manage knowledge wiki cleanup --fix                     → auto-fix issues
-/maestro-manage knowledge wiki stats                             → graph statistics
-/maestro-manage knowledge wiki stats --type spec                 → spec-only statistics
+/maestro-knowledge wiki                                   → health dashboard (default)
+/maestro-knowledge wiki health                            → health dashboard
+/maestro-knowledge wiki search auth                       → search for "auth" with follow-up actions
+/maestro-knowledge wiki cleanup                           → find orphans, broken links, stale entries
+/maestro-knowledge wiki cleanup --fix                     → auto-fix issues
+/maestro-knowledge wiki stats                             → graph statistics
+/maestro-knowledge wiki stats --type spec                 → spec-only statistics
 ```
 
 | Flag | Effect |
@@ -49,9 +49,9 @@ MANDATORY, NOT SUBSTITUTABLE by manual Read/Grep: graph operations (`orphans`, `
 
 ### Step 2: Render Dashboard
 
-Display: health score, entry counts by type, broken links, orphan count, top hubs. Include health status message and quick-action commands (`/maestro-manage knowledge wiki connect --fix`, `/maestro-manage knowledge wiki digest`, `/maestro-manage knowledge wiki cleanup --fix`, `maestro wiki graph`).
+Display: health score, entry counts by type, broken links, orphan count, top hubs. Include health status message and quick-action commands (`/maestro-knowledge wiki connect --fix`, `/maestro-knowledge wiki digest`, `/maestro-knowledge wiki cleanup --fix`, `maestro wiki graph`).
 
-> **Scope split (complementary, not conflicting):** `/maestro-manage knowledge wiki connect --fix` repairs/augments `related` links between existing entries (no deletion). `/maestro-manage knowledge wiki cleanup --fix` deletes/flags orphans and removes broken-link entries from frontmatter. Run `wiki-connect` first to maximize link recovery, then `cleanup` to handle the true residual orphans.
+> **Scope split (complementary, not conflicting):** `/maestro-knowledge wiki connect --fix` repairs/augments `related` links between existing entries (no deletion). `/maestro-knowledge wiki cleanup --fix` deletes/flags orphans and removes broken-link entries from frontmatter. Run `wiki-connect` first to maximize link recovery, then `cleanup` to handle the true residual orphans.
 
 ---
 
@@ -65,7 +65,7 @@ maestro wiki search "<query>" --json
 
 ### Step 2: Display Results
 
-Show table of results (ID, type, title, tags) with action hints: `maestro wiki get <id>`, `backlinks <id>`, `/maestro-learn follow <id>`, `/maestro-manage knowledge wiki connect --scope <type>`.
+Show table of results (ID, type, title, tags) with action hints: `maestro wiki get <id>`, `backlinks <id>`, `/maestro-learn follow <id>`, `/maestro-knowledge wiki connect --scope <type>`.
 
 ### Step 3: Interactive Follow-up
 

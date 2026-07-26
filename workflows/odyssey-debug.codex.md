@@ -298,7 +298,7 @@ Goals:      {done}/{total} ({skipped} skipped)
 
 | Condition | Next |
 |-----------|------|
-| Discovery issues | `$maestro-manage issue list --source debug-odyssey` |
+| Discovery issues | `$maestro-issue list --source debug-odyssey` |
 | Document pattern | `$maestro-learn decompose <module>` |
 | Formal review | `$maestro-odyssey <changed-files> --mode review` |
 | Second opinion | `$maestro-learn consult <understanding.md>` |

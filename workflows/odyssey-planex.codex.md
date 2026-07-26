@@ -343,7 +343,7 @@ Status:      {ALL_PASSED|PARTIAL|ESCALATED}
 
 | Condition | Next |
 |-----------|------|
-| Discovery issues created | `$maestro-manage issue list --source planex-odyssey` |
+| Discovery issues created | `$maestro-issue list --source planex-odyssey` |
 | Deeper debug needed | `$maestro-odyssey <finding> --mode debug` |
 | Formal review of changes | `$maestro-odyssey <changed-files> --mode review` |
 | UI-related findings | `$maestro-odyssey <component> --mode ui` |

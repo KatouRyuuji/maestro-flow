@@ -253,7 +253,7 @@ Goals:       {done}/{total} ({skipped} skipped)
 |-----------|------|
 | Critical findings need fix | `/maestro-odyssey <finding> --mode improve` |
 | Deeper debug needed | `/maestro-odyssey <finding> --mode debug` |
-| Discovery issues created | `/maestro-manage issue list --source security-odyssey` |
+| Discovery issues created | `/maestro-issue list --source security-odyssey` |
 | Need deeper audit tier | `/maestro-odyssey <target> --mode security --tier deep` |
 | Document pattern | `/maestro-learn decompose <module>` |
 | Second opinion | `/maestro-learn consult <understanding.md>` |
