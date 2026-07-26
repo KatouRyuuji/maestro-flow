@@ -276,4 +276,4 @@ Execution process -> /maestro-knowhow -> .workflow/knowhow/ -> wiki-index.json -
 |----------|-------|
 | **Daily Development** | `/maestro-next` -> quick note on completion -> `/maestro-knowhow tip "discovered trick"` |
 | **Milestone Completion** | `/maestro-knowledge harvest --recent 30` -> `/maestro-knowhow compact` -> `/maestro-knowledge wiki connect --fix` |
-| **Project Handoff** | `maestro knowhow list` -> `maestro knowhow search "core concept"` -> `maestro spec load --role implement` |
+| **Project Handoff** | `maestro knowhow list` -> `maestro knowhow search "core concept"` -> `maestro spec load --category coding` |

@@ -210,19 +210,20 @@ maestro delegate "..." --rule development-implement-feature --mode write
 项目级知识自动注入，Agent 启动时无需手动粘贴上下文：
 
 ```bash
-# 初始化（扫描代码库生成规范文件）
-/maestro-spec setup                                     # 已有项目：扫描代码库填充 specs
+# 初始化
+maestro spec init                                       # 播种骨架文件（仅骨架，不扫描代码库）
+maestro run skill specs-setup                           # 已有项目：扫描代码库，用检出的约定填充 specs
 # 新项目可跳过 -- specs 由 analyze/plan/execute 渐进填充
 
-# 录入规范
-/maestro-spec add coding "所有 API 使用 Hono 框架"
-/maestro-spec add arch "通知模块使用事件驱动架构"
-/maestro-spec add learning "分页 offset=0 会越界"
+# 录入规范（/maestro-spec 只做录入，category 自动推断，也可显式指定）
+/maestro-spec coding "所有 API 使用 Hono 框架"
+/maestro-spec arch "通知模块使用事件驱动架构"
+/maestro-spec learning "分页 offset=0 会越界"
 
-# 加载规范
-/maestro-spec load --role implement
-/maestro-spec load --keyword auth
-/maestro-spec load --role implement --keyword auth
+# 加载规范（CLI）
+maestro spec load --category coding
+maestro spec load --keyword auth
+maestro spec load --category coding --keyword auth
 ```
 
 **自动注入**：Hook 在 Agent 启动时按类型自动注入对应规范（coder→coding, tester→test, debugger→debug）。

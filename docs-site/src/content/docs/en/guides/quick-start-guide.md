@@ -210,19 +210,20 @@ maestro delegate "..." --rule development-implement-feature --mode write
 Project-level knowledge auto-injection — no manual context pasting when the Agent starts:
 
 ```bash
-# Initialize (scan the codebase to generate spec files)
-/maestro-spec setup                                     # Existing projects: scan the codebase to populate specs
+# Initialize
+maestro spec init                                       # Seed skeleton files (skeleton only, no codebase scan)
+maestro run skill specs-setup                           # Existing projects: scan the codebase to populate specs
 # New projects can skip -- specs are progressively populated by analyze/plan/execute
 
-# Add specs
-/maestro-spec add coding "所有 API 使用 Hono 框架"
-/maestro-spec add arch "通知模块使用事件驱动架构"
-/maestro-spec add learning "分页 offset=0 会越界"
+# Add specs (/maestro-spec only records; category is inferred, or state it explicitly)
+/maestro-spec coding "所有 API 使用 Hono 框架"
+/maestro-spec arch "通知模块使用事件驱动架构"
+/maestro-spec learning "分页 offset=0 会越界"
 
-# Load specs
-/maestro-spec load --role implement
-/maestro-spec load --keyword auth
-/maestro-spec load --role implement --keyword auth
+# Load specs (CLI)
+maestro spec load --category coding
+maestro spec load --keyword auth
+maestro spec load --category coding --keyword auth
 ```
 
 **Auto-injection**: Hooks auto-inject the corresponding specs by type when the Agent starts (coder→coding, tester→test, debugger→debug).

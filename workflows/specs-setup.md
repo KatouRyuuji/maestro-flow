@@ -15,7 +15,7 @@ System specs initialization -- scan project structure, detect tech stack, genera
 ## Trigger
 
 - First `/maestro-init` (automatic)
-- Manual `/maestro-spec setup`
+- Manual `maestro run skill specs-setup` (CLI-only seeding, without the codebase scan: `maestro spec init`)
 
 ## Prerequisites
 
@@ -133,7 +133,7 @@ category: learning
 # Learnings
 
 Bugs, gotchas, and lessons learned during development.
-Add entries with: `/maestro-spec add learning <description>`
+Add entries with: `/maestro-spec learning <description>`
 
 ## Entries
 
@@ -311,10 +311,10 @@ Display list of all created files grouped by destination:
 - {other skips}
 
 ## Deferred (created on demand)
-- debug-notes.md, review-standards.md — use /maestro-spec add when needed
+- debug-notes.md, review-standards.md — use /maestro-spec when needed
 ```
 
-Note that `debug-notes.md` and `review-standards.md` are created on demand via `/maestro-spec add`, and any `.proposed.md` files indicate an existing recipe was not overwritten — review and merge manually.
+Note that `debug-notes.md` and `review-standards.md` are created on demand via `/maestro-spec`, and any `.proposed.md` files indicate an existing recipe was not overwritten — review and merge manually.
 
 ## Output
 

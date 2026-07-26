@@ -223,7 +223,7 @@ Fragments extracted: 8 (filtered from 12 by confidence ≥ 0.5)
 
 ### 6b. Spec routing
 
-MANDATORY recommendation: `/maestro-spec add <spec_type> <content>`. Mapping: pattern→pattern, decision→decision, bug→bug, knowhow→rule.
+MANDATORY recommendation: `/maestro-spec <category> <content>`. Mapping: pattern→`coding`, decision→`arch`, bug→`debug`, knowhow→`review`.
 
 ### 6c. Issue routing
 
@@ -327,7 +327,7 @@ Next:
   → Review wiki entries: maestro wiki list --type note
   → Triage issues: recommend `/maestro-issue list --source harvest`
   → Connect wiki graph: recommend `/maestro-knowledge wiki --fix`
-  → View specs: recommend `/maestro-spec load --role implement`
+  → View specs: recommend `maestro spec load --category coding`
 ```
 
 ---

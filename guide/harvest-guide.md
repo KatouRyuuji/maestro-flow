@@ -276,4 +276,4 @@ Workflow 存储面向项目内知识，system 存储面向跨会话持久记忆�
 |------|------|
 | **日常开发** | `/maestro-next` → 完成后随手记 → `/maestro-knowhow tip "发现的技巧"` |
 | **里程碑结束** | `/maestro-knowledge harvest --recent 30` → `/maestro-knowhow compact` → `/maestro-knowledge wiki connect --fix` |
-| **项目交接** | `maestro knowhow list` → `maestro knowhow search "核心概念"` → `maestro spec load --role implement` |
+| **项目交接** | `maestro knowhow list` → `maestro knowhow search "核心概念"` → `maestro spec load --category coding` |

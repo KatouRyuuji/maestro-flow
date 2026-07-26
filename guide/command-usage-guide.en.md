@@ -307,9 +307,10 @@ execute → review → auto-test → test → /maestro-session-seal
 ## 6. Specification and Knowledge
 
 ```bash
-maestro spec init                                  # Scan project for conventions
+maestro spec init                                  # Seed skeleton spec files (no codebase scan)
+maestro run skill specs-setup                      # Existing projects: scan the codebase
 /maestro-spec coding "All APIs use Hono framework"  # Record a spec
-maestro spec load --role implement                 # Load specs
+maestro spec load --category coding                 # Load specs
 maestro kg index                                   # Rebuild codebase docs
 maestro search "authentication" --type knowhow     # Search knowhow
 maestro session status                             # Project dashboard

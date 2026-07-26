@@ -107,7 +107,7 @@ If `.workflow/specs/` does not exist:
 1. MANDATORY, NOT SUBSTITUTABLE by manual Read/Grep: Run `Bash("maestro spec init")` — creates empty seed files (skeleton only, no codebase scan)
 
 2. If project has existing source files (package.json, tsconfig.json, pyproject.toml, go.mod, etc.):
-   - MANDATORY recommendation: `/maestro-spec setup` — scan codebase and populate specs with detected conventions when invoked
+   - MANDATORY recommendation: `maestro run skill specs-setup` — scan codebase and populate specs with detected conventions when invoked
    - Note: Specs are further enriched by analyze, plan, and execute stages via `maestro spec add`
 
 3. If greenfield project (no source files):

@@ -188,8 +188,9 @@ maestro delegate "..." --rule development-implement-feature --mode write
 Project-level knowledge auto-injection — no manual context pasting when Agents start:
 
 ```bash
-# Initialize (scan codebase to generate spec files, CLI)
-maestro spec init                              # Existing projects: scan codebase to populate specs
+# Initialize
+maestro spec init                              # Seed skeleton files (skeleton only, no codebase scan)
+maestro run skill specs-setup                  # Existing projects: scan the codebase to populate specs
 # New projects can skip -- specs are progressively populated by analyze/plan/execute
 
 # Add specs (/maestro-spec only records; category is inferred, or state it explicitly)
@@ -198,9 +199,9 @@ maestro spec init                              # Existing projects: scan codebas
 /maestro-spec learning "Pagination offset=0 causes off-by-one"
 
 # Load specs (CLI)
-maestro spec load --role implement
+maestro spec load --category coding
 maestro spec load --keyword auth
-maestro spec load --role implement --keyword auth
+maestro spec load --category coding --keyword auth
 ```
 
 **Auto-injection**: Hooks auto-inject specs by Agent type at startup (coder→coding, tester→test, debugger→debug).

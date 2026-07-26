@@ -22,9 +22,11 @@ Uses `maestro wiki remove-entry` for atomic removal — the entry is deleted fro
 ## Argument Shape
 
 ```
-/maestro-spec remove spec-learnings-003                → remove entry 003 from learnings.md
-/maestro-spec remove spec-coding-conventions-001       → remove entry 001 from coding-conventions.md
-/maestro-spec remove spec-quality-rules-005 -y         → remove without confirmation
+$ARGUMENTS: "<entry-id> [-y]"
+
+spec-learnings-003                → remove entry 003 from learnings.md
+spec-coding-conventions-001       → remove entry 001 from coding-conventions.md
+spec-quality-rules-005 -y         → remove without confirmation
 ```
 
 | Flag | Effect |
@@ -104,6 +106,6 @@ From:      .workflow/specs/{filename}
 Remaining: {remaining entry count} entries in {filename}
 
 To verify:  maestro wiki list --type spec --category {category}
-To re-add:  /maestro-spec add {category} {content}
+To re-add:  /maestro-spec {category} {content}
 ```
 

@@ -339,7 +339,7 @@ Scope: all
 
 Next:
   → 抢救未抽取 artifact:   /maestro-knowledge harvest <ids>
-  → 验证现状:              /maestro-spec load --role implement
+  → 验证现状:              maestro spec load --category coding
   → 复审 wiki 状态:        maestro wiki list --status deprecated
   → 周期巡检 (建议):       milestone 结束时跑 --scope all --report
 ```

@@ -215,7 +215,7 @@ maestro load --type spec --category coding
 
 | What | Command |
 |------|---------|
-| Spec | `/maestro-spec add <category> "title" "content" --keywords kw1,kw2 --description "summary"` |
+| Spec | `/maestro-spec "<constraint>"` (guided; category inferred, or state it as the first word) · `maestro spec add <category> "title" "content" --keywords kw1,kw2 --description "summary"` (direct CLI write) |
 | Knowhow | `/maestro-knowhow` (`--spec-category <cat>` for agent injection) |
 
 Category routing: decisions→`arch`, patterns→`coding`, pitfalls→`debug`/`learning`, rules→`review`, tests→`test`.

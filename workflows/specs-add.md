@@ -49,7 +49,7 @@ content  -- free-text description of the entry
 ## Prerequisites
 
 - Target specs directory must exist:
-  - `project`: `.workflow/specs/` (run `/maestro-spec setup` or `maestro spec init`)
+  - `project`: `.workflow/specs/` (run `maestro spec init`, or `maestro run skill specs-setup` to also scan the codebase)
   - `global`: `~/.maestro/specs/` (run `maestro spec init --scope global`)
   - `team`: `.workflow/collab/specs/` (run `maestro spec init --scope team`)
   - `personal`: `.workflow/collab/specs/{uid}/` (run `maestro spec init --scope personal`)

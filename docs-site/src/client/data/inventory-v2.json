@@ -154,9 +154,8 @@
       "name": "maestro-spec",
       "file": ".claude/commands/maestro-spec.md",
       "category": "spec",
-      "description": "Manage project specs — add, load, remove entries, or initialize the spec system. Unified command with subcommands.",
-      "argumentHint": "add|load|remove|setup [args...]",
-      "subcommands": ["add", "load", "remove", "setup"]
+      "description": "Intent-driven spec precipitation — state a constraint in natural language and the workflow infers the category and records a <spec-entry>. Records only: loading is `maestro spec load`, removal is the `specs-remove` step.",
+      "argumentHint": "[intent — e.g. '加一条规范：禁止用 any' | 'arch 约束：服务间走 gRPC' | '--scope team coding: 统一用 pnpm']"
     },
     {
       "name": "maestro-issue",
@@ -183,9 +182,9 @@
       "name": "maestro-odyssey",
       "file": ".claude/commands/maestro-odyssey.md",
       "category": "odyssey",
-      "description": "Long-running iterative cycle — one entry, five modes. Shared archaeology/audit → fix → verify → generalize → discover → persist.",
-      "argumentHint": "<intent> --mode debug|improve|planex|review|ui [--auto] [-y] [-c]",
-      "subcommands": ["debug", "improve", "planex", "review", "ui"]
+      "description": "Long-running iterative cycle — one entry, six modes. Shared archaeology/audit → fix → verify → generalize → discover → persist.",
+      "argumentHint": "<intent> --mode debug|improve|planex|review|security|ui [--auto] [-y] [-c]",
+      "subcommands": ["debug", "improve", "planex", "review", "security", "ui"]
     },
     {
       "name": "maestro-learn",

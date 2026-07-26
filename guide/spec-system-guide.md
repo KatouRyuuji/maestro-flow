@@ -27,7 +27,8 @@ Maestro 知识管理分为 **Spec**（编码约束/工具）和 **Wiki**（广�
 |------|----------|---------|------|
 | `coding-conventions.md` | coding | implement | 命名、导入、格式、模式 |
 | `architecture-constraints.md` | arch | plan | 模块结构、层边界 |
-| `review-standards.md` | review | review | 质量规则、检查清单 |
+| `quality-rules.md` | quality | review | 质量标准、可维护性 |
+| `review-standards.md` | review | review | 评审检查清单、质量门禁 |
 | `debug-notes.md` | debug | analyze | 调试技巧、根因记录 |
 | `test-conventions.md` | test | test | 测试框架、覆盖率要求 |
 | `learnings.md` | learning | implement | Bug、陷阱、经验教训 |
@@ -51,7 +52,7 @@ Revoked column must be set rather than deleting tokens.
 
 | 属性 | 必需 | 说明 |
 |------|------|------|
-| `category` | 是 | 单值：coding, arch, review, debug, test, learning, ui |
+| `category` | 是 | 单值：coding, arch, quality, debug, test, review, learning, ui |
 | `keywords` | 是 | 逗号分隔，小写，跨 category 发现 |
 | `date` | 是 | `YYYY-MM-DD` |
 | `source` | 否 | 来源（manual / agent / phase） |

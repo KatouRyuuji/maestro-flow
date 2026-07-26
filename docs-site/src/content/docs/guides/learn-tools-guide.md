@@ -136,7 +136,7 @@ Maestro 学习工具集的完整使用手册，涵盖 5 个 `/maestro-learn` 子
 |------|------|--------|
 | `<target>` | 文件路径 / 目录 / 模块名 | 必填 |
 | `--patterns <list>` | 逗号分隔的模式名列表，聚焦分析 | 检测全部 |
-| `--save-spec` | 每个新模式自动调用 `/maestro-spec add` | 关闭 |
+| `--save-spec` | 每个新模式自动调用 `/maestro-spec "<约束>"` | 关闭 |
 | `--save-wiki` | 按维度创建 wiki 笔记 | 关闭 |
 
 <details>
@@ -311,7 +311,7 @@ specs/learnings.md                         # 统一学习沉淀
 ```
 maestro-learn follow → maestro-learn decompose      # 从理解到模式提取
 maestro-learn follow → maestro-learn consult        # 从理解到多视角验证
-maestro-learn decompose → /maestro-spec add         # 从模式发现到规范录入
+maestro-learn decompose → /maestro-spec "<约束>"         # 从模式发现到规范录入
 maestro-learn consult → maestro-learn investigate   # 从复盘发现到深入探究
 maestro-learn investigate → maestro-learn follow    # 从问题定位到深入阅读
 maestro-learn consult → maestro-learn decompose     # 从质疑到系统化拆解

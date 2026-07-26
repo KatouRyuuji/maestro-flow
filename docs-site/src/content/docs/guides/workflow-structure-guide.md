@@ -227,7 +227,7 @@ Spec 作用域：
 | personal | `.workflow/collab/specs/{uid}/` | `spec:personal:{uid}:` |
 
 ```xml
-<spec-entry category="coding" keywords="exports,naming" date="2026-05-13" source="manual" roles="implement">
+<spec-entry category="coding" keywords="exports,naming" date="2026-05-13" source="manual">
   规范内容...
 </spec-entry>
 ```

@@ -333,12 +333,13 @@ analyze --gaps {issue_id} → plan --gaps → execute → review → issue close
 
 ## 六、规范与知识
 
-> **路由边界**（v0.5.50+）：`/maestro-spec` 管理项目约束规则（编码规范、架构约束、质量标准）；`/maestro-knowhow` 管理可复用知识文档（决策记录、操作配方、参考资料）。约束类走 `/maestro-spec add`，知识类走 `/maestro-knowhow`。
+> **路由边界**（v0.5.50+）：`/maestro-spec` 管理项目约束规则（编码规范、架构约束、质量标准）；`/maestro-knowhow` 管理可复用知识文档（决策记录、操作配方、参考资料）。约束类走 `/maestro-spec`，知识类走 `/maestro-knowhow`。`/maestro-spec` 只负责录入，加载走 `maestro spec load`，移除走 `specs-remove` step。
 
 ```bash
-/maestro-spec setup                                      # 扫描项目生成规范
-/maestro-spec add coding "所有 API 使用 Hono 框架"       # 录入约束规则
-/maestro-spec load --role implement                     # 加载规范
+maestro spec init                                        # 播种规范骨架文件（不扫描代码库）
+maestro run skill specs-setup                            # 已有项目：扫描代码库填充规范
+/maestro-spec coding "所有 API 使用 Hono 框架"           # 录入约束规则（首个位置参数即 category）
+maestro spec load --category coding                      # 加载规范
 maestro kg index                            # 增量刷新代码库文档
 maestro knowhow search "认证"          # 搜索可复用知识
 /maestro-knowledge audit --scope all             # 审计三存储，清理过期/矛盾条目

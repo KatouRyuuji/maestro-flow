@@ -116,13 +116,11 @@ Detect version, preview changes, apply workflow upgrades
 
 ### `maestro-spec`
 
-**Usage:** `add|load|remove|setup [args...]`
+**Usage:** `[intent — e.g. '加一条规范：禁止用 any' | 'arch 约束：服务间走 gRPC' | '--scope team coding: 统一用 pnpm']`
 
-Manage project specs — add, load, remove entries, or initialize the spec system. Unified command with subcommands.
+Intent-driven spec precipitation — state a constraint in natural language and the workflow infers the category and records a <spec-entry>. Records only: loading is \`maestro spec load\`, removal is the \`specs-remove\` step.
 
 **Invocation:** Explicit routing or user slash command
-
-**Subcommands:** `add`, `load`, `remove`, `setup`
 
 ---
 
@@ -162,13 +160,13 @@ Intent-driven knowledge-store management — audit, harvest, wiki health, knowle
 
 ### `maestro-odyssey`
 
-**Usage:** `<intent> --mode debug|improve|planex|review|ui [--auto] [-y] [-c]`
+**Usage:** `<intent> --mode debug|improve|planex|review|security|ui [--auto] [-y] [-c]`
 
-Long-running iterative cycle — one entry, five modes. Shared archaeology/audit → fix → verify → generalize → discover → persist.
+Long-running iterative cycle — one entry, six modes. Shared archaeology/audit → fix → verify → generalize → discover → persist.
 
 **Invocation:** Explicit routing or user slash command
 
-**Subcommands:** `debug`, `improve`, `planex`, `review`, `ui`
+**Subcommands:** `debug`, `improve`, `planex`, `review`, `security`, `ui`
 
 ---
 
@@ -262,7 +260,8 @@ User-invoked learning toolkit — guided reading, investigation, pattern extract
 > - `/quality-review`, `/quality-test`, `/quality-auto-test`, `/quality-debug`, `/quality-retrospective` → first-tier steps `review`/`test`/`auto-test`/`debug`/`retrospective`, dispatched by an orchestrator inside a Session chain (no slash form)
 > - `/quality-refactor` → `/maestro-odyssey --mode improve`; `/security-audit` → `/maestro-odyssey --mode security` (`--tier quick|standard|deep`, `--scope`)
 > - `/odyssey-debug`, `/odyssey-improve`, `/odyssey-planex`, `/odyssey-ui` → `/maestro-odyssey --mode <name>`; `/odyssey-review-test-fix` → `/maestro-odyssey --mode review`
-> - `/spec-add` → `/maestro-spec "<constraint>"`; `/spec-load` → `maestro spec load`; `/spec-setup` → `maestro spec init`; `/spec-remove` → step `specs-remove`. `/maestro-spec` only adds — it has no load/remove/setup subcommands
+> - `/spec-add` → `/maestro-spec "<constraint>"`; `/spec-load` → `maestro spec load`; `/spec-setup` → `maestro run skill specs-setup` (skeleton only: `maestro spec init`); `/spec-remove` → step `specs-remove`
+>   The slash command records only — it has no load/remove/setup subcommands. Spec management as a whole is not add-only: it lives on the CLI (`maestro spec load|list|search|init|status|add|injection|conflict|supersede|history|health|analytics`) and in the sibling steps `specs-load`/`specs-remove`/`specs-setup`
 > - `/manage-issue` → `/maestro-issue`; `/manage-knowhow` → `/maestro-knowhow`; `/manage-harvest`, `/manage-wiki`, `/wiki-connect`, `/wiki-digest` → `/maestro-knowledge <op>`
 > - `/manage-status` → `maestro session status`; `/manage-codebase-rebuild`, `/manage-codebase-refresh`, `/manage-drift-realign`, `/quality-sync` → `maestro kg index`
 > - `/learn-follow`, `/learn-investigate`, `/learn-decompose` → `/maestro-learn <sub>`; `/learn-second-opinion` → `/maestro-learn consult`; `/learn-retro` → step `retrospective`

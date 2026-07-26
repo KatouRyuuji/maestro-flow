@@ -135,7 +135,7 @@ Systematically decompose complex code into a reusable design pattern catalog, wi
 |-----------|-------------|---------|
 | `<target>` | File path / directory / module name | Required |
 | `--patterns <list>` | Comma-separated pattern name list for focused analysis | Detect all |
-| `--save-spec` | Auto-call `/maestro-spec add` for each new pattern | Off |
+| `--save-spec` | Auto-call `/maestro-spec "<constraint>"` for each new pattern | Off |
 | `--save-wiki` | Create wiki notes per dimension | Off |
 
 <details>
@@ -310,7 +310,7 @@ Uses the `<spec-entry>` closed-tag format with `category`, `keywords`, `date`, `
 ```
 maestro-learn follow -> maestro-learn decompose      # From understanding to pattern extraction
 maestro-learn follow -> maestro-learn consult        # From understanding to multi-perspective validation
-maestro-learn decompose -> /maestro-spec add         # From pattern discovery to spec inclusion
+maestro-learn decompose -> /maestro-spec "<constraint>"         # From pattern discovery to spec inclusion
 maestro-learn consult -> maestro-learn investigate   # From retrospective finding to deep investigation
 maestro-learn investigate -> maestro-learn follow    # From problem identification to deep reading
 maestro-learn consult -> maestro-learn decompose     # From challenge to systematic decomposition

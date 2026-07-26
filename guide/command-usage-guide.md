@@ -307,9 +307,10 @@ execute → review → auto-test → test → /maestro-session-seal
 ## 六、规范与知识
 
 ```bash
-maestro spec init                                       # 扫描项目生成规范
+maestro spec init                                       # 播种规范骨架文件（不扫描代码库）
+maestro run skill specs-setup                            # 已有项目：扫描代码库填充规范
 /maestro-spec coding "所有 API 使用 Hono 框架"           # 录入约束规则（首个位置参数即 category）
-maestro spec load --role implement                      # 加载规范
+maestro spec load --category coding                      # 加载规范
 maestro kg index                                        # 重建代码库文档
 maestro knowhow search "认证"                            # 搜索知识复用
 /maestro-knowledge audit --scope all                    # 审计三存储，清理过期/矛盾条目

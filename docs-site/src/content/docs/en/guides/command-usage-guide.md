@@ -336,12 +336,13 @@ Quality gates are inserted into the chain by the Ralph policy as **decision node
 
 ## 6. Specification and Knowledge
 
-> **Routing boundary** (v0.5.50+): `/maestro-spec` manages project constraint rules (coding conventions, architecture constraints, quality standards); `/maestro-knowledge` manages reusable knowledge documents (decision records, operation recipes, reference material). Constraint-type entries go through `/maestro-spec add`, knowledge-type entries go through `/maestro-knowhow`.
+> **Routing boundary** (v0.5.50+): `/maestro-spec` manages project constraint rules (coding conventions, architecture constraints, quality standards); `/maestro-knowhow` manages reusable knowledge documents (decision records, operation recipes, reference material). Constraint-type entries go through `/maestro-spec`, knowledge-type entries go through `/maestro-knowhow`. `/maestro-spec` records only — loading is `maestro spec load`, removal is the `specs-remove` step.
 
 ```bash
-/maestro-spec setup                                      # Scan project to generate specs
-/maestro-spec add coding "all APIs use Hono framework"       # Record a constraint rule
-/maestro-spec load --role implement                     # Load specs
+maestro spec init                                        # Seed skeleton spec files (no codebase scan)
+maestro run skill specs-setup                            # Existing projects: scan the codebase
+/maestro-spec coding "all APIs use Hono framework"       # Record a constraint rule (first positional is the category)
+maestro spec load --category coding                      # Load specs
 maestro kg index                            # Incremental refresh codebase docs
 maestro knowhow search "authentication"          # Search reusable knowledge
 /maestro-knowledge audit --scope all             # Audit the three stores, clean up stale/conflicting entries

@@ -35,7 +35,8 @@ Each spec file is the primary document for a category. `maestro spec load --cate
 |------|----------|--------------|---------|
 | `coding-conventions.md` | coding | implement | Naming, imports, formatting, patterns |
 | `architecture-constraints.md` | arch | plan | Module structure, layer boundaries |
-| `review-standards.md` | review | review | Quality rules, checklists |
+| `quality-rules.md` | quality | review | Quality standards, maintainability |
+| `review-standards.md` | review | review | Review checklists, quality gates |
 | `debug-notes.md` | debug | analyze | Debug tips, root cause records |
 | `test-conventions.md` | test | test | Test framework, coverage requirements |
 | `learnings.md` | learning | implement | Bugs, pitfalls, lessons |
@@ -59,7 +60,7 @@ Revoked column must be set rather than deleting tokens.
 
 | Attribute | Required | Description |
 |-----------|----------|-------------|
-| `category` | Yes | Single value: coding, arch, review, debug, test, learning, ui |
+| `category` | Yes | Single value: coding, arch, quality, debug, test, review, learning, ui |
 | `keywords` | Yes | Comma-separated, lowercase, cross-category discovery |
 | `date` | Yes | `YYYY-MM-DD` |
 | `source` | No | Origin (manual / agent / phase) |
@@ -180,7 +181,7 @@ maestro spec load --category <category> --keyword <kw>
 maestro spec load --keyword <kw>                     # Cross all files
 ```
 
-> **Migration note**: The `--role` option has been replaced by `--category`. The `roles` attribute in `<spec-entry>` tags has been replaced by `category`. Both are single-valued (coding, arch, review, debug, test, learning, ui). Legacy `roles`/`--role` are still parsed but deprecated.
+> **Migration note**: The `--role` option has been replaced by `--category`. The `roles` attribute in `<spec-entry>` tags has been replaced by `category`. Both are single-valued (coding, arch, quality, debug, test, review, learning, ui). Legacy `roles`/`--role` are still parsed but deprecated.
 
 ### Progressive Fill
 
