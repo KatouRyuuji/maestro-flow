@@ -14,6 +14,7 @@ allowed-tools:
 session-mode: none
 version: 0.5.56
 ---
+
 <purpose>
 Turn instructions into command overlays — JSON patch files that augment `.claude/commands/*.md`
 non-invasively, auto-applied by `maestro install`. Two modes:
@@ -54,7 +55,7 @@ survives reinstall.
 | `--scan` | Auto-scan .workflow/ | Discover all workflow-related signals |
 | _(positional text)_ | User description | Direct observation |
 
-Multiple combinable. `--amend` with no flags/description → interactive (scan + AskUserQuestion).
+Multiple combinable. `--amend` with no flags/description → interactive (scan + request_user_input).
 Amend control: `--dry-run` (preview, don't install), `-y` (skip confirmations).
 Amend output: `~/.maestro/overlays/amend-{slug}.json` + optional `~/.maestro/overlays/docs/amend-{slug}.md`.
 
@@ -66,8 +67,8 @@ Amend output: `~/.maestro/overlays/amend-{slug}.json` + optional `~/.maestro/ove
 2. **Idempotent** — re-running `maestro overlay apply` with the same overlay JSON MUST produce no file changes
 3. **Creation only** — this skill MUST only create overlays; listing and removal are handled by `maestro overlay list` (ink TUI)
 4. **Pristine source preferred** — injection point analysis MUST read from `$PKG_ROOT/.claude/commands/` (untouched originals) first, fall back to `~/.claude/commands/` only if pristine unavailable
-5. **User approval before write** — overlay JSON MUST be shown and approved via AskUserQuestion before writing to disk, unless `-y` is explicitly provided (amend mode only)
-6. **Chain skip option mandatory** — if a skill chain is configured, the injected content MUST include a "Skip" option in AskUserQuestion; NEVER force the user into a chain
+5. **User approval before write** — overlay JSON MUST be shown and approved via request_user_input before writing to disk, unless `-y` is explicitly provided (amend mode only)
+6. **Chain skip option mandatory** — if a skill chain is configured, the injected content MUST include a "Skip" option in request_user_input; NEVER force the user into a chain
 
 **Amend mode only** (when `--amend`):
 
@@ -82,7 +83,7 @@ Amend output: `~/.maestro/overlays/amend-{slug}.json` + optional `~/.maestro/ove
 
 ### 1. Parse user intent
 
-Treat the argument as natural-language intent. If unclear, ask up to 2 questions with AskUserQuestion: (a) which command(s) to target, (b) where in the command flow the injection should happen.
+Treat the argument as natural-language intent. If unclear, ask up to 2 questions with request_user_input: (a) which command(s) to target, (b) where in the command flow the injection should happen.
 
 ### 2. Identify targets, injection points, and visualize
 
@@ -109,7 +110,7 @@ If the user wants a whole new section, use `mode: new-section` with `afterSectio
   <success_criteria>
 ```
 
-Use AskUserQuestion to confirm:
+Use request_user_input to confirm:
 - **"Confirm"** — proceed with this injection point
 - **"Pick different section"** — re-select section/mode
 - **"Cancel"** — abort
@@ -118,9 +119,9 @@ Use AskUserQuestion to confirm:
 
 After confirming the injection point, ask whether this overlay should recommend another retained command upon completion. Emit its exact slash command after confirmation. `team-*` and `maestro-odyssey` are not valid handoff targets.
 
-Use AskUserQuestion:
+Use request_user_input:
 - **"No chain"** — standard overlay, no skill handoff
-- **"Chain to skill"** → ask for the target skill name (e.g., a step like `review`, `execute`, `test` invoked via `maestro run prepare <step>` + `maestro run create <step> --session YYYYMMDD-<step>-{topic} --intent "{goal}"`)
+- **"Chain to skill"** → ask for the target skill name (e.g., a step like `review`, `execute`, `test` invoked via `maestro run prepare --platform codex <step>` + `maestro run create <step> --session YYYYMMDD-<step>-{topic} --intent "{goal}"`)
 - **"Chain with alternatives"** → ask for primary skill + 1-2 alternative skills
 
 If chain is selected, record the skill name(s) for use in Step 3.
@@ -152,21 +153,21 @@ Build a slug from the user's intent (kebab-case, lowercase). Write to `~/.maestr
 - `@~/.maestro/...` references are encouraged for pointing at docs
 - Escape `\n` in JSON strings; use a HEREDOC via Bash if content is long
 
-**Skill chain content** — if a chain was configured in Step 2.5, append a Skill Handoff block at the end of the patch `content`. The handoff uses AskUserQuestion so the user controls whether to proceed:
+**Skill chain content** — if a chain was configured in Step 2.5, append a Skill Handoff block at the end of the patch `content`. The handoff uses request_user_input so the user controls whether to proceed:
 
 ```markdown
 ---
 
 **Skill Handoff** (overlay)
 
-After the above step completes, use AskUserQuestion:
-- "Proceed to review" — Hand off to step `review` (`maestro run prepare review` + `maestro run create review --session YYYYMMDD-review-{topic} --intent "{goal}"`)
+After the above step completes, use request_user_input:
+- "Proceed to review" — Hand off to step `review` (`maestro run prepare --platform codex review` + `maestro run create review --session YYYYMMDD-review-{topic} --intent "{goal}"`)
 - "Skip" — Continue with current command flow
 - "Alternative: execute" — Run step `execute` with built-in verification instead
 
 On user selection:
-- Proceed → run step `review` (`maestro run prepare review` + `maestro run create review --session YYYYMMDD-review-{topic} --intent "{goal}"`)
-- Alternative → run step `execute` (`maestro run prepare execute` + `maestro run create execute --session YYYYMMDD-execute-{topic} --intent "{goal}"`)
+- Proceed → run step `review` (`maestro run prepare --platform codex review` + `maestro run create review --session YYYYMMDD-review-{topic} --intent "{goal}"`)
+- Alternative → run step `execute` (`maestro run prepare --platform codex execute` + `maestro run create execute --session YYYYMMDD-execute-{topic} --intent "{goal}"`)
 - Skip → continue normally
 ```
 
@@ -179,7 +180,7 @@ Handoff rules:
 
 ### 3.5. Content approval
 
-Display the full overlay JSON to the user. AskUserQuestion:
+Display the full overlay JSON to the user. request_user_input:
 - **"Approve & install"** — proceed to installation
 - **"Edit"** — user provides corrections, re-draft
 - **"Cancel"** — discard overlay, do not write
@@ -210,7 +211,7 @@ Show the user:
 Name:    <slug>
 Path:    ~/.maestro/overlays/<slug>.json
 Targets: maestro-next (applied), maestro-init (skipped: missing)
-Chain:   review (via AskUserQuestion) | none
+Chain:   review (via request_user_input) | none
 Scopes:  [global]
 
 Re-apply: maestro overlay apply
@@ -274,7 +275,7 @@ Classify: command deficiency → proceed; code bug → skip (suggest `/maestro-c
 - Signal points to 'command file missing a section/gate/step/routing rule' → **command deficiency** → proceed with overlay
 - Signal points to 'code implementation does not match existing command requirements' → **code bug** → skip, route to `/maestro-companion` or step `plan --gaps`
 - Signal involves both → split: deficiency part → overlay; bug part → route to companion
-- Uncertain → default to AskUserQuestion for user classification
+- Uncertain → default to request_user_input for user classification
 
 ### C. Group overlays
 
@@ -282,7 +283,7 @@ Group by target command + section (merge same command+section). Granularity: 1-2
 
 ### D. Preview & confirm
 
-Display the section map with injection points. AskUserQuestion: **Apply all** / **Select patches** / **Edit** (modify signal target/section, loop back) / **Cancel**. Skip confirmation if `-y`.
+Display the section map with injection points. request_user_input: **Apply all** / **Select patches** / **Edit** (modify signal target/section, loop back) / **Cancel**. Skip confirmation if `-y`.
 
 ### E. Draft overlays
 
@@ -324,7 +325,7 @@ Default mode:
 - [ ] Re-running `maestro overlay apply` produces no file changes (idempotent)
 - [ ] User shown the report with target list and removal instructions
 - [ ] Injection point preview shown (with existing overlays + `>>>` marker) and confirmed before drafting
-- [ ] If chain configured, `content` includes a retained-command recommendation with AskUserQuestion + Skip option
+- [ ] If chain configured, `content` includes a retained-command recommendation with request_user_input + Skip option
 
 Amend mode:
 - [ ] Signals classified: command deficiency vs code bug
