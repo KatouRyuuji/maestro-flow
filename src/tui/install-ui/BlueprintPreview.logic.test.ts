@@ -123,11 +123,10 @@ describe('BlueprintPreview.logic', () => {
       assert.equal(tree[0].entries[0].fileCount, 10);
     });
 
-    it('groups all 9 components correctly by parent', () => {
+    it('groups all 8 components correctly by parent', () => {
       const inputs = [
         mockDef('workflows', '/home/user/.maestro/workflows'),
         mockDef('templates', '/home/user/.maestro/templates'),
-        mockDef('chains', '/home/user/.maestro/chains'),
         mockDef('overlays', '/maestro/overlays/_shipped'),
         mockDef('commands', '/home/user/.claude/commands'),
         mockDef('agents', '/home/user/.claude/agents'),

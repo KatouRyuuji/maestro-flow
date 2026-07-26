@@ -245,20 +245,20 @@ describe('partitionRequestedComponentIds', () => {
   const allIds = new Set(COMPONENT_DEFS.map((d) => d.id));
 
   it('treats defined-but-unavailable components as soft skips, not unknown', () => {
-    // ref/chains/overlays are defined components; simulate a build where their
+    // ref/templates/overlays are defined components; simulate a build where their
     // source files are absent (not in availableIds). They must NOT be unknown.
     const available = new Set(allIds);
     available.delete('ref');
-    available.delete('chains');
+    available.delete('templates');
     available.delete('overlays');
 
     const { unknown, unavailable, requested } = partitionRequestedComponentIds(
-      ['workflows', 'ref', 'chains', 'overlays'],
+      ['workflows', 'ref', 'templates', 'overlays'],
       available,
     );
 
     expect(unknown).toEqual([]);
-    expect(unavailable.sort()).toEqual(['chains', 'overlays', 'ref']);
+    expect(unavailable.sort()).toEqual(['overlays', 'ref', 'templates']);
     expect(requested).toContain('workflows');
     expect(requested).toContain('ref');
   });

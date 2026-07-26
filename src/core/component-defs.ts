@@ -38,7 +38,7 @@ export interface ComponentDef {
   defaultSelected?: boolean;
   /**
    * If true, this component is always installed and cannot be deselected.
-   * Core infrastructure components (workflows, templates, chains, etc.) should be mandatory.
+   * Core infrastructure components (workflows, templates, overlays, etc.) should be mandatory.
    */
   mandatory?: boolean;
   /**
@@ -179,16 +179,6 @@ export const COMPONENT_DEFS: ComponentDef[] = [
     description: 'Prompt & task templates (~/.maestro/templates/)',
     sourcePath: 'templates',
     target: () => join(paths.home, 'templates'),
-    alwaysGlobal: true,
-    mandatory: true,
-    platform: 'shared',
-  },
-  {
-    id: 'chains',
-    label: 'Chains',
-    description: 'Coordinate chain graphs (~/.maestro/chains/)',
-    sourcePath: 'chains',
-    target: () => join(paths.home, 'chains'),
     alwaysGlobal: true,
     mandatory: true,
     platform: 'shared',

@@ -26,7 +26,6 @@
     "templates",
     "prepare",
     "workflows",
-    "chains",
     "ref",
     "overlays/_shipped",
     ".claude/commands",

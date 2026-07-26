@@ -42,9 +42,9 @@ describe('ComponentGrid.logic', () => {
   // ---------------------------------------------------------------------------
   describe('selectAllAvailable', () => {
     it('returns copy of available ids', () => {
-      const ids = ['workflows', 'templates', 'chains'];
+      const ids = ['workflows', 'templates', 'ref'];
       const result = selectAllAvailable(ids);
-      assert.deepEqual(result, ['workflows', 'templates', 'chains']);
+      assert.deepEqual(result, ['workflows', 'templates', 'ref']);
       // Verify it's a copy
       result.push('extra');
       assert.equal(ids.length, 3);
@@ -171,7 +171,7 @@ describe('ComponentGrid.logic', () => {
   // Integration scenarios
   // ---------------------------------------------------------------------------
   describe('navigation + toggling scenario', () => {
-    const ids = ['workflows', 'templates', 'chains', 'overlays', 'commands',
+    const ids = ['workflows', 'templates', 'prepare', 'overlays', 'commands',
                  'agents', 'skills', 'claude-md', 'codex-agents-md',
                  'codex-agents', 'codex-skills'];
 
