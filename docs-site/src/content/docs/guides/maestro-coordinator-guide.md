@@ -181,7 +181,7 @@ Roadmap 仅在多 release 证据时推断。Quality 基于 specs 和可观测风
 
 ## 建链协议（A_CREATE）
 
-1. **Specs 预检**：chain 含执行 stage 且 `.workflow/specs/` 不存在 → 在 steps 最前面插入 `spec-setup`
+1. **Specs 预检**：chain 含执行 stage 且 `.workflow/specs/` 不存在 → 在 steps 最前面插入 `specs-setup`
 2. **Skill 名预校验**：所有 step 的 skill 名通过 `maestro skills --steps --json` 预校验；未命中 → 报错 E005，阻断建链
 3. **组装 chain-file**（execution step 仅 `command/args?/stage?/goal_ref?/retry_max?`；decision step 声明 `decision_ref`）
 4. **创建**：

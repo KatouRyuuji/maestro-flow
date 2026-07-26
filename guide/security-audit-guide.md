@@ -149,14 +149,14 @@ chain-file 的 step 形态只接受 `command` / `args?` / `stage?` / `goal_ref?`
 }
 ```
 
-### 与 quality-review 集成
+### 与 review 步骤集成
 
 ```bash
 # 先执行安全审计
 /maestro-odyssey --mode security --scope src/auth "<target>"
 
-# 再执行代码审查（包含安全维度）
-/quality-review 1 --dimensions security
+# 再由编排器派发 review 步骤（含安全维度），经 /maestro-next 进入
+/maestro-next "对 src/auth 做带安全维度的代码审查"
 ```
 
 ## 最佳实践
@@ -198,7 +198,7 @@ chain-file 的 step 形态只接受 `command` / `args?` / `stage?` / `goal_ref?`
 
 ```yaml
 - name: Security Audit
-  run: maestro delegate "security-audit quick" --mode analysis
+  run: maestro delegate "快速安全审计" --mode analysis
 ```
 
 ---

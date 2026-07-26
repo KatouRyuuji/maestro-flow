@@ -18,7 +18,7 @@ Maestro 知识回收系统将执行过程中产生的知识碎片从"会话临�
 | 存储 | 路径 | 存什么 | 谁消费 |
 |------|------|--------|--------|
 | **Wiki** | `.workflow/wiki/` | 观察发现、通用洞察、知识图谱 | `/maestro-knowledge wiki connect`、`/maestro-knowledge wiki digest` |
-| **Spec** | `.workflow/specs/` | 编码规范、架构决策、模式规则 | `/maestro-spec load`、Hook 自动注入 |
+| **Spec** | `.workflow/specs/` | 编码规范、架构决策、模式规则 | `maestro spec load`、Hook 自动注入 |
 | **Issue** | `.workflow/issues/issues.jsonl` | 未解决的 bug、风险、待办 | `/maestro-issue`、`/maestro "analyze..."` |
 
 ### 与 knowhow 的关系
@@ -250,7 +250,7 @@ Workflow 存储面向项目内知识，system 存储面向跨会话持久记忆�
      ▼         ▼          ▼
 ┌─────────────────────────────────────────────────────────┐
 │                   下游消费                                │
-│  maestro-knowledge wiki connect / maestro-knowledge wiki digest / maestro-spec load / maestro-issue                        │
+│  maestro-knowledge wiki connect / maestro-knowledge wiki digest / maestro spec load / maestro-issue                        │
 │  Hook 自动注入 / /maestro "plan <phase> --gaps"          │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -278,4 +278,4 @@ Workflow 存储面向项目内知识，system 存储面向跨会话持久记忆�
 |------|------|
 | **日常开发** | `/maestro "execute"` → 完成后随手记 → `/maestro-knowhow tip "发现的技巧"` |
 | **里程碑结束** | `/maestro-knowledge harvest --recent 30` → `/maestro-knowhow compact` → `/maestro-knowledge wiki connect --fix` |
-| **项目交接** | `maestro knowhow list` → `maestro knowhow search "核心概念"` → `/maestro-spec load --role implement` |
+| **项目交接** | `maestro knowhow list` → `maestro knowhow search "核心概念"` → `maestro spec load --role implement` |

@@ -24,7 +24,7 @@ Maestro Issue 系统是独立于 Phase 管线的问题追踪机制。Phase 管�
 
 ---
 
-## 二、manage-issue-discover 详解
+## 二、maestro-issue discover 详解
 
 ### 基本用法
 
@@ -136,7 +136,7 @@ Prompt 驱动模式围绕用户关注点进行深度定向探索。
 
 ---
 
-## 三、manage-issue 详解
+## 三、maestro-issue 详解
 
 `/maestro-issue` 负责 Issue 生命周期管理，支持 6 个子命令。
 

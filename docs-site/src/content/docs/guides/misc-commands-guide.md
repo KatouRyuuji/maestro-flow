@@ -89,9 +89,9 @@ Maestro 工作流中用于维护、发布和规范管理的辅助命令。
 
 ---
 
-## 三、maestro-spec remove — 规范移除
+## 三、specs-remove — 规范移除
 
-从 specs 文件中移除指定的 `<spec-entry>` 条目。与 `/maestro-spec add` 对称，使用 `maestro wiki remove-entry` 原子删除并自动更新索引。
+从 specs 文件中移除指定的 `<spec-entry>` 条目。作为 `/maestro-spec`（录入）的对称操作，`specs-remove` 是编排器派发的 step，使用 `maestro wiki remove-entry` 原子删除并自动更新索引。
 
 ### Entry ID 格式
 
@@ -103,15 +103,15 @@ spec-{file-stem}-{NNN}  （如 spec-learnings-003）
 
 ```bash
 maestro wiki list --type spec --json    # 列出所有 spec 条目
-/maestro-spec load --keyword auth               # 按关键词搜索
-/maestro-spec remove spec-learnings-003          # 移除指定条目
+maestro spec load --keyword auth        # 按关键词搜索（CLI）
+specs-remove spec-learnings-003         # 移除指定条目（step，由编排器派发）
 ```
 
 ### 注意事项
 
-- 需先通过 `/maestro-spec setup` 初始化 `.workflow/specs/`
+- 需先通过 `maestro spec init` 初始化 `.workflow/specs/`
 - Entry ID 必须是 spec 类型子节点
-- 移除不可逆（建议先用 `/maestro-spec load` 预览）
+- 移除不可逆（建议先用 `maestro spec load` 预览）
 
 ---
 

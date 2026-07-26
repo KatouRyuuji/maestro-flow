@@ -49,7 +49,7 @@ Joined as alice <alice@example.com> on alice-laptop (admin)
 
 $ maestro collab status
 Active in last 30 min:
-  alice@alice-laptop    maestro-execute     P3/TASK-001    2 min ago
+  alice@alice-laptop    execute             P3/TASK-001    2 min ago
   bob@bob-desktop       wiki-update         spec-auth      5 min ago
 
 $ maestro collab sync --with-overlays
@@ -61,7 +61,7 @@ Importing team overlays...
 Sync complete.
 
 $ maestro collab preflight --phase 3
-⚠ bob@bob-desktop is active on phase 3 (last: maestro-execute, 4 min ago)
+⚠ bob@bob-desktop is active on phase 3 (last: execute, 4 min ago)
 exit: 1
 ```
 
@@ -90,7 +90,7 @@ model | P3 | TASK-001 | ~/proj | 👥 alice (P3/001) | bob (spec-auth) +2
 - 队友心跳是历史遗留（实际已停手）
 - 临时补丁，范围不撞车
 
-**不要用 `--force`**：拿不准、没人确认、对方 action 是 `maestro-execute`（正在动代码）。
+**不要用 `--force`**：拿不准、没人确认、对方 action 是 `execute`（正在动代码）。
 
 ## 增量同步 Fast Path
 

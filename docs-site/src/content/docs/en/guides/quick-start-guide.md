@@ -164,12 +164,6 @@ Skip the Phase pipeline and complete tasks directly:
 
 # Lightweight execution (minimal Run lifecycle)
 /maestro-companion "修复登录页 Bug"
-
-# Suggest only, do not execute
-/maestro-next --suggest "重构 API 层"
-
-# List routable channels
-/maestro-next --list
 ```
 
 ---
@@ -241,7 +235,7 @@ Inject custom steps without modifying the original command files:
 
 ```bash
 # Create via natural language
-/maestro-overlay "在 maestro-execute 后增加 CLI 验证"
+/maestro-overlay "在 execute 后增加 CLI 验证"
 
 # Manage
 maestro overlay list                    # Interactive TUI view

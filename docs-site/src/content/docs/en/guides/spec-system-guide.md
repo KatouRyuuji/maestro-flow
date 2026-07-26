@@ -29,7 +29,7 @@ Maestro's knowledge management consists of **Spec** (coded constraints/tools) an
 
 ### File to Role Mapping
 
-Each spec file serves as the primary document for a role. `maestro-spec load --role` loads the primary file in full, plus cross-file entries tagged with that role.
+Each spec file serves as the primary document for a role. `maestro spec load --role` loads the primary file in full, plus cross-file entries tagged with that role.
 
 | File | Primary Role | Purpose |
 |------|-------------|---------|
@@ -92,8 +92,7 @@ Standard deployment procedure with rollback safety.
 
 </details>
 
-- **Registration**: `/maestro-spec add` -- extract, generate, or optimize tool definitions
-- **Execution**: `/maestro-ralph` -- load tool by name or role, execute step-by-step
+Tools need no dedicated register/execute command: capture a `tool: true` knowhow document via `/maestro-knowhow` (recipe type + `--tool`), and agents auto-discover and inject its summary through `maestro spec load`.
 
 ### Spec Commands
 
@@ -111,7 +110,7 @@ maestro spec load --keyword <kw>             # Cross all files
 Specs are filled progressively across the lifecycle:
 
 ```
-maestro-init      -> maestro-spec setup (scan codebase, initialize specs)
+maestro-init      -> spec init (scan codebase, initialize specs)
 analyze           -> architecture-constraints / coding-conventions (progressive)
 plan / execute    -> implementation constraints
 test              -> test-conventions
@@ -121,8 +120,8 @@ retrospective     -> learnings (retrospective insights)
 
 ### Keyword System
 
-- `maestro-spec add` auto-extracts 3-5 domain keywords
-- `maestro-spec load --keyword <kw>` matches `<spec-entry>` `keywords` attribute
+- `maestro spec add` auto-extracts 3-5 domain keywords
+- `maestro spec load --keyword <kw>` matches `<spec-entry>` `keywords` attribute
 - Legacy heading entries fallback to text search
 
 ---
@@ -305,10 +304,6 @@ maestro spec init [--scope <scope>]
 maestro spec load [--role <role>] [--keyword <kw>] [--scope <scope>] [--json]
 maestro spec add <category> "<title>" "<content>" [--roles r1,r2] [--keywords kw1,kw2] [--source <src>] [--ref <path>] [--knowhow-type <type>]
 maestro spec list [--scope <scope>] | status [--scope <scope>]
-
-# -- Tool Spec ------------------------------------------------------------
-/maestro-spec add "<description>"
-/maestro-ralph "<name or role intent>"
 
 # -- Wiki -----------------------------------------------------------------
 maestro wiki list [--type <type>] [--role <role>] [--category <cat>] [--tag <tag>] [-q <query>] [--group] [--json]

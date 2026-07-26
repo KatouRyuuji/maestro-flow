@@ -136,36 +136,34 @@ Reports: lifecycle statistics (active/deprecated/contested), evolution chain cou
 
 | Command | Responsibility |
 |------|------|
-| `/spec-add` | Appends `<spec-entry>` entries to specs files, supporting both inline and ref modes |
-| `/manage-knowhow-capture` | Captures 6 types of knowledge documents into knowhow/ (compact, template, recipe, reference, decision, tip) |
-| `/maestro-tools-register` | Registers reusable business processes as knowhow tool documents (YAML header `tool: true` + `category`) |
-| `/manage-learn` | Captures atomic insights to `learnings.md` (pattern, gotcha, technique, tip) |
-| `/manage-harvest` | Extracts knowledge fragments from workflow artifacts, routing to three storages: wiki/spec/issue |
+| `/maestro-spec` | Appends `<spec-entry>` entries to specs files, supporting both inline and ref modes |
+| `/maestro-knowhow` | Captures 6 types of knowledge documents into knowhow/ (compact, template, recipe, reference, decision, tip); add `--tool` to mark as an executable tool |
+| `/maestro-learn` | Captures atomic insights to `learnings.md` (pattern, gotcha, technique, tip) |
+| `/maestro-knowledge harvest` | Extracts knowledge fragments from workflow artifacts, routing to three storages: wiki/spec/issue |
 
 ### Read Commands
 
 | Command | Responsibility |
 |------|------|
-| `/spec-load` | Loads main documents by category + cross-file keyword matching entries + auto-discovers knowhow tools |
-| `/maestro-tools-execute` | Loads tool documents from knowhow and executes them step-by-step |
-| `/manage-knowhow` | Performs list/search/view/edit/delete across workflow knowhow and system memory storages |
-| `/manage-wiki` | Wiki graph health, search, cleanup, and statistics |
+| `maestro spec load` | Loads main documents by category + cross-file keyword matching entries + auto-discovers knowhow tools |
+| `maestro knowhow` | list/search/get across the workflow knowhow store; deletion/cleanup routes through `/maestro-knowledge audit` |
+| `/maestro-knowledge wiki` | Wiki graph health, search, cleanup, and statistics |
 
 ### Analysis Commands
 
 | Command | Responsibility |
 |------|------|
-| `/wiki-digest` | Semantic topic clustering + knowledge coverage heatmap + gap analysis |
-| `/wiki-connect` | Discovers isolated nodes and missing links, fixes graph connectivity |
-| `/manage-knowledge-audit` | Audits spec/knowhow/artifact stores — contradiction detection, expiration cleanup, orphan pruning (keep/supersede/contest/deprecate/delete five-state decisions) |
-| `/learn-decompose` | Extracts design patterns from code, writes to spec and wiki |
-| `/learn-follow` | Guided reading of code/wiki, extracts pattern and builds understanding |
+| `/maestro-knowledge wiki digest` | Semantic topic clustering + knowledge coverage heatmap + gap analysis |
+| `/maestro-knowledge wiki connect` | Discovers isolated nodes and missing links, fixes graph connectivity |
+| `/maestro-knowledge audit` | Audits spec/knowhow/artifact stores — contradiction detection, expiration cleanup, orphan pruning (keep/supersede/contest/deprecate/delete five-state decisions) |
+| `/maestro-learn decompose` | Extracts design patterns from code, writes to spec and wiki |
+| `/maestro-learn follow` | Guided reading of code/wiki, extracts pattern and builds understanding |
 
 ### Initialization
 
 | Command | Responsibility |
 |------|------|
-| `/spec-setup` | Scans project structure, initializes specs skeleton files (6 seed files) |
+| `maestro spec init` | Scans project structure, initializes specs skeleton files (6 seed files) |
 
 ---
 
@@ -191,18 +189,11 @@ summary: "Use when testing payment endpoints for retry safety."
 5. Verify webhook delivers exactly once
 ```
 
-`maestro-spec load --category test` automatically scans for documents in knowhow/ where `category=test` and `tool=true`, injecting the tool summary along with spec into the agent context.
+`maestro spec load --category test` automatically scans for documents in knowhow/ where `category=test` and `tool=true`, injecting the tool summary along with spec into the agent context.
 
 ### Registration and Usage
 
-| Phase | Command | Scenario |
-|------|------|------|
-| During Planning | `/maestro-tools-register generate` | Standardize business processes |
-| After Execution | `/maestro-tools-register extract` | Capture verified operational steps |
-| Before Testing | `/maestro-tools-register generate` | Register verification methods for the test agent |
-| During Retrospective | `/maestro-tools-register optimize` | Extract reusable processes from artifacts |
-
-Usage: Execute by name `/maestro-tools-execute integration-test`, discover by category `/maestro-tools-execute --category test`, Agent auto-discovery (`maestro-spec load` output includes tool summaries).
+A tool is just a knowhow document tagged `tool: true`: capture it via `/maestro-knowhow` (recipe type + `--tool`), and agents auto-discover and inject its summary through `maestro spec load --category` — no dedicated register/execute command required.
 
 ---
 
@@ -441,22 +432,22 @@ codeExtractor.extract({ allowScripts: true })
 ## Knowledge Flow Panorama
 
 ```
-Execution Artifacts         Extraction                Storage                 Consumption
-─────────                  ─────                    ─────                  ─────
-Analysis Session ─────┐                              ┌─→ specs/     ─→ spec-injector → agent
-Debug Records ────────┼──→ /manage-harvest ──────────┼─→ knowhow/   ─→ wiki load → on-demand
-Plan Documents ───────┤    /quality-retrospective    ├─→ issues/    ─→ manage-issue → track
-Code Changes ─────────┘    /learn-decompose          └─→ learnings  ─→ keyword-injector → context
+Execution Artifacts        Extraction                             Storage       Consumption
+─────────                  ─────                                  ─────         ───────────
+Analysis Session ─────┐                                       ┌─→ specs/     ─→ spec-injector → agent
+Debug Records ────────┼──→ /maestro-knowledge harvest ────────┼─→ knowhow/   ─→ wiki load → on-demand
+Plan Documents ───────┤    retrospective step                 ├─→ issues/    ─→ maestro-issue → track
+Code Changes ─────────┘    /maestro-learn decompose           └─→ learnings  ─→ keyword-injector → context
 ```
 
 Progressive Fill——Automatic accumulation at each stage:
 
 ```bash
-maestro-init    → spec-setup (skeleton + scan)
-maestro-analyze → lock decisions → arch, code patterns → coding
-maestro-plan    → design conventions → coding/arch, test strategy → test
-maestro-execute → lessons learned → learning, root causes → debug
-maestro-execute → built-in verification (E2.7) → quality discoveries → review
+maestro-init → spec init (skeleton + scan)
+analyze → lock decisions → arch, code patterns → coding
+plan    → design conventions → coding/arch, test strategy → test
+execute → lessons learned → learning, root causes → debug
+execute → built-in verification (E2.7) → quality discoveries → review
 ```
 
 <details>
@@ -467,15 +458,15 @@ Taking the user management module (registration, login, JWT authentication, user
 **1. Planning + Analysis**
 
 ```bash
-/workflow-lite-plan User Management Module API: Registration, Login, JWT Authentication, User CRUD
-/maestro-analyze API endpoint design pattern analysis
+/maestro User Management Module API: Registration, Login, JWT Authentication, User CRUD
+/maestro analyze API endpoint design patterns
 ```
 
 **2. Implementation + Knowledge Recovery**
 
 ```bash
-/workflow-lite-execute
-/manage-harvest --source lite-plan --to auto
+/maestro implement the plan above
+/maestro-knowledge harvest --source lite-plan --to auto
 ```
 
 harvest auto-routing:
@@ -487,33 +478,26 @@ harvest auto-routing:
 | Response format knowledge | wiki → knowhow | "Unified return `{ data, error, meta }` structure" |
 | Missing features | issue | "Missing rate limiting middleware" |
 
-**3. Register Verification Tools**
+**3. Testing Consumption**
 
 ```bash
-/maestro-tools-register generate User API E2E Verification: Registration → Login → Token Refresh → CRUD → Exception
+# auto-test & test are first-tier steps dispatched by the orchestrator (maestro run), not slash commands
+auto-test --keyword user-api             # Auto test: discover tool → generate test code
+test "user management API"               # Conversational UAT: verify step-by-step according to tool
 ```
 
-**4. Testing Consumption**
+**4. Feedback**
 
 ```bash
-/quality-auto-test --keyword user-api    # Auto test: discover tool → generate test code
-/quality-test user management API        # Conversational UAT: verify step-by-step according to tool
-```
-
-**5. Feedback**
-
-```bash
-/maestro-tools-register optimize user-api-verify   # Append newly discovered edge cases
-/manage-learn "refresh token retry after expiration needs to handle race condition"
+/maestro-learn "refresh token retry after expiration needs to handle race condition"
 ```
 
 Command responsibilities:
 
 | Command | Output | Nature |
 |---|---|---|
-| `/manage-harvest` | spec entry + wiki entry + issue | Passive knowledge |
-| `/manage-knowhow-capture` | AST-*.md (API contract) | Passive assets |
-| `/maestro-tools-register` | RCP-*.md (verification process) | Active executable |
-| `/quality-auto-test` | Test code | Consumes tool |
+| `/maestro-knowledge harvest` | spec entry + wiki entry + issue | Passive knowledge |
+| `/maestro-knowhow` | AST-*.md (API contract); `--tool`-tagged RCP-*.md (verification process) | Passive asset / active executable |
+| `auto-test` step | Test code | Consumes tool |
 
 </details>

@@ -17,7 +17,7 @@ impeccable --chain build  →  impeccable (auto pipeline)  →  ui-codify
 
 **Phase pipeline position**: `analyze -> ui-design -> plan -> execute -> verify` (design precedes planning)
 
-`maestro-impeccable` is an orchestration layer for the impeccable skill (23 commands / 6 categories), driving automated iteration loops via critique/audit scoring. The `design-ref/` produced by `--chain build` is auto-detected by `maestro-plan`, which injects design tokens into execution tasks' `read_first[]`.
+`maestro-impeccable` is an orchestration layer for the impeccable skill (23 commands / 6 categories), driving automated iteration loops via critique/audit scoring. The `design-ref/` produced by `--chain build` is auto-detected by the `plan` step, which injects design tokens into execution tasks' `read_first[]`.
 
 ---
 
@@ -51,7 +51,7 @@ Generate design prototypes with multiple style variants. After user selection, c
 
 | Next Step | Command |
 |-----------|---------|
-| Plan based on design | `/maestro-plan {milestone}` |
+| Plan based on design | `/maestro "{milestone}"` (coordinator dispatches the `plan` step) |
 | Refine design | `/maestro-impeccable "{phase}" --chain improve` |
 
 ---
@@ -187,14 +187,13 @@ Reverse-engineer a design system from existing source code, generate a reference
 /maestro-impeccable --codify src/components --package-name my-design-system
 ```
 
-**Data flow**: `ui-design` → `design-ref/` → consumed by `maestro-plan` → `ui-craft` operates on source → `ui-codify` extracts knowledge, closing the loop.
+**Data flow**: `ui-design` → `design-ref/` → consumed by the `plan` step → `ui-craft` operates on source → `ui-codify` extracts knowledge, closing the loop.
 
 ### Phase Pipeline Integration
 
 ```bash
 /maestro-impeccable "1" --chain build  # Design first
-/maestro-plan 1                         # Plan based on design
-/maestro-execute 1                      # Execute implementation (with built-in verification gate E2.7)
+/maestro "1"                            # Coordinator runs plan → execute (with built-in verification gate E2.7)
 ```
 
 ### Single Command Mode

@@ -181,7 +181,7 @@ Set `decomposition_owner = "maestro"`. Downstream ralph only consumes and does n
 
 ## Chain Construction Protocol (A_CREATE)
 
-1. **Specs pre-check**: the chain contains an execution stage and `.workflow/specs/` does not exist → insert `spec-setup` at the very front of steps
+1. **Specs pre-check**: the chain contains an execution stage and `.workflow/specs/` does not exist → insert `specs-setup` at the very front of steps
 2. **Skill name pre-validation**: the skill names of all steps are pre-validated via `maestro skills --steps --json`; no match → raise error E005 and block chain construction
 3. **Assemble the chain-file** (an execution step has only `command/args?/stage?/goal_ref?/retry_max?`; a decision step declares `decision_ref`)
 4. **Create**:

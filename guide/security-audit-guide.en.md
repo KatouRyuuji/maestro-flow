@@ -149,14 +149,14 @@ A chain-file step accepts only `command` / `args?` / `stage?` / `goal_ref?` / `r
 }
 ```
 
-### Quality-Review Integration
+### Review Step Integration
 
 ```bash
 # Execute security audit first
 /maestro-odyssey --mode security --scope src/auth "<target>"
 
-# Then execute code review (including security dimension)
-/quality-review 1 --dimensions security
+# Then run the review step (security dimension), dispatched by the orchestrator via /maestro-next
+/maestro-next "code review of src/auth with the security dimension"
 ```
 
 ## Best Practices
@@ -198,7 +198,7 @@ Add security audit step in CI/CD pipeline:
 
 ```yaml
 - name: Security Audit
-  run: maestro delegate "security-audit quick" --mode analysis
+  run: maestro delegate "quick security audit" --mode analysis
 ```
 
 ---

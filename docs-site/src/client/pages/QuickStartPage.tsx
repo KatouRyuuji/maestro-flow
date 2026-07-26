@@ -53,155 +53,155 @@ const COMMANDS: CommandData[] = [
     },
   },
   {
-    id: 'roadmap', cmd: '/maestro-roadmap', category: 'init', status: 'core', level: 1,
+    id: 'roadmap', cmd: '/maestro "roadmap"', category: 'init', status: 'core', level: 1,
     zh: {
-      desc: '消费 analyze 宏观产出，将目标分解为 Milestone > Phase 层级',
+      desc: '消费 analyze 宏观产出，将目标分解为 Milestone > Phase 层级（Session 链步骤，由编排器派发）',
       when: 'analyze 宏观分析产出 scope_verdict=large 时，需要多 Phase 里程碑分解',
-      how: '/maestro-roadmap -y',
-      tips: ['纯编排层，需要上游 context（analyze 或 brainstorm 产出）', '-y 自动确认，省去交互问答', '路线图可通过 --revise 随时修订', 'scope_verdict=medium/small 时可跳过，直接 plan --from analyze:ANL-xxx'],
+      how: '/maestro "roadmap"',
+      tips: ['纯编排层，需要上游 context（analyze 或 brainstorm 产出）', '链内以 roadmap -y 自动确认，省去交互问答', '链内 roadmap --revise 随时修订路线图', 'scope_verdict=medium/small 时可跳过，直接 plan --from analyze:ANL-xxx'],
     },
     en: {
-      desc: 'Consume macro analyze output, decompose goals into Milestone > Phase hierarchy',
+      desc: 'Consume macro analyze output, decompose goals into Milestone > Phase hierarchy (Session chain step, dispatched by the orchestrator)',
       when: 'After macro analyze produces scope_verdict=large, for multi-phase milestone decomposition',
-      how: '/maestro-roadmap -y',
-      tips: ['Pure orchestration layer, requires upstream context (analyze or brainstorm output)', '-y auto-confirms, skips interactive Q&A', 'Revise anytime with --revise', 'Skip when scope_verdict=medium/small — go direct with plan --from analyze:ANL-xxx'],
+      how: '/maestro "roadmap"',
+      tips: ['Pure orchestration layer, requires upstream context (analyze or brainstorm output)', 'In-chain, roadmap -y auto-confirms and skips interactive Q&A', 'In-chain, roadmap --revise revises anytime', 'Skip when scope_verdict=medium/small — go direct with plan --from analyze:ANL-xxx'],
     },
   },
   {
-    id: 'blueprint', cmd: '/maestro-blueprint', category: 'init', status: 'recommended', level: 2,
+    id: 'blueprint', cmd: '/maestro "blueprint ..."', category: 'init', status: 'recommended', level: 2,
     zh: {
-      desc: '6 阶段规范蓝图：产品简报 → PRD → 架构文档 → 史诗故事',
+      desc: '6 阶段规范蓝图：产品简报 → PRD → 架构文档 → 史诗故事（Session 链步骤，由编排器派发）',
       when: '大型项目需要完整规范文档体系，与 brainstorm 并行的正式规范路径',
-      how: '/maestro-blueprint "项目想法或目标"',
-      tips: ['产出保存在 .workflow/blueprint/ 目录', '下游通过 --from blueprint:BLP-xxx 消费', '-y 自动模式跳过交互确认'],
+      how: '/maestro "blueprint 项目想法或目标"',
+      tips: ['产出保存在 .workflow/blueprint/ 目录', '下游通过 --from blueprint:BLP-xxx 消费', '链内以 blueprint -y 跳过交互确认'],
     },
     en: {
-      desc: '6-stage spec blueprint: Product Brief → PRD → Architecture → Epics',
+      desc: '6-stage spec blueprint: Product Brief → PRD → Architecture → Epics (Session chain step, dispatched by the orchestrator)',
       when: 'Large projects needing comprehensive spec documentation, parallel to brainstorm',
-      how: '/maestro-blueprint "project idea or goal"',
-      tips: ['Outputs saved to .workflow/blueprint/ directory', 'Downstream consumes via --from blueprint:BLP-xxx', '-y auto-mode skips interactive confirmation'],
+      how: '/maestro "blueprint project idea or goal"',
+      tips: ['Outputs saved to .workflow/blueprint/ directory', 'Downstream consumes via --from blueprint:BLP-xxx', 'In-chain, blueprint -y skips interactive confirmation'],
     },
   },
   // Pipeline
   {
-    id: 'grill', cmd: '/maestro-grill', category: 'pipeline', status: 'recommended', level: 2,
+    id: 'grill', cmd: '/maestro "grill ..."', category: 'pipeline', status: 'recommended', level: 2,
     zh: {
-      desc: '苏格拉底式压力测试 — 对抗性提问验证方案假设，用代码证据挑战模糊术语',
+      desc: '苏格拉底式压力测试 — 对抗性提问验证方案假设，用代码证据挑战模糊术语（Session 链步骤，由编排器派发）',
       when: '在 brainstorm 或 roadmap 之前，需要验证方案假设和需求可行性',
-      how: '/maestro-grill "多租户架构方案"',
+      how: '/maestro "grill 多租户架构方案"',
       tips: ['支持 shallow/standard/deep 三级深度', '产出验证过的 context-package，可直接导入下游命令', '与 brainstorm 互补：grill 是收敛验证，brainstorm 是发散探索'],
     },
     en: {
-      desc: 'Socratic stress-testing — adversarial questioning verifies assumptions with code evidence',
+      desc: 'Socratic stress-testing — adversarial questioning verifies assumptions with code evidence (Session chain step, dispatched by the orchestrator)',
       when: 'Before brainstorm or roadmap, need to verify assumptions and feasibility',
-      how: '/maestro-grill "multi-tenancy architecture"',
+      how: '/maestro "grill multi-tenancy architecture"',
       tips: ['Supports shallow/standard/deep depth levels', 'Produces verified context-package for downstream commands', 'Complements brainstorm: grill converges/verifies, brainstorm diverges/explores'],
     },
   },
   {
-    id: 'analyze', cmd: '/maestro-analyze', category: 'pipeline', status: 'core', level: 1,
+    id: 'analyze', cmd: '/maestro "analyze phase N"', category: 'pipeline', status: 'core', level: 1,
     zh: {
-      desc: '双层分析：Micro（数字参数）Phase 级 6 维度深度分析，Macro（文本参数）宏观需求探索',
+      desc: '双层分析：Micro（数字参数）Phase 级 6 维度深度分析，Macro（文本参数）宏观需求探索（Session 链步骤，由编排器派发）',
       when: 'Micro：开始新 Phase 前深度分析；Macro：roadmap 之前探索需求影响面',
-      how: '/maestro-analyze 1',
+      how: '/maestro "analyze phase 1"',
       tips: ['Micro 模式：数字参数（如 1）→ Phase 级 6 维度评分 → 直接进入 plan', 'Macro 模式：文本参数（如 "多租户架构"）→ scope_verdict → 路由到 roadmap 或 plan', '支持 --from brainstorm:ID 导入上游上下文'],
     },
     en: {
-      desc: 'Dual-layer: Micro (number) for phase-level 6-dimension analysis, Macro (text) for requirement exploration',
+      desc: 'Dual-layer: Micro (number) for phase-level 6-dimension analysis, Macro (text) for requirement exploration (Session chain step, dispatched by the orchestrator)',
       when: 'Micro: deep analysis before a phase; Macro: explore requirement impact before roadmap',
-      how: '/maestro-analyze 1',
+      how: '/maestro "analyze phase 1"',
       tips: ['Micro mode: number arg (e.g. 1) → 6-dimension scoring → directly to plan', 'Macro mode: text arg (e.g. "multi-tenancy") → scope_verdict → routes to roadmap or plan', 'Use --from brainstorm:ID for upstream context'],
     },
   },
   {
-    id: 'plan', cmd: '/maestro-plan', category: 'pipeline', status: 'core', level: 1,
+    id: 'plan', cmd: '/maestro "plan phase N"', category: 'pipeline', status: 'core', level: 1,
     zh: {
-      desc: '基于分析结果生成执行计划，分解为具体任务',
+      desc: '基于分析结果生成执行计划，分解为具体任务（Session 链步骤，由编排器派发）',
       when: '分析完成后，准备制定实现方案',
-      how: '/maestro-plan 1',
+      how: '/maestro "plan phase 1"',
       tips: ['--from analyze:ANL-xxx 可跳过 roadmap 直达规划（中小功能推荐）', '可带 --gaps 基于验证缺陷生成修复计划', '计划产物保存在 .workflow/scratch/ 下'],
     },
     en: {
-      desc: 'Generate execution plan from analysis, decompose into tasks',
+      desc: 'Generate execution plan from analysis, decompose into tasks (Session chain step, dispatched by the orchestrator)',
       when: 'After analysis, ready to create implementation plan',
-      how: '/maestro-plan 1',
+      how: '/maestro "plan phase 1"',
       tips: ['--from analyze:ANL-xxx skips roadmap for direct planning (recommended for mid/small features)', 'Use --gaps to generate fix plan from verification gaps', 'Plan artifacts saved under .workflow/scratch/'],
     },
   },
   {
-    id: 'execute', cmd: '/maestro-execute', category: 'pipeline', status: 'core', level: 1,
+    id: 'execute', cmd: '/maestro "execute phase N"', category: 'pipeline', status: 'core', level: 1,
     zh: {
-      desc: '按计划执行任务，生成代码和产物',
+      desc: '按计划执行任务，生成代码和产物（Session 链步骤，由编排器派发）',
       when: '计划确认后，开始实际编码实现',
-      how: '/maestro-execute 1',
+      how: '/maestro "execute phase 1"',
       tips: ['执行前确认计划内容完整', '可用 --dir 指定特定计划目录'],
     },
     en: {
-      desc: 'Execute tasks per plan, generate code and artifacts',
+      desc: 'Execute tasks per plan, generate code and artifacts (Session chain step, dispatched by the orchestrator)',
       when: 'Plan confirmed, ready to implement',
-      how: '/maestro-execute 1',
+      how: '/maestro "execute phase 1"',
       tips: ['Review plan content before execution', 'Use --dir to target a specific plan directory'],
     },
   },
   // Quality
   {
-    id: 'auto-test', cmd: '/quality-auto-test', category: 'quality', status: 'recommended', level: 2,
+    id: 'auto-test', cmd: '/maestro "auto-test phase N"', category: 'quality', status: 'recommended', level: 2,
     zh: {
-      desc: '智能自动测试，自动路由到 spec/gap/code 测试轨道',
+      desc: '智能自动测试，自动路由到 spec/gap/code 测试轨道（Session 链步骤，由编排器派发）',
       when: '验证通过后需要补充测试覆盖',
-      how: '/quality-auto-test 1',
-      tips: ['--re-run 只重跑失败场景', '会自动分析测试缺口并生成补全'],
+      how: '/maestro "auto-test phase 1"',
+      tips: ['链内以 auto-test 1 --re-run 只重跑失败场景', '会自动分析测试缺口并生成补全'],
     },
     en: {
-      desc: 'Smart auto-testing, routes to spec/gap/code test tracks',
+      desc: 'Smart auto-testing, routes to spec/gap/code test tracks (Session chain step, dispatched by the orchestrator)',
       when: 'After verification, need to add test coverage',
-      how: '/quality-auto-test 1',
-      tips: ['--re-run only reruns failed scenarios', 'Auto-analyzes test gaps and generates supplements'],
+      how: '/maestro "auto-test phase 1"',
+      tips: ['In-chain, auto-test 1 --re-run reruns only failed scenarios', 'Auto-analyzes test gaps and generates supplements'],
     },
   },
   {
-    id: 'test', cmd: '/quality-test', category: 'quality', status: 'recommended', level: 2,
+    id: 'test', cmd: '/maestro "test phase N"', category: 'quality', status: 'recommended', level: 2,
     zh: {
-      desc: '交互式 UAT 测试，人工确认每个测试场景',
+      desc: '交互式 UAT 测试，人工确认每个测试场景（Session 链步骤，由编排器派发）',
       when: '需要人工验收测试，确保功能符合预期',
-      how: '/quality-test 1',
-      tips: ['会生成 UAT 测试清单供逐步确认', '配合 --auto-fix 自动修复简单问题'],
+      how: '/maestro "test phase 1"',
+      tips: ['会生成 UAT 测试清单供逐步确认', '加 --auto-fix 自动修复简单问题，--smoke 先跑冒烟测试'],
     },
     en: {
-      desc: 'Interactive UAT testing, manual confirmation for each scenario',
+      desc: 'Interactive UAT testing, manual confirmation for each scenario (Session chain step, dispatched by the orchestrator)',
       when: 'Manual acceptance testing needed to confirm functionality',
-      how: '/quality-test 1',
-      tips: ['Generates UAT checklist for step-by-step confirmation', 'Use --auto-fix to auto-fix simple issues'],
+      how: '/maestro "test phase 1"',
+      tips: ['Generates UAT checklist for step-by-step confirmation', 'Add --auto-fix to auto-fix simple issues, --smoke to run smoke tests first'],
     },
   },
   {
-    id: 'review', cmd: '/quality-review', category: 'quality', status: 'recommended', level: 2,
+    id: 'review', cmd: '/maestro "review phase N"', category: 'quality', status: 'recommended', level: 2,
     zh: {
-      desc: '代码审查，多维度评估代码质量',
+      desc: '代码审查，多维度评估代码质量（Session 链步骤，由编排器派发）',
       when: '提交前需要代码审查',
-      how: '/quality-review 1 --level standard',
-      tips: ['--level 支持 minimal/standard/rigorous', '审查结果保存在 review.json'],
+      how: '/maestro "review phase 1"',
+      tips: ['审查分 quick/standard/deep 三档，按变更规模和风险自动推断', '审查结果保存在 review.json'],
     },
     en: {
-      desc: 'Code review, multi-dimensional quality assessment',
+      desc: 'Code review, multi-dimensional quality assessment (Session chain step, dispatched by the orchestrator)',
       when: 'Code review before submission',
-      how: '/quality-review 1 --level standard',
-      tips: ['--level supports minimal/standard/rigorous', 'Review results saved in review.json'],
+      how: '/maestro "review phase 1"',
+      tips: ['Review tiers quick/standard/deep, inferred from change size and risk', 'Review results saved in review.json'],
     },
   },
   {
-    id: 'debug', cmd: '/quality-debug', category: 'quality', status: 'stable', level: 2,
+    id: 'debug', cmd: '/maestro-odyssey --mode debug', category: 'quality', status: 'stable', level: 2,
     zh: {
-      desc: '诊断测试失败或验证缺陷的根因',
+      desc: '诊断测试失败或验证缺陷的根因（原 quality-debug，已并入 Odyssey debug 模式）',
       when: '测试失败或验证不通过，需要定位问题',
-      how: '/quality-debug --from-uat 1',
-      tips: ['--from-uat 基于 UAT 结果诊断', '会生成诊断报告和修复建议'],
+      how: '/maestro-odyssey --mode debug "登录失败" --from-uat 1',
+      tips: ['--from-uat 基于 UAT 结果诊断', '会生成诊断报告和修复方向'],
     },
     en: {
-      desc: 'Diagnose root cause of test failures or verification gaps',
+      desc: 'Diagnose root cause of test failures or verification gaps (former quality-debug, folded into Odyssey debug mode)',
       when: 'Tests fail or verification doesn\'t pass',
-      how: '/quality-debug --from-uat 1',
-      tips: ['--from-uat diagnoses from UAT results', 'Generates diagnosis report with fix suggestions'],
+      how: '/maestro-odyssey --mode debug "login fails" --from-uat 1',
+      tips: ['--from-uat diagnoses from UAT results', 'Generates diagnosis report with fix directions'],
     },
   },
   // Quick
@@ -211,13 +211,13 @@ const COMMANDS: CommandData[] = [
       desc: '系统性安全审计 — 覆盖 OWASP Top 10、供应链、密钥泄露、CI/CD 管线（已并入 Odyssey security 模式）',
       when: '发布前、安全敏感变更后、定期安全检查',
       how: '/maestro-odyssey "审计认证模块安全性" --mode security',
-      tips: ['原 /security-audit 已融入 Odyssey，通过 --mode security 进入', 'Odyssey 归档 → 审计 → 修复 → 验证 的长循环', '会生成安全发现和修复优先级排序'],
+      tips: ['原 security-audit 命令已融入 Odyssey，通过 --mode security 进入', 'Odyssey 归档 → 审计 → 修复 → 验证 的长循环', '会生成安全发现和修复优先级排序'],
     },
     en: {
       desc: 'Systematic security audit — OWASP Top 10, supply chain, secrets leak, CI/CD pipeline (folded into Odyssey security mode)',
       when: 'Before releases, after security-sensitive changes, periodic security checks',
       how: '/maestro-odyssey "audit auth module security" --mode security',
-      tips: ['The former /security-audit is now Odyssey --mode security', 'Odyssey long loop: archaeology → audit → fix → verify', 'Generates security findings with fix priority ranking'],
+      tips: ['The former security-audit command is now Odyssey --mode security', 'Odyssey long loop: archaeology → audit → fix → verify', 'Generates security findings with fix priority ranking'],
     },
   },
   {
@@ -341,38 +341,7 @@ const COMMANDS: CommandData[] = [
       how: '/maestro-ralph "refactor auth module" -y',
       tips: ['Unlike /maestro: ralph has decision nodes, chain grows dynamically', 'Best for high-uncertainty large tasks'],
     },
-  },
-  {
-    id: 'swarm', cmd: '/maestro-swarm-workflow', category: 'advanced', status: 'stable', level: 3,
-    zh: {
-      desc: '并行工作流加速层 — 多 agent 并发执行，覆盖 analyze/brainstorm/review/verify 等 8 种脚本',
-      when: '需要加速分析、审查、验证等可并行化的工作流步骤',
-      how: '/maestro-swarm-workflow "审查 auth 模块安全性"',
-      tips: ['--script 指定预构建脚本（analyze/brainstorm/review/verify/grill/plan/execute/milestone-audit）', '--count N 控制并发 agent 数量', '--resume 恢复中断的运行'],
-    },
-    en: {
-      desc: 'Parallel workflow accelerator — multi-agent concurrent execution with 8 pre-built scripts',
-      when: 'Need to accelerate parallelizable workflow steps like analysis, review, verification',
-      how: '/maestro-swarm-workflow "review auth module security"',
-      tips: ['--script specifies pre-built script (analyze/brainstorm/review/verify/grill/plan/execute/milestone-audit)', '--count N controls concurrent agent count', '--resume resumes interrupted runs'],
-    },
-  },
-  {
-    id: 'universal', cmd: '/maestro-universal-workflow', category: 'advanced', status: 'stable', level: 3,
-    zh: {
-      desc: '动态对抗式工作流生成器 — 按需生成专用工作流脚本，支持三级对抗深度',
-      when: '标准脚本不满足需求，需要定制化对抗式决策工作流',
-      how: '/maestro-universal-workflow "评估 3 种缓存策略的优劣" --depth standard',
-      tips: ['shallow（单 skeptic）/ standard（3 票多数决）/ deep（交叉验证+元怀疑论）', '--dry-run 只生成脚本不执行', '生成的脚本自动保存到 ~/.maestro/workflows/dynamic/ 可复用'],
-    },
-    en: {
-      desc: 'Dynamic adversarial workflow generator — generates custom workflows with 3 depth levels',
-      when: 'Standard scripts don\'t fit, need custom adversarial decision workflows',
-      how: '/maestro-universal-workflow "evaluate 3 caching strategies" --depth standard',
-      tips: ['shallow (single skeptic) / standard (3-vote majority) / deep (cross-verify + meta-skeptic)', '--dry-run generates script without executing', 'Generated scripts auto-saved to ~/.maestro/workflows/dynamic/ for reuse'],
-    },
-  },
-  {
+  },  {
     id: 'guard', cmd: '/maestro-guard', category: 'advanced', status: 'stable', level: 3,
     zh: {
       desc: '编辑边界控制 — 配置目录级写入边界，防止代理误改不相关文件',
@@ -409,12 +378,12 @@ const SCENARIOS: ScenarioData[] = [
     zh: {
       title: '新项目起步（Path A）',
       desc: '大型项目完整工作流：宏观分析 → roadmap 分解 → 逐 Phase 推进',
-      steps: ['/maestro-init', '/maestro-analyze "项目目标"', '# scope_verdict=large → roadmap', '/maestro-roadmap -y', '/maestro-analyze 1', '/maestro-plan 1', '/maestro-execute 1'],
+      steps: ['/maestro-init', '/maestro "analyze 项目目标"', '# scope_verdict=large → roadmap', '/maestro "roadmap"', '/maestro "analyze phase 1"', '/maestro "plan phase 1"', '/maestro "execute phase 1"'],
     },
     en: {
       title: 'New Project (Path A)',
       desc: 'Large project full workflow: macro analyze → roadmap decomposition → per-phase execution',
-      steps: ['/maestro-init', '/maestro-analyze "project goals"', '# scope_verdict=large → roadmap', '/maestro-roadmap -y', '/maestro-analyze 1', '/maestro-plan 1', '/maestro-execute 1'],
+      steps: ['/maestro-init', '/maestro "analyze project goals"', '# scope_verdict=large → roadmap', '/maestro "roadmap"', '/maestro "analyze phase 1"', '/maestro "plan phase 1"', '/maestro "execute phase 1"'],
     },
   },
   {
@@ -422,12 +391,12 @@ const SCENARIOS: ScenarioData[] = [
     zh: {
       title: '中等功能（Path B）',
       desc: '跳过 roadmap，analyze 直达 plan — 适合 1-2 个子系统的功能',
-      steps: ['/maestro-analyze "功能描述"', '# scope_verdict=medium → 直达 plan', '/maestro-plan --from analyze:ANL-xxx', '/maestro-execute'],
+      steps: ['/maestro "analyze 功能描述"', '# scope_verdict=medium → 直达 plan', '/maestro "plan --from analyze:ANL-xxx"', '/maestro "execute"'],
     },
     en: {
       title: 'Medium Feature (Path B)',
       desc: 'Skip roadmap, analyze direct to plan — for features spanning 1-2 subsystems',
-      steps: ['/maestro-analyze "feature description"', '# scope_verdict=medium → direct to plan', '/maestro-plan --from analyze:ANL-xxx', '/maestro-execute'],
+      steps: ['/maestro "analyze feature description"', '# scope_verdict=medium → direct to plan', '/maestro "plan --from analyze:ANL-xxx"', '/maestro "execute"'],
     },
   },
   {
@@ -474,12 +443,12 @@ const SCENARIOS: ScenarioData[] = [
     zh: {
       title: '并行开发',
       desc: '多里程碑同时推进，不等 Bug 修完',
-      steps: ['/maestro-fork -m 2', 'cd .worktrees/m2-*/', '/maestro-analyze 3 && /maestro-plan 3 && /maestro-execute 3', 'cd /project', '/maestro-merge -m 2'],
+      steps: ['/maestro-fork -m 2', 'cd .worktrees/m2-*/', '/maestro -y "推进 phase 3"', 'cd /project', '/maestro-merge -m 2'],
     },
     en: {
       title: 'Parallel Dev',
       desc: 'Multiple milestones simultaneously',
-      steps: ['/maestro-fork -m 2', 'cd .worktrees/m2-*/', '/maestro-analyze 3 && /maestro-plan 3 && /maestro-execute 3', 'cd /project', '/maestro-merge -m 2'],
+      steps: ['/maestro-fork -m 2', 'cd .worktrees/m2-*/', '/maestro -y "advance phase 3"', 'cd /project', '/maestro-merge -m 2'],
     },
   },
   {
@@ -487,12 +456,12 @@ const SCENARIOS: ScenarioData[] = [
     zh: {
       title: '质量闭环',
       desc: '测试失败 → 诊断 → 修复 → 重测',
-      steps: ['/quality-test 1', '# 测试失败时', '/quality-debug --from-uat 1', '/maestro-plan 1 --gaps', '/maestro-execute 1', '/quality-auto-test 1 --re-run'],
+      steps: ['/maestro "test phase 1"', '# 测试失败时', '/maestro-odyssey --mode debug "<from-uat 1>"', '/maestro "plan phase 1 --gaps"', '/maestro "execute phase 1"', '/maestro "auto-test phase 1"'],
     },
     en: {
       title: 'Quality Loop',
       desc: 'Test fail → diagnose → fix → retest',
-      steps: ['/quality-test 1', '# on failure', '/quality-debug --from-uat 1', '/maestro-plan 1 --gaps', '/maestro-execute 1', '/quality-auto-test 1 --re-run'],
+      steps: ['/maestro "test phase 1"', '# on failure', '/maestro-odyssey --mode debug "<from-uat 1>"', '/maestro "plan phase 1 --gaps"', '/maestro "execute phase 1"', '/maestro "auto-test phase 1"'],
     },
   },
   {
@@ -520,21 +489,7 @@ const SCENARIOS: ScenarioData[] = [
       desc: 'Pre-release security scan → discover vulnerabilities → fix → verify',
       steps: ['/maestro-odyssey "full security audit" --mode security', '# security audit long loop', '/maestro-issue "create issue: fix XSS vulnerability, severity critical"', '# create security issue', '/maestro "Fix XSS vulnerability"', '# full orchestration and verification', '/maestro-odyssey "re-check the security fix" --mode security', '# re-audit to confirm'],
     },
-  },
-  {
-    id: 'templates', icon: '📐',
-    zh: {
-      title: '工作流模板复用',
-      desc: '将常用流程模板化，一键复用',
-      steps: ['/maestro-composer "每周依赖更新流程"', '# 生成可复用模板', '/maestro-player weekly-deps --context repo=main', '# 执行模板', '# 检查点自动持久化，中断后可恢复'],
-    },
-    en: {
-      title: 'Workflow Template Reuse',
-      desc: 'Template common flows for one-click reuse',
-      steps: ['/maestro-composer "weekly dependency update flow"', '# generate reusable template', '/maestro-player weekly-deps --context repo=main', '# execute template', '# checkpoints auto-persist, resume on interrupt'],
-    },
-  },
-];
+  },];
 
 // -- Status Badge --
 
@@ -804,9 +759,9 @@ export default function QuickStartPage() {
           {isZh ? '核心管线流程' : 'Core Pipeline Flow'}
         </div>
         <div className="flex items-center justify-center gap-0 flex-wrap">
-          <PipelineStep label={isZh ? '分析' : 'Analyze'} cmd="/maestro-analyze" color="blue" isZh={isZh} />
-          <PipelineStep label={isZh ? '规划' : 'Plan'} cmd="/maestro-plan" color="purple" isZh={isZh} />
-          <PipelineStep label={isZh ? '执行' : 'Execute'} cmd="/maestro-execute" color="orange" isLast isZh={isZh} />
+          <PipelineStep label={isZh ? '分析' : 'Analyze'} cmd="analyze" color="blue" isZh={isZh} />
+          <PipelineStep label={isZh ? '规划' : 'Plan'} cmd="plan" color="purple" isZh={isZh} />
+          <PipelineStep label={isZh ? '执行' : 'Execute'} cmd="execute" color="orange" isLast isZh={isZh} />
         </div>
       </div>
 

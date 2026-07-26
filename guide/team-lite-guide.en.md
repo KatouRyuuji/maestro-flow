@@ -27,7 +27,7 @@ maestro collab status              # See who is doing what (last 30 min)
 maestro collab sync                # One-click sync (stash → pull --rebase → pop → push)
 ```
 
-`/maestro-plan` and `/maestro-execute` templates already integrate preflight calls — no manual triggering needed.
+The `plan` and `execute` step templates already integrate preflight calls — no manual triggering needed.
 
 ## Core Command Reference
 
@@ -49,7 +49,7 @@ Joined as alice <alice@example.com> on alice-laptop (admin)
 
 $ maestro collab status
 Active in last 30 min:
-  alice@alice-laptop    maestro-execute     P3/TASK-001    2 min ago
+  alice@alice-laptop    execute             P3/TASK-001    2 min ago
   bob@bob-desktop       wiki-update         spec-auth      5 min ago
 
 $ maestro collab sync --with-overlays
@@ -61,7 +61,7 @@ Importing team overlays...
 Sync complete.
 
 $ maestro collab preflight --phase 3
-⚠ bob@bob-desktop is active on phase 3 (last: maestro-execute, 4 min ago)
+⚠ bob@bob-desktop is active on phase 3 (last: execute, 4 min ago)
 exit: 1
 ```
 
@@ -90,7 +90,7 @@ Activation: `join` executed + `activity.jsonl` has non-self events within 30 min
 - Teammate's heartbeat is a historical remnant
 - Temporary patch with no scope overlap
 
-**Do not use `--force`**: When unsure, unconfirmed, or the action is `maestro-execute`.
+**Do not use `--force`**: When unsure, unconfirmed, or the action is `execute`.
 
 ## Incremental Sync Fast Path
 

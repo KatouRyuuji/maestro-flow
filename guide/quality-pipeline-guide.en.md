@@ -2,7 +2,7 @@
 title: "Quality Pipeline Guide"
 ---
 
-Complete reference for the Maestro quality pipeline: seven commands organized around a **"Review → Test → Debug → Refactor → Retrospective"** closed loop.
+Complete reference for the Maestro quality pipeline: seven stages organized around a **"Review → Test → Debug → Refactor → Retrospective"** closed loop. `review` / `test` / `auto-test` / `debug` / `retrospective` are **first-tier steps** dispatched by the orchestrator via the session chain (not standalone slash commands — you cannot type `/quality-*` directly); `refactor` is folded into `/maestro-odyssey --mode improve`, and `sync` is handled by `maestro kg index`. The user entry points are `/maestro "<intent>"` (the coordinator classifies and builds the chain) or `/maestro-next`. Each stage's parameter block below documents its step interface for pass-through when the chain is built.
 
 ---
 
@@ -10,20 +10,20 @@ Complete reference for the Maestro quality pipeline: seven commands organized ar
 
 | Command | Purpose | Core Question | Artifact ID |
 |----------|---------|---------------|-------------|
-| `quality-review` | Multi-level code review | Does code quality meet standards? | `REV-{NNN}` |
-| `quality-test` | Conversational UAT | Does it work from the user's perspective? | `TST-{NNN}` |
-| `quality-auto-test` | Unified automated testing | Do coverage and regression checks pass? | `TST-{NNN}` |
-| `quality-debug` | Hypothesis-driven debugging | What is the root cause? | `DBG-{NNN}` |
+| `review` | Multi-level code review | Does code quality meet standards? | `REV-{NNN}` |
+| `test` | Conversational UAT | Does it work from the user's perspective? | `TST-{NNN}` |
+| `auto-test` | Unified automated testing | Do coverage and regression checks pass? | `TST-{NNN}` |
+| `debug` | Hypothesis-driven debugging | What is the root cause? | `DBG-{NNN}` |
 | `/maestro-odyssey --mode improve` | Reflection-driven refactoring | Is technical debt converging? | `WBR-{NNN}` |
-| `quality-sync` | Documentation synchronization | Are docs consistent with code? | -- |
-| `quality-retrospective` | Phase retrospective | What insights are reusable? | `INS-{8hex}` |
+| `maestro kg index` | Documentation synchronization | Are docs consistent with code? | -- |
+| `retrospective` | Phase retrospective | What insights are reusable? | `INS-{8hex}` |
 
 ---
 
-## quality-review — Multi-Level Code Review
+## review — Multi-Level Code Review
 
 ```bash
-/quality-review <phase> [--level quick|standard|deep] [--dimensions security,architecture,...] [--skip-specs]
+review <phase> [--level quick|standard|deep] [--dimensions security,architecture,...] [--skip-specs]
 ```
 
 | Parameter | Description |
@@ -38,16 +38,16 @@ Artifact path: `scratch/{YYYYMMDD}-review-P{N}-{slug}/review.json`
 
 | Verdict | Meaning | Next Step |
 |---------|---------|-----------|
-| `PASS` | All dimensions passed | `/quality-test {phase}` |
-| `WARN` | Non-critical issues, can proceed | `/quality-test {phase}` |
-| `BLOCK` | Critical issues, must fix | `/maestro-plan {phase} --gaps` |
+| `PASS` | All dimensions passed | `test {phase}` |
+| `WARN` | Non-critical issues, can proceed | `test {phase}` |
+| `BLOCK` | Critical issues, must fix | `plan {phase} --gaps` |
 
 ---
 
-## quality-test — Conversational UAT
+## test — Conversational UAT
 
 ```bash
-/quality-test [phase] [--smoke] [--auto-fix]
+test [phase] [--smoke] [--auto-fix]
 ```
 
 | Parameter | Description |
@@ -61,17 +61,17 @@ Artifact path: `scratch/{YYYYMMDD}-test-P{N}-{slug}/` (uat.md, test-plan.json, t
 
 | Condition | Next Step |
 |-----------|-----------|
-| All passed | `/maestro-milestone-audit` |
-| `--auto-fix` succeeded | `/quality-review {phase}` |
-| Issues remain | `/quality-debug --from-uat {phase}` |
-| Insufficient coverage | `/quality-auto-test {phase}` |
+| All passed | `/maestro-session-seal` |
+| `--auto-fix` succeeded | `review {phase}` |
+| Issues remain | `debug --from-uat {phase}` |
+| Insufficient coverage | `auto-test {phase}` |
 
 ---
 
-## quality-auto-test — Unified Automated Testing
+## auto-test — Unified Automated Testing
 
 ```bash
-/quality-auto-test <phase> [--max-iter N] [--layer L0-L3] [--strategy name] [--dry-run] [--re-run] [-y]
+auto-test <phase> [--max-iter N] [--layer L0-L3] [--strategy name] [--dry-run] [--re-run] [-y]
 ```
 
 | Parameter | Description |
@@ -97,17 +97,17 @@ Artifact path: `scratch/{YYYYMMDD}-auto-test-P{N}-{slug}/` (test-plan.json, scen
 
 | Condition | Next Step |
 |-----------|-----------|
-| Converged (≥95%) | `/quality-test {phase}` |
-| Bugs found | `/quality-debug --from-uat {phase}` |
-| Max iterations, >80% | `/quality-test {phase}` |
-| Max iterations, <80% | `/quality-debug {phase}` |
+| Converged (≥95%) | `test {phase}` |
+| Bugs found | `debug --from-uat {phase}` |
+| Max iterations, >80% | `test {phase}` |
+| Max iterations, <80% | `debug {phase}` |
 
 ---
 
-## quality-debug — Hypothesis-Driven Debugging
+## debug — Hypothesis-Driven Debugging
 
 ```bash
-/quality-debug [issue description] [--from-uat <phase>] [--parallel]
+debug [issue description] [--from-uat <phase>] [--parallel]
 ```
 
 | Mode | Trigger | Symptom Source |
@@ -122,8 +122,8 @@ Artifact path: `scratch/{YYYYMMDD}-debug-P{N}-{slug}/` (understanding.md, eviden
 
 | Condition | Next Step |
 |-----------|-----------|
-| Root cause found | `/maestro-plan {phase} --gaps` |
-| UAT handoff + auto-fix | `/quality-test {phase} --auto-fix` |
+| Root cause found | `plan {phase} --gaps` |
+| UAT handoff + auto-fix | `test {phase} --auto-fix` |
 | Unclear conclusion | Resume debug session |
 
 ---
@@ -140,20 +140,20 @@ Artifact path: `scratch/{YYYYMMDD}-refactor-{scope}/reflection-log.md`
 
 ---
 
-## quality-sync — Documentation Synchronization
+## maestro kg index — Documentation Synchronization
 
 ```bash
-/quality-sync [--full] [--since <commit|HEAD~N>] [--dry-run]
+maestro kg index [--full] [--since <commit|HEAD~N>] [--dry-run]
 ```
 
 Detects changes via `git diff` → traces impact chains through `doc-index.json` → updates `.workflow/codebase/` documents.
 
 ---
 
-## quality-retrospective — Phase Retrospective
+## retrospective — Phase Retrospective
 
 ```bash
-/quality-retrospective [phase|N..M] [--lens technical|process|quality|decision] [--all] [--no-route] [--compare N] [-y]
+retrospective [phase|N..M] [--lens technical|process|quality|decision] [--all] [--no-route] [--compare N] [-y]
 ```
 
 4 parallel Lenses (Technical / Process / Quality / Decision), insights auto-routed:
@@ -170,38 +170,36 @@ Detects changes via `git diff` → traces impact chains through `doc-index.json`
 ## Quality Closed Loop
 
 ```
-                    ┌──────────────────────────────────────────┐
-                    │           Phase execution complete         │
-                    └──────────────┬───────────────────────────┘
-                                   │
-                    ┌──────────────▼───────────────────────────┐
-              ┌─────┤        quality-review (review)            │
-              │     └──────────────┬───────────────────────────┘
-              │ BLOCK              │ PASS/WARN
-              ▼                    ▼
-    ┌─────────────────┐  ┌────────────────────────────────────┐
-    │ maestro-plan     │  │     quality-test / quality-auto-test │
-    │ --gaps (fix)     │  │            (testing)                │
-    └────────┬────────┘  └──────────────┬─────────────────────┘
-             │                          │
-             │ Apply fix                │ Issues found
-             ▼                          ▼
-    ┌─────────────────┐      ┌──────────────────────┐
-    │ maestro-execute  │◄─────┤   quality-debug       │
-    └────────┬────────┘ debug │   (debugging)         │
-             │                └──────────┬───────────┘
-             │ Root cause found          │
-             ▼                           │
-    ┌─────────────────┐                  │
-    │ Re-run test loop │◄─────────────────┘
+                ┌──────────────────────────┐
+                │ Phase execution complete │
+                └─────────────┬────────────┘
+                              │
+                ┌─────────────▼────────────┐
+             ┌──┤ review                   │
+             │  └─────────────┬────────────┘
+             │ BLOCK          │ PASS/WARN
+             │                ▼
+    ┌────────▼────────┐ ┌─────▼────────────────┐
+    │ plan            │ │ test / auto-test     │
+    │ --gaps (fix)    │ │      (testing)       │
+    └────────┬────────┘ └──────────┬───────────┘
+             │ Apply fix           │ Issues found
+             ▼                     ▼
+    ┌─────────────────┐       ┌────────────────┐
+    │ execute         │◄──────┤  debug         │
+    └────────┬────────┘ debug └────────┬───────┘
+             │ Root cause found        │
+             │                         │
+    ┌────────▼────────┐                │
+    │ Re-run test loop│◄───────────────┘
     └────────┬────────┘
              │ All passed
              ▼
-    ┌─────────────────────────────────────────────────────────┐
-    │  /maestro-odyssey --mode improve (optional, tech debt)  │
-    │  maestro kg index (re-index codebase)                   │
-    │  retrospective step (retro, feedback)                   │
-    └─────────────────────────────────────────────────────────┘
+    ┌──────────────────────────────────────────────────────────┐
+    │ /maestro-odyssey --mode improve (optional, tech debt)    │
+    │ maestro kg index (re-index codebase)                     │
+    │ retrospective step (retro, feedback)                     │
+    └──────────────────────────────────────────────────────────┘
 ```
 
 <details>
@@ -209,31 +207,31 @@ Detects changes via `git diff` → traces impact chains through `doc-index.json`
 
 ```
 Code just executed
-  ├─ Need code quality assessment? ──> /quality-review <phase>
+  ├─ Need code quality assessment? ──> review <phase>
   │    ├─ PASS/WARN ──> Continue to testing
-  │    └─ BLOCK ──> /maestro-plan <phase> --gaps
+  │    └─ BLOCK ──> plan <phase> --gaps
   │
-  ├─ Need user acceptance? ──> /quality-test <phase>
-  │    ├─ All passed ──> /maestro-milestone-audit
-  │    └─ Issues found ──> /quality-debug --from-uat <phase>
+  ├─ Need user acceptance? ──> test <phase>
+  │    ├─ All passed ──> /maestro-session-seal
+  │    └─ Issues found ──> debug --from-uat <phase>
   │
-  ├─ Need automated testing? ──> /quality-auto-test <phase>
-  │    ├─ Converged ──> /quality-test <phase>
-  │    └─ Bugs found ──> /quality-debug --from-uat <phase>
+  ├─ Need automated testing? ──> auto-test <phase>
+  │    ├─ Converged ──> test <phase>
+  │    └─ Bugs found ──> debug --from-uat <phase>
   │
-  ├─ Known bugs? ──> /quality-debug "<issue>"
-  │    ├─ Root cause clear ──> /maestro-plan <phase> --gaps
+  ├─ Known bugs? ──> debug "<issue>"
+  │    ├─ Root cause clear ──> plan <phase> --gaps
   │    └─ Unclear ──> Continue debugging
   │
   ├─ Need to reduce tech debt? ──> /maestro-odyssey --mode improve <scope>
-  │    ├─ Tests pass ──> /quality-sync
-  │    └─ Tests fail ──> /quality-debug <scope>
+  │    ├─ Tests pass ──> maestro kg index
+  │    └─ Tests fail ──> debug <scope>
   │
-  ├─ Code changed but docs not updated? ──> /quality-sync
+  ├─ Code changed but docs not updated? ──> maestro kg index
   │
-  └─ Phase complete, need retrospective? ──> /quality-retrospective <phase>
+  └─ Phase complete, need retrospective? ──> retrospective <phase>
        ├─ Insights found ──> Auto-route to spec/issue/knowhow
-       └─ Complete ──> /manage-status
+       └─ Complete ──> maestro session status
 ```
 
 </details>
@@ -242,18 +240,18 @@ Code just executed
 
 ## Integration with Phase Pipeline
 
-After `maestro-execute` (with built-in verification gate E2.7) confirms Phase goals, quality commands are the standard entry point:
+After `execute` (with built-in verification gate E2.7) confirms Phase goals, quality commands are the standard entry point:
 
 ```bash
-/maestro-execute 1 → /quality-review 1 → /quality-auto-test 1 → /quality-test 1 → /quality-retrospective 1
+execute 1 → review 1 → auto-test 1 → test 1 → retrospective 1
 ```
 
 `--gaps` is the core bridge between quality and Phase pipelines:
 
 | Trigger Scenario | Command |
 |-----------------|---------|
-| `quality-review` verdict BLOCK | `/maestro-plan {phase} --gaps` |
-| `quality-debug` confirms root cause | `/maestro-plan {phase} --gaps` |
-| `quality-test --auto-fix` | Auto-invokes `plan--gaps → execute → verify` |
+| `review` verdict BLOCK | `plan {phase} --gaps` |
+| `debug` confirms root cause | `plan {phase} --gaps` |
+| `test --auto-fix` | Auto-invokes `plan--gaps → execute → verify` |
 
 **Pre-milestone-audit checkpoints**: All Phases verified → Critical Phases reviewed → Core functionality tested → Issues resolved → Retrospective completed

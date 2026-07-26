@@ -80,7 +80,7 @@ The complete command catalog from `lifecycle_position` to `session-seal`. Each e
 | brainstorm | `brainstorm "{intent}" [--from grill:{grill_id}]` | — | all |
 | blueprint | `blueprint "{intent}"` | — | all |
 | init | `maestro-init` | — | all |
-| spec-setup | `maestro-spec setup` | — | all (inserted only when `.workflow/specs/` does not exist) |
+| specs-setup | `maestro-spec setup` | — | all (inserted only when `.workflow/specs/` does not exist) |
 | analyze-macro | `analyze "{intent}"` | `post-analyze-scope` | all |
 | roadmap | `roadmap --from analyze:{analyze_macro_id}` | — | all (only scope_verdict=large + wants_roadmap) |
 | analyze | `analyze --session {session}` | — | all |
@@ -136,7 +136,7 @@ Each `◆` is a decision node, evaluated by a read-only evaluator and submitting
 
 | # | Rule |
 |---|------|
-| 0.5 | **specs pre-check**: starting point ∉ {grill, brainstorm, blueprint, init} and `.workflow/specs/` does not exist → insert `spec-setup` at the very front of the chain |
+| 0.5 | **specs pre-check**: starting point ∉ {grill, brainstorm, blueprint, init} and `.workflow/specs/` does not exist → insert `specs-setup` at the very front of the chain |
 | 1 | **Starting point**: start from `lifecycle_position` |
 | 2 | **Skip completed**: skip stages that already have a completed artifact under the current session |
 | 3 | **quality_mode filter**: exclude non-matching stages according to `quality_mode` |

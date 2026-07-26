@@ -130,14 +130,14 @@ No AGENTS.md (file side effects); skip on `source=resume` (avoid duplicate); no 
 
 **stdin**:
 ```json
-{ "session_id": "abc123", "turn_id": "turn-001", "prompt": "/maestro-execute 2",
+{ "session_id": "abc123", "turn_id": "turn-001", "prompt": "/maestro-next \"advance Phase 2\"",
   "cwd": "/path/to/project", "hook_event_name": "UserPromptSubmit", "model": "gpt-5.1-codex" }
 ```
 
 **stdout**:
 ```json
 { "hookSpecificOutput": { "hookEventName": "UserPromptSubmit",
-  "additionalContext": "## Workflow Context for maestro-execute\nMilestone: MVP | Phase: 2 (1/4 completed)\n..." } }
+  "additionalContext": "## Session Context for maestro-next\nMilestone: MVP | Phase: 2 (1/4 completed)\n..." } }
 ```
 </details>
 

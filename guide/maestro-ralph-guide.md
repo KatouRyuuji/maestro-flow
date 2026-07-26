@@ -74,8 +74,8 @@ Ralph 支持扫描两个平台的 skill 目录：
 ```json
 // .workflow/skill-config.json
 {
-  "maestro-execute": { "auto_commit": true },
-  "quality-review": { "dims": "bugs,security" }
+  "execute": { "auto_commit": true },
+  "review": { "dims": "bugs,security" }
 }
 ```
 
@@ -186,10 +186,10 @@ Ralph 的 decision 节点按评估委托方式分为 5 组：
   "lifecycle_position": "plan",
   "target": "milestone-complete",
   "steps": [
-    { "index": 0, "type": "skill", "skill": "maestro-plan", "args": "1", "status": "completed" },
-    { "index": 1, "type": "skill", "skill": "maestro-execute", "args": "1", "status": "completed" },
+    { "index": 0, "type": "skill", "skill": "plan", "args": "1", "status": "completed" },
+    { "index": 1, "type": "skill", "skill": "execute", "args": "1", "status": "completed" },
     { "index": 2, "type": "decision", "skill": "maestro-ralph", "args": "{\"decision\":\"post-verify\",\"retry_count\":0,\"max_retries\":2}", "status": "running" },
-    { "index": 3, "type": "skill", "skill": "quality-review", "args": "1", "status": "pending" }
+    { "index": 3, "type": "skill", "skill": "review", "args": "1", "status": "pending" }
   ],
   "current_step": 3
 }
@@ -250,8 +250,8 @@ Session Anchor 是 Ralph 在每个 step 执行前自动注入的只读上下文�
 - Done when: all auth tests green + JWT refresh works + middleware blocks unauthorized
 
 **Execution Progress**:
-- [0] maestro-analyze (analyze): Completed macro analysis, scope=large
-- [1] maestro-plan (plan): Generated 12-task plan for phase 2
+- [0] analyze (analyze): Completed macro analysis, scope=large
+- [1] plan (plan): Generated 12-task plan for phase 2
   ⚠️ Some tasks depend on external API mock
 - Progress: 2 done, 8 pending
 
@@ -426,7 +426,7 @@ INTENT_ALIGNED=true|false
 UNMET=[{id:G2, gap:'...', target_phase:execute}, ...]
 ```
 
-- `has_unmet` → 对每个 unmet 子目标插入 scoped mini-loop（`maestro-plan --gaps` + `maestro-execute`），标记 `goal_ref`
+- `has_unmet` → 对每个 unmet 子目标插入 scoped mini-loop（`plan --gaps` + `execute`），标记 `goal_ref`
 - `all_met` + `INTENT_ALIGNED=true` → 标记全部完成，进入 milestone-complete
 - `all_met` + `INTENT_ALIGNED=false` → **尾部漂移熔断**（A_REGROUND_HALT），auto_confirm 不跳过
 
@@ -625,9 +625,9 @@ Session JSON 包含 35+ 字段，以下为完整结构：
   // === 步骤（3 个示例：completed 执行 step、completed decision、running 执行 step）===
   "steps": [
     {
-      "index": 0, "skill": "maestro-analyze", "args": "\"implement auth\" 2",
+      "index": 0, "skill": "analyze", "args": "\"implement auth\" 2",
       "stage": "analyze", "scope": "phase", "decision": null,
-      "command_scope": "project", "command_path": "D:/project/.claude/commands/maestro-analyze.md",
+      "command_scope": "project", "command_path": "D:/project/prepare/analyze.md",
       "milestone_id": "MVP", "source_artifact_ref": null,
       "status": "completed", "goal_ref": null,
       "completion_confirmed": true, "completion_status": "DONE",
@@ -649,9 +649,9 @@ Session JSON 包含 35+ 字段，以下为完整结构：
       "deferred_reads": [], "load": null
     },
     {
-      "index": 2, "skill": "maestro-plan", "args": "\"implement auth\" 2",
+      "index": 2, "skill": "plan", "args": "\"implement auth\" 2",
       "stage": "plan", "scope": "phase", "decision": null,
-      "command_scope": "project", "command_path": "D:/project/.claude/commands/maestro-plan.md",
+      "command_scope": "project", "command_path": "D:/project/prepare/plan.md",
       "milestone_id": "MVP", "source_artifact_ref": "analyze:ANL-042",
       "status": "running", "goal_ref": null,
       "completion_confirmed": false, "completed_at": null,

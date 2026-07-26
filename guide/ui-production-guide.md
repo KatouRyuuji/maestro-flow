@@ -17,7 +17,7 @@ impeccable --chain build  →  impeccable (auto pipeline)  →  ui-codify
 
 **Phase 管线位置**：`analyze -> ui-design -> plan -> execute -> verify`（设计先于规划）
 
-`maestro-impeccable` 是 impeccable skill（23 命令 / 6 分类）的编排层，通过 critique/audit 评分驱动自动迭代循环。`--chain build` 产出的 `design-ref/` 会被 `maestro-plan` 自动检测，将设计 token 注入执行任务的 `read_first[]`。
+`maestro-impeccable` 是 impeccable skill（23 命令 / 6 分类）的编排层，通过 critique/audit 评分驱动自动迭代循环。`--chain build` 产出的 `design-ref/` 会被 `plan` 步骤自动检测，将设计 token 注入执行任务的 `read_first[]`。
 
 ---
 

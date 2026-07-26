@@ -53,7 +53,7 @@ Revoked column must be set rather than deleting tokens.
 
 ### Tool 发现
 
-Tool 是标记了 `tool: true` YAML 头的 knowhow 文档。`maestro-spec load --category` 自动扫描 `knowhow/` 中匹配 category + tool 的条目，追加摘要。
+Tool 是标记了 `tool: true` YAML 头的 knowhow 文档。`maestro spec load --category` 自动扫描 `knowhow/` 中匹配 category + tool 的条目，追加摘要。
 
 ```markdown
 ---
@@ -200,10 +200,6 @@ maestro spec load [--category <cat>] [--keyword <kw>] [--scope <scope>] [--json]
 maestro spec add <category> "<title>" "<content>" [--keywords kw1,kw2] [--ref <path>]
 maestro spec list [--scope <scope>] [--uid <uid>]
 maestro spec status [--scope <scope>] [--uid <uid>]
-
-# Tool 发现
-/maestro-spec add "<description>"
-/maestro-ralph "<name>" | --category <cat>
 
 # 分析
 maestro spec analytics [--keywords] [--hit-rate] [--clear]

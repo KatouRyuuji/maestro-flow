@@ -136,9 +136,8 @@ maestro spec health
 
 | 命令 | 职责 |
 |------|------|
-| `/maestro-spec add` | 向 specs 文件追加 `<spec-entry>` 条目，支持 inline 和 ref 两种模式 |
-| `/maestro-knowhow` | 捕获 6 种类型知识文档到 knowhow/（compact、template、recipe、reference、decision、tip） |
-| `/maestro-tools-register` | 将可复用业务流程注册为 knowhow 工具文档（YAML 头 `tool: true` + `category`） |
+| `/maestro-spec` | 向 specs 文件追加 `<spec-entry>` 条目，支持 inline 和 ref 两种模式 |
+| `/maestro-knowhow` | 捕获 6 种类型知识文档到 knowhow/（compact、template、recipe、reference、decision、tip），可加 `--tool` 标记为可执行 tool |
 | `/maestro-learn` | 捕获原子洞察到 `learnings.md`（pattern、gotcha、technique、tip） |
 | `/maestro-knowledge harvest` | 从工作流产物中提取知识碎片，路由到 wiki/spec/issue 三个存储 |
 
@@ -146,17 +145,16 @@ maestro spec health
 
 | 命令 | 职责 |
 |------|------|
-| `/maestro-spec load` | 按 category 加载主文档 + 跨文件 keyword 匹配条目 + 自动发现 knowhow 工具 |
-| `/maestro-tools-execute` | 从 knowhow 加载工具文档并逐步执行 |
-| `maestro knowhow` | 跨 workflow knowhow 和 system memory 两个存储做 list/search/view/edit/delete |
+| `maestro spec load` | 按 category 加载主文档 + 跨文件 keyword 匹配条目 + 自动发现 knowhow 工具 |
+| `maestro knowhow` | 对 workflow knowhow 存储做 list/search/get；删除/清理走 `/maestro-knowledge audit` |
 | `/maestro-knowledge wiki` | Wiki 图健康度、搜索、清理、统计 |
 
 ### 分析类
 
 | 命令 | 职责 |
 |------|------|
-| `/maestro-knowledge wiki` | 语义主题聚类 + 知识覆盖热力图 + gap 分析 |
-| `/maestro-knowledge wiki` | 发现孤立节点和缺失连接，修复图联通性 |
+| `/maestro-knowledge wiki digest` | 语义主题聚类 + 知识覆盖热力图 + gap 分析 |
+| `/maestro-knowledge wiki connect` | 发现孤立节点和缺失连接，修复图联通性 |
 | `/maestro-knowledge audit` | 审计 spec/knowhow/artifact 三存储 — 矛盾检测、过期淘汰、孤立清理（keep/supersede/contest/deprecate/delete 五态决策） |
 | `/maestro-learn decompose` | 从代码中提取设计模式，写入 spec 和 wiki |
 | `/maestro-learn follow` | 引导式阅读代码/wiki，提取 pattern 并构建理解 |
@@ -165,7 +163,7 @@ maestro spec health
 
 | 命令 | 职责 |
 |------|------|
-| `/maestro-spec setup` | 扫描项目结构，初始化 specs 骨架文件（6 个种子文件） |
+| `maestro spec init` | 扫描项目结构，初始化 specs 骨架文件（6 个种子文件） |
 
 ---
 
@@ -191,18 +189,11 @@ summary: "Use when testing payment endpoints for retry safety."
 5. Verify webhook delivers exactly once
 ```
 
-`maestro-spec load --category test` 自动扫描 knowhow/ 中 `category=test` 且 `tool=true` 的文档，将工具摘要与 spec 一起注入 agent 上下文。
+`maestro spec load --category test` 自动扫描 knowhow/ 中 `category=test` 且 `tool=true` 的文档，将工具摘要与 spec 一起注入 agent 上下文。
 
 ### 注册与使用
 
-| 阶段 | 命令 | 场景 |
-|------|------|------|
-| 规划期间 | `/maestro-tools-register generate` | 标准化业务流程 |
-| 执行之后 | `/maestro-tools-register extract` | 捕获经过验证的操作步骤 |
-| 测试之前 | `/maestro-tools-register generate` | 注册验证方法给 test agent |
-| 复盘时 | `/maestro-tools-register optimize` | 从产物中提取可复用流程 |
-
-使用方式：按名称执行 `/maestro-tools-execute integration-test`、按 category 发现 `/maestro-tools-execute --category test`、Agent 自动发现（`maestro-spec load` 输出包含工具摘要）。
+Tool 就是带 `tool: true` 的 knowhow 文档：用 `/maestro-knowhow`（recipe 类型 + `--tool`）沉淀，agent 通过 `maestro spec load --category` 自动发现并注入摘要——无需专门的注册/执行命令。
 
 ---
 
@@ -452,11 +443,11 @@ codeExtractor.extract({ allowScripts: true })
 Progressive Fill——各阶段自动沉淀：
 
 ```bash
-maestro-init    → spec-setup（骨架 + 扫描）
-maestro-analyze → 锁定决策 → arch，代码模式 → coding
-maestro-plan    → 设计约定 → coding/arch，测试策略 → test
-maestro-execute → 经验教训 → learning，根因 → debug
-maestro-execute → 内置验证（E2.7）→ 质量发现 → review
+maestro-init → spec init（骨架 + 扫描）
+analyze → 锁定决策 → arch，代码模式 → coding
+plan    → 设计约定 → coding/arch，测试策略 → test
+execute → 经验教训 → learning，根因 → debug
+execute → 内置验证（E2.7）→ 质量发现 → review
 ```
 
 <details>
@@ -467,14 +458,14 @@ maestro-execute → 内置验证（E2.7）→ 质量发现 → review
 **1. 规划 + 分析**
 
 ```bash
-/workflow-lite-plan 用户管理模块 API：注册、登录、JWT 鉴权、用户 CRUD
-/maestro-analyze API 端点设计模式分析
+/maestro 用户管理模块 API：注册、登录、JWT 鉴权、用户 CRUD
+/maestro 分析 API 端点设计模式
 ```
 
 **2. 实现 + 知识回收**
 
 ```bash
-/workflow-lite-execute
+/maestro 实现上述计划
 /maestro-knowledge harvest --source lite-plan --to auto
 ```
 
@@ -487,23 +478,17 @@ harvest 自动路由：
 | 响应格式知识 | wiki → knowhow | "统一返回 `{ data, error, meta }` 结构" |
 | 缺失功能 | issue | "缺少 rate limiting 中间件" |
 
-**3. 注册验证工具**
+**3. 测试消费**
 
 ```bash
-/maestro-tools-register generate User API E2E 验证：注册 → 登录 → token 刷新 → CRUD → 异常
+# auto-test 与 test 是编排器（maestro run）派发的一级 step，不是斜杠命令
+auto-test --keyword user-api             # 自动测试：发现 tool → 生成测试代码
+test "user management API"               # 会话式 UAT：按 tool 步骤逐项验证
 ```
 
-**4. 测试消费**
+**4. 反哺**
 
 ```bash
-/quality-auto-test --keyword user-api    # 自动测试：发现 tool → 生成测试代码
-/quality-test user management API        # 会话式 UAT：按 tool 步骤逐项验证
-```
-
-**5. 反哺**
-
-```bash
-/maestro-tools-register optimize user-api-verify   # 追加新发现的 edge case
 /maestro-learn "refresh token 过期后重试需要处理 race condition"
 ```
 
@@ -512,8 +497,7 @@ harvest 自动路由：
 | 命令 | 产出 | 性质 |
 |---|---|---|
 | `/maestro-knowledge harvest` | spec 条目 + wiki 条目 + issue | 被动知识 |
-| `/maestro-knowhow` | AST-*.md（API 契约） | 被动资产 |
-| `/maestro-tools-register` | RCP-*.md（验证流程） | 主动可执行 |
-| `/quality-auto-test` | 测试代码 | 消费 tool |
+| `/maestro-knowhow` | AST-*.md（API 契约）；`--tool` 标记的 RCP-*.md（验证流程） | 被动资产 / 主动可执行 |
+| `auto-test` step | 测试代码 | 消费 tool |
 
 </details>

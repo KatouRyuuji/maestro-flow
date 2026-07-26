@@ -17,7 +17,7 @@ Knowledge harvesting extracts fragments from execution artifacts, classifies and
 | Store | Path | What It Holds | Who Consumes |
 |-------|------|---------------|--------------|
 | **Wiki** | `.workflow/wiki/` | Observations, general insights, knowledge graph | `/maestro-knowledge wiki connect`, `/maestro-knowledge wiki digest` |
-| **Spec** | `.workflow/specs/` | Coding conventions, architecture decisions, pattern rules | `/maestro-spec load`, Hook auto-injection |
+| **Spec** | `.workflow/specs/` | Coding conventions, architecture decisions, pattern rules | `maestro spec load`, Hook auto-injection |
 | **Issue** | `.workflow/issues/issues.jsonl` | Unresolved bugs, risks, TODOs | `/maestro-issue`, `/maestro "analyze..."` |
 
 ### Relationship with Knowhow
@@ -249,7 +249,7 @@ The command supports automatic type recognition via tokens:
      v         v          v
 +----------------------------------------------------------+
 |                   Downstream Consumption                  |
-|  /maestro-knowledge wiki connect / /maestro-knowledge wiki digest / maestro-spec load / /maestro-issue   |
+|  /maestro-knowledge wiki connect / /maestro-knowledge wiki digest / maestro spec load / /maestro-issue   |
 |  Hook auto-injection / /maestro "plan <phase> --gaps"    |
 +----------------------------------------------------------+
 ```
@@ -277,4 +277,4 @@ Execution process -> /maestro-knowhow -> .workflow/knowhow/ -> wiki-index.json -
 |----------|-------|
 | **Daily Development** | `/maestro "execute"` -> quick note on completion -> `/maestro-knowhow tip "discovered trick"` |
 | **Milestone Completion** | `/maestro-knowledge harvest --recent 30` -> `/maestro-knowhow compact` -> `/maestro-knowledge wiki connect --fix` |
-| **Project Handoff** | `maestro knowhow list` -> `maestro knowhow search "core concept"` -> `/maestro-spec load --role implement` |
+| **Project Handoff** | `maestro knowhow list` -> `maestro knowhow search "core concept"` -> `maestro spec load --role implement` |

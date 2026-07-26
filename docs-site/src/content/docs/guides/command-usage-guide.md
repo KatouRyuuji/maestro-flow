@@ -424,13 +424,15 @@ maestro load --category coding --keyword auth           # 统一知识加载
 /maestro-update --force     # 一键全量升级
 ```
 
-### maestro-spec remove — 规范移除
+### specs-remove — 规范移除
 
 从 specs 文件中移除指定的 `<spec-entry>` 条目。Entry ID 格式：`spec-{file-stem}-{NNN}`。
 
+`specs-remove` 是编排器派发的 step（无 `/xxx` 形态），经 `/maestro "<意图>"` 或 `/maestro-next` 进入；`/maestro-spec` 只负责录入，没有 remove 子命令。
+
 ```bash
 maestro wiki list --type spec --json    # 列出所有 spec 条目
-/maestro-spec remove spec-learnings-003          # 移除指定条目
+specs-remove spec-learnings-003         # 链内步骤：移除指定条目
 ```
 
 ### maestro-knowledge audit — 知识审计

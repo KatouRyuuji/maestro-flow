@@ -72,9 +72,9 @@ Maestro 使用 `action x object` 矩阵进行语义路由：
 
 | 输入 | 路由 | 命令链 |
 |------|------|--------|
-| `"Add API endpoint"` | quick | `maestro-quick` |
-| `"plan phase 2"` | plan | `maestro-plan 2` |
-| `"debug auth crash"` | debug | `quality-debug` |
+| `"Add API endpoint"` | companion | `/maestro-companion "Add API endpoint"` |
+| `"plan phase 2"` | plan | step `plan 2` |
+| `"debug auth crash"` | debug | step `debug "auth crash"` |
 | `"fix issue ISS-abc-001"` | issue-full | analyze → plan → execute → review → close |
 | `"brainstorm notifications"` | brainstorm-driven | brainstorm → plan → execute → verify |
 | `"continue"` | state_continue | 基于项目状态自动推断 |
@@ -85,27 +85,26 @@ Maestro 使用 `action x object` 矩阵进行语义路由：
 
 ### 单步链
 
-| 链名 | 命令 |
+| 链名 | 步骤（Session chain 内派发） |
 |------|------|
-| `analyze` | `maestro-analyze {milestone}` |
-| `plan` | `maestro-plan {milestone}` |
-| `execute` | `maestro-execute {phase}` |
-| `review` | `quality-review {phase}` |
-| `test` | `quality-test {phase}` |
-| `debug` | `quality-debug "{description}"` |
-| `quick` | `maestro-quick "{description}"` |
+| `analyze` | `analyze {phase}` |
+| `plan` | `plan {phase}` |
+| `execute` | `execute {phase}` |
+| `review` | `review {phase}` |
+| `test` | `test {phase}` |
+| `debug` | `debug "{description}"` |
 
 ### 多步链
 
 | 链名 | 步骤 | 场景 |
 |------|------|------|
-| `full-lifecycle` | plan → execute → review → test → audit | 完整 milestone |
+| `full-lifecycle` | plan → execute → review → test → session-seal → harvest | 完整 milestone |
 | `roadmap-driven` | init → roadmap → plan → execute | 从需求开始 |
 | `brainstorm-driven` | brainstorm → plan → execute | 从探索开始 |
 | `execute-review` | execute → review | 规划完成后恢复 |
 | `review-fix` | plan --gaps → execute → review | 修复 review 问题 |
 | `issue-full` | analyze → plan → execute → review → close | Issue 闭环 |
-| `milestone-close` | audit → complete | 关闭 milestone |
+| `milestone-close` | session-seal | 关闭 milestone |
 
 ---
 
@@ -132,7 +131,7 @@ Maestro 使用 `action x object` 矩阵进行语义路由：
     {
       "index": 0,
       "type": "skill",
-      "skill": "maestro-plan",
+      "skill": "plan",
       "args": "1",
       "status": "pending"
     }
@@ -169,8 +168,8 @@ Maestro 使用 `action x object` 矩阵进行语义路由：
 | 未初始化 | `init` |
 | 有 roadmap，目标 phase 无 artifact | `analyze` |
 | 最新 artifact 是 analyze | `plan` |
-| 最新是 plan | `execute-verify` |
-| verify 通过，无 review | `review` |
+| 最新是 plan | `execute` |
+| execute 完成（含内置验证），无 review | `review` |
 | UAT 通过 | `milestone-close` |
 | 所有 phase 完成 | `milestone-close` |
 
@@ -183,11 +182,11 @@ Maestro 使用 `action x object` 矩阵进行语义路由：
 | 命令 | Flag | 效果 |
 |------|------|------|
 | maestro-init | `-y` | 跳过交互提问 |
-| maestro-analyze | `-y` | 跳过交互 scoping |
-| maestro-plan | `-y` | 跳过确认和澄清 |
-| maestro-execute | `-y` | 跳过确认，blocked 自动继续 |
-| quality-test | `-y --auto-fix` | 自动触发 gap-fix loop |
-| maestro-milestone-complete | `-y` | 跳过 knowledge promotion |
+| analyze | `-y` | 跳过交互 scoping |
+| plan | `-y` | 跳过确认和澄清 |
+| execute | `-y` | 跳过确认，blocked 自动继续 |
+| test | `-y --auto-fix` | 自动触发 gap-fix loop |
+| maestro-session-seal | `-y` | 跳过确认（auto 模式） |
 
 ---
 

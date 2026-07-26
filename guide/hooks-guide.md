@@ -197,7 +197,7 @@ maestro hooks list      # 可用 Hook 列表
 
 匹配 Skill 调用时注入工作流状态 + 阶段产物树 + 前序成果（`additionalContext`，不重写 prompt）。支持模式：首要步骤 skill 调用（`analyze`、`plan`、`execute`、`review`、`test`、`auto-test`、milestone 等，由编排器派发）以及编排入口 `/maestro`、`/maestro-next`、`/maestro-ralph`
 
-协调器 Skill 额外注入 coordinator-tracker bridge 的 next-step 提示：`Chain: full-lifecycle [3/6] | Status: paused | Next: quality-review 2 | Resume: /maestro -c`
+协调器 Skill 额外注入 coordinator-tracker bridge 的 next-step 提示：`Chain: full-lifecycle [3/6] | Status: paused | Next: review 2 | Resume: /maestro -c`
 
 ### coordinator-tracker — 协调器进度追踪
 
@@ -217,8 +217,8 @@ maestro hooks list      # 可用 Hook 列表
   "phase": 2,
   "steps_total": 6,
   "steps_completed": 3,
-  "current_step": { "index": 3, "skill": "quality-review", "args": "2" },
-  "next_step": { "index": 4, "skill": "quality-test", "args": "2" },
+  "current_step": { "index": 3, "skill": "review", "args": "2" },
+  "next_step": { "index": 4, "skill": "test", "args": "2" },
   "status": "paused",
   "updated_at": 1744668285953
 }
@@ -226,7 +226,7 @@ maestro hooks list      # 可用 Hook 列表
 
 </details>
 
-**Statusline**：`claude-sonnet-4-6 | P2 | [3/6]quality-review`（暂停态 `[P]quality-review`）
+**Statusline**：`claude-sonnet-4-6 | P2 | [3/6]review`（暂停态 `[P]review`）
 
 ### workflow-guard — 工作流守卫
 

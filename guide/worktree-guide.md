@@ -155,14 +155,14 @@ worktree 内执行命令时，新 artifact 自动归属 `worktree-scope.json` �
 | 命令 | 原因 |
 |------|------|
 | `maestro-init` | 会重置项目状态 |
-| `maestro-roadmap` | 会重新分解 milestones |
-| `maestro-blueprint` | 会修改全局 blueprint |
+| `roadmap` 步骤 | 会重新分解 milestones |
+| `blueprint` 步骤 | 会修改全局 blueprint |
 | `maestro-fork` | 不能在 worktree 内再 fork |
 | `maestro-merge` | 必须在 main 中执行 |
 
 ## Dashboard 集成
 
-`/manage-status` 会显示 worktree 状态：
+`maestro session status` 会显示 worktree 状态：
 
 <details>
 <summary>Dashboard 输出示例</summary>

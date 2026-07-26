@@ -17,7 +17,7 @@ Maestro 知识回收系统将执行过程中产生的知识碎片从"会话临�
 | 存储 | 路径 | 存什么 | 谁消费 |
 |------|------|--------|--------|
 | **Wiki** | `.workflow/wiki/` | 观察发现、通用洞察、知识图谱 | `/maestro-knowledge wiki` |
-| **Spec** | `.workflow/specs/` | 编码规范、架构决策、模式规则 | `/maestro-spec load`、Hook 自动注入 |
+| **Spec** | `.workflow/specs/` | 编码规范、架构决策、模式规则 | `maestro spec load`、Hook 自动注入 |
 | **Issue** | `.workflow/issues/issues.jsonl` | 未解决的 bug、风险、待办 | `/maestro-issue`、`analyze --gaps`（分析步骤） |
 
 ### 与 knowhow 的关系
@@ -26,7 +26,7 @@ Harvest 提取的碎片路由到 wiki/spec/issue。Knowhow（`.workflow/knowhow/
 
 ---
 
-## 二、manage-harvest 详解
+## 二、maestro-knowledge harvest 详解
 
 ### 命令语法
 
@@ -117,17 +117,16 @@ Harvest 提取的碎片路由到 wiki/spec/issue。Knowhow（`.workflow/knowhow/
 
 ---
 
-## 三、manage-knowhow 详解
+## 三、maestro knowhow（管理）详解
 
 ### 命令语法
 
 ```bash
-maestro knowhow                                  # 列出全部（默认）
-maestro knowhow search "认证流程"                  # 全文搜索
-maestro knowhow view KNW-20260510-1430           # 查看指定条目
-maestro knowhow edit MEMORY.md                   # 编辑系统记忆
-maestro knowhow delete TIP-20260510-0900         # 删除（需确认）
-maestro knowhow prune --tag deprecated --before 2026-04-01  # 批量清理
+maestro knowhow list                  # 列出全部（默认）
+maestro knowhow search "认证流程"     # 全文搜索
+maestro knowhow get KNW-20260510-1430 # 查看指定条目
+/maestro-knowledge audit              # 删除条目 → 经审计 keep/deprecate/delete
+/maestro-knowledge audit              # 批量清理（prune）→ 知识审计
 ```
 
 ### 双存储架构
@@ -166,7 +165,7 @@ Workflow 存储面向项目内知识，system 存储面向跨会话持久记忆�
 
 ---
 
-## 四、manage-knowhow-capture 详解
+## 四、/maestro-knowhow（沉淀）详解
 
 ### 命令语法
 
@@ -223,7 +222,7 @@ Workflow 存储面向项目内知识，system 存储面向跨会话持久记忆�
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                     执行阶段                             │
-│  maestro-analyze → maestro-plan → maestro-execute       │
+│  analyze → plan → execute（Skill 链步）                 │
 │       ↓              ↓                ↓                 │
 │   ANL-xxx/       plan-xxx/       code changes           │
 │   brainstorm/    lite-plan/      debug-log/             │
@@ -232,7 +231,7 @@ Workflow 存储面向项目内知识，system 存储面向跨会话持久记忆�
              ▼
 ┌─────────────────────────────────────────────────────────┐
 │                  知识回收                                │
-│  /maestro-knowledge harvest                                        │
+│  /maestro-knowledge harvest                             │
 │  ├── Stage 1-2: 发现产物                                │
 │  ├── Stage 3:   提取碎片（category + confidence）        │
 │  ├── Stage 4:   分类路由（auto / forced）                │
@@ -249,8 +248,8 @@ Workflow 存储面向项目内知识，system 存储面向跨会话持久记忆�
      ▼         ▼          ▼
 ┌─────────────────────────────────────────────────────────┐
 │                   下游消费                                │
-│  wiki-connect / wiki-digest / spec-load / manage-issue   │
-│  Hook 自动注入 / maestro-plan --gaps                     │
+│  maestro-knowledge wiki / spec load / maestro-issue     │
+│  Hook 自动注入 / plan --gaps                            │
 └─────────────────────────────────────────────────────────┘
 ```
 </details>
@@ -276,5 +275,5 @@ Workflow 存储面向项目内知识，system 存储面向跨会话持久记忆�
 | 场景 | 步骤 |
 |------|------|
 | **日常开发** | `/maestro-next` → 完成后随手记 → `/maestro-knowhow tip "发现的技巧"` |
-| **里程碑结束** | `/maestro-knowledge harvest --recent 30` → `/maestro-knowhow compact` → `/maestro-knowledge wiki --fix` |
-| **项目交接** | `maestro knowhow list` → `maestro knowhow search "核心概念"` → `/maestro-spec load --role implement` |
+| **里程碑结束** | `/maestro-knowledge harvest --recent 30` → `/maestro-knowhow compact` → `/maestro-knowledge wiki connect --fix` |
+| **项目交接** | `maestro knowhow list` → `maestro knowhow search "核心概念"` → `maestro spec load --role implement` |

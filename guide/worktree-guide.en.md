@@ -24,9 +24,9 @@ Main worktree (master)              Worktree (.worktrees/m2-production/)
 │       ├── 03-realtime/ [forked]   │       └── 04-billing/ (owned)
 │       └── 04-billing/ [forked]    │
 │                                   │   Execute normally here:
-│   Fix M1 bugs on main             │   /maestro-analyze 3
-│                                   │   /maestro-plan 3
-│                                   │   /maestro-execute 3
+│   Fix M1 bugs on main             │   /maestro "phase 3"
+│                                   │   (coordinator dispatches
+│                                   │    analyze → plan → execute)
 ```
 
 </details>
@@ -45,7 +45,7 @@ Main worktree (master)              Worktree (.worktrees/m2-production/)
 ### Scenario 1: Milestone completed with bugs — start next without waiting
 
 ```bash
-/maestro-milestone-complete          # M1 complete but has bugs
+/maestro-session-seal                # M1 complete but has bugs
 /maestro-fork -m 2                   # Fork M2 worktree
 
 # Terminal A: Fix M1 bugs on main
@@ -53,7 +53,7 @@ cd /project
 
 # Terminal B: Advance M2 in worktree
 cd .worktrees/m2-production/
-/maestro-analyze 3 && /maestro-plan 3 && /maestro-execute 3
+/maestro "phase 3"   # coordinator runs analyze → plan → execute
 
 # M2 complete, merge back
 /maestro-merge -m 2
@@ -153,14 +153,14 @@ Inside a worktree, new artifacts auto-belong to the milestone in `worktree-scope
 | Command | Reason |
 |---------|--------|
 | `maestro-init` | Would reset project state |
-| `maestro-roadmap` | Would re-decompose phases |
-| `maestro-blueprint` | Would modify global blueprint |
+| `roadmap` step | Would re-decompose phases |
+| `blueprint` step | Would modify global blueprint |
 | `maestro-fork` | Cannot fork from within a worktree |
 | `maestro-merge` | Must be executed from main |
 
 ## Dashboard Integration
 
-`/manage-status` displays worktree status:
+`maestro session status` displays worktree status:
 
 <details>
 <summary>Dashboard Output Examples</summary>

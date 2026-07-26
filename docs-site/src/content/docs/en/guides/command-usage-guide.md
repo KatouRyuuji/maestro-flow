@@ -20,7 +20,7 @@ The Maestro command system exposes **18 slash commands**, backed by 45 skills an
 
 Beyond slash commands there are two other layers, neither invoked with a leading `/`:
 
-- **First-tier steps** (80 in `workflows/`) — `analyze`, `plan`, `execute`, `review`, `test`, `auto-test`, `debug`, `grill`, `brainstorm`, `blueprint`, `roadmap`, `harvest`, `retrospective`, `verify`, `collab` and others. These are dispatched by an orchestrator inside a Session chain; you reach them through `/maestro "<intent>"` or `/maestro-next`, never by typing `/maestro-plan`.
+- **First-tier steps** (80 in `workflows/`) — `analyze`, `plan`, `execute`, `review`, `test`, `auto-test`, `debug`, `grill`, `brainstorm`, `blueprint`, `roadmap`, `harvest`, `retrospective`, `verify`, `collab` and others. These are dispatched by an orchestrator inside a Session chain; you reach them through `/maestro "<intent>"` or `/maestro-next`, never by typing them as a `/maestro-…` slash command.
 - **Skills** (45 in `.claude/skills/`, of which 25 are `team-*`) — user-invocable team and utility skills such as `/team-swarm`.
 
 The global entry point `/maestro` is the **intent-to-chain planner**, which automatically selects the optimal command chain based on user intent and project state, creates a canonical Session, and enters the shared Run loop.
@@ -427,13 +427,15 @@ Detects the schema version of the current `.workflow/`, displays available migra
 /maestro-update --force     # One-click full upgrade
 ```
 
-### maestro-spec remove — Spec Removal
+### specs-remove — Spec Removal
 
 Removes the specified `<spec-entry>` entry from the specs file. Entry ID format: `spec-{file-stem}-{NNN}`.
 
+`specs-remove` is an orchestrator-dispatched step (no `/xxx` form), reached through `/maestro "<intent>"` or `/maestro-next`; `/maestro-spec` only adds and has no remove subcommand.
+
 ```bash
 maestro wiki list --type spec --json    # List all spec entries
-/maestro-spec remove spec-learnings-003          # Remove the specified entry
+specs-remove spec-learnings-003         # In-chain step: remove the specified entry
 ```
 
 ### /maestro-knowledge audit — Knowledge Audit

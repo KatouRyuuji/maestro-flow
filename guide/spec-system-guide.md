@@ -21,7 +21,7 @@ Maestro 知识管理分为 **Spec**（编码约束/工具）和 **Wiki**（广�
 
 ### 文件与 Category 映射
 
-每个 spec 文件是一个 category 的主文档。`maestro-spec load --category` 加载主文档全文 + 跨文件 keyword 匹配条目。
+每个 spec 文件是一个 category 的主文档。`maestro spec load --category` 加载主文档全文 + 跨文件 keyword 匹配条目。
 
 | 文件 | Category | 隐式角色 | 用途 |
 |------|----------|---------|------|
@@ -57,7 +57,7 @@ Revoked column must be set rather than deleting tokens.
 | `source` | 否 | 来源（manual / agent / phase） |
 | `ref` | 否 | 指向 knowhow 详情文档的路径 |
 | `confidence` | 否 | 置信度：`high` / `medium` / `low` / `contested` |
-| `sid` | 否 | 稳定身份标识（格式 `S-YYYYMMDD-xxxx`，`maestro-spec add` 自动生成） |
+| `sid` | 否 | 稳定身份标识（格式 `S-YYYYMMDD-xxxx`，`maestro spec add` 自动生成） |
 | `supersedes` | 否 | 此条目替代的旧条目 sid |
 | `superseded-by` | 否 | 替代此条目的新条目 sid |
 | `status` | 否 | 生命周期状态：`active`（默认）/ `deprecated` |
@@ -128,7 +128,7 @@ Store tokens in httpOnly cookies.
 
 ### Tool 发现
 
-Tool 是标记了 `tool: true` YAML 头的 knowhow 文档。`maestro-spec load --category` 自动扫描 `knowhow/` 中匹配 category + tool 的条目，追加摘要。
+Tool 是标记了 `tool: true` YAML 头的 knowhow 文档。`maestro spec load --category` 自动扫描 `knowhow/` 中匹配 category + tool 的条目，追加摘要。
 
 <details>
 <summary>Knowhow tool 示例 + spec ref 条目</summary>
@@ -160,8 +160,7 @@ Use when testing payment integration endpoints for retry safety.
 
 </details>
 
-- **注册**：`/maestro-tools-register` — 将可复用流程编码为 knowhow tool 文档
-- **执行**：`/maestro-tools-execute` — 按名称或 category 加载 tool，逐步执行
+Tool 无需专门的注册/执行命令：用 `/maestro-knowhow`（recipe 类型 + `--tool`）沉淀带 `tool: true` 的 knowhow 文档，agent 通过 `maestro spec load --category` 自动发现并注入摘要。
 
 ### Spec 命令
 
@@ -178,15 +177,15 @@ maestro spec load --keyword <kw>                     # 跨所有文件
 ### Progressive Fill
 
 ```
-maestro-init    → spec-setup     maestro-analyze → arch, coding
-maestro-plan    → coding, test   maestro-execute → learning, debug
-maestro-execute → review (via E2.7 verification gate)
+maestro-init → spec init      analyze → arch, coding
+plan         → coding, test   execute → learning, debug
+execute      → review (via E2.7 verification gate)
 ```
 
 ### 关键词系统
 
-- `maestro-spec add` 自动提取 3-5 个领域关键词
-- `maestro-spec load --keyword <kw>` 跨所有 category 文件匹配 `<spec-entry>` 的 keywords
+- `maestro spec add` 自动提取 3-5 个领域关键词
+- `maestro spec load --keyword <kw>` 跨所有 category 文件匹配 `<spec-entry>` 的 keywords
 - 旧版标题条目回退到文本搜索
 
 ---
@@ -406,10 +405,6 @@ maestro spec conflict mark <file> <line> --note "<reason>" [--marker <id>] [--co
 maestro spec conflict clear <file> <line> [--confidence <level>]          # 清除冲突标记
 maestro spec conflict set-confidence <file> <line> <level>                # 设置置信度
 maestro spec conflict clear-all <file> [--confidence <level>]             # 批量清除文件内所有冲突
-
-# -- Tool 发现 ------------------------------------------------------------
-/maestro-tools-register "<description>"
-/maestro-tools-execute "<name>" | --category <cat>
 
 # -- Wiki -----------------------------------------------------------------
 maestro wiki list [--type <type>] [--category <cat>] [--keyword <kw>] [--tool] [-q <query>] [--group] [--json]

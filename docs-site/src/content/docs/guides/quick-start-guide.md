@@ -164,12 +164,6 @@ maestro session start "实现 JWT 认证" --chain analyze plan execute   # CLI �
 
 # 轻量执行（最小 Run 生命周期）
 /maestro-companion "修复登录页 Bug"
-
-# 仅建议不执行
-/maestro-next --suggest "重构 API 层"
-
-# 列出可路由渠道
-/maestro-next --list
 ```
 
 ---
@@ -241,7 +235,7 @@ maestro delegate "..." --rule development-implement-feature --mode write
 
 ```bash
 # 自然语言创建
-/maestro-overlay "在 maestro-execute 后增加 CLI 验证"
+/maestro-overlay "在 execute 后增加 CLI 验证"
 
 # 管理
 maestro overlay list                    # 交互式 TUI 查看

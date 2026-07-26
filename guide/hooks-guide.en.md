@@ -156,9 +156,9 @@ Writes heartbeat to `.workflow/collab/activity.jsonl` once per turn.
 
 **Event**: `UserPromptSubmit` | **Level**: `standard`
 
-Matches Skill invocations and injects workflow state + phase artifact tree + prior results via `additionalContext` (does not rewrite prompt). Supported patterns: `/maestro-execute {N}`, `/maestro-plan {N}`, `/maestro-analyze {N}`, `/maestro-phase-transition`, `/quality-review {N}`, `/quality-test {N}`, `/maestro`, `/maestro-coordinate`, `/maestro-link-coordinate`
+Matches Skill invocations and injects workflow state + phase artifact tree + prior results via `additionalContext` (does not rewrite prompt). Supported patterns: first-tier step skill invocations (`analyze`, `plan`, `execute`, `review`, `test`, `auto-test`, milestone, etc., dispatched by the orchestrator) plus orchestration entries `/maestro`, `/maestro-next`, `/maestro-ralph`
 
-Coordinator Skills additionally inject coordinator-tracker bridge next-step prompt: `Chain: full-lifecycle [3/6] | Status: paused | Next: quality-review 2 | Resume: /maestro -c`
+Coordinator Skills additionally inject coordinator-tracker bridge next-step prompt: `Chain: full-lifecycle [3/6] | Status: paused | Next: review 2 | Resume: /maestro -c`
 
 ### coordinator-tracker — Coordinator Progress Tracking
 
@@ -178,8 +178,8 @@ Updates bridge file at end of each turn for Statusline and skill-context consump
   "phase": 2,
   "steps_total": 6,
   "steps_completed": 3,
-  "current_step": { "index": 3, "skill": "quality-review", "args": "2" },
-  "next_step": { "index": 4, "skill": "quality-test", "args": "2" },
+  "current_step": { "index": 3, "skill": "review", "args": "2" },
+  "next_step": { "index": 4, "skill": "test", "args": "2" },
   "status": "paused",
   "updated_at": 1744668285953
 }
@@ -187,7 +187,7 @@ Updates bridge file at end of each turn for Statusline and skill-context consump
 
 </details>
 
-**Statusline**: `claude-sonnet-4-6 | P2 | [3/6]quality-review` (paused shows `[P]quality-review`)
+**Statusline**: `claude-sonnet-4-6 | P2 | [3/6]review` (paused shows `[P]review`)
 
 ### workflow-guard — Workflow Guard
 

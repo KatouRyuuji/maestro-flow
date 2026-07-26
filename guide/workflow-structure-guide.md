@@ -61,11 +61,11 @@ title: ".workflow/ 产物目录体系"
 │   ├── AST-*.md                  # asset
 │   ├── BLP-*.md                  # blueprint
 │   ├── DOC-*.md                  # document
-│   ├── KNW-follow-*.md           # learn-follow
-│   ├── KNW-decompose-*.md        # learn-decompose
-│   ├── KNW-retro-*.md/json       # learn-retro
-│   ├── KNW-opinion-*.md          # learn-second-opinion
-│   ├── KNW-investigate-*/        # learn-investigate
+│   ├── KNW-follow-*.md           # maestro-learn follow
+│   ├── KNW-decompose-*.md        # maestro-learn decompose
+│   ├── KNW-retro-*.md/json       # retrospective 步骤
+│   ├── KNW-opinion-*.md          # maestro-learn consult
+│   ├── KNW-investigate-*/        # maestro-learn investigate
 │   ├── KNW-digest-*.md           # wiki-digest
 │   └── wiki-connections-*.md     # wiki-connect
 │
@@ -179,7 +179,7 @@ title: ".workflow/ 产物目录体系"
 | `state.json` | 项目状态机 + Artifact Registry | `version`, `status`, `current_milestone`, `current_phase`, `artifacts[]`, `milestones[]`, `milestone_history[]` |
 | `config.json` | 用户工作流配置（`maestro-init` 创建 + 各命令分段写入） | `workflow.{research,reflection}`, `execution.{method,auto_commit,default_executor}`, `git.commit_docs`, `gates.{confirm_roadmap,confirm_plan}`, `codebase.auto_sync_after_execute`, `worktree.{root,branch_prefix}`, `guard.*`, `collab.*`, `specInjection.*`, `dashboard.port` |
 | `project.md` | 项目定义（`maestro-init` 创建） | Core Value, Requirements, Key Decisions, Context |
-| `roadmap.md` | 里程碑/阶段路线图（`maestro-roadmap` 创建） | 里程碑列表、success criteria、依赖关系、Phase Progress Table |
+| `roadmap.md` | 里程碑/阶段路线图（`roadmap` 步骤创建） | 里程碑列表、success criteria、依赖关系、Phase Progress Table |
 | `wiki-index.json` | Wiki 统一索引（WikiIndexer 自动生成） | 索引 project/specs/knowhow/issues/roadmap |
 
 ### state.json Schema
@@ -294,7 +294,7 @@ Spec 作用域：
 | personal | `.workflow/collab/specs/{uid}/` | `spec:personal:{uid}:` |
 
 ```xml
-<spec-entry category="coding" keywords="exports,naming" date="2026-05-13" source="spec-add" roles="implement">
+<spec-entry category="coding" keywords="exports,naming" date="2026-05-13" source="manual" roles="implement">
   规范内容...
 </spec-entry>
 ```
@@ -338,15 +338,15 @@ Learn 特殊前缀：`KNW-follow-`, `KNW-decompose-`, `KNW-retro-`, `KNW-opinion
 ```
 
 - `issues/issue-history.jsonl` — 已关闭问题归档
-- `issues/discoveries/` — `manage-issue-discover` 会话产物
+- `issues/discoveries/` — `issue-discover` 步骤会话产物
 
 ---
 
 ## 六、里程碑归档
 
-里程碑完成时 `maestro-milestone-complete` 创建归档：
+里程碑完成时 `/maestro-session-seal` 创建归档：
 
-1. `maestro-milestone-audit` 验证完整性 → `audit-report.md`
+1. 验证所有 run 已完成 → `audit-report.md`
 2. scratch 产物移入 `milestones/{M}/artifacts/`
 3. `state.json.artifacts[]` 移入 `milestone_history[]`
 4. 提取 knowhow，推进下一里程碑
@@ -381,17 +381,17 @@ Learn 特殊前缀：`KNW-follow-`, `KNW-decompose-`, `KNW-retro-`, `KNW-opinion
 
 ### Artifact 类型与命令
 
-| Type | ID 前缀 | Scope | 命令 |
+| Type | ID 前缀 | Scope | 来源 |
 |------|---------|-------|------|
-| analyze | ANL-{NNN} | phase, adhoc, standalone | maestro-analyze |
-| plan | PLN-{NNN} | phase, adhoc | maestro-plan |
-| execute | EXC-{NNN} | phase | maestro-execute |
-| verify | VRF-{NNN} | phase, milestone | maestro-execute (E2.7) |
-| review | REV-{NNN} | phase | quality-review |
-| debug | DBG-{NNN} | phase, standalone | quality-debug |
-| test | TST-{NNN} | phase | quality-test |
-| brainstorm | BRN-{NNN} | adhoc | maestro-brainstorm |
-| collab | CLB-{NNN} | adhoc | maestro-collab |
+| analyze | ANL-{NNN} | phase, adhoc, standalone | `analyze` 步骤 |
+| plan | PLN-{NNN} | phase, adhoc | `plan` 步骤 |
+| execute | EXC-{NNN} | phase | `execute` 步骤 |
+| verify | VRF-{NNN} | phase, milestone | `execute` (E2.7) |
+| review | REV-{NNN} | phase | `review` 步骤 |
+| debug | DBG-{NNN} | phase, standalone | `debug` 步骤 |
+| test | TST-{NNN} | phase | `test` 步骤 |
+| brainstorm | BRN-{NNN} | adhoc | `brainstorm` 步骤 |
+| collab | CLB-{NNN} | adhoc | `collab` 步骤 |
 | import | IMP-{NNN} | standalone | `--from @file` 自动创建 |
 | ui-design | — | phase, scratch | maestro-impeccable --chain build |
 
@@ -401,7 +401,6 @@ Learn 特殊前缀：`KNW-follow-`, `KNW-decompose-`, `KNW-retro-`, `KNW-opinion
 |------|------|------|
 | maestro 主会话 | `maestro-{YYYYMMDD-HHmmss}` | `maestro-20260513-143022` |
 | ralph 会话 | `ralph-{YYYYMMDD-HHmmss}` | `ralph-20260513-143022` |
-| player 会话 | `player-{YYYYMMDD-HHmmss}` | `player-20260513-143022` |
 | delegate ID | `{prefix}-{HHmmss}-{rand4}` | `gem-143022-a7f2` |
 | Issue ID | `ISS-XXXXXXXX-NNN` | `ISS-a1b2c3d4-001` |
 
@@ -548,22 +547,24 @@ Context Package 是跨命令的**标准数据合约**——上游按统一 schem
 替代原有的 `--from-brainstorm`（保留为别名），支持多种输入源：
 
 ```bash
+# roadmap / plan / analyze 步骤接受的 --from 参数模式（在 Session chain 内派发）：
+
 # 按 artifact 类型+ID
-maestro-roadmap --from brainstorm:BRN-001
-maestro-plan --from analyze:ANL-002
+roadmap --from brainstorm:BRN-001
+plan --from analyze:ANL-002
 
 # 按 session 路径
-maestro-plan --from .workflow/scratch/20260521-brainstorm-cache/
+plan --from .workflow/scratch/20260521-brainstorm-cache/
 
 # 导入外部文档（自动创建 import session）
-maestro-roadmap --from @requirements.md
-maestro-analyze --from @competitor-analysis.pdf
+roadmap --from @requirements.md
+analyze --from @competitor-analysis.pdf
 
 # 多源合并
-maestro-plan --from brainstorm:BRN-001 --from @tech-constraints.md
+plan --from brainstorm:BRN-001 --from @tech-constraints.md
 
 # 向后兼容
-maestro-roadmap --from-brainstorm SESSION-ID   # 等价于 --from brainstorm:{resolve(SESSION-ID)}
+roadmap --from-brainstorm SESSION-ID   # 等价于 --from brainstorm:{resolve(SESSION-ID)}
 ```
 
 **解析优先级**：
@@ -588,7 +589,7 @@ maestro-roadmap --from-brainstorm SESSION-ID   # 等价于 --from brainstorm:{re
 ### 外部文档导入流程
 
 ```
-maestro-roadmap --from @prd.md
+roadmap --from @prd.md
     │
     ├── 1. 创建 import session: .workflow/scratch/{date}-import-prd/
     ├── 2. 复制原始文档 → source.{ext}

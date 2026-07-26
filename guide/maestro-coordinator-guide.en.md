@@ -72,9 +72,9 @@ Maestro uses an `action x object` matrix for semantic routing:
 
 | Input | Route | Command Chain |
 |-------|-------|---------------|
-| `"Add API endpoint"` | quick | `maestro-quick` |
-| `"plan phase 2"` | plan | `maestro-plan 2` |
-| `"debug auth crash"` | debug | `quality-debug` |
+| `"Add API endpoint"` | companion | `/maestro-companion "Add API endpoint"` |
+| `"plan phase 2"` | plan | step `plan 2` |
+| `"debug auth crash"` | debug | step `debug "auth crash"` |
 | `"fix issue ISS-abc-001"` | issue-full | analyze → plan → execute → review → close |
 | `"brainstorm notifications"` | brainstorm-driven | brainstorm → plan → execute → verify |
 | `"continue"` | state_continue | Auto-infer from project state |
@@ -85,27 +85,26 @@ Maestro uses an `action x object` matrix for semantic routing:
 
 ### Single-Step Chains
 
-| Chain Name | Command |
+| Chain Name | Step (dispatched inside the Session chain) |
 |------------|---------|
-| `analyze` | `maestro-analyze {milestone}` |
-| `plan` | `maestro-plan {milestone}` |
-| `execute` | `maestro-execute {phase}` |
-| `review` | `quality-review {phase}` |
-| `test` | `quality-test {phase}` |
-| `debug` | `quality-debug "{description}"` |
-| `quick` | `maestro-quick "{description}"` |
+| `analyze` | `analyze {phase}` |
+| `plan` | `plan {phase}` |
+| `execute` | `execute {phase}` |
+| `review` | `review {phase}` |
+| `test` | `test {phase}` |
+| `debug` | `debug "{description}"` |
 
 ### Multi-Step Chains
 
 | Chain Name | Steps | Use Case |
 |------------|-------|----------|
-| `full-lifecycle` | plan → execute → review → test → audit | Complete milestone |
+| `full-lifecycle` | plan → execute → review → test → session-seal → harvest | Complete milestone |
 | `roadmap-driven` | init → roadmap → plan → execute | Starting from requirements |
 | `brainstorm-driven` | brainstorm → plan → execute | Starting from exploration |
 | `execute-review` | execute → review | Resume after planning |
 | `review-fix` | plan --gaps → execute → review | Fix review issues |
 | `issue-full` | analyze → plan → execute → review → close | Issue closed-loop |
-| `milestone-close` | audit → complete | Close milestone |
+| `milestone-close` | session-seal | Close milestone |
 
 ---
 
@@ -132,7 +131,7 @@ Storage location: `.workflow/.maestro/maestro-{YYYYMMDD-HHMMSS}/status.json`
     {
       "index": 0,
       "type": "skill",
-      "skill": "maestro-plan",
+      "skill": "plan",
       "args": "1",
       "status": "pending"
     }
@@ -169,8 +168,8 @@ User Input → Intent Parsing → Initial Chain → Canonical Session → run-ex
 | Not initialized | `init` |
 | Has roadmap, target phase has no artifacts | `analyze` |
 | Latest artifact is analyze | `plan` |
-| Latest is plan | `execute-verify` |
-| Verify passed, no review | `review` |
+| Latest is plan | `execute` |
+| Execute completed (verification built-in), no review | `review` |
 | UAT passed | `milestone-close` |
 | All phases complete | `milestone-close` |
 
@@ -183,11 +182,11 @@ When `-y` is enabled, Maestro propagates the auto flag to downstream commands:
 | Command | Flag | Effect |
 |---------|------|--------|
 | maestro-init | `-y` | Skip interactive questioning |
-| maestro-analyze | `-y` | Skip interactive scoping |
-| maestro-plan | `-y` | Skip confirmations and clarification |
-| maestro-execute | `-y` | Skip confirmations, auto-continue on blocked |
-| quality-test | `-y --auto-fix` | Auto-trigger gap-fix loop |
-| maestro-milestone-complete | `-y` | Skip knowledge promotion |
+| analyze | `-y` | Skip interactive scoping |
+| plan | `-y` | Skip confirmations and clarification |
+| execute | `-y` | Skip confirmations, auto-continue on blocked |
+| test | `-y --auto-fix` | Auto-trigger gap-fix loop |
+| maestro-session-seal | `-y` | Skip confirmations (auto mode) |
 
 ---
 

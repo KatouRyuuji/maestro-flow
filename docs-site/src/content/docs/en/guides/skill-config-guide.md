@@ -75,12 +75,12 @@ Merge strategy: Project-level overrides global, deep-merged at skill granularity
 ## CLI Usage
 
 ```bash
-maestro config list                        # List all configurable skills
-maestro config set <skill> <param> <value> [-g]  # Set (-g for global)
-maestro config show [skill]                # View configuration
-maestro config show --json                 # JSON format
-maestro config unset <skill> <param> [-g]  # Remove single parameter
-maestro config reset [skill] [-g]          # Reset configuration
+maestro config skills list                        # List all configurable skills
+maestro config skills set <skill> <param> <value> [-g]  # Set (-g for global)
+maestro config skills show [skill]                # View configuration
+maestro config skills show --json                 # JSON format
+maestro config skills unset <skill> <param> [-g]  # Remove single parameter
+maestro config skills reset [skill] [-g]          # Reset configuration
 ```
 
 > Parameter names don't need the `--` prefix; CLI auto-completes.
@@ -90,8 +90,8 @@ maestro config reset [skill] [-g]          # Reset configuration
 ## TUI Interactive Interface
 
 ```bash
-maestro config                    # Launch dashboard
-maestro config edit <skill>       # Edit specific skill
+maestro config skills                    # Launch dashboard
+maestro config skills edit <skill>       # Edit specific skill
 ```
 
 ### Dashboard
@@ -138,19 +138,19 @@ The `skill-context` hook triggers on `UserPromptSubmit`:
 
 ```bash
 # Development mode (auto-commit + skip confirmation)
-maestro config set maestro-ralph auto-commit true -g
-maestro config set maestro-ralph y true -g
+maestro config skills set maestro-ralph auto-commit true -g
+maestro config skills set maestro-ralph y true -g
 
 # Review mode (deep review)
-maestro config set maestro-ralph level deep -g
+maestro config skills set maestro-ralph level deep -g
 
 # Planning mode (auto + collaborative)
-maestro config set maestro-next auto true -g
-maestro config set maestro-next collab true
+maestro config skills set maestro-next auto true -g
+maestro config skills set maestro-next collab true
 
 # Analysis mode (silent)
-maestro config set maestro-ralph y true -g
-maestro config set maestro-ralph c true -g
+maestro config skills set maestro-ralph y true -g
+maestro config skills set maestro-ralph c true -g
 ```
 
 ---
@@ -168,11 +168,11 @@ maestro config set maestro-ralph c true -g
 
 | Command | Description |
 |---------|-------------|
-| `maestro config` | TUI dashboard |
-| `maestro config list` | List all configurable skills |
-| `maestro config show [skill]` | View configuration |
-| `maestro config set <skill> <param> <value> [-g]` | Set parameter default |
-| `maestro config unset <skill> <param> [-g]` | Remove parameter default |
-| `maestro config reset [skill] [-g]` | Reset configuration |
-| `maestro config edit <skill>` | TUI edit specific skill |
+| `maestro config skills` | TUI dashboard |
+| `maestro config skills list` | List all configurable skills |
+| `maestro config skills show [skill]` | View configuration |
+| `maestro config skills set <skill> <param> <value> [-g]` | Set parameter default |
+| `maestro config skills unset <skill> <param> [-g]` | Remove parameter default |
+| `maestro config skills reset [skill] [-g]` | Reset configuration |
+| `maestro config skills edit <skill>` | TUI edit specific skill |
 | `maestro cfg ...` | Alias for `config` |

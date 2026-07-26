@@ -201,7 +201,7 @@ chain-file 的 step 形态只接受 `command` / `args?` / `stage?` / `goal_ref?`
 
 ```yaml
 - name: Security Audit
-  run: maestro delegate "security-audit quick" --mode analysis
+  run: maestro delegate "快速安全审计" --mode analysis
 ```
 
 ---

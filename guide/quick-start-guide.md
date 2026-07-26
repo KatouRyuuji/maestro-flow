@@ -30,43 +30,47 @@ maestro hooks install --level standard
 
 ```bash
 /maestro-init                          # 初始化 .workflow/ 目录
-/maestro-roadmap "项目名称和目标" -y     # 生成路线图
+/maestro "从需求开始做整个项目" -y      # spec-driven 链：init → roadmap --mode full → plan → execute → harvest
 ```
 
 ### 从头脑风暴开始
 
 ```bash
-/maestro-brainstorm "在线教育平台"       # 多角色头脑风暴
-/maestro-init --from brainstorm:ANL-xxx # 基于头脑风暴初始化
-/maestro-roadmap "创建路线图" -y
+/maestro "brainstorm 在线教育平台"      # 多角色头脑风暴（brainstorm-driven 链）
+/maestro-init --from-brainstorm SESSION-ID                  # 基于头脑风暴初始化
+/maestro "创建路线图" -y                # roadmap-driven 链
 ```
 
 ### 完整规范蓝图（大型项目）
 
 ```bash
 /maestro-init
-/maestro-blueprint                      # 6 阶段规范蓝图（产品简报 + PRD + 架构 + 史诗）
+/maestro "生成规范蓝图"                   # blueprint-driven 链：7 阶段规范蓝图（产品简报 + PRD + 架构 + 史诗）
 ```
 
 ---
 
 ## 3. Phase 管线
 
-项目的核心推进流程，每个 Phase 走 `分析 → 规划 → 执行 → 验证` 生命周期：
+项目的核心推进流程，每个 Phase 走 `分析 → 规划 → 执行 → 审查 → 测试` 生命周期（验证已内聚于 `post-execute` 决策门）：
 
 ```bash
-# 全量模式——覆盖当前里程碑所有 Phase
-/maestro-analyze                        # 分析
-/maestro-plan                           # 规划
-/maestro-execute                        # 执行（含内置验证门控 E2.7）
+# 闭环模式——/maestro-ralph 构建完整生命周期链 + decision gate
+/maestro-ralph "实现用户认证系统"     # analyze → plan → execute → ◆ → review → ◆ → test → seal
+
+# 逐步模式（经 /maestro 路由单步链）
+/maestro "analyze"                    # 分析
+/maestro "plan phase 1"               # 规划
+/maestro "execute"                    # 执行
+# 注：/maestro-verify 已于 v0.5.51 退役，验证集成进 maestro-ralph 决策门
 
 # 逐 Phase 模式（micro 层：Phase 级深度分析）
-/maestro-analyze 1                      # 只分析 Phase 1（6 维度评分）
-/maestro-plan 1                         # 只规划 Phase 1
-/maestro-execute 1                      # 只执行 Phase 1
+/maestro "analyze phase 1"            # 只分析 Phase 1
+/maestro "plan phase 1"               # 只规划 Phase 1
+/maestro "execute phase 1"            # 只执行 Phase 1
 
 # 宏观探索模式（macro 层：roadmap 之前使用）
-/maestro-analyze "实现多租户架构"         # 需求影响面探索 → scope_verdict 路由
+/maestro "实现多租户架构"              # analyze-macro → scope_verdict 路由
 ```
 
 ### 一键全自动
@@ -79,35 +83,31 @@ maestro hooks install --level standard
 ### 免初始化模式（临时任务）
 
 ```bash
-/maestro-analyze "实现 JWT 认证"         # scope=standalone，自动创建 state.json
-/maestro-plan --dir scratch/20260420-analyze-jwt-...
-/maestro-execute --dir scratch/20260420-plan-jwt-...
+/maestro "实现 JWT 认证"                 # analyze-plan-execute 链，scope=standalone
+maestro session start "实现 JWT 认证" --chain analyze plan execute   # CLI 直接建链
 ```
 
 ---
 
 ## 4. 质量管线
 
-执行后运行质量验证，三轨测试互补：
+执行后运行质量验证，三轨测试互补。`auto-test` / `test` / `review` 是编排器派发的 first-tier step，通过 `/maestro-next` 或 `/maestro "<意图>"` 按意图建链触发，不能直接敲 `/quality-*`：
 
 ```bash
-# 统一自动测试（智能路由：spec/gap/code）
-/quality-auto-test 1
-
-# 会话式 UAT
-/quality-test 1
-
-# 代码审查
-/quality-review 1 --level standard
+auto-test 1                     # 统一自动测试（智能路由：spec/gap/code）
+test 1                          # 会话式 UAT
+review 1 --level standard       # 代码审查
 ```
 
 ### 测试失败修复循环
 
+`debug` / `auto-test` 同为编排器派发的 step，参数在建链时透传：
+
 ```bash
-/quality-debug --from-uat 1             # 诊断失败
-/maestro-plan 1 --gaps                  # 生成修复计划
-/maestro-execute 1                      # 执行修复
-/quality-auto-test 1 --re-run           # 重跑失败场景
+debug --from-uat 1              # 诊断失败
+plan 1 --gaps                   # 生成修复计划
+execute 1                       # 执行修复
+auto-test 1 --re-run            # 重跑失败场景
 ```
 
 ---
@@ -123,10 +123,8 @@ maestro hooks install --level standard
 # 创建 Issue
 /maestro-issue create --title "内存泄漏" --severity high
 
-# 闭环处理
-/maestro-analyze --gaps ISS-001          # 根因分析
-/maestro-plan --gaps                     # 方案规划
-/maestro-execute                         # 执行修复
+# 闭环处理（issue-full 链）
+/maestro "fix issue ISS-001"     # analyze --gaps → plan --gaps → execute → review → close → harvest
 /maestro-issue close ISS-001 --resolution "Fixed"
 ```
 
@@ -139,14 +137,11 @@ maestro hooks install --level standard
 跳过 Phase 管线，直接完成任务：
 
 ```bash
-# 最快路径
+# 最快路径（纯路由：分类意图 → 路由到 companion / 单 Run / /maestro）
 /maestro-next "修复登录页 Bug"
 
-# 带规划验证
-/maestro-next --full "重构 API 层"
-
-# 带决策提取
-/maestro-next --discuss "数据库迁移策略"
+# 轻量执行（最小 Run 生命周期）
+/maestro-companion "修复登录页 Bug"
 ```
 
 ---
@@ -193,19 +188,19 @@ maestro delegate "..." --rule development-implement-feature --mode write
 项目级知识自动注入，Agent 启动时无需手动粘贴上下文：
 
 ```bash
-# 初始化（扫描代码库生成规范文件）
-/maestro-spec setup                                    # 已有项目：扫描代码库填充 specs
-# 新项目可跳过 -- specs 由 analyze/plan/execute 渐进填充
+# 初始化（扫描代码库生成规范文件，CLI）
+maestro spec init                                      # 已有项目：扫描代码库填充 specs
+# 新项目可跳过 —— specs 由 analyze/plan/execute 渐进填充
 
-# 录入规范
-/maestro-spec add coding "所有 API 使用 Hono 框架"
-/maestro-spec add arch "通知模块使用事件驱动架构"
-/maestro-spec add learning "分页 offset=0 会越界"
+# 录入规范（/maestro-spec 只做录入，category 自动推断，也可显式指定）
+/maestro-spec coding "所有 API 使用 Hono 框架"
+/maestro-spec arch "通知模块使用事件驱动架构"
+/maestro-spec learning "分页 offset=0 会越界"
 
-# 加载规范
-/maestro-spec load --role implement
-/maestro-spec load --keyword auth
-/maestro-spec load --role implement --keyword auth
+# 加载规范（CLI）
+maestro spec load --role implement
+maestro spec load --keyword auth
+maestro spec load --role implement --keyword auth
 ```
 
 **自动注入**：Hook 在 Agent 启动时按类型自动注入对应规范（coder→coding, tester→test, debugger→debug）。
@@ -218,7 +213,7 @@ maestro delegate "..." --rule development-implement-feature --mode write
 
 ```bash
 # 自然语言创建
-/maestro-overlay "在 maestro-execute 后增加 CLI 验证"
+/maestro-overlay "在 execute 后增加 CLI 验证"
 
 # 管理
 maestro overlay list                    # 交互式 TUI 查看
@@ -260,7 +255,7 @@ maestro hooks toggle spec-injector off
 ```bash
 /maestro-fork -m 2                              # Fork M2 worktree
 cd .worktrees/m2-production/
-/maestro-analyze 3 && /maestro-plan 3 && /maestro-execute 3
+/maestro "analyze phase 3" && /maestro "plan phase 3" && /maestro "execute phase 3"
 
 cd /project
 /maestro-merge -m 2                             # 合并回 main
@@ -275,10 +270,10 @@ cd /project
 
 ```bash
 # 审计（跨 Phase 集成验证）
-/maestro-milestone-audit
+/maestro-session-seal
 
 # 完成（归档并推进到下一里程碑）
-/maestro-milestone-complete
+/maestro-session-seal
 ```
 
 ---
@@ -316,7 +311,8 @@ maestro stop              # 停止服务
 ### 新项目
 
 ```bash
-/maestro-init → /maestro-roadmap → /maestro-plan 1 → /maestro-execute 1 → /maestro-milestone-audit
+/maestro-init → /maestro "从需求开始做整个项目" → /maestro-session-seal
+# 或闭环：/maestro-ralph "实现 X" -y
 ```
 
 ### 一键全自动
@@ -334,7 +330,7 @@ maestro stop              # 停止服务
 ### 问题发现与修复
 
 ```bash
-/maestro-issue discover → /maestro-analyze --gaps ISS-xxx → /maestro-plan --gaps → /maestro-execute → close
+/maestro-issue discover → /maestro "fix issue ISS-xxx" → /maestro-issue close
 ```
 
 ### 并行开发

@@ -30,43 +30,47 @@ After installation, `/maestro-*` slash commands and `maestro` terminal commands 
 
 ```bash
 /maestro-init                          # Initialize .workflow/ directory
-/maestro-roadmap "Project name and goals" -y  # Generate roadmap
+/maestro "Build the whole project from requirements" -y  # spec-driven chain: init → roadmap --mode full → plan → execute → harvest
 ```
 
 ### Start from Brainstorming
 
 ```bash
-/maestro-brainstorm "Online education platform"  # Multi-role brainstorming
-/maestro-init --from brainstorm:ANL-xxx          # Initialize from brainstorm
-/maestro-roadmap "Create roadmap" -y
+/maestro "brainstorm Online education platform"  # Multi-role brainstorming (brainstorm-driven chain)
+/maestro-init --from-brainstorm SESSION-ID       # Initialize from brainstorm
+/maestro "Create roadmap" -y                     # roadmap-driven chain
 ```
 
 ### Full Specification Blueprint (Large Projects)
 
 ```bash
 /maestro-init
-/maestro-blueprint                     # 6-stage spec blueprint (Product Brief + PRD + Architecture + Epics)
+/maestro "Generate spec blueprint"     # blueprint-driven chain: 7-stage spec blueprint (Product Brief + PRD + Architecture + Epics)
 ```
 
 ---
 
 ## 3. Phase Pipeline
 
-The core project progression — each Phase goes through `Analyze → Plan → Execute → Verify`:
+The core project progression — each Phase goes through the `analyze → plan → execute → review → test` lifecycle (verification is already cohesive within the `post-execute` decision gate):
 
 ```bash
-# Full mode — covers all phases in current milestone
-/maestro-analyze                       # Analyze
-/maestro-plan                          # Plan
-/maestro-execute                       # Execute (with built-in verification gate E2.7)
+# Closed-loop mode — /maestro-ralph builds the full lifecycle chain + decision gate
+/maestro-ralph "Implement user authentication system"     # analyze → plan → execute → ◆ → review → ◆ → test → seal
 
-# Per-phase mode (micro layer: Phase-level deep analysis)
-/maestro-analyze 1                     # Analyze Phase 1 only (6-dimension scoring)
-/maestro-plan 1                        # Plan Phase 1 only
-/maestro-execute 1                     # Execute Phase 1 only
+# Step-by-step mode (single-step chains routed via /maestro)
+/maestro "analyze"                    # Analyze
+/maestro "plan phase 1"               # Plan
+/maestro "execute"                    # Execute
+# Note: /maestro-verify was retired in v0.5.51 — verification is integrated into the maestro-ralph decision gate
 
-# Macro exploration (macro layer: use before roadmap)
-/maestro-analyze "Implement multi-tenancy"  # Requirement impact exploration → scope_verdict routing
+# Per-Phase mode (micro layer: Phase-level deep analysis)
+/maestro "analyze phase 1"            # Analyze Phase 1 only
+/maestro "plan phase 1"               # Plan Phase 1 only
+/maestro "execute phase 1"            # Execute Phase 1 only
+
+# Macro exploration mode (macro layer: use before roadmap)
+/maestro "Implement multi-tenancy"    # analyze-macro → scope_verdict routing
 ```
 
 ### One-Click Full Auto
@@ -79,35 +83,31 @@ The core project progression — each Phase goes through `Analyze → Plan → E
 ### No-Init Mode (Ad-hoc Tasks)
 
 ```bash
-/maestro-analyze "Implement JWT auth"  # scope=standalone, auto-creates state.json
-/maestro-plan --dir scratch/20260420-analyze-jwt-...
-/maestro-execute --dir scratch/20260420-plan-jwt-...
+/maestro "Implement JWT auth"          # analyze-plan-execute chain, scope=standalone
+maestro session start "Implement JWT auth" --chain analyze plan execute   # Build the chain directly via CLI
 ```
 
 ---
 
 ## 4. Quality Pipeline
 
-Run quality verification after execution — three complementary test tracks:
+Run quality verification after execution — three complementary test tracks. `auto-test` / `test` / `review` are first-tier steps dispatched by the orchestrator; trigger them by intent via `/maestro-next` or `/maestro "<intent>"` — you cannot type `/quality-*` directly:
 
 ```bash
-# Unified auto-test (smart routing: spec/gap/code)
-/quality-auto-test 1
-
-# Conversational UAT
-/quality-test 1
-
-# Code review
-/quality-review 1 --level standard
+auto-test 1                     # Unified auto-test (smart routing: spec/gap/code)
+test 1                          # Conversational UAT
+review 1 --level standard       # Code review
 ```
 
 ### Test Failure Fix Loop
 
+`debug` / `auto-test` are also orchestrator-dispatched steps; their flags are passed through when the chain is built:
+
 ```bash
-/quality-debug --from-uat 1            # Diagnose failure
-/maestro-plan 1 --gaps                 # Generate fix plan
-/maestro-execute 1                     # Execute fix
-/quality-auto-test 1 --re-run          # Re-run failed scenarios
+debug --from-uat 1              # Diagnose failure
+plan 1 --gaps                   # Generate fix plan
+execute 1                       # Execute fix
+auto-test 1 --re-run            # Re-run failed scenarios
 ```
 
 ---
@@ -118,16 +118,14 @@ Problem tracking system parallel to Phase pipeline, supports full automation:
 
 ```bash
 # Discover problems
-/manage-issue-discover by-prompt "Check API error handling"
+/maestro-issue discover by-prompt "Check API error handling"
 
 # Create issue
-/manage-issue create --title "Memory leak" --severity high
+/maestro-issue create --title "Memory leak" --severity high
 
-# Closed-loop processing
-/maestro-analyze --gaps ISS-001         # Root cause analysis
-/maestro-plan --gaps                    # Solution planning
-/maestro-execute                        # Execute fix
-/manage-issue close ISS-001 --resolution "Fixed"
+# Closed-loop processing (issue-full chain)
+/maestro "fix issue ISS-001"     # analyze --gaps → plan --gaps → execute → review → close → harvest
+/maestro-issue close ISS-001 --resolution "Fixed"
 ```
 
 **Commander Agent** can auto-advance unanalyzed issues without manual intervention.
@@ -139,14 +137,11 @@ Problem tracking system parallel to Phase pipeline, supports full automation:
 Bypass the Phase pipeline and complete tasks directly:
 
 ```bash
-# Shortest path
-/maestro-quick "Fix login page bug"
+# Fastest path (pure router: classify intent → route to companion / single Run / /maestro)
+/maestro-next "Fix login page bug"
 
-# With plan validation
-/maestro-quick --full "Refactor API layer"
-
-# With decision extraction
-/maestro-quick --discuss "Database migration strategy"
+# Lightweight execution (minimal Run lifecycle)
+/maestro-companion "Fix login page bug"
 ```
 
 ---
@@ -193,19 +188,19 @@ maestro delegate "..." --rule development-implement-feature --mode write
 Project-level knowledge auto-injection — no manual context pasting when Agents start:
 
 ```bash
-# Initialize (scan codebase to generate spec files)
-/spec-setup                                    # Existing projects: scan codebase to populate specs
+# Initialize (scan codebase to generate spec files, CLI)
+maestro spec init                              # Existing projects: scan codebase to populate specs
 # New projects can skip -- specs are progressively populated by analyze/plan/execute
 
-# Add specs
-/spec-add coding "All APIs use Hono framework"
-/spec-add arch "Notification module uses event-driven architecture"
-/spec-add learning "Pagination offset=0 causes off-by-one"
+# Add specs (/maestro-spec only records; category is inferred, or state it explicitly)
+/maestro-spec coding "All APIs use Hono framework"
+/maestro-spec arch "Notification module uses event-driven architecture"
+/maestro-spec learning "Pagination offset=0 causes off-by-one"
 
-# Load specs
-/spec-load --role implement
-/spec-load --keyword auth
-/spec-load --role implement --keyword auth
+# Load specs (CLI)
+maestro spec load --role implement
+maestro spec load --keyword auth
+maestro spec load --role implement --keyword auth
 ```
 
 **Auto-injection**: Hooks auto-inject specs by Agent type at startup (coder→coding, tester→test, debugger→debug).
@@ -218,7 +213,7 @@ Inject custom steps without modifying original command files:
 
 ```bash
 # Create via natural language
-/maestro-overlay "Add CLI verification after maestro-execute"
+/maestro-overlay "Add CLI verification after execute"
 
 # Manage
 maestro overlay list                    # Interactive TUI view
@@ -260,7 +255,7 @@ Milestone-level parallelism — start the next milestone without waiting for bug
 ```bash
 /maestro-fork -m 2                              # Fork M2 worktree
 cd .worktrees/m2-production/
-/maestro-analyze 3 && /maestro-plan 3 && /maestro-execute 3
+/maestro "analyze phase 3" && /maestro "plan phase 3" && /maestro "execute phase 3"
 
 cd /project
 /maestro-merge -m 2                             # Merge back to main
@@ -275,10 +270,10 @@ cd /project
 
 ```bash
 # Audit (cross-Phase integration verification)
-/maestro-milestone-audit
+/maestro-session-seal
 
 # Complete (archive and advance to next milestone)
-/maestro-milestone-complete
+/maestro-session-seal
 ```
 
 ---
@@ -316,7 +311,8 @@ Displays Phase progress, Issue status (Backlog → In Progress → Review → Do
 ### New Project
 
 ```bash
-/maestro-init → /maestro-roadmap → /maestro-plan 1 → /maestro-execute 1 → /maestro-milestone-audit
+/maestro-init → /maestro "Build the whole project from requirements" → /maestro-session-seal
+# Or closed-loop: /maestro-ralph "Implement X" -y
 ```
 
 ### One-Click Full Auto
@@ -328,13 +324,13 @@ Displays Phase progress, Issue status (Backlog → In Progress → Review → Do
 ### Bug Fix
 
 ```bash
-/maestro-quick "Fix mobile login page layout issues"
+/maestro-next "Fix mobile login page layout issues"    # routes to companion / single Run / /maestro
 ```
 
 ### Issue Discovery & Fix
 
 ```bash
-/manage-issue-discover → /maestro-analyze --gaps ISS-xxx → /maestro-plan --gaps → /maestro-execute → close
+/maestro-issue discover → /maestro "fix issue ISS-xxx" → /maestro-issue close
 ```
 
 ### Parallel Development

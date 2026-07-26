@@ -137,7 +137,7 @@ SessionStart(source=startup)
 **stdout**:
 ```json
 { "hookSpecificOutput": { "hookEventName": "UserPromptSubmit",
-  "additionalContext": "## Workflow Context for maestro-execute\nMilestone: MVP | Phase: 2 (1/4 completed)\n..." } }
+  "additionalContext": "## Session Context for maestro-next\nMilestone: MVP | Phase: 2 (1/4 completed)\n..." } }
 ```
 </details>
 

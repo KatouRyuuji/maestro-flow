@@ -101,10 +101,10 @@ Maestro 完整配置参考，涵盖所有配置文件、环境变量和 CLI 选�
 ### CLI 操作
 
 ```bash
-maestro config get cli-tools
-maestro config set tools.gemini.enabled true
-maestro config set tools.gemini.primaryModel "gemini-2.5-pro"
-maestro config set roles.analyze.fallbackChain '["codex", "gemini"]'
+maestro config delegate          # 委托工具配置（TUI：启用/禁用、模型、标签）
+maestro config delegate show     # 打印当前 cli-tools.json
+maestro config delegate list     # 列出已识别的工具
+maestro config roles register    # 角色 → 工具映射
 ```
 
 ---
@@ -256,11 +256,11 @@ maestro config set roles.analyze.fallbackChain '["codex", "gemini"]'
 ### CLI 操作
 
 ```bash
-maestro config list                              # 列出可配置 skill
-maestro config set maestro-execute --method auto  # 设置参数
-maestro config set maestro-plan --auto true -g    # 设置全局参数
-maestro config get maestro-execute                # 查看配置
-maestro config reset maestro-execute              # 重置
+maestro config skills list                       # 列出可配置 skill
+maestro config skills set execute method auto    # 设置参数（param 不带 -- 前缀）
+maestro config skills set plan auto true -g      # 设置全局参数
+maestro config skills show execute               # 查看配置
+maestro config skills reset execute              # 重置
 ```
 
 ---
@@ -541,7 +541,7 @@ maestro statusline install        # 交互式安装（含主题选择）
 {
   "name": "cli-verify",
   "description": "Add CLI verification after execution",
-  "targets": ["maestro-execute", "maestro-plan"],
+  "targets": ["maestro-companion", "maestro-ralph"],
   "priority": 50,
   "enabled": true,
   "patches": [
@@ -784,7 +784,7 @@ maestro spec analytics                               # 分析统计
 3. **安装 Hook** — `maestro hooks install --level standard`
 4. **安装 Statusline** — `maestro statusline install`
 5. **初始化项目** — `/maestro-init`，生成 `.workflow/` 目录和 `config.json`
-6. **（可选）Skill 参数** — `maestro config set maestro-execute --method auto -y`
+6. **（可选）Skill 参数** — `maestro config set execute --method auto -y`
 7. **（可选）Overlay** — `maestro overlay apply <name>` 增强命令行为
 8. **（可选）工作空间** — `maestro workspace link ../shared-lib` 跨项目知识共享
 
