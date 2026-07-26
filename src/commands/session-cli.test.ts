@@ -3,9 +3,9 @@
 // create / chain insert / chain skip / chain replace. Complements the unit-level
 // chain-admin.test.ts by covering the option parsing and output shape.
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Command } from 'commander';
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve as resolvePath } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -360,13 +360,39 @@ describe('maestro session chain', () => {
   });
 });
 
+// These cases spawn the real compiled bin (`bin/maestro.js` → `dist/src/cli.js`)
+// once per CLI invocation to assert the machine-mode envelope contract end to end.
+// The suite entry (`vitest run`) does NOT build first, so `dist/` must already be
+// fresh; a missing build otherwise surfaces as an opaque empty-stdout assertion
+// failure (or a timeout) instead of an actionable message.
+//
+// Each `invokeMachine` is a full Node + CLI-module-load cycle (~1.5s on Windows).
+// The spawn count is irreducible: every result asserts `lines.toHaveLength(1)`
+// (exactly one envelope per process), so two operations cannot share a process,
+// and the intra-session chains (resolve→resume, insert→skip→replace) are strictly
+// ordered by identity/activity revision and cannot be parallelized safely. The
+// generous per-test timeouts below are sized to that measured spawn cost, not used
+// to paper over a regression.
+const BIN_ENTRY = resolvePath('dist/src/cli.js');
+
 describe('built-bin session run-response/1.0', () => {
+  beforeAll(() => {
+    if (!existsSync(BIN_ENTRY)) {
+      throw new Error(
+        `built-bin tests require a compiled dist: ${BIN_ENTRY} is missing. ` +
+        'Run `npm run build` before this suite (the test runner does not build).',
+      );
+    }
+  });
+
   const auditArgs = (requestId: string, identityRevision: number, activityRevision: number): string[] => [
     '--request-id', requestId,
     '--expected-identity-revision', String(identityRevision),
     '--expected-activity-revision', String(activityRevision),
   ];
 
+  // 14 sequential real-bin spawns; measured baseline ~21s on Windows (~1.5s each).
+  // 45s gives ~2x headroom for slower/CI machines without masking a hang.
   it('emits one envelope for recovery chain and meta exits', () => {
     const store = new SessionStore(root);
     store.createSession('recovery', 'recovery');
@@ -485,8 +511,10 @@ describe('built-bin session run-response/1.0', () => {
     expect(replacedReplay.body).toMatchObject({ operation: 'chain-replace', ok: true, replay: { status: 'replayed' } });
     expect(meta.body).toMatchObject({ operation: 'meta-update', ok: true, replay: { status: 'applied' } });
     expect(metaReplay.body).toMatchObject({ operation: 'meta-update', ok: true, replay: { status: 'replayed' } });
-  });
+  }, 45000);
 
+  // 7 sequential real-bin spawns; measured ~4.6s, already grazing the 5s default.
+  // 20s keeps this off the flake edge with the same per-spawn budget as above.
   it('captures every Commander usage exit in machine mode', () => {
     const cases = [
       { args: ['session', 'resolve', '--json'], operation: 'resolve' },
@@ -509,5 +537,5 @@ describe('built-bin session run-response/1.0', () => {
         error: { code: 'COMMANDER_USAGE' },
       });
     }
-  });
+  }, 20000);
 });
