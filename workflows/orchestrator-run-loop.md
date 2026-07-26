@@ -84,7 +84,7 @@ Maestro 与 Ralph 共享这一执行循环。编排层调用 `maestro session ..
 
 ### 2. Locate and allocate
 
-1. `maestro session status --session {session_id}` 读取 canonical 状态。
+1. `maestro session status {session_id}` 读取 canonical 状态。
 2. execution step：显式调用 `maestro session next --session {session_id} --inline-brief --json`。只有该动词能分配下一 Run。`--inline-brief` 在 birth packet 中内联 Resume Packet（guidance + contract + continuity），正常前向流程无需再调 `run brief`。
 3. decision step：不创建 Run，转 Decision evaluation。
 4. `CHAIN_COMPLETE`：校验 goals 与 gates 后转 Session seal。
@@ -146,7 +146,7 @@ Runtime 返回的 next 仅为 `suggest_only`，因此 Runtime 自身不执行它
 
 Paused recovery 仅由显式 `-c` 触发：
 
-1. `session status` 读取 exact blocker 与 revisions。
+1. `session status {session_id}` 读取 exact blocker 与 revisions。
 2. 每个 blocker 经用户选择后调用 `maestro session resolve --session {id} --request-id {rid} --actor {actor} --reason "{reason}" --expected-identity-revision {n} --expected-activity-revision {n} (--decision {point}|--step {step}) --disposition {value}`（decision 用 `proceed|retry`，step 用 `retry|skip`）。
 3. blockers 清零后调用 `maestro session resume --session {id} --request-id {rid} --actor {actor} --reason "{reason}" --expected-identity-revision {n} --expected-activity-revision {n}`。
 4. resume 只恢复 Session；下一 Run 仍由显式 `session next` 分配。

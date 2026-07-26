@@ -157,11 +157,11 @@ Delete the temporary file after success. Do not inline unescaped JSON. Then ente
 
 ### A_CONTINUE
 
-Use read-only `run recall` plus `session status`. A paused Session follows shared `run recover`; sealed/archived Sessions are terminal. Multiple live candidates require explicit selection.
+Use read-only `run recall` plus `session status {session_id}`. A paused Session follows shared `run recover`; sealed/archived Sessions are terminal. Multiple live candidates require explicit selection.
 
 ### A_AMEND
 
-Read `ralph-amend-goal.md`, use `session status` for the snapshot, perform read-only impact analysis, confirm, then commit the whole decomposition with `session meta update --session {session_id} --decomposition-file -` (the decomposition object must carry all three of `execution_criteria`, `goals`, `changelog` — the schema is strict). Any pending-tail change must come from a planning Skill proposal.
+Read `ralph-amend-goal.md`, use `session status {session_id}` for the snapshot, perform read-only impact analysis, confirm, then commit the whole decomposition with `session meta update --session {session_id} --decomposition-file -` (the decomposition object must carry all three of `execution_criteria`, `goals`, `changelog` — the schema is strict). Any pending-tail change must come from a planning Skill proposal.
 
 </actions>
 

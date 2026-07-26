@@ -65,4 +65,4 @@ The proposal may change only the pending tail and must respect the Run's declare
 
 ## 6. Continue
 
-Display the amendment ID, risk, superseded/added goal counts and proposal disposition. Resume the shared loop with `maestro session status`, then explicitly allocate through `maestro session next`.
+Display the amendment ID, risk, superseded/added goal counts and proposal disposition. Resume the shared loop with `maestro session status {session_id}`, then explicitly allocate through `maestro session next`.

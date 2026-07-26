@@ -1663,7 +1663,7 @@ function ensureRunShell(store: SessionStore, sessionId: string, runId: string): 
   mkdirSync(join(runDir, 'work'), { recursive: true });
   const report = join(runDir, 'report.md');
   if (!existsSync(report)) {
-    writeFileSync(report, '---\nverdict: ready\nsummary: ""\nconstraints: []\ndecisions: []\ncaveats: []\nopen_questions: []\nnext: []\n---\n## 摘要\n\n## 结论/Verdict\n\n## 讨论/复盘\n\n## 产物\n\n## 交接/Next\n', 'utf8');
+    writeFileSync(report, '---\nverdict: ready\nsummary: ""\nconstraints: []\ndecisions: []\nconcerns: []\nnext: []\ndetails: {}\n---\n## 摘要\n\n## 结论/Verdict\n\n## 讨论/复盘\n\n## 产物\n\n## 交接/Next\n', 'utf8');
   }
   writeFileSync(join(runDir, 'diagnostics.ndjson'), '', { flag: 'a' });
   return runDir;

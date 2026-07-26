@@ -13,6 +13,7 @@ Human-facing usage should prefer `session create`, `session done`, and `session 
 - A Run is one execution attempt. Its sealed outputs remain immutable and may be consumed by later Runs in the **same Session** through the canonical `upstream`/Artifact Registry map.
 - Reuse references eligible sealed outputs in place. Normal routing does not fork, import, copy, resume, or resolve Sessions to obtain prior work.
 - Historical similarity is read-only evidence. It may explain potentially related work, but it never selects a Session, binds an output, creates a Run, or becomes a next action.
+- Every Session lifecycle call MUST carry explicit Session identity — `session status|check|evidence|seal` take positional `{session_id}`; `session next|done|decide|meta update` take `--session {session_id}`. Omitting it falls back to non-authoritative resolution that MAY select a sealed or unrelated Session.
 
 ## Prepare (optional, read-only)
 
@@ -59,6 +60,7 @@ maestro run create odyssey --session 20260715-odyssey-planex-todo -- --mode plan
 - Every new formal JSON artifact MUST contain a complete top-level `_meta` object: `{"_meta":{"kind":"<stable-kind>","schema":"<stable-kind>/1.0"},...}`. `kind` and `schema` are required together; `role` and `alias` are optional.
 - A legacy JSON artifact with no `_meta` remains readable through contract/filename inference. Never write a partial, null, or non-object `_meta`; strict validation rejects the artifact and blocks Run completion.
 - Human-readable synthesis and handoff MUST be written to `{run_dir}/report.md`.
+- report.md frontmatter keys are a fixed whitelist (`verdict`, `summary`, `constraints`, `decisions`, `concerns`, `next`, `details`); every risk, caveat, or open question MUST go into `concerns`. Keys outside the whitelist are silently dropped and never reach the handoff, the next brief's signals, or a `done-with-concerns` verdict.
 - Informal worker traces and intermediate logs may use `{run_dir}/evidence/` (lazily created, not gate-checked).
 - Temporary computation may use `{run_dir}/work/`; it is never an artifact and is never indexed.
 - `.workflow/sessions/{session_id}/` is the only Session authority. Do not create private command Session directories or a second status/manifest truth source. Team message buses may exist only as transient coordination and never contain formal artifacts.

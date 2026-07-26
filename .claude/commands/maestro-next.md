@@ -273,7 +273,7 @@ maestro run start "<short goal>" --cmd <step> --session YYYYMMDD-<step>-<topic> 
 #      Seal run as blocked. Do NOT proceed to step 4.
 
 # 4. Load the execution manual (follow the `next` hint from start)
-maestro run brief <run_id>
+#    Execute the `next` hint returned by step 3's start verbatim — append no flag.
 #    Returns: workflow content, run-mode summary, goal, gate status
 
 # 5. LLM executes the workflow (core process)

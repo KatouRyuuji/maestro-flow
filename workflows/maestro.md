@@ -245,7 +245,7 @@ detectNextAction(state):
 
 `'status'` 是唯一的非 chain 落点：它没有 chainMap 条目，代表"无法判定下一步"。命中时执行
 `Bash("maestro session status")`（无 compatible Session 则 `maestro session list`），把输出呈现给用户后
-询问下一步——与 resolvePhase 第 6 步同一模式。不得据此自行推断并启动任何 chain。
+询问下一步——与 resolvePhase 第 6 步同一模式。不得据此自行推断并启动任何 chain。进入 Run 循环后所有 status/check/evidence 调用必须显式传 session_id。
 
 ### Chain Reference
 
