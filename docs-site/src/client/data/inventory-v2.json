@@ -16,16 +16,9 @@
       "color": "blue"
     },
     {
-      "id": "quality",
-      "name": "Quality",
-      "description": "Tech debt reduction and security auditing",
-      "icon": "check-circle",
-      "color": "green"
-    },
-    {
       "id": "manage",
       "name": "Management",
-      "description": "Project status, issues, knowledge stores, drift/rebuild sync — unified /maestro-manage command",
+      "description": "Project issues, knowhow precipitation, and knowledge-store management — /maestro-issue, /maestro-knowhow, /maestro-knowledge",
       "icon": "settings",
       "color": "gray"
     },
@@ -166,12 +159,25 @@
       "subcommands": ["add", "load", "remove", "setup"]
     },
     {
-      "name": "maestro-manage",
-      "file": ".claude/commands/maestro-manage.md",
+      "name": "maestro-issue",
+      "file": ".claude/commands/maestro-issue.md",
       "category": "manage",
-      "description": "Project management hub — status, issues, knowledge stores, and drift/rebuild sync. Unified command with subcommands.",
-      "argumentHint": "status|issue|knowledge|sync [args...]",
-      "subcommands": ["status", "issue", "knowledge", "sync"]
+      "description": "Intent-driven issue lifecycle — report, list, close, link, or discover issues in .workflow/issues/",
+      "argumentHint": "<intent — e.g. 'report a login bug' | 'list open' | 'close ISS-xxx' | 'discover'>"
+    },
+    {
+      "name": "maestro-knowhow",
+      "file": ".claude/commands/maestro-knowhow.md",
+      "category": "manage",
+      "description": "Intent-driven knowhow precipitation — record decisions, templates, recipes, and tips into .workflow/knowhow/",
+      "argumentHint": "<intent — e.g. 'record a JWT refresh decision' | 'template this retry code' | 'tip: redis pitfall'>"
+    },
+    {
+      "name": "maestro-knowledge",
+      "file": ".claude/commands/maestro-knowledge.md",
+      "category": "manage",
+      "description": "Intent-driven knowledge-store management — audit, harvest, wiki health, knowledge-graph linking, and domain terms",
+      "argumentHint": "<intent — e.g. 'audit knowledge base' | 'harvest this session' | 'wiki health' | 'register term MVP'>"
     },
     {
       "name": "maestro-odyssey",
@@ -188,20 +194,6 @@
       "description": "User-invoked learning toolkit — guided reading, investigation, pattern extraction, or second opinions. Manual /maestro-learn only; auto code analysis routes via /maestro-next.",
       "argumentHint": "follow|investigate|decompose|consult [args...]",
       "subcommands": ["follow", "investigate", "decompose", "consult"]
-    },
-    {
-      "name": "quality-refactor",
-      "file": ".claude/commands/quality-refactor.md",
-      "category": "quality",
-      "description": "Tech debt reduction with reflection-driven iteration and systematic identification",
-      "argumentHint": "[<scope>]"
-    },
-    {
-      "name": "security-audit",
-      "file": ".claude/commands/security-audit.md",
-      "category": "quality",
-      "description": "OWASP Top 10 and STRIDE security auditing with supply chain analysis — three tiers: quick, standard, deep",
-      "argumentHint": "[quick|standard|deep] [--scope <path>]"
     }
   ],
   "claude_skills": [],

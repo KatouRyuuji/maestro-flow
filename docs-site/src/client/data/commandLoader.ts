@@ -88,17 +88,15 @@ export async function preloadCommands(): Promise<void> {
   const commonCommands = [
     'maestro',
     'maestro-init',
-    'maestro-plan',
-    'maestro-execute',
+    'maestro-next',
     'maestro-companion',
-    'maestro-brainstorm',
-    'maestro-analyze',
-    'maestro-collab',
+    'maestro-ralph',
     'maestro-spec',
-    'quality-test',
-    'quality-debug',
-    'maestro-manage',
+    'maestro-issue',
+    'maestro-knowhow',
+    'maestro-knowledge',
     'maestro-odyssey',
+    'maestro-impeccable',
     'maestro-learn',
   ];
 

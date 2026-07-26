@@ -15,8 +15,8 @@ Maestro 质量管线完整参考：围绕 **"审查 → 测试 → 调试 → �
 | `test`（Skill 链步） | 会话式 UAT | 用户视角是否正常？ | `TST-{NNN}` |
 | `auto-test`（Skill 链步） | 统一自动测试 | 覆盖率和回归是否通过？ | `TST-{NNN}` |
 | `/maestro-odyssey --mode debug` | 假设驱动调试 | 根因是什么？ | `DBG-{NNN}` |
-| `quality-refactor` | 反思驱动重构 | 技术债是否收敛？ | `WBR-{NNN}` |
-| `maestro-manage sync codebase` | 文档同步 | 文档与代码是否一致？ | — |
+| `maestro-odyssey --mode improve` | 反思驱动重构 | 技术债是否收敛？ | `WBR-{NNN}` |
+| `maestro kg index` | 文档同步 | 文档与代码是否一致？ | — |
 | `retrospective`（`/maestro "复盘 phase N"`） | 阶段复盘 | 可复用的洞察是什么？ | `INS-{8hex}` |
 
 > 裸命令名（`review`、`test`、`auto-test`）是 Skill 链步骤，由 `/maestro` 路由或 `maestro session start --chain ...` 在 canonical Session 内执行；质量门（`post-*`）是 Ralph 策略插入的 decision 节点。
@@ -129,10 +129,10 @@ auto-test --session {session}   # 链内 Skill 命令（business-test / test-gen
 
 ---
 
-## quality-refactor — 反思驱动重构
+## maestro-odyssey --mode improve — 反思驱动重构
 
 ```bash
-/quality-refactor [<scope>]    # scope: 模块路径 | 功能区域 | all
+/maestro-odyssey --mode improve [<scope>]    # scope: 模块路径 | 功能区域 | all
 ```
 
 每轮：**分析**（识别影响）→ **规划**（确认后执行）→ **反思**（测试验证 + 策略调整）
@@ -141,10 +141,10 @@ auto-test --session {session}   # 链内 Skill 命令（business-test / test-gen
 
 ---
 
-## maestro-manage sync codebase — 文档同步
+## maestro kg index — 文档同步
 
 ```bash
-/maestro-manage sync codebase [--full] [--since <commit|HEAD~N>] [--dry-run]
+maestro kg index [--full] [--since <commit|HEAD~N>] [--dry-run]
 ```
 
 通过 `git diff` 检测变更 → `doc-index.json` 追踪影响链 → 更新 `.workflow/codebase/` 文档。
@@ -155,10 +155,10 @@ auto-test --session {session}   # 链内 Skill 命令（business-test / test-gen
 
 ```bash
 /maestro "复盘 phase N"        # retrospective 链：4 个并行 Lens（Technical / Process / Quality / Decision）
-/maestro-manage knowledge capture "洞察"   # 知识沉淀（knowhow）
+/maestro-knowhow "洞察"   # 知识沉淀（knowhow）
 ```
 
-> v0.5.56 起，阶段复盘由 `retrospective` Skill 承担（经 `/maestro "复盘 phase N"` 路由）；知识 promotion/捕获走 `/maestro-manage knowledge capture` 或 `harvest`。旧的 `maestro-next --promote` 已退役（`/maestro-next` 现为纯路由器）。
+> v0.5.56 起，阶段复盘由 `retrospective` Skill 承担（经 `/maestro "复盘 phase N"` 路由）；知识 promotion/捕获走 `/maestro-knowhow` 或 `harvest`。旧的 `maestro-next --promote` 已退役（`/maestro-next` 现为纯路由器）。
 
 4 个并行 Lens（Technical / Process / Quality / Decision），洞察自动路由：
 
@@ -202,8 +202,8 @@ auto-test --session {session}   # 链内 Skill 命令（business-test / test-gen
          │ 全部通过
          ▼
 ┌──────────────────────────────────────────────────┐
-│  quality-refactor（可选，处理技术债）              │
-│  maestro-manage sync codebase（同步文档）          │
+│  maestro-odyssey --mode improve（可选，处理技术债）              │
+│  maestro kg index（同步文档）          │
 │  /maestro "复盘 phase N"（复盘，知识回流）          │
 └──────────────────────────────────────────────────┘
 ```
@@ -231,15 +231,15 @@ auto-test --session {session}   # 链内 Skill 命令（business-test / test-gen
   │    ├─ 根因明确 ──> /maestro "plan <phase> --gaps"
   │    └─ 不确定 ──> 继续调试
   │
-  ├─ 需要减少技术债？──> /quality-refactor <scope>
-  │    ├─ 测试通过 ──> /maestro-manage sync codebase
+  ├─ 需要减少技术债？──> /maestro-odyssey --mode improve <scope>
+  │    ├─ 测试通过 ──> maestro kg index
   │    └─ 测试失败 ──> /maestro-odyssey --mode debug "<scope>"
   │
-  ├─ 代码改了文档没更新？──> /maestro-manage sync codebase
+  ├─ 代码改了文档没更新？──> maestro kg index
   │
   └─ Phase 完成需要复盘？──> /maestro "复盘 phase N"（retrospective）
        ├─ 有洞察 ──> 自动路由到 spec/issue/knowhow
-       └─ 完成后 ──> /maestro-manage status
+       └─ 完成后 ──> maestro session status
 ```
 
 </details>

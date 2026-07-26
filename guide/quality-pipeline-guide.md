@@ -14,7 +14,7 @@ Maestro 质量管线完整参考：七条命令围绕 **"审查 → 测试 → �
 | `quality-test` | 会话式 UAT | 用户视角是否正常？ | `TST-{NNN}` |
 | `quality-auto-test` | 统一自动测试 | 覆盖率和回归是否通过？ | `TST-{NNN}` |
 | `quality-debug` | 假设驱动调试 | 根因是什么？ | `DBG-{NNN}` |
-| `quality-refactor` | 反思驱动重构 | 技术债是否收敛？ | `WBR-{NNN}` |
+| `/maestro-odyssey --mode improve` | 反思驱动重构 | 技术债是否收敛？ | `WBR-{NNN}` |
 | `quality-sync` | 文档同步 | 文档与代码是否一致？ | — |
 | `quality-retrospective` | 阶段复盘 | 可复用的洞察是什么？ | `INS-{8hex}` |
 
@@ -128,10 +128,10 @@ Maestro 质量管线完整参考：七条命令围绕 **"审查 → 测试 → �
 
 ---
 
-## quality-refactor — 反思驱动重构
+## /maestro-odyssey --mode improve — 反思驱动重构
 
 ```bash
-/quality-refactor [<scope>]    # scope: 模块路径 | 功能区域 | all
+/maestro-odyssey --mode improve [<scope>]    # scope: 模块路径 | 功能区域 | all
 ```
 
 每轮：**分析**（识别影响）→ **规划**（确认后执行）→ **反思**（测试验证 + 策略调整）
@@ -143,7 +143,7 @@ Maestro 质量管线完整参考：七条命令围绕 **"审查 → 测试 → �
 ## quality-sync — 文档同步
 
 ```bash
-/quality-sync [--full] [--since <commit|HEAD~N>] [--dry-run]
+maestro kg index [--full] [--since <commit|HEAD~N>] [--dry-run]
 ```
 
 通过 `git diff` 检测变更 → `doc-index.json` 追踪影响链 → 更新 `.workflow/codebase/` 文档。
@@ -197,11 +197,11 @@ Maestro 质量管线完整参考：七条命令围绕 **"审查 → 测试 → �
     └────────┬────────┘
              │ 全部通过
              ▼
-    ┌──────────────────────────────────────────┐
-    │  quality-refactor (可选，处理技术债)       │
-    │  quality-sync (同步文档)                  │
-    │  quality-retrospective (复盘，知识回流)    │
-    └──────────────────────────────────────────┘
+    ┌──────────────────────────────────────────────────┐
+    │  /maestro-odyssey --mode improve (可选，技术债)  │
+    │  maestro kg index (同步代码库索引)               │
+    │  retrospective step (复盘，知识回流)             │
+    └──────────────────────────────────────────────────┘
 ```
 
 <details>
@@ -225,15 +225,15 @@ Maestro 质量管线完整参考：七条命令围绕 **"审查 → 测试 → �
   │    ├─ 根因明确 ──> /maestro-plan <phase> --gaps
   │    └─ 不确定 ──> 继续调试
   │
-  ├─ 需要减少技术债？──> /quality-refactor <scope>
-  │    ├─ 测试通过 ──> /quality-sync
+  ├─ 需要减少技术债？──> /maestro-odyssey --mode improve <scope>
+  │    ├─ 测试通过 ──> maestro kg index
   │    └─ 测试失败 ──> /quality-debug <scope>
   │
-  ├─ 代码改了文档没更新？──> /quality-sync
+  ├─ 代码改了文档没更新？──> maestro kg index
   │
   └─ Phase 完成需要复盘？──> /quality-retrospective <phase>
        ├─ 有洞察 ──> 自动路由到 spec/issue/knowhow
-       └─ 完成后 ──> /manage-status
+       └─ 完成后 ──> maestro session status
 ```
 
 </details>

@@ -121,7 +121,7 @@ Run quality verification after execution — the quality gate is inserted into t
 # Single-step quality commands (routed via /maestro)
 /maestro "review phase 1"               # Code review
 /maestro "test phase 1"                 # UAT testing
-/security-audit 1                        # Security audit
+/maestro-odyssey --mode security 1                        # Security audit
 ```
 
 ### Test Failure Fix Loop
@@ -140,14 +140,14 @@ A problem tracking system independent of the Phase pipeline, supporting full clo
 
 ```bash
 # Discover problems
-/maestro-manage issue discover by-prompt "检查 API 错误处理"
+/maestro-issue discover by-prompt "检查 API 错误处理"
 
 # Create an Issue
-/maestro-manage issue create --title "内存泄漏" --severity high
+/maestro-issue create --title "内存泄漏" --severity high
 
 # Closed-loop processing (issue-full chain)
 /maestro "fix issue ISS-001"     # analyze --gaps → plan --gaps → execute → review → close → harvest
-/maestro-manage issue close ISS-001 --resolution "Fixed"
+/maestro-issue close ISS-001 --resolution "Fixed"
 ```
 
 The **Commander Agent** can auto-advance unanalyzed Issues without manual intervention.
@@ -392,7 +392,7 @@ Once installed, hooks keep the graph fresh and provide context automatically (`k
 ### Issue Discovery & Fix
 
 ```bash
-/maestro-manage issue discover → /maestro "fix issue ISS-xxx" → /maestro-manage issue close
+/maestro-issue discover → /maestro "fix issue ISS-xxx" → /maestro-issue close
 ```
 
 ### Parallel Development

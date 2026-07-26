@@ -3,7 +3,7 @@ title: "Maestro Commands Quick Reference"
 ---
 
 > Auto-generated from `inventory-v2.json` + `.claude/commands/*.md` frontmatter.
-> v2 (v0.5.51+): 18 commands across 10 categories.
+> v2 (v0.5.51+): 18 commands across 9 categories.
 > Do not edit by hand — run `npm run sync:docs-reference` to regenerate.
 
 ---
@@ -126,41 +126,33 @@ Manage project specs — add, load, remove entries, or initialize the spec syste
 
 ---
 
-## Quality
-
-*Tech debt reduction and security auditing*
-
-### `quality-refactor`
-
-**Usage:** `[<scope>]`
-
-Tech debt reduction with reflection-driven iteration and systematic identification
-
-**Invocation:** Explicit routing or user slash command
-
-### `security-audit`
-
-**Usage:** `[quick|standard|deep] [--scope <path>]`
-
-OWASP Top 10 and STRIDE security auditing with supply chain analysis — three tiers: quick, standard, deep
-
-**Invocation:** Explicit routing or user slash command
-
----
-
 ## Management
 
-*Project status, issues, knowledge stores, drift/rebuild sync — unified /maestro-manage command*
+*Project issues, knowhow precipitation, and knowledge-store management — /maestro-issue, /maestro-knowhow, /maestro-knowledge*
 
-### `maestro-manage`
+### `maestro-issue`
 
-**Usage:** `status|issue|knowledge|sync [args...]`
+**Usage:** `<intent — e.g. 'report a login bug' | 'list open' | 'close ISS-xxx' | 'discover'>`
 
-Project management hub — status, issues, knowledge stores, and drift/rebuild sync. Unified command with subcommands.
+Intent-driven issue lifecycle — report, list, close, link, or discover issues in .workflow/issues/
 
 **Invocation:** Explicit routing or user slash command
 
-**Subcommands:** `status`, `issue`, `knowledge`, `sync`
+### `maestro-knowhow`
+
+**Usage:** `<intent — e.g. 'record a JWT refresh decision' | 'template this retry code' | 'tip: redis pitfall'>`
+
+Intent-driven knowhow precipitation — record decisions, templates, recipes, and tips into .workflow/knowhow/
+
+**Invocation:** Explicit routing or user slash command
+
+### `maestro-knowledge`
+
+**Usage:** `<intent — e.g. 'audit knowledge base' | 'harvest this session' | 'wiki health' | 'register term MVP'>`
+
+Intent-driven knowledge-store management — audit, harvest, wiki health, knowledge-graph linking, and domain terms
+
+**Invocation:** Explicit routing or user slash command
 
 ---
 

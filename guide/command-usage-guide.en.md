@@ -50,7 +50,7 @@ graph TB
         QAT["/quality-auto-test"]
         QT["/quality-test"]
         QD["/quality-debug"]
-        QRF["/quality-refactor"]
+        QRF["/maestro-odyssey --mode improve"]
         QS["/quality-sync"]
     end
 
@@ -278,7 +278,7 @@ Discover → Create → Analyze → Plan → Execute → Close
 | `/quality-review {N}` | Tiered code review | `--level quick\|standard\|deep` |
 | `/quality-test {N}` | Session-based UAT | `--auto-fix` |
 | `/quality-debug` | Hypothesis-driven debugging | `--from-uat {N}` `--parallel` |
-| `/quality-refactor` | Technical debt remediation | `[scope]` |
+| `/maestro-odyssey --mode improve` | Technical debt remediation | `[scope]` |
 
 **Fix loop**: `verify gaps → plan --gaps → execute → verify` or `test failure → debug → plan --gaps → execute`
 
@@ -595,12 +595,12 @@ Loads registered tool specs (knowhow documents with `tool: true`) and executes t
 
 Codifies reusable business processes as knowhow documents (`tool: true`). Four modes: Extract (from code), Generate (new tool), Optimize (existing), Promote (elevate existing knowhow).
 
-### `/maestro-ui-codify` — Design System Extraction
+### `/maestro-impeccable --codify` — Design System Extraction
 
 ```bash
-/maestro-ui-codify src/components/                    # Extract design system from source
-/maestro-ui-codify src/ --package-name my-design      # Specify package name
-/maestro-ui-codify src/ --output-dir .workflow/ref    # Specify output directory
+/maestro-impeccable --codify src/components/                    # Extract design system from source
+/maestro-impeccable --codify src/ --package-name my-design      # Specify package name
+/maestro-impeccable --codify src/ --output-dir .workflow/ref    # Specify output directory
 ```
 
 4-phase pipeline: Validate → Extract (3 parallel Agents) → Package (preview.html) → Knowhow persistence. Outputs design-tokens.json + layout-templates.json + preview + knowhow manifest.

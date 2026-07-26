@@ -102,10 +102,10 @@
     "title": "Maestro 文档",
     "description": "Maestro 命令、技能和工作流的完整文档。",
     "quick_guide_title": "快速指南",
-    "quick_guide_step1": "使用 /maestro-brainstorm 探索项目想法，或直接 /maestro-init 初始化项目",
-    "quick_guide_step2": "通过 /maestro-roadmap 创建路线图，或 /maestro-blueprint 生成完整规范蓝图",
-    "quick_guide_step3": "使用 /maestro-plan 规划阶段任务，/maestro-execute 执行（含内置验证门控 E2.7）",
-    "quick_guide_step4": "利用 /learn-* 命令持续学习，/wiki-* 命令管理知识图谱"
+    "quick_guide_step1": "使用 /maestro-init 初始化项目，然后把任意目标描述给 /maestro，自动编排完整工作流",
+    "quick_guide_step2": "用 /maestro-next 逐步推进，或用 /maestro-companion 处理无需完整管线的快速修复",
+    "quick_guide_step3": "/maestro 会自动运行内置的 分析 → 规划 → 执行 → 验证 管线（含验证门控），无需手动逐步调用",
+    "quick_guide_step4": "用 /maestro-knowhow 沉淀知识，/maestro-knowledge 管理知识库，/maestro-learn 研读代码库"
   },
   "content": {
     "copy": "复制",

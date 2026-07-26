@@ -42,7 +42,7 @@ icon: "🤖"
 /maestro -y "添加 OAuth 支持"   # 自动确认低风险分类与 proposal
 /maestro -c                     # 继续唯一 live 兼容 Session
 /maestro --amend "改为支持 OAuth"  # 修改 live Session 目标
-/maestro status                 # 项目仪表盘（route 到 maestro-manage status）
+/maestro status                 # 项目仪表盘（route 到 maestro session status）
 ```
 
 ### 公共 Flags
@@ -101,14 +101,14 @@ icon: "🤖"
 | `test` | `test {phase}` |
 | `test_gen` | `auto-test {phase}` |
 | `debug` | `debug "{description}"` |
-| `refactor` | `quality-refactor "{description}"` |
+| `refactor` | `maestro-odyssey --mode improve "{description}"` |
 | `retrospective` | `retrospective {phase}` |
 | `init` | `maestro-init` |
 | `grill` | `grill "{description}"` |
 | `blueprint` | `blueprint "{description}"` |
 | `analyze-macro` | `analyze "{description}"` |
 | `companion` | `/maestro-companion "{description}"` |
-| `status` | `maestro-manage status` |
+| `status` | `maestro session status` |
 | `milestone_close` | `maestro-session-seal` |
 
 ### 多步链
@@ -128,7 +128,7 @@ icon: "🤖"
 | `next-milestone` | roadmap → plan → execute | 下一里程碑 |
 | `milestone-close` | session-seal | 关闭 milestone |
 
-> 完整链目录与 chainMap 见 `workflows/maestro.md`。裸命令名（`plan`、`execute`…）是 first-tier Skill 步骤；`maestro-*` 与 `quality-refactor` 是独立 command 名。
+> 完整链目录与 chainMap 见 `workflows/maestro.md`。裸命令名（`plan`、`execute`…）是 first-tier Skill 步骤；`maestro-*` 与 `maestro-odyssey --mode improve` 是独立 command 名。
 
 ### Minimum Chain Rules
 

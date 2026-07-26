@@ -15,7 +15,7 @@ The two can operate independently or in concert:
 - **Independent operation**: Discover and manage Issues directly without affecting Phase progress
 - **Linked mode**: Issues are injected into the Phase pipeline via the `--gaps` parameter to drive root cause analysis and remediation
 
-`/maestro-manage issue discover` is the entry point of the Issue system, providing two discovery modes:
+`/maestro-issue discover` is the entry point of the Issue system, providing two discovery modes:
 
 - **Multi-perspective full scan**: 8 specialized perspectives analyze in parallel, providing comprehensive coverage of code quality dimensions
 - **Prompt-driven exploration**: Deep, targeted exploration around user-specified concerns
@@ -24,17 +24,17 @@ Discovery results are automatically deduplicated, Issue records are generated, a
 
 ---
 
-## 2. maestro-manage issue discover in Detail
+## 2. /maestro-issue discover in Detail
 
 ### Basic Usage
 
 ```bash
-/maestro-manage issue discover                                    # Interactive mode selection
-/maestro-manage issue discover multi-perspective                  # 8-perspective full scan
-/maestro-manage issue discover by-prompt "Check API error handling"  # Prompt-driven
-/maestro-manage issue discover multi-perspective -y               # Skip confirmation
-/maestro-manage issue discover multi-perspective --scope=src/auth/**  # Specify scope
-/maestro-manage issue discover by-prompt "Database query perf" --depth=deep  # Deep exploration
+/maestro-issue discover                                    # Interactive mode selection
+/maestro-issue discover multi-perspective                  # 8-perspective full scan
+/maestro-issue discover by-prompt "Check API error handling"  # Prompt-driven
+/maestro-issue discover multi-perspective -y               # Skip confirmation
+/maestro-issue discover multi-perspective --scope=src/auth/**  # Specify scope
+/maestro-issue discover by-prompt "Database query perf" --depth=deep  # Deep exploration
 ```
 
 ### Parameter Reference
@@ -89,7 +89,7 @@ Mode: multi-perspective
 Raw findings: 47 → Unique issues: 31
 
 Severity: critical(3) high(8) medium(12) low(8)
-Next: /maestro-manage issue list --severity critical
+Next: /maestro-issue list --severity critical
 ```
 
 ---
@@ -136,19 +136,19 @@ Each discovery session creates artifacts under `.workflow/issues/discoveries/{SE
 
 ---
 
-## 3. maestro-manage issue in Detail
+## 3. /maestro-issue in Detail
 
-`/maestro-manage issue` manages the full Issue lifecycle with 6 subcommands.
+`/maestro-issue` manages the full Issue lifecycle with 6 subcommands.
 
 ### Basic Usage
 
 ```bash
-/maestro-manage issue create --title "Memory leak" --severity high
-/maestro-manage issue list --severity critical --status open
-/maestro-manage issue status ISS-20260513-001
-/maestro-manage issue update ISS-20260513-001 --status in_progress --priority 1
-/maestro-manage issue close ISS-20260513-001 --resolution "Fixed memory leak"
-/maestro-manage issue link ISS-20260513-001 --task TASK-003
+/maestro-issue create --title "Memory leak" --severity high
+/maestro-issue list --severity critical --status open
+/maestro-issue status ISS-20260513-001
+/maestro-issue update ISS-20260513-001 --status in_progress --priority 1
+/maestro-issue close ISS-20260513-001 --resolution "Fixed memory leak"
+/maestro-issue link ISS-20260513-001 --task TASK-003
 ```
 
 ---
@@ -159,7 +159,7 @@ Each discovery session creates artifacts under `.workflow/issues/discoveries/{SE
 <summary>create -- Create an Issue</summary>
 
 ```bash
-/maestro-manage issue create --title "Title" [options]
+/maestro-issue create --title "Title" [options]
 ```
 
 | Option | Description | Default |
@@ -199,26 +199,26 @@ Output is sorted by priority ascending, severity descending.
 **status** displays full Issue details (title, status, severity, description, fix direction, context, tags, history, feedback):
 
 ```bash
-/maestro-manage issue status ISS-20260513-001
+/maestro-issue status ISS-20260513-001
 ```
 
 **update** modifies fields; status changes are automatically recorded in `issue_history`:
 
 ```bash
-/maestro-manage issue update ISS-20260513-001 --status in_progress --priority 1 --add-tag urgent
+/maestro-issue update ISS-20260513-001 --status in_progress --priority 1 --add-tag urgent
 # Options: --severity, --tags, --phase, --milestone, --fix-direction, --description, --note
 ```
 
 **close** resolves and moves to history list:
 
 ```bash
-/maestro-manage issue close ISS-20260513-001 --resolution "Fix description" [--status completed|failed|deferred]
+/maestro-issue close ISS-20260513-001 --resolution "Fix description" [--status completed|failed|deferred]
 ```
 
 **link** creates a bidirectional link (Issue `affected_components` <-> Task `issue_refs`):
 
 ```bash
-/maestro-manage issue link ISS-20260513-001 --task TASK-003
+/maestro-issue link ISS-20260513-001 --task TASK-003
 ```
 
 </details>
@@ -284,11 +284,11 @@ discover -> list -> analyze -> plan -> execute -> verify -> close
 
 ```bash
 # 1. Discover
-/maestro-manage issue discover multi-perspective
+/maestro-issue discover multi-perspective
 
 # 2. Review results
-/maestro-manage issue list --severity critical
-/maestro-manage issue status ISS-20260513-001
+/maestro-issue list --severity critical
+/maestro-issue status ISS-20260513-001
 
 # 3. Root cause analysis (--gaps injects Issue into Phase pipeline)
 /maestro "analyze --gaps ISS-20260513-001"
@@ -300,7 +300,7 @@ discover -> list -> analyze -> plan -> execute -> verify -> close
 /maestro "execute"
 
 # 6. Close
-/maestro-manage issue close ISS-20260513-001 --resolution "Fix description"
+/maestro-issue close ISS-20260513-001 --resolution "Fix description"
 ```
 
 ### Shortcut Path
@@ -309,7 +309,7 @@ For urgent/simple issues, use `maestro-next` to skip intermediate steps:
 
 ```bash
 /maestro-next "Fix token rotation race condition"
-/maestro-manage issue close ISS-20260513-001 --resolution "Fixed via maestro-next"
+/maestro-issue close ISS-20260513-001 --resolution "Fixed via maestro-next"
 ```
 
 ### Integration with Roadmap/Milestone

@@ -10,34 +10,34 @@ The Maestro knowledge harvest system transforms knowledge fragments generated du
 
 ### Knowledge Loop
 
-Knowledge harvesting extracts fragments from execution artifacts, classifies and routes them, writes to persistent storage, and feeds back into new execution -- forming a complete knowledge loop. Three phases: **Extract** (`/maestro-manage knowledge harvest`) -> **Route** (auto-classification engine) -> **Persist** (write to wiki/spec/issue).
+Knowledge harvesting extracts fragments from execution artifacts, classifies and routes them, writes to persistent storage, and feeds back into new execution -- forming a complete knowledge loop. Three phases: **Extract** (`/maestro-knowledge harvest`) -> **Route** (auto-classification engine) -> **Persist** (write to wiki/spec/issue).
 
 ### Three Knowledge Stores
 
 | Store | Path | What It Holds | Who Consumes |
 |-------|------|---------------|--------------|
-| **Wiki** | `.workflow/wiki/` | Observations, general insights, knowledge graph | `/maestro-manage knowledge wiki connect`, `/maestro-manage knowledge wiki digest` |
+| **Wiki** | `.workflow/wiki/` | Observations, general insights, knowledge graph | `/maestro-knowledge wiki connect`, `/maestro-knowledge wiki digest` |
 | **Spec** | `.workflow/specs/` | Coding conventions, architecture decisions, pattern rules | `/maestro-spec load`, Hook auto-injection |
-| **Issue** | `.workflow/issues/issues.jsonl` | Unresolved bugs, risks, TODOs | `/maestro-manage issue`, `/maestro "analyze..."` |
+| **Issue** | `.workflow/issues/issues.jsonl` | Unresolved bugs, risks, TODOs | `/maestro-issue`, `/maestro "analyze..."` |
 
 ### Relationship with Knowhow
 
-Harvest extracts fragments and routes them to wiki/spec/issue. Knowhow (`.workflow/knowhow/`) is an independent, complete knowledge document system created proactively via `/maestro-manage knowledge capture`. The two are complementary: **Harvest** = passive recovery, **Knowhow** = active capture.
+Harvest extracts fragments and routes them to wiki/spec/issue. Knowhow (`.workflow/knowhow/`) is an independent, complete knowledge document system created proactively via `/maestro-knowhow`. The two are complementary: **Harvest** = passive recovery, **Knowhow** = active capture.
 
 ---
 
-## 2. maestro-manage knowledge harvest Details
+## 2. /maestro-knowledge harvest Details
 
 ### Command Syntax
 
 ```bash
-/maestro-manage knowledge harvest                                      # Scan all artifacts, interactive selection
-/maestro-manage knowledge harvest <session-id>                         # Harvest specified session
-/maestro-manage knowledge harvest <path>                               # Harvest specified directory
-/maestro-manage knowledge harvest --recent 7                           # Only last 7 days
-/maestro-manage knowledge harvest --source analysis                    # Only harvest analysis artifacts
-/maestro-manage knowledge harvest <target> --to wiki                   # Force all routes to wiki
-/maestro-manage knowledge harvest <target> --dry-run                   # Preview without writing
+/maestro-knowledge harvest                                      # Scan all artifacts, interactive selection
+/maestro-knowledge harvest <session-id>                         # Harvest specified session
+/maestro-knowledge harvest <path>                               # Harvest specified directory
+/maestro-knowledge harvest --recent 7                           # Only last 7 days
+/maestro-knowledge harvest --source analysis                    # Only harvest analysis artifacts
+/maestro-knowledge harvest <target> --to wiki                   # Force all routes to wiki
+/maestro-knowledge harvest <target> --dry-run                   # Preview without writing
 ```
 
 ### Three Modes
@@ -117,17 +117,17 @@ Duplicate fragments are marked `[SKIP-DUP]` and recorded in the harvest report.
 
 ---
 
-## 3. maestro-manage knowledge knowhow Details
+## 3. maestro knowhow Details
 
 ### Command Syntax
 
 ```bash
-/maestro-manage knowledge knowhow                                  # List all (default)
-/maestro-manage knowledge knowhow search "auth flow"               # Full-text search
-/maestro-manage knowledge knowhow view KNW-20260510-1430           # View specified entry
-/maestro-manage knowledge knowhow edit MEMORY.md                   # Edit system memory
-/maestro-manage knowledge knowhow delete TIP-20260510-0900         # Delete (confirmation required)
-/maestro-manage knowledge knowhow prune --tag deprecated --before 2026-04-01  # Batch cleanup
+maestro knowhow                                  # List all (default)
+maestro knowhow search "auth flow"               # Full-text search
+maestro knowhow get KNW-20260510-1430            # View specified entry
+maestro knowhow edit MEMORY.md                   # Edit system memory
+/maestro-knowledge audit --scope knowhow          # Retire a stale entry (keep/deprecate/delete)
+/maestro-knowledge audit --scope knowhow --dry-run  # Preview batch cleanup without touching disk
 ```
 
 ### Dual Storage Architecture
@@ -166,18 +166,18 @@ Workflow storage is for within-project knowledge; system storage is for cross-se
 
 ---
 
-## 4. maestro-manage knowledge capture Details
+## 4. /maestro-knowhow Details
 
 ### Command Syntax
 
 ```bash
-/maestro-manage knowledge capture compact "Auth module dev progress"       # Session compression
-/maestro-manage knowledge capture template                       # Interactive template entry
-/maestro-manage knowledge capture recipe "Deployment process"                # Operation recipe
-/maestro-manage knowledge capture reference --source https://...  # External document summary
-/maestro-manage knowledge capture decision                       # Architecture decision record
-/maestro-manage knowledge capture tip "TypeScript generic inference pitfall"    # Quick tip
-/maestro-manage knowledge capture                                # Interactive selection (9 types)
+/maestro-knowhow compact "Auth module dev progress"       # Session compression
+/maestro-knowhow template                       # Interactive template entry
+/maestro-knowhow recipe "Deployment process"                # Operation recipe
+/maestro-knowhow reference --source https://...  # External document summary
+/maestro-knowhow decision                       # Architecture decision record
+/maestro-knowhow tip "TypeScript generic inference pitfall"    # Quick tip
+/maestro-knowhow                                # Interactive selection (9 types)
 ```
 
 ### Capture Timing
@@ -232,7 +232,7 @@ The command supports automatic type recognition via tokens:
              v
 +----------------------------------------------------------+
 |                  Knowledge Harvest                        |
-|  /maestro-manage knowledge harvest                                         |
+|  /maestro-knowledge harvest                                         |
 |  |-- Stage 1-2: Discover artifacts                       |
 |  |-- Stage 3:   Extract fragments (category+confidence)  |
 |  |-- Stage 4:   Classify and route (auto / forced)       |
@@ -249,7 +249,7 @@ The command supports automatic type recognition via tokens:
      v         v          v
 +----------------------------------------------------------+
 |                   Downstream Consumption                  |
-|  maestro-manage knowledge wiki connect / maestro-manage knowledge wiki digest / maestro-spec load / maestro-manage issue   |
+|  /maestro-knowledge wiki connect / /maestro-knowledge wiki digest / maestro-spec load / /maestro-issue   |
 |  Hook auto-injection / /maestro "plan <phase> --gaps"    |
 +----------------------------------------------------------+
 ```
@@ -258,7 +258,7 @@ The command supports automatic type recognition via tokens:
 ### Active Knowledge Capture Parallel Path
 
 ```
-Execution process -> /maestro-manage knowledge capture -> .workflow/knowhow/ -> wiki-index.json -> retrieval and reuse
+Execution process -> /maestro-knowhow -> .workflow/knowhow/ -> wiki-index.json -> retrieval and reuse
 ```
 
 ### Collaboration with learn-* Commands
@@ -275,6 +275,6 @@ Execution process -> /maestro-manage knowledge capture -> .workflow/knowhow/ -> 
 
 | Scenario | Steps |
 |----------|-------|
-| **Daily Development** | `/maestro "execute"` -> quick note on completion -> `/maestro-manage knowledge capture tip "discovered trick"` |
-| **Milestone Completion** | `/maestro-manage knowledge harvest --recent 30` -> `/maestro-manage knowledge capture compact` -> `/maestro-manage knowledge wiki connect --fix` |
-| **Project Handoff** | `/maestro-manage knowledge knowhow list` -> `/maestro-manage knowledge knowhow search "core concept"` -> `/maestro-spec load --role implement` |
+| **Daily Development** | `/maestro "execute"` -> quick note on completion -> `/maestro-knowhow tip "discovered trick"` |
+| **Milestone Completion** | `/maestro-knowledge harvest --recent 30` -> `/maestro-knowhow compact` -> `/maestro-knowledge wiki connect --fix` |
+| **Project Handoff** | `maestro knowhow list` -> `maestro knowhow search "core concept"` -> `/maestro-spec load --role implement` |

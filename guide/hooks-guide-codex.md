@@ -130,7 +130,7 @@ SessionStart(source=startup)
 
 **stdin**:
 ```json
-{ "session_id": "abc123", "turn_id": "turn-001", "prompt": "/maestro-execute 2",
+{ "session_id": "abc123", "turn_id": "turn-001", "prompt": "/maestro-next \"推进 Phase 2\"",
   "cwd": "/path/to/project", "hook_event_name": "UserPromptSubmit", "model": "gpt-5.1-codex" }
 ```
 

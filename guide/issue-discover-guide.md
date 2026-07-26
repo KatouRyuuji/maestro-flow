@@ -15,7 +15,7 @@ Maestro Issue 系统是独立于 Phase 管线的问题追踪机制。Phase 管�
 - **独立运行**：直接发现和管理 Issue，不影响 Phase 进度
 - **联动模式**：Issue 通过 `--gaps` 参数注入 Phase 管线，驱动根因分析和修复
 
-`/manage-issue-discover` 是 Issue 系统的入口，提供两种发现模式：
+`/maestro-issue discover` 是 Issue 系统的入口，提供两种发现模式：
 
 - **多视角全扫描**：8 个专业视角并行分析，全面覆盖代码质量维度
 - **Prompt 驱动探索**：围绕用户关注点进行深度定向探索
@@ -29,12 +29,12 @@ Maestro Issue 系统是独立于 Phase 管线的问题追踪机制。Phase 管�
 ### 基本用法
 
 ```bash
-/manage-issue-discover                              # 交互选择模式
-/manage-issue-discover multi-perspective            # 8 视角全扫描
-/manage-issue-discover by-prompt "检查 API 错误处理"  # Prompt 驱动
-/manage-issue-discover multi-perspective -y         # 跳过确认
-/manage-issue-discover multi-perspective --scope=src/auth/**  # 指定范围
-/manage-issue-discover by-prompt "数据库查询性能" --depth=deep  # 深度探索
+/maestro-issue discover                              # 交互选择模式
+/maestro-issue discover multi-perspective            # 8 视角全扫描
+/maestro-issue discover by-prompt "检查 API 错误处理"  # Prompt 驱动
+/maestro-issue discover multi-perspective -y         # 跳过确认
+/maestro-issue discover multi-perspective --scope=src/auth/**  # 指定范围
+/maestro-issue discover by-prompt "数据库查询性能" --depth=deep  # 深度探索
 ```
 
 ### 参数一览
@@ -89,7 +89,7 @@ Mode: multi-perspective
 Raw findings: 47 → Unique issues: 31
 
 Severity: critical(3) high(8) medium(12) low(8)
-Next: /manage-issue list --severity critical
+Next: /maestro-issue list --severity critical
 ```
 
 ---
@@ -138,17 +138,17 @@ Prompt 驱动模式围绕用户关注点进行深度定向探索。
 
 ## 三、manage-issue 详解
 
-`/manage-issue` 负责 Issue 生命周期管理，支持 6 个子命令。
+`/maestro-issue` 负责 Issue 生命周期管理，支持 6 个子命令。
 
 ### 基本用法
 
 ```bash
-/manage-issue create --title "内存泄漏" --severity high
-/manage-issue list --severity critical --status open
-/manage-issue status ISS-20260513-001
-/manage-issue update ISS-20260513-001 --status in_progress --priority 1
-/manage-issue close ISS-20260513-001 --resolution "已修复内存泄漏"
-/manage-issue link ISS-20260513-001 --task TASK-003
+/maestro-issue create --title "内存泄漏" --severity high
+/maestro-issue list --severity critical --status open
+/maestro-issue status ISS-20260513-001
+/maestro-issue update ISS-20260513-001 --status in_progress --priority 1
+/maestro-issue close ISS-20260513-001 --resolution "已修复内存泄漏"
+/maestro-issue link ISS-20260513-001 --task TASK-003
 ```
 
 ---
@@ -159,7 +159,7 @@ Prompt 驱动模式围绕用户关注点进行深度定向探索。
 <summary>create -- 创建 Issue</summary>
 
 ```bash
-/manage-issue create --title "标题" [选项]
+/maestro-issue create --title "标题" [选项]
 ```
 
 | 选项 | 说明 | 默认值 |
@@ -199,26 +199,26 @@ Prompt 驱动模式围绕用户关注点进行深度定向探索。
 **status** 查看完整 Issue 详情（标题、状态、严重程度、描述、修复方向、上下文、标签、历史、反馈）：
 
 ```bash
-/manage-issue status ISS-20260513-001
+/maestro-issue status ISS-20260513-001
 ```
 
 **update** 更新字段，状态变更自动记录到 `issue_history`：
 
 ```bash
-/manage-issue update ISS-20260513-001 --status in_progress --priority 1 --add-tag urgent
+/maestro-issue update ISS-20260513-001 --status in_progress --priority 1 --add-tag urgent
 # 可选: --severity, --tags, --phase, --milestone, --fix-direction, --description, --note
 ```
 
 **close** 关闭并移入历史列表：
 
 ```bash
-/manage-issue close ISS-20260513-001 --resolution "修复说明" [--status completed|failed|deferred]
+/maestro-issue close ISS-20260513-001 --resolution "修复说明" [--status completed|failed|deferred]
 ```
 
 **link** 创建双向关联（Issue `affected_components` <-> Task `issue_refs`）：
 
 ```bash
-/manage-issue link ISS-20260513-001 --task TASK-003
+/maestro-issue link ISS-20260513-001 --task TASK-003
 ```
 
 </details>
@@ -284,32 +284,27 @@ discover -> list -> analyze -> plan -> execute -> verify -> close
 
 ```bash
 # 1. 发现
-/manage-issue-discover multi-perspective
+/maestro-issue discover multi-perspective
 
 # 2. 查看结果
-/manage-issue list --severity critical
-/manage-issue status ISS-20260513-001
+/maestro-issue list --severity critical
+/maestro-issue status ISS-20260513-001
 
-# 3. 根因分析（--gaps 将 Issue 注入 Phase 管线）
-/maestro-analyze --gaps ISS-20260513-001
-
-# 4. 方案规划
-/maestro-plan --gaps
-
-# 5. 执行修复
-/maestro-execute
+# 3-5. 根因分析 → 方案规划 → 执行修复
+#      （--gaps 将 Issue 注入 Phase 管线，编排器依次派发 analyze → plan → execute）
+/maestro "修复 ISS-20260513-001"
 
 # 6. 关闭
-/manage-issue close ISS-20260513-001 --resolution "修复说明"
+/maestro-issue close ISS-20260513-001 --resolution "修复说明"
 ```
 
 ### 快捷路径
 
-紧急/简单问题可用 `maestro-quick` 跳过中间步骤：
+紧急/简单问题可用 `/maestro-next` 跳过中间步骤：
 
 ```bash
-/maestro-quick "修复 token 轮换竞态条件"
-/manage-issue close ISS-20260513-001 --resolution "已通过 maestro-quick 修复"
+/maestro-next "修复 token 轮换竞态条件"
+/maestro-issue close ISS-20260513-001 --resolution "已通过 /maestro-next 修复"
 ```
 
 ### 与 Roadmap/Milestone 集成

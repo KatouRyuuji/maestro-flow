@@ -136,36 +136,36 @@ maestro spec health
 
 | 命令 | 职责 |
 |------|------|
-| `/spec-add` | 向 specs 文件追加 `<spec-entry>` 条目，支持 inline 和 ref 两种模式 |
-| `/manage-knowhow-capture` | 捕获 6 种类型知识文档到 knowhow/（compact、template、recipe、reference、decision、tip） |
+| `/maestro-spec add` | 向 specs 文件追加 `<spec-entry>` 条目，支持 inline 和 ref 两种模式 |
+| `/maestro-knowhow` | 捕获 6 种类型知识文档到 knowhow/（compact、template、recipe、reference、decision、tip） |
 | `/maestro-tools-register` | 将可复用业务流程注册为 knowhow 工具文档（YAML 头 `tool: true` + `category`） |
-| `/manage-learn` | 捕获原子洞察到 `learnings.md`（pattern、gotcha、technique、tip） |
-| `/manage-harvest` | 从工作流产物中提取知识碎片，路由到 wiki/spec/issue 三个存储 |
+| `/maestro-learn` | 捕获原子洞察到 `learnings.md`（pattern、gotcha、technique、tip） |
+| `/maestro-knowledge harvest` | 从工作流产物中提取知识碎片，路由到 wiki/spec/issue 三个存储 |
 
 ### 读取类
 
 | 命令 | 职责 |
 |------|------|
-| `/spec-load` | 按 category 加载主文档 + 跨文件 keyword 匹配条目 + 自动发现 knowhow 工具 |
+| `/maestro-spec load` | 按 category 加载主文档 + 跨文件 keyword 匹配条目 + 自动发现 knowhow 工具 |
 | `/maestro-tools-execute` | 从 knowhow 加载工具文档并逐步执行 |
-| `/manage-knowhow` | 跨 workflow knowhow 和 system memory 两个存储做 list/search/view/edit/delete |
-| `/manage-wiki` | Wiki 图健康度、搜索、清理、统计 |
+| `maestro knowhow` | 跨 workflow knowhow 和 system memory 两个存储做 list/search/view/edit/delete |
+| `/maestro-knowledge wiki` | Wiki 图健康度、搜索、清理、统计 |
 
 ### 分析类
 
 | 命令 | 职责 |
 |------|------|
-| `/wiki-digest` | 语义主题聚类 + 知识覆盖热力图 + gap 分析 |
-| `/wiki-connect` | 发现孤立节点和缺失连接，修复图联通性 |
-| `/manage-knowledge-audit` | 审计 spec/knowhow/artifact 三存储 — 矛盾检测、过期淘汰、孤立清理（keep/supersede/contest/deprecate/delete 五态决策） |
-| `/learn-decompose` | 从代码中提取设计模式，写入 spec 和 wiki |
-| `/learn-follow` | 引导式阅读代码/wiki，提取 pattern 并构建理解 |
+| `/maestro-knowledge wiki` | 语义主题聚类 + 知识覆盖热力图 + gap 分析 |
+| `/maestro-knowledge wiki` | 发现孤立节点和缺失连接，修复图联通性 |
+| `/maestro-knowledge audit` | 审计 spec/knowhow/artifact 三存储 — 矛盾检测、过期淘汰、孤立清理（keep/supersede/contest/deprecate/delete 五态决策） |
+| `/maestro-learn decompose` | 从代码中提取设计模式，写入 spec 和 wiki |
+| `/maestro-learn follow` | 引导式阅读代码/wiki，提取 pattern 并构建理解 |
 
 ### 初始化
 
 | 命令 | 职责 |
 |------|------|
-| `/spec-setup` | 扫描项目结构，初始化 specs 骨架文件（6 个种子文件） |
+| `/maestro-spec setup` | 扫描项目结构，初始化 specs 骨架文件（6 个种子文件） |
 
 ---
 
@@ -444,9 +444,9 @@ codeExtractor.extract({ allowScripts: true })
 执行产物                    提取                      存储                    消费
 ─────────                  ─────                    ─────                  ─────
 分析会话 ─────┐                              ┌─→ specs/     ─→ spec-injector → agent
-调试记录 ─────┼──→ /manage-harvest ──────────┼─→ knowhow/   ─→ wiki load → 按需
-规划文档 ─────┤    /quality-retrospective    ├─→ issues/    ─→ manage-issue → 追踪
-代码变更 ─────┘    /learn-decompose          └─→ learnings  ─→ keyword-injector → 上下文
+调试记录 ─────┼──→ /maestro-knowledge harvest ──────────┼─→ knowhow/   ─→ wiki load → 按需
+规划文档 ─────┤    retrospective 步骤        ├─→ issues/    ─→ /maestro-issue → 追踪
+代码变更 ─────┘    /maestro-learn decompose          └─→ learnings  ─→ keyword-injector → 上下文
 ```
 
 Progressive Fill——各阶段自动沉淀：
@@ -475,7 +475,7 @@ maestro-execute → 内置验证（E2.7）→ 质量发现 → review
 
 ```bash
 /workflow-lite-execute
-/manage-harvest --source lite-plan --to auto
+/maestro-knowledge harvest --source lite-plan --to auto
 ```
 
 harvest 自动路由：
@@ -504,15 +504,15 @@ harvest 自动路由：
 
 ```bash
 /maestro-tools-register optimize user-api-verify   # 追加新发现的 edge case
-/manage-learn "refresh token 过期后重试需要处理 race condition"
+/maestro-learn "refresh token 过期后重试需要处理 race condition"
 ```
 
 各命令职责：
 
 | 命令 | 产出 | 性质 |
 |---|---|---|
-| `/manage-harvest` | spec 条目 + wiki 条目 + issue | 被动知识 |
-| `/manage-knowhow-capture` | AST-*.md（API 契约） | 被动资产 |
+| `/maestro-knowledge harvest` | spec 条目 + wiki 条目 + issue | 被动知识 |
+| `/maestro-knowhow` | AST-*.md（API 契约） | 被动资产 |
 | `/maestro-tools-register` | RCP-*.md（验证流程） | 主动可执行 |
 | `/quality-auto-test` | 测试代码 | 消费 tool |
 

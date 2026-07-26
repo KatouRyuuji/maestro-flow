@@ -148,12 +148,12 @@ S_PARSE → S_SETUP → S_CHAIN → S_GATE → S_REPORT
 
 ---
 
-### 2.3 maestro-ui-codify — UI Codification
+### 2.3 /maestro-impeccable --codify — UI Codification
 
 Reverse-engineer a design system from existing source code, generate a reference package, and persist as a knowledge asset.
 
 ```
-/maestro-ui-codify <source-path> [--package-name <name>] [--output-dir <path>] [--overwrite]
+/maestro-impeccable --codify <source-path> [--package-name <name>] [--output-dir <path>] [--overwrite]
 ```
 
 | Parameter | Default | Description |
@@ -184,7 +184,7 @@ Reverse-engineer a design system from existing source code, generate a reference
 # Step 2: Automated production (build chain)
 /maestro-impeccable "new landing page" --chain build --threshold 28
 # Step 3: Reverse-engineer design system
-/maestro-ui-codify src/components --package-name my-design-system
+/maestro-impeccable --codify src/components --package-name my-design-system
 ```
 
 **Data flow**: `ui-design` → `design-ref/` → consumed by `maestro-plan` → `ui-craft` operates on source → `ui-codify` extracts knowledge, closing the loop.
@@ -207,7 +207,7 @@ Reverse-engineer a design system from existing source code, generate a reference
 # Production hardening
 /maestro-impeccable "prepare for launch" --chain harden --threshold 30
 # Reverse extract
-/maestro-ui-codify src/ui --package-name company-components
+/maestro-impeccable --codify src/ui --package-name company-components
 ```
 
 ---
@@ -230,5 +230,5 @@ Reverse-engineer a design system from existing source code, generate a reference
 # Iterative optimization
 /maestro-impeccable "optimize dashboard" --chain improve --threshold 30 --max-loops 5
 # Knowledge consolidation
-/maestro-ui-codify src --package-name project-design-v1
+/maestro-impeccable --codify src --package-name project-design-v1
 ```

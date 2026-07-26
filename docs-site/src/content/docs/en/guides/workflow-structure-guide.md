@@ -63,8 +63,8 @@ icon: "📁"
 │   ├── KNW-retro-*.md/json       # /maestro-learn consult
 │   ├── KNW-opinion-*.md          # /maestro-learn consult
 │   ├── KNW-investigate-*/        # /maestro-learn investigate
-│   ├── KNW-digest-*.md           # /maestro-manage knowledge wiki digest
-│   └── wiki-connections-*.md     # /maestro-manage knowledge wiki connect
+│   ├── KNW-digest-*.md           # /maestro-knowledge wiki digest
+│   └── wiki-connections-*.md     # /maestro-knowledge wiki connect
 │
 ├── scratch/                      # Execution artifacts ({YYYYMMDD}-{type}[-P{N}]-{slug})
 │   ├── *-analyze-*/              # Analysis: discussion.md, analysis.md, conclusions.json, context.md
@@ -271,7 +271,7 @@ Learn special prefixes: `KNW-follow-`, `KNW-decompose-`, `KNW-retro-`, `KNW-opin
 ```
 
 - `issues/issue-history.jsonl` — archived closed issues
-- `issues/discoveries/` — `/maestro-manage issue discover` session artifacts
+- `issues/discoveries/` — `/maestro-issue discover` session artifacts
 
 ---
 
@@ -410,9 +410,9 @@ When a milestone is completed, `/maestro-session-seal` creates an archive:
 | verify | VRF-{NNN} | phase, milestone | (retired; integrated into `/maestro-ralph` decision gate `post-execute`) |
 | review | REV-{NNN} | phase | `review` (`/maestro "review"`) |
 | debug | DBG-{NNN} | phase, standalone | `/maestro-odyssey --mode debug` |
-| test | TST-{NNN} | phase | `test` (`/maestro "<test intent>"`) or `/security-audit` |
+| test | TST-{NNN} | phase | `test` (`/maestro "<test intent>"`) or `/maestro-odyssey --mode security` |
 | brainstorm | BRN-{NNN} | adhoc | `brainstorm` (`/maestro "brainstorm..."`) |
-| collab | CLB-{NNN} | adhoc | `/maestro-collab` / team chain |
+| collab | CLB-{NNN} | adhoc | `collab` (`/maestro "collab..."`) / team chain |
 | ui-design | — | phase, scratch | `/maestro-impeccable --codify` |
 
 ### Session ID Formats

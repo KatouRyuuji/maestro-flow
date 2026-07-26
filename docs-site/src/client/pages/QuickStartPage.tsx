@@ -206,18 +206,18 @@ const COMMANDS: CommandData[] = [
   },
   // Quick
   {
-    id: 'security-audit', cmd: '/security-audit', category: 'quality', status: 'recommended', level: 2,
+    id: 'security-audit', cmd: '/maestro-odyssey --mode security', category: 'quality', status: 'recommended', level: 2,
     zh: {
-      desc: '系统性安全审计 — 覆盖 OWASP Top 10、供应链、密钥泄露、CI/CD 管线',
+      desc: '系统性安全审计 — 覆盖 OWASP Top 10、供应链、密钥泄露、CI/CD 管线（已并入 Odyssey security 模式）',
       when: '发布前、安全敏感变更后、定期安全检查',
-      how: '/security-audit standard',
-      tips: ['quick（5 分钟快速扫描）/ standard（全面审计）/ deep（含 STRIDE 威胁建模）', '--scope 限定扫描范围，避免全量扫描耗时过长', '会生成安全报告和修复优先级排序'],
+      how: '/maestro-odyssey "审计认证模块安全性" --mode security',
+      tips: ['原 /security-audit 已融入 Odyssey，通过 --mode security 进入', 'Odyssey 归档 → 审计 → 修复 → 验证 的长循环', '会生成安全发现和修复优先级排序'],
     },
     en: {
-      desc: 'Systematic security audit — OWASP Top 10, supply chain, secrets leak, CI/CD pipeline',
+      desc: 'Systematic security audit — OWASP Top 10, supply chain, secrets leak, CI/CD pipeline (folded into Odyssey security mode)',
       when: 'Before releases, after security-sensitive changes, periodic security checks',
-      how: '/security-audit standard',
-      tips: ['quick (5-min scan) / standard (full audit) / deep (with STRIDE threat modeling)', '--scope limits scan area to avoid long full scans', 'Generates security report with fix priority ranking'],
+      how: '/maestro-odyssey "audit auth module security" --mode security',
+      tips: ['The former /security-audit is now Odyssey --mode security', 'Odyssey long loop: archaeology → audit → fix → verify', 'Generates security findings with fix priority ranking'],
     },
   },
   {
@@ -267,33 +267,33 @@ const COMMANDS: CommandData[] = [
   },
   // Issue
   {
-    id: 'discover', cmd: '/manage-issue-discover', category: 'issue', status: 'recommended', level: 2,
+    id: 'discover', cmd: '/maestro-issue', category: 'issue', status: 'recommended', level: 2,
     zh: {
       desc: '8 视角全扫描发现潜在问题',
       when: '需要全面检查代码库问题，或按提示搜索特定问题',
-      how: '/manage-issue-discover by-prompt "检查 API 错误处理"',
-      tips: ['支持 by-prompt 按描述搜索', '发现的 Issue 可自动进入修复管线'],
+      how: '/maestro-issue "发现问题：检查 API 错误处理"',
+      tips: ['意图驱动，用自然语言描述要扫描的范围', '发现的 Issue 可自动进入修复管线'],
     },
     en: {
       desc: '8-perspective scan to discover potential issues',
       when: 'Comprehensive codebase issue scan or targeted search',
-      how: '/manage-issue-discover by-prompt "check API error handling"',
-      tips: ['by-prompt searches by description', 'Discovered issues can auto-enter fix pipeline'],
+      how: '/maestro-issue "discover: check API error handling"',
+      tips: ['Intent-driven — describe the scan scope in natural language', 'Discovered issues can auto-enter fix pipeline'],
     },
   },
   {
-    id: 'issue', cmd: '/manage-issue', category: 'issue', status: 'stable', level: 2,
+    id: 'issue', cmd: '/maestro-issue', category: 'issue', status: 'stable', level: 2,
     zh: {
       desc: '创建、查看、关闭 Issue',
       when: '手动创建 Issue 或管理已发现的问题',
-      how: '/manage-issue create --title "内存泄漏" --severity high',
-      tips: ['Issue 可关联 Phase 管线自动修复', 'Commander Agent 会自动推进未分析的 Issue'],
+      how: '/maestro-issue "记录一个内存泄漏 bug，严重度 high"',
+      tips: ['意图驱动：报告 / 列出 / 关闭 / 关联 用自然语言描述即可', 'Issue 可关联 Phase 管线自动修复'],
     },
     en: {
       desc: 'Create, view, close issues',
       when: 'Manually create issues or manage discovered problems',
-      how: '/manage-issue create --title "memory leak" --severity high',
-      tips: ['Issues can link to pipeline for auto-fix', 'Commander Agent auto-advances unanalyzed issues'],
+      how: '/maestro-issue "log a memory leak bug, high severity"',
+      tips: ['Intent-driven: report / list / close / link — just describe it', 'Issues can link to pipeline for auto-fix'],
     },
   },
   // Advanced
@@ -461,12 +461,12 @@ const SCENARIOS: ScenarioData[] = [
     zh: {
       title: '问题发现与修复',
       desc: '发现问题 → 定位 → 修复 → 关闭',
-      steps: ['/manage-issue-discover by-prompt "检查错误处理"', '/maestro-analyze --gaps ISS-001', '/maestro-plan --gaps', '/maestro-execute', '/manage-issue close ISS-001 --resolution "Fixed"'],
+      steps: ['/maestro-issue "发现问题：检查错误处理"', '/maestro "修复 ISS-001 的缺陷"', '/maestro-issue "关闭 ISS-001，已修复"'],
     },
     en: {
       title: 'Issue Discovery & Fix',
       desc: 'Discover → diagnose → fix → close',
-      steps: ['/manage-issue-discover by-prompt "check error handling"', '/maestro-analyze --gaps ISS-001', '/maestro-plan --gaps', '/maestro-execute', '/manage-issue close ISS-001 --resolution "Fixed"'],
+      steps: ['/maestro-issue "discover: check error handling"', '/maestro "fix the gaps in ISS-001"', '/maestro-issue "close ISS-001, resolved"'],
     },
   },
   {
@@ -500,12 +500,12 @@ const SCENARIOS: ScenarioData[] = [
     zh: {
       title: '知识管理闭环',
       desc: '执行后提取知识 → 沉淀到 wiki/spec → 下次规划时自动注入',
-      steps: ['/manage-harvest --recent 3', '# 提取最近 3 个会话的知识', '/wiki-connect --fix', '# 发现并修复知识图谱中的隐藏关联', '/wiki-digest --recent 7', '# 生成最近 7 天的知识摘要'],
+      steps: ['/maestro-knowhow "沉淀这次的决策与技巧"', '# 捕获经验到 knowhow', '/maestro-knowledge "提取最近 3 个会话的知识"', '# harvest 并入库', '/maestro-knowledge "检查 wiki 健康并连接知识图谱"', '# 发现并修复隐藏关联'],
     },
     en: {
       title: 'Knowledge Loop',
       desc: 'Extract knowledge after execution → persist to wiki/spec → auto-inject in next planning',
-      steps: ['/manage-harvest --recent 3', '# extract knowledge from last 3 sessions', '/wiki-connect --fix', '# discover and fix hidden connections in wiki graph', '/wiki-digest --recent 7', '# generate knowledge digest for last 7 days'],
+      steps: ['/maestro-knowhow "capture this decision and tips"', '# precipitate into knowhow', '/maestro-knowledge "harvest the last 3 sessions"', '# harvest into the store', '/maestro-knowledge "check wiki health and link the graph"', '# discover and fix hidden connections'],
     },
   },
   {
@@ -513,12 +513,12 @@ const SCENARIOS: ScenarioData[] = [
     zh: {
       title: '安全审计与修复',
       desc: '发布前安全扫描 → 发现漏洞 → 修复 → 验证',
-      steps: ['/security-audit standard', '# 全面安全审计', '/manage-issue create --title "修复 XSS 漏洞" --severity critical', '# 创建安全 Issue', '/maestro "修复 XSS 漏洞"', '# 使用完整编排和验证', '/security-audit quick', '# 复查确认'],
+      steps: ['/maestro-odyssey "全面安全审计" --mode security', '# 安全审计长循环', '/maestro-issue "创建 issue：修复 XSS 漏洞，severity critical"', '# 创建安全 Issue', '/maestro "修复 XSS 漏洞"', '# 使用完整编排和验证', '/maestro-odyssey "复查安全修复" --mode security', '# 复查确认'],
     },
     en: {
       title: 'Security Audit & Fix',
       desc: 'Pre-release security scan → discover vulnerabilities → fix → verify',
-      steps: ['/security-audit standard', '# full security audit', '/manage-issue create --title "Fix XSS vulnerability" --severity critical', '# create security issue', '/maestro "Fix XSS vulnerability"', '# full orchestration and verification', '/security-audit quick', '# re-audit to confirm'],
+      steps: ['/maestro-odyssey "full security audit" --mode security', '# security audit long loop', '/maestro-issue "create issue: fix XSS vulnerability, severity critical"', '# create security issue', '/maestro "Fix XSS vulnerability"', '# full orchestration and verification', '/maestro-odyssey "re-check the security fix" --mode security', '# re-audit to confirm'],
     },
   },
   {
@@ -902,7 +902,7 @@ export default function QuickStartPage() {
             { icon: '2', color: 'bg-tint-green text-accent-green', zh: '简单任务用 Companion', en: 'Use Companion for simple tasks', zhDesc: 'Bug 修复、小改动不需要走完整管线。/maestro-companion 直接执行并记录证据。', enDesc: 'Bug fixes and small changes do not need the full pipeline. /maestro-companion executes directly and records evidence.' },
             { icon: '3', color: 'bg-tint-purple text-accent-purple', zh: '-y 省时间', en: '-y saves time', zhDesc: '大多数命令支持 -y 自动确认。熟悉后加上 -y 可以大幅提升效率。', enDesc: 'Most commands support -y auto-confirm. Add -y once familiar to boost efficiency.' },
             { icon: '4', color: 'bg-tint-orange text-accent-orange', zh: '质量闭环别跳过', en: 'Don\'t skip quality loop', zhDesc: '执行后一定要 verify + test。质量管线是代码质量的最后一道防线。', enDesc: 'Always verify + test after execute. Quality pipeline is the last line of defense.' },
-            { icon: '5', color: 'bg-tint-blue text-accent-blue', zh: '知识要沉淀', en: 'Persist knowledge', zhDesc: '每个阶段结束后用 /manage-harvest 提取知识。积累的知识会在下次 /maestro-plan 时自动注入。', enDesc: 'Use /manage-harvest after each phase. Accumulated knowledge auto-injects in next /maestro-plan.' },
+            { icon: '5', color: 'bg-tint-blue text-accent-blue', zh: '知识要沉淀', en: 'Persist knowledge', zhDesc: '每个阶段结束后用 /maestro-knowledge 提取知识、/maestro-knowhow 沉淀经验。积累的知识会在下次规划时自动注入。', enDesc: 'Use /maestro-knowledge to harvest and /maestro-knowhow to capture after each phase. Accumulated knowledge auto-injects in the next planning cycle.' },
             { icon: '6', color: 'bg-tint-green text-accent-green', zh: '不确定时用 ralph', en: 'When unsure, use ralph', zhDesc: '/maestro-ralph 自动推断最优命令链，适合不确定该走哪条路的复杂场景。', enDesc: '/maestro-ralph auto-infers the optimal command chain for complex scenarios with uncertain paths.' },
           ].map((item) => (
             <div key={item.icon} className="flex gap-[var(--spacing-3)] p-[var(--spacing-3)] border border-border rounded-[var(--radius-lg)] bg-bg-card">

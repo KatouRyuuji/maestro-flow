@@ -121,7 +121,7 @@ maestro session start "实现 JWT 认证" --chain analyze plan execute   # CLI �
 # 单步质量命令（经 /maestro 路由）
 /maestro "review phase 1"               # 代码审查
 /maestro "test phase 1"                 # UAT 测试
-/security-audit 1                        # 安全审计
+/maestro-odyssey --mode security "phase 1"   # 安全审计
 ```
 
 ### 测试失败修复循环
@@ -140,14 +140,14 @@ maestro session start "实现 JWT 认证" --chain analyze plan execute   # CLI �
 
 ```bash
 # 发现问题
-/maestro-manage issue discover by-prompt "检查 API 错误处理"
+/maestro-issue discover by-prompt "检查 API 错误处理"
 
 # 创建 Issue
-/maestro-manage issue create --title "内存泄漏" --severity high
+/maestro-issue create --title "内存泄漏" --severity high
 
 # 闭环处理（issue-full 链）
 /maestro "fix issue ISS-001"     # analyze --gaps → plan --gaps → execute → review → close → harvest
-/maestro-manage issue close ISS-001 --resolution "Fixed"
+/maestro-issue close ISS-001 --resolution "Fixed"
 ```
 
 **Commander Agent** 可自动推进未分析的 Issue，无需手动干预。
@@ -392,7 +392,7 @@ maestro kg context "validateToken"                  # 调用者/被调用者
 ### 问题发现与修复
 
 ```bash
-/maestro-manage issue discover → /maestro "fix issue ISS-xxx" → /maestro-manage issue close
+/maestro-issue discover → /maestro "fix issue ISS-xxx" → /maestro-issue close
 ```
 
 ### 并行开发

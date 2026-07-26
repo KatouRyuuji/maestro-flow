@@ -115,9 +115,9 @@ maestro wiki list --type spec --json    # 列出所有 spec 条目
 
 ---
 
-## 四、maestro-manage knowledge audit — 知识审计淘汰
+## 四、maestro-knowledge audit — 知识审计淘汰
 
-审计 spec / knowhow / artifact 三存储，识别矛盾、过期、孤立和元数据质量问题。与 `/maestro-manage knowledge harvest`（写入/提取）对称——harvest 积累知识，audit 清理知识。
+审计 spec / knowhow / artifact 三存储，识别矛盾、过期、孤立和元数据质量问题。与 `/maestro-knowledge harvest`（写入/提取）对称——harvest 积累知识，audit 清理知识。
 
 ### 审计场景（8 类 28 子场景）
 
@@ -165,11 +165,11 @@ maestro wiki list --type spec --json    # 列出所有 spec 条目
 ### 常见用法
 
 ```bash
-/maestro-manage knowledge audit --scope all              # 全量审计（交互式）
-/maestro-manage knowledge audit --scope spec --level P0  # 仅审计 P0 级 spec 问题
-/maestro-manage knowledge audit --scope knowhow --dry-run # 预览 knowhow 审计
-/maestro-manage knowledge audit --scope artifact --report # 仅生成 artifact 审计报告
-/maestro-manage knowledge audit --scope all --mark        # 非交互标记所有问题条目
+/maestro-knowledge audit --scope all              # 全量审计（交互式）
+/maestro-knowledge audit --scope spec --level P0  # 仅审计 P0 级 spec 问题
+/maestro-knowledge audit --scope knowhow --dry-run # 预览 knowhow 审计
+/maestro-knowledge audit --scope artifact --report # 仅生成 artifact 审计报告
+/maestro-knowledge audit --scope all --mark        # 非交互标记所有问题条目
 ```
 
 ---

@@ -14,7 +14,7 @@ Complete reference for the Maestro quality pipeline: seven commands organized ar
 | `quality-test` | Conversational UAT | Does it work from the user's perspective? | `TST-{NNN}` |
 | `quality-auto-test` | Unified automated testing | Do coverage and regression checks pass? | `TST-{NNN}` |
 | `quality-debug` | Hypothesis-driven debugging | What is the root cause? | `DBG-{NNN}` |
-| `quality-refactor` | Reflection-driven refactoring | Is technical debt converging? | `WBR-{NNN}` |
+| `/maestro-odyssey --mode improve` | Reflection-driven refactoring | Is technical debt converging? | `WBR-{NNN}` |
 | `quality-sync` | Documentation synchronization | Are docs consistent with code? | -- |
 | `quality-retrospective` | Phase retrospective | What insights are reusable? | `INS-{8hex}` |
 
@@ -128,10 +128,10 @@ Artifact path: `scratch/{YYYYMMDD}-debug-P{N}-{slug}/` (understanding.md, eviden
 
 ---
 
-## quality-refactor — Reflection-Driven Refactoring
+## /maestro-odyssey --mode improve — Reflection-Driven Refactoring
 
 ```bash
-/quality-refactor [<scope>]    # scope: module path | feature area | all
+/maestro-odyssey --mode improve [<scope>]    # scope: module path | feature area | all
 ```
 
 Each round: **Analysis** (identify impact) → **Planning** (execute after confirmation) → **Reflection** (test verification + strategy adjustment)
@@ -197,11 +197,11 @@ Detects changes via `git diff` → traces impact chains through `doc-index.json`
     └────────┬────────┘
              │ All passed
              ▼
-    ┌──────────────────────────────────────────┐
-    │  quality-refactor (optional, tech debt)   │
-    │  quality-sync (sync docs)                │
-    │  quality-retrospective (retro, feedback)  │
-    └──────────────────────────────────────────┘
+    ┌─────────────────────────────────────────────────────────┐
+    │  /maestro-odyssey --mode improve (optional, tech debt)  │
+    │  maestro kg index (re-index codebase)                   │
+    │  retrospective step (retro, feedback)                   │
+    └─────────────────────────────────────────────────────────┘
 ```
 
 <details>
@@ -225,7 +225,7 @@ Code just executed
   │    ├─ Root cause clear ──> /maestro-plan <phase> --gaps
   │    └─ Unclear ──> Continue debugging
   │
-  ├─ Need to reduce tech debt? ──> /quality-refactor <scope>
+  ├─ Need to reduce tech debt? ──> /maestro-odyssey --mode improve <scope>
   │    ├─ Tests pass ──> /quality-sync
   │    └─ Tests fail ──> /quality-debug <scope>
   │

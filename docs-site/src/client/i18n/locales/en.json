@@ -102,10 +102,10 @@
     "title": "Maestro Documentation",
     "description": "Complete documentation for Maestro commands, skills, and workflows.",
     "quick_guide_title": "Quick Guide",
-    "quick_guide_step1": "Start with /maestro-brainstorm to explore ideas, or /maestro-init to initialize a project",
-    "quick_guide_step2": "Create a roadmap with /maestro-roadmap, or generate full specs with /maestro-blueprint",
-    "quick_guide_step3": "Plan tasks with /maestro-plan, then execute with /maestro-execute (includes built-in verification gate E2.7)",
-    "quick_guide_step4": "Use /learn-* commands for continuous learning and /wiki-* commands to manage your knowledge graph"
+    "quick_guide_step1": "Initialize a project with /maestro-init, then describe any goal to /maestro to auto-orchestrate the workflow",
+    "quick_guide_step2": "Use /maestro-next to advance one step at a time, or /maestro-companion for quick fixes that skip the full pipeline",
+    "quick_guide_step3": "/maestro runs the built-in analyze → plan → execute → verify pipeline for you — including the verification gate",
+    "quick_guide_step4": "Capture knowledge with /maestro-knowhow, manage the knowledge base with /maestro-knowledge, and study the codebase with /maestro-learn"
   },
   "content": {
     "copy": "Copy",

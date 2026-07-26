@@ -8,17 +8,17 @@ title: "Skill 参数配置指南"
 
 ## 概览
 
-Maestro Skill Config 解决常见痛点：每次调用 `/maestro-execute` 都要手动输入 `--auto-commit --method auto -y`。
+Maestro Skill Config 解决常见痛点：每次运行 `maestro-execute` skill 都要手动输入 `--auto-commit --method auto -y`。
 
 ```
-用户调用 /maestro-execute 3
+调用 maestro-execute 3（skill，由生命周期派发）
        ↓
 skill-context hook (UserPromptSubmit)
        ↓ 匹配 skill → 加载配置 → 对比已有参数
        ↓
 additionalContext 注入默认参数
        ↓
-等同于 /maestro-execute 3 --auto-commit --method auto -y
+等同于 maestro-execute 3 --auto-commit --method auto -y
 ```
 
 ---

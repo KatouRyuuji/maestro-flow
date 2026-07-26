@@ -90,10 +90,10 @@ summary: "Use when implementing OAuth 2.0 login for public clients."
 | 命令 | 职责 |
 |------|------|
 | `/maestro-spec add` | 向 specs 文件追加 `<spec-entry>` 条目，支持 inline 和 ref 两种模式 |
-| `/maestro-manage knowledge capture` | 捕获 6 种类型知识文档到 knowhow/（compact、template、recipe、reference、decision、tip） |
+| `/maestro-knowhow` | 捕获 6 种类型知识文档到 knowhow/（compact、template、recipe、reference、decision、tip） |
 | `/maestro-spec add` | 将可复用业务流程注册为 knowhow 工具文档（YAML 头 `tool: true` + `category`） |
-| `/maestro-manage knowledge capture` | 捕获原子洞察到 `learnings.md`（pattern、gotcha、technique、tip） |
-| `/maestro-manage knowledge harvest` | 从工作流产物中提取知识碎片，路由到 wiki/spec/issue 三个存储 |
+| `/maestro-knowhow` | 捕获原子洞察到 `learnings.md`（pattern、gotcha、technique、tip） |
+| `/maestro-knowledge harvest` | 从工作流产物中提取知识碎片，路由到 wiki/spec/issue 三个存储 |
 
 ### 读取类
 
@@ -101,16 +101,16 @@ summary: "Use when implementing OAuth 2.0 login for public clients."
 |------|------|
 | `/maestro-spec load` | 按 category 加载主文档 + 跨文件 keyword 匹配条目 + 自动发现 knowhow 工具 |
 | `/maestro-ralph` | 从 knowhow 加载工具文档并逐步执行 |
-| `/maestro-manage knowledge knowhow` | 跨 workflow knowhow 和 system memory 两个存储做 list/search/view/edit/delete |
-| `/maestro-manage knowledge wiki` | Wiki 图健康度、搜索、清理、统计 |
+| `maestro knowhow` | 跨 workflow knowhow 和 system memory 两个存储做 list/search/get（删除/淘汰走 `/maestro-knowledge audit`） |
+| `/maestro-knowledge wiki` | Wiki 图健康度、搜索、清理、统计 |
 
 ### 分析类
 
 | 命令 | 职责 |
 |------|------|
-| `/maestro-manage knowledge wiki digest` | 语义主题聚类 + 知识覆盖热力图 + gap 分析 |
-| `/maestro-manage knowledge wiki connect` | 发现孤立节点和缺失连接，修复图联通性 |
-| `/maestro-manage knowledge audit` | 审计 spec/knowhow/artifact 三存储 — 矛盾检测、过期淘汰、孤立清理（keep/deprecate/delete 三态决策） |
+| `/maestro-knowledge wiki digest` | 语义主题聚类 + 知识覆盖热力图 + gap 分析 |
+| `/maestro-knowledge wiki connect` | 发现孤立节点和缺失连接，修复图联通性 |
+| `/maestro-knowledge audit` | 审计 spec/knowhow/artifact 三存储 — 矛盾检测、过期淘汰、孤立清理（keep/deprecate/delete 三态决策） |
 | `/maestro-learn decompose` | 从代码中提取设计模式，写入 spec 和 wiki |
 | `/maestro-learn follow` | 引导式阅读代码/wiki，提取 pattern 并构建理解 |
 
@@ -242,14 +242,14 @@ WikiIndexer 除了索引文件系统中的 spec/knowhow 文档外，还将非文
 执行产物                    提取                      存储                    消费
 ─────────                  ─────                    ─────                  ─────
 分析会话 ─────┐                              ┌─→ specs/     ─→ spec-injector → agent
-调试记录 ─────┼──→ /maestro-manage knowledge harvest ──────────┼─→ knowhow/   ─→ wiki load → 按需
-规划文档 ─────┤    maestro-companion --promote├─→ issues/    ─→ maestro-manage issue → 追踪
+调试记录 ─────┼──→ /maestro-knowledge harvest ─────────────────┼─→ knowhow/   ─→ wiki load → 按需
+规划文档 ─────┤    maestro-companion --promote├─→ issues/    ─→ maestro-issue → 追踪
 代码变更 ─────┘    /maestro-learn decompose          └─→ learnings  ─→ keyword-injector → 上下文
 
                     淘汰清理                    审计                    CodeGraph
                     ─────                      ─────                  ─────
 specs/     ──┐                              ┌─→ kg search   ─→ 符号搜索
-knowhow/   ──┼──→ /maestro-manage knowledge audit ──┼─→ kg context  ─→ 调用关系
+knowhow/   ──┼──→ /maestro-knowledge audit ─────────┼─→ kg context  ─→ 调用关系
 artifacts/ ──┘    (三态: keep/deprecate/delete) └─→ kg path    ─→ 调用链追踪
                                                              ↑ Hook 自动同步
                                                              kg-sync (UserPromptSubmit)
@@ -281,7 +281,7 @@ review    → 质量发现 → review
 
 ```bash
 /workflow-lite-execute
-/maestro-manage knowledge harvest --source lite-plan --to auto
+/maestro-knowledge harvest --source lite-plan --to auto
 ```
 
 harvest 自动路由：
@@ -310,15 +310,15 @@ harvest 自动路由：
 
 ```bash
 /maestro-spec add optimize user-api-verify   # 追加新发现的 edge case
-/maestro-manage knowledge capture "refresh token 过期后重试需要处理 race condition"
+/maestro-knowhow "refresh token 过期后重试需要处理 race condition"
 ```
 
 各命令职责：
 
 | 命令 | 产出 | 性质 |
 |---|---|---|
-| `/maestro-manage knowledge harvest` | spec 条目 + wiki 条目 + issue | 被动知识 |
-| `/maestro-manage knowledge capture` | AST-*.md（API 契约） | 被动资产 |
+| `/maestro-knowledge harvest` | spec 条目 + wiki 条目 + issue | 被动知识 |
+| `/maestro-knowhow` | AST-*.md（API 契约） | 被动资产 |
 | `/maestro-spec add` | RCP-*.md（验证流程） | 主动可执行 |
 | `/maestro "auto-test"` | 测试代码 | 消费 tool |
 

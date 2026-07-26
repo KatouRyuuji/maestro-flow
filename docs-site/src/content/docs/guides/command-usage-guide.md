@@ -55,17 +55,17 @@ graph TB
     subgraph quality["质量管线"]
         QAT["auto-test"]
         QD["/maestro-odyssey --mode debug"]
-        QRF["/quality-refactor"]
-        QS["/maestro-manage sync codebase"]
+        QRF["/maestro-odyssey --mode improve"]
+        QS["maestro kg index"]
     end
 
     subgraph issue["Issue 闭环"]
-        ID["/maestro-manage issue discover"]
-        IC["/maestro-manage issue create"]
+        ID["/maestro-issue discover"]
+        IC["/maestro-issue create"]
         IA["analyze --gaps"]
         IP["plan --gaps"]
         IE["execute"]
-        ICL["/maestro-manage issue close"]
+        ICL["/maestro-issue close"]
     end
 
     subgraph milestone["里程碑"]
@@ -151,7 +151,7 @@ graph TB
 
 | path | 含义 | 来源 | 生命周期 |
 |------|------|------|----------|
-| `standalone` | 独立 Issue，不绑定 Phase | 手动创建、`/maestro-manage issue discover`、外部导入 | 独立闭环，不影响 Phase 推进 |
+| `standalone` | 独立 Issue，不绑定 Phase | 手动创建、`/maestro-issue discover`、外部导入 | 独立闭环，不影响 Phase 推进 |
 | `workflow` | Phase 关联 Issue | `post-review` / `post-business-test` / `post-test` 决策门 auto-create、Phase 验证产生 | 可能阻塞 milestone 完成 |
 
 ---
@@ -234,10 +234,10 @@ maestro session start "理解认证流程" --session 20260721-learn-auth --chain
 ```
 
 ```bash
-/maestro-manage issue discover by-prompt "检查 API 的错误处理"
-/maestro-manage issue create --title "内存泄漏" --severity high
+/maestro-issue discover by-prompt "检查 API 的错误处理"
+/maestro-issue create --title "内存泄漏" --severity high
 /maestro "fix issue ISS-xxx"            # issue-full 链：analyze --gaps → plan --gaps → execute → review → close → harvest
-/maestro-manage issue close ISS-xxx --resolution "Fixed"
+/maestro-issue close ISS-xxx --resolution "Fixed"
 ```
 
 `issue-full` 链（来自 `/maestro` 链目录）：
@@ -271,7 +271,7 @@ analyze --gaps {issue_id} → plan --gaps → execute → review → issue close
 | `maestro-odyssey --mode improve` | 运行质量深度提升 | vs `review` 决策门（通过/失败门控） |
 | `maestro-odyssey --mode planex` | 需求到交付穷尽迭代 | vs `execute` 链步（按计划执行） |
 | `maestro-odyssey --mode review` | 审查+修复+泛化全流程 | vs `review` 决策门（裁决不修复） |
-| `maestro-odyssey --mode security` | 安全审计穷尽迭代 | vs `/security-audit`（单次审计） |
+| `maestro-odyssey --mode security` | 安全审计穷尽迭代 | `/security-audit` 已退役并入本模式 |
 | `maestro-odyssey --mode ui` | UI 持久化打磨会话 | vs `/maestro-impeccable`（单次执行） |
 
 **共用 flags**：`--skip-fix`（仅分析）· `--skip-generalize`（跳过泛化）· `-c`（恢复会话）· `--auto`（自动模式）· `-y`（自动确认）
@@ -286,7 +286,7 @@ analyze --gaps {issue_id} → plan --gaps → execute → review → issue close
 /maestro-ralph "实现 X"     # execute → ◆post-execute → review → ◆post-review → test → ◆post-test → seal
 /maestro "全面质量检查"      # quality-loop 链：review → auto-test → test → debug → plan --gaps → execute
 /maestro "review 有问题需要修"  # review-fix 链：plan --gaps → execute → review
-/quality-refactor "auth module"  # 技术债务治理
+/maestro-odyssey --mode improve "auth module"  # 技术债务治理
 ```
 
 | 命令 | 用途 | 关键参数 |
@@ -295,7 +295,7 @@ analyze --gaps {issue_id} → plan --gaps → execute → review → issue close
 | `auto-test --session {session}` | 业务测试 / 测试生成（链步） | — |
 | `test --session {session}` | 会话式 UAT（链步） | `--frontend-verify` |
 | `/maestro-odyssey --mode debug` | 假设驱动调试 | `--from-uat {N}` `--parallel` |
-| `/quality-refactor` | 技术债务治理 | `[scope]` |
+| `/maestro-odyssey --mode improve` | 技术债务治理 | `[scope]` |
 
 **修复循环**：决策门 `fix` verdict → repair Skill 产生 `chain-proposal/1.0` → 插入修复 step（plan --gaps → execute）。详见 [Ralph 指南](./maestro-ralph-guide.md)。
 
@@ -333,16 +333,16 @@ analyze --gaps {issue_id} → plan --gaps → execute → review → issue close
 
 ## 六、规范与知识
 
-> **路由边界**（v0.5.50+）：`/maestro-spec` 管理项目约束规则（编码规范、架构约束、质量标准）；`/maestro-manage knowledge` 管理可复用知识文档（决策记录、操作配方、参考资料）。约束类走 `/maestro-spec add`，知识类走 `/maestro-manage knowledge capture`。
+> **路由边界**（v0.5.50+）：`/maestro-spec` 管理项目约束规则（编码规范、架构约束、质量标准）；`/maestro-knowhow` 管理可复用知识文档（决策记录、操作配方、参考资料）。约束类走 `/maestro-spec add`，知识类走 `/maestro-knowhow`。
 
 ```bash
 /maestro-spec setup                                      # 扫描项目生成规范
 /maestro-spec add coding "所有 API 使用 Hono 框架"       # 录入约束规则
 /maestro-spec load --role implement                     # 加载规范
-/maestro-manage sync codebase                            # 增量刷新代码库文档
-/maestro-manage knowledge knowhow search "认证"          # 搜索可复用知识
-/maestro-manage knowledge audit --scope all             # 审计三存储，清理过期/矛盾条目
-/maestro-manage status                                   # 项目仪表板
+maestro kg index                            # 增量刷新代码库文档
+maestro knowhow search "认证"          # 搜索可复用知识
+/maestro-knowledge audit --scope all             # 审计三存储，清理过期/矛盾条目
+maestro session status                                   # 项目仪表板
 maestro search "认证"                                    # 统一知识搜索（wiki + code）
 maestro load --category coding --keyword auth           # 统一知识加载
 ```
@@ -357,7 +357,7 @@ maestro load --category coding --keyword auth           # 统一知识加载
 | `/maestro-companion` | 轻量执行 | 机械清晰的小任务；最小 Run 生命周期（start + done）+ 证据 |
 | `grill` | 压力测试 | 对抗式苏格拉底访谈，验证方案假设，产出 context-package |
 | `blueprint` | 正式规格 | 7 阶段文档链（Brief → PRD → Architecture → Epics），与 brainstorm 互补 |
-| `/maestro-manage knowledge audit` | 知识审计 | spec/knowhow/artifact 三存储审计淘汰（keep/deprecate/delete） |
+| `/maestro-knowledge audit` | 知识审计 | spec/knowhow/artifact 三存储审计淘汰（keep/deprecate/delete） |
 | `/team-swarm` | 蚁群智能 | ACO 驱动群体优化，信息素收敛，4 角色 + Python 控制器 |
 | `/maestro-odyssey --mode debug` | 深度调试 | 考古→诊断→修复→泛化，三句哲学约束穷尽迭代 |
 | `/maestro-odyssey --mode improve` | 深度改进 | 6 维审计→逐轮修复→0 remaining actionable |
@@ -433,7 +433,7 @@ maestro wiki list --type spec --json    # 列出所有 spec 条目
 /maestro-spec remove spec-learnings-003          # 移除指定条目
 ```
 
-### maestro-manage knowledge audit — 知识审计
+### maestro-knowledge audit — 知识审计
 
 审计 spec / knowhow / artifact 三存储，识别矛盾、过期、孤立和元数据质量问题。
 
@@ -445,8 +445,8 @@ maestro wiki list --type spec --json    # 列出所有 spec 条目
 | `--report` | 仅生成审计报告 |
 
 ```bash
-/maestro-manage knowledge audit --scope all              # 全量审计
-/maestro-manage knowledge audit --scope spec --level P0  # 仅 P0 级 spec 问题
+/maestro-knowledge audit --scope all              # 全量审计
+/maestro-knowledge audit --scope spec --level P0  # 仅 P0 级 spec 问题
 ```
 
 ### 里程碑发布（/maestro-milestone-release 已退役）

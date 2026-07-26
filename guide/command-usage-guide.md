@@ -43,7 +43,7 @@ graph TB
 
     subgraph knowledge["知识管理"]
         CP["/maestro-companion 知识伴侣"]
-        KA["/manage-knowledge-audit 审计淘汰"]
+        KA["/maestro-knowledge audit 审计淘汰"]
     end
 
     subgraph pipeline["Milestone 管线"]
@@ -58,17 +58,17 @@ graph TB
         QAT["/quality-auto-test"]
         QT["/quality-test"]
         QD["/quality-debug"]
-        QRF["/quality-refactor"]
-        QS["/quality-sync"]
+        QRF["/maestro-odyssey --mode improve"]
+        QS["maestro kg index"]
     end
 
     subgraph issue["Issue 闭环"]
-        ID["/manage-issue-discover"]
-        IC["/manage-issue create"]
+        ID["/maestro-issue discover"]
+        IC["/maestro-issue create"]
         IA["/maestro-analyze --gaps"]
         IP["/maestro-plan --gaps"]
         IE["/maestro-execute"]
-        ICL["/manage-issue close"]
+        ICL["/maestro-issue close"]
     end
 
     subgraph milestone["里程碑"]
@@ -77,7 +77,7 @@ graph TB
     end
 
     subgraph quick["快速渠道"]
-        MQ["/maestro-quick"]
+        MQ["/maestro-next"]
         LP["/workflow-lite-plan"]
     end
 
@@ -171,7 +171,7 @@ graph TB
 
 | path | 含义 | 来源 | 生命周期 |
 |------|------|------|----------|
-| `standalone` | 独立 Issue，不绑定 Phase | 手动创建、`/manage-issue-discover`、外部导入 | 独立闭环，不影响 Phase 推进 |
+| `standalone` | 独立 Issue，不绑定 Phase | 手动创建、`/maestro-issue discover`、外部导入 | 独立闭环，不影响 Phase 推进 |
 | `workflow` | Phase 关联 Issue | `quality-review` auto-create、`quality-auto-test` 失败产生、Phase 验证产生 | 可能阻塞 milestone 完成 |
 
 ---
@@ -245,9 +245,9 @@ analyze → plan → execute → verify → review → test → milestone-audit 
 ## 二、快速渠道
 
 ```bash
-/maestro-quick "修复登录页面 bug"              # 最短路径
-/maestro-quick --full "重构 API 层"            # 带规划验证
-/maestro-quick --discuss "数据库迁移方案"       # 带决策提取
+/maestro-next "修复登录页面 bug"              # 最短路径
+/maestro-next --full "重构 API 层"            # 带规划验证
+/maestro-next --discuss "数据库迁移方案"       # 带决策提取
 
 # Scratch 模式（无需 init）
 /maestro-analyze "实现 JWT 认证"               # scope=standalone
@@ -267,12 +267,12 @@ analyze → plan → execute → verify → review → test → milestone-audit 
 ```
 
 ```bash
-/manage-issue-discover by-prompt "检查 API 的错误处理"
-/manage-issue create --title "内存泄漏" --severity high
+/maestro-issue discover by-prompt "检查 API 的错误处理"
+/maestro-issue create --title "内存泄漏" --severity high
 /maestro-analyze --gaps ISS-xxx                 # 根因分析
 /maestro-plan --gaps                            # 方案规划
 /maestro-execute                                # 执行修复
-/manage-issue close ISS-xxx --resolution "Fixed"
+/maestro-issue close ISS-xxx --resolution "Fixed"
 ```
 
 **Commander Agent** 可自动推进未分析的 Issue，按 `execute > analyze > plan` 优先级调度。
@@ -291,7 +291,7 @@ analyze → plan → execute → verify → review → test → milestone-audit 
 | `/quality-review {N}` | 分层代码审查 | `--level quick\|standard\|deep` |
 | `/quality-test {N}` | 会话式 UAT | `--auto-fix` |
 | `/quality-debug` | 假设驱动调试 | `--from-uat {N}` `--parallel` |
-| `/quality-refactor` | 技术债务治理 | `[scope]` |
+| `/maestro-odyssey --mode improve` | 技术债务治理 | `[scope]` |
 
 **修复循环**：`verify gaps → plan --gaps → execute → verify` 或 `test 失败 → debug → plan --gaps → execute`
 
@@ -320,13 +320,13 @@ analyze → plan → execute → verify → review → test → milestone-audit 
 ## 六、规范与知识
 
 ```bash
-/spec-setup                                     # 扫描项目生成规范
-/spec-add coding "所有 API 使用 Hono 框架"       # 录入规范
-/spec-load --role implement                     # 加载规范
-/manage-codebase-rebuild                        # 重建代码库文档
-/manage-knowhow search "认证"                   # 搜索知识复用
-/manage-knowledge-audit --scope all             # 审计三存储，清理过期/矛盾条目
-/manage-status                                  # 项目仪表板
+/maestro-spec setup                                     # 扫描项目生成规范
+/maestro-spec add coding "所有 API 使用 Hono 框架"       # 录入规范
+/maestro-spec load --role implement                     # 加载规范
+maestro kg index                        # 重建代码库文档
+maestro knowhow search "认证"                   # 搜索知识复用
+/maestro-knowledge audit --scope all             # 审计三存储，清理过期/矛盾条目
+maestro session status                                  # 项目仪表板
 /maestro-companion before --task "实现认证"      # 任务前加载知识上下文
 ```
 
@@ -339,7 +339,7 @@ analyze → plan → execute → verify → review → test → milestone-audit 
 | `/maestro-next` | 单命令推荐 | 轻量路由，不创建 session，推荐 1 个原子命令 + 2-3 备选 |
 | `/maestro-grill` | 压力测试 | 对抗式苏格拉底访谈，验证方案假设，产出 context-package |
 | `/maestro-blueprint` | 正式规格 | 6 阶段文档链（Brief → PRD → Architecture → Epics），与 brainstorm 互补 |
-| `/manage-knowledge-audit` | 知识审计 | spec/knowhow/artifact 三存储审计淘汰（keep/deprecate/delete） |
+| `/maestro-knowledge audit` | 知识审计 | spec/knowhow/artifact 三存储审计淘汰（keep/deprecate/delete） |
 | `/team-swarm` | 蚁群智能 | ACO 驱动群体优化，信息素收敛，4 角色 + Python 控制器 |
 
 ---
@@ -352,11 +352,11 @@ analyze → plan → execute → verify → review → test → milestone-audit 
 
 | 命令 | 定位 | 核心流程 |
 |------|------|----------|
-| `/odyssey-debug` | 深度调试闭环 | 考古 → 探索 → 诊断 → 修复 → 确认 → 泛化 → 发现 → 沉淀 |
-| `/odyssey-improve` | 代码库质量提升 | 调查 → 6 维审查 → 诊断 → 修复 → 验证 → 泛化 → 发现 → 沉淀 |
-| `/odyssey-planex` | 需求驱动迭代实现 | 解析需求 → 验收标准 → 规划 → 执行 → 验证 → 修复循环 → 泛化 |
-| `/odyssey-review-test-fix` | 深度代码审查 + 修复 | 考古 → 探索 → 多维审查 → 穷尽修复 → 确认 → 泛化 → 发现 → 沉淀 |
-| `/odyssey-ui` | UI 视觉体验优化 | 调查 → 6 维审查 → 发散探索 → 修复 → 验证 → 泛化 → 发现 → 沉淀 |
+| `/maestro-odyssey --mode debug` | 深度调试闭环 | 考古 → 探索 → 诊断 → 修复 → 确认 → 泛化 → 发现 → 沉淀 |
+| `/maestro-odyssey --mode improve` | 代码库质量提升 | 调查 → 6 维审查 → 诊断 → 修复 → 验证 → 泛化 → 发现 → 沉淀 |
+| `/maestro-odyssey --mode planex` | 需求驱动迭代实现 | 解析需求 → 验收标准 → 规划 → 执行 → 验证 → 修复循环 → 泛化 |
+| `/maestro-odyssey --mode review` | 深度代码审查 + 修复 | 考古 → 探索 → 多维审查 → 穷尽修复 → 确认 → 泛化 → 发现 → 沉淀 |
+| `/maestro-odyssey --mode ui` | UI 视觉体验优化 | 调查 → 6 维审查 → 发散探索 → 修复 → 验证 → 泛化 → 发现 → 沉淀 |
 
 ### 共同特征
 
@@ -364,17 +364,17 @@ analyze → plan → execute → verify → review → test → milestone-audit 
 - **阶段自动提交**：每个阶段完成后自动 `git commit`，无需用户确认
 - **多 CLI 辅助**：通过 `maestro delegate` 调用多个工具交叉验证
 - **质量门自迭代**：每个分析阶段自动评估覆盖度/深度/可操作性，不足时重新进入（最多 3 轮）
-- **知识沉淀**：S_RECORD 阶段将可复用知识写入 understanding.md，后续通过 `/spec-add` 永久化
+- **知识沉淀**：S_RECORD 阶段将可复用知识写入 understanding.md，后续通过 `/maestro-spec add` 永久化
 - **会话可恢复**：`-c` 标志恢复最近会话，`-y` 自动确认所有决策点
 
-### `/odyssey-debug` — 深度调试
+### `/maestro-odyssey --mode debug` — 深度调试
 
 ```bash
-/odyssey-debug "登录接口返回 500"                     # 完整调试闭环
-/odyssey-debug "内存泄漏" --template memory-leak       # 预定义策略模板
-/odyssey-debug "性能劣化" --skip-fix                   # 仅分析不修复
-/odyssey-debug "竞态条件" -y                           # 全自动模式
-/odyssey-debug -c                                      # 恢复上次会话
+/maestro-odyssey --mode debug "登录接口返回 500"                     # 完整调试闭环
+/maestro-odyssey --mode debug "内存泄漏" --template memory-leak       # 预定义策略模板
+/maestro-odyssey --mode debug "性能劣化" --skip-fix                   # 仅分析不修复
+/maestro-odyssey --mode debug "竞态条件" -y                           # 全自动模式
+/maestro-odyssey --mode debug -c                                      # 恢复上次会话
 ```
 
 | 参数 | 说明 |
@@ -389,13 +389,13 @@ analyze → plan → execute → verify → review → test → milestone-audit 
 
 **输出**：`session.json` + `evidence.ndjson` + `explore.json` + `understanding.md`（9 节）
 
-### `/odyssey-improve` — 代码库质量提升
+### `/maestro-odyssey --mode improve` — 代码库质量提升
 
 ```bash
-/odyssey-improve src/auth/                            # 审查指定模块
-/odyssey-improve HEAD                                 # 审查最近变更
-/odyssey-improve --dimensions performance,security    # 指定审查维度
-/odyssey-improve --all --skip-fix                     # 全项目扫描，仅审查
+/maestro-odyssey --mode improve src/auth/                            # 审查指定模块
+/maestro-odyssey --mode improve HEAD                                 # 审查最近变更
+/maestro-odyssey --mode improve --dimensions performance,security    # 指定审查维度
+/maestro-odyssey --mode improve --all --skip-fix                     # 全项目扫描，仅审查
 ```
 
 | 参数 | 说明 |
@@ -408,14 +408,14 @@ analyze → plan → execute → verify → review → test → milestone-audit 
 
 **6 维审查**：性能（热点路径、N+1 查询）、安全（OWASP Top 10）、架构（层违规、循环依赖）、可靠性（错误处理）、可观测性（日志覆盖）、可维护性（复杂度、死代码）
 
-### `/odyssey-planex` — 需求驱动迭代实现
+### `/maestro-odyssey --mode planex` — 需求驱动迭代实现
 
 ```bash
-/odyssey-planex "实现 JWT 认证"                        # 完整需求闭环
-/odyssey-planex "修复登录 bug" --template bugfix       # Bug 修复模板
-/odyssey-planex "重构 API 层" --template refactor      # 重构模板
-/odyssey-planex "实现支付" --max-iterations 5          # 最多 5 轮验证
-/odyssey-planex "迁移数据库" --method cli --executor codex  # CLI 执行
+/maestro-odyssey --mode planex "实现 JWT 认证"                        # 完整需求闭环
+/maestro-odyssey --mode planex "修复登录 bug" --template bugfix       # Bug 修复模板
+/maestro-odyssey --mode planex "重构 API 层" --template refactor      # 重构模板
+/maestro-odyssey --mode planex "实现支付" --max-iterations 5          # 最多 5 轮验证
+/maestro-odyssey --mode planex "迁移数据库" --method cli --executor codex  # CLI 执行
 ```
 
 | 参数 | 说明 |
@@ -429,13 +429,13 @@ analyze → plan → execute → verify → review → test → milestone-audit 
 
 **核心循环**：定义验收标准 → 规划 → 执行 → 逐条验证 → 修复失败项 → 重新验证，直到所有标准通过
 
-### `/odyssey-review-test-fix` — 深度代码审查
+### `/maestro-odyssey --mode review` — 深度代码审查
 
 ```bash
-/odyssey-review-test-fix src/api/                     # 审查指定目录
-/odyssey-review-test-fix HEAD                         # 审查最近变更
-/odyssey-review-test-fix --dimensions correctness,security  # 指定维度
-/odyssey-review-test-fix --fix-threshold high         # 仅修复 critical + high
+/maestro-odyssey --mode review src/api/                     # 审查指定目录
+/maestro-odyssey --mode review HEAD                         # 审查最近变更
+/maestro-odyssey --mode review --dimensions correctness,security  # 指定维度
+/maestro-odyssey --mode review --fix-threshold high         # 仅修复 critical + high
 ```
 
 | 参数 | 说明 |
@@ -448,12 +448,12 @@ analyze → plan → execute → verify → review → test → milestone-audit 
 
 **穷尽修复**：按 severity 逐轮（critical → high → medium → low），每轮修复后 re-review 修改区域
 
-### `/odyssey-ui` — UI 视觉体验优化
+### `/maestro-odyssey --mode ui` — UI 视觉体验优化
 
 ```bash
-/odyssey-ui src/components/Header/                    # 审查指定组件
-/odyssey-ui --dimensions visual_hierarchy,accessibility  # 指定维度
-/odyssey-ui --skip-fix                                # 仅审查 + 发散探索
+/maestro-odyssey --mode ui src/components/Header/                    # 审查指定组件
+/maestro-odyssey --mode ui --dimensions visual_hierarchy,accessibility  # 指定维度
+/maestro-odyssey --mode ui --skip-fix                                # 仅审查 + 发散探索
 ```
 
 | 参数 | 说明 |
@@ -502,14 +502,14 @@ maestro run brief <run-id> --session <session-id>     # 加载 canonical Resume 
 
 ## 九、缺失 maestro-* 命令补充
 
-### `/maestro-amend` — 工作流缺陷修复
+### `/maestro-overlay --amend` — 工作流缺陷修复
 
 ```bash
-/maestro-amend --scan                                 # 自动扫描 .workflow/ 发现信号
-/maestro-amend --from-verify .workflow/scratch/xxx    # 从验证结果收集信号
-/maestro-amend --from-review .workflow/scratch/xxx    # 从代码审查收集信号
-/maestro-amend --from-issues ISS-001,ISS-002          # 从 Issue 收集信号
-/maestro-amend "execute 后缺少验证步骤"                # 直接描述缺陷
+/maestro-overlay --amend --scan                                 # 自动扫描 .workflow/ 发现信号
+/maestro-overlay --amend --from-verify .workflow/scratch/xxx    # 从验证结果收集信号
+/maestro-overlay --amend --from-review .workflow/scratch/xxx    # 从代码审查收集信号
+/maestro-overlay --amend --from-issues ISS-001,ISS-002          # 从 Issue 收集信号
+/maestro-overlay --amend "execute 后缺少验证步骤"                # 直接描述缺陷
 ```
 
 信号驱动的 overlay 生成器 — 从多个来源收集工作流缺陷信号，诊断哪些命令需要修补，批量生成定向 overlay。与 `/maestro-overlay`（单个显式意图）不同，此命令**发现**需要修补的内容。
@@ -622,12 +622,12 @@ maestro run brief <run-id> --session <session-id>     # 加载 canonical Resume 
 
 将可复用业务流程编码为 knowhow 文档（`tool: true`）。四种模式：Extract（从代码提取）、Generate（生成新工具）、Optimize（优化现有）、Promote（提升已有 knowhow）。
 
-### `/maestro-ui-codify` — 设计系统提取
+### `/maestro-impeccable --codify` — 设计系统提取
 
 ```bash
-/maestro-ui-codify src/components/                    # 从源码提取设计系统
-/maestro-ui-codify src/ --package-name my-design      # 指定包名
-/maestro-ui-codify src/ --output-dir .workflow/ref    # 指定输出目录
+/maestro-impeccable --codify src/components/                    # 从源码提取设计系统
+/maestro-impeccable --codify src/ --package-name my-design      # 指定包名
+/maestro-impeccable --codify src/ --output-dir .workflow/ref    # 指定输出目录
 ```
 
 4 阶段流水线：验证 → 提取（3 个并行 Agent）→ 打包（preview.html）→ 知识资产持久化。输出 design-tokens.json + layout-templates.json + preview + knowhow manifest。
@@ -689,13 +689,13 @@ maestro domain                                        # 查看当前领域配置
 
 管理项目领域知识配置，影响 spec 注入和知识搜索的范围。
 
-### `/manage-kg-extractors` — 知识图谱提取器配置
+### `/maestro-knowledge extractors` — 知识图谱提取器配置
 
 ```bash
-/manage-kg-extractors                                 # 扫描并生成提取规则
-/manage-kg-extractors --scan-only                     # 仅扫描不写入
-/manage-kg-extractors --append                        # 追加到现有配置
-/manage-kg-extractors --language typescript            # 限定语言
+/maestro-knowledge extractors                                 # 扫描并生成提取规则
+/maestro-knowledge extractors --scan-only                     # 仅扫描不写入
+/maestro-knowledge extractors --append                        # 追加到现有配置
+/maestro-knowledge extractors --language typescript            # 限定语言
 ```
 
 分析代码库模式，自动生成 `.workflow/kg/extractors.yaml` — 教 MaestroGraph 的 codegraph 提取器识别项目特定符号（builder/factory API、领域常量、自定义装饰器等）。3 个并行 Agent 扫描 builder/factory 调用、常量/注解、框架特定模式。

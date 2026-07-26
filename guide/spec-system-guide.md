@@ -94,7 +94,7 @@ Revoked column must be set rather than deleting tokens.
 
 1. Agent 搜索知识 → 发现与当前上下文矛盾 → 调用 `maestro spec conflict mark` 标记
 2. 注入时：`contested` 条目移到末尾并显示警告；`low` 条目添加降级标记
-3. 审计清除：`/manage-knowledge-audit` 或 `maestro spec conflict clear` 消除标记
+3. 审计清除：`/maestro-knowledge audit` 或 `maestro spec conflict clear` 消除标记
 
 #### 健康检查
 

@@ -7,7 +7,7 @@ icon: "🔒"
 
 ## 概述
 
-`security-audit` 命令提供系统性安全审计，覆盖：
+`/maestro-odyssey --mode security`提供系统性安全审计，覆盖：
 
 - **OWASP Top 10**：Web 应用安全风险
 - **依赖供应链**：第三方库安全分析
@@ -29,7 +29,7 @@ icon: "🔒"
 快速扫描，适合日常开发检查：
 
 ```bash
-/security-audit quick
+/maestro-odyssey --mode security --tier quick "<target>"
 ```
 
 - 扫描 OWASP Top 10 常见漏洞
@@ -41,7 +41,7 @@ icon: "🔒"
 标准扫描，适合发布前检查：
 
 ```bash
-/security-audit standard
+/maestro-odyssey --mode security "<target>"
 ```
 
 - quick 级别所有检查
@@ -54,7 +54,7 @@ icon: "🔒"
 深度扫描，适合安全审计：
 
 ```bash
-/security-audit deep
+/maestro-odyssey --mode security --tier deep "<target>"
 ```
 
 - standard 级别所有检查
@@ -66,16 +66,16 @@ icon: "🔒"
 
 ```bash
 # 默认 quick 扫描
-/security-audit
+/maestro-odyssey --mode security "<target>"
 
 # 指定深度
-/security-audit standard
+/maestro-odyssey --mode security "<target>"
 
 # 限定扫描范围
-/security-audit deep --scope src/auth
+/maestro-odyssey --mode security --tier deep --scope src/auth "<target>"
 
 # 组合使用
-/security-audit standard --scope src/api
+/maestro-odyssey --mode security --scope src/api "<target>"
 ```
 
 ## OWASP Top 10 覆盖
@@ -122,30 +122,31 @@ deep 级别包含 STRIDE 威胁建模：
 
 审计完成后生成结构化报告：
 
+产物全部写入当前 Run 的 `outputs/` 目录，由 Run 契约声明（见 `prepare/odyssey-security.md` 的 `produces`）：
+
 ```
-.security-audit/
-├── summary.md          # 执行摘要
-├── owasp-top10.md      # OWASP 检查结果
-├── dependencies.md     # 依赖分析
-├── secrets.md          # 密钥检测结果（standard+）
-├── cicd.md             # CI/CD 审查结果（standard+）
-├── stride.md           # STRIDE 分析（deep）
-├── git-history.md      # Git 历史分析（deep）
-└── recommendations.md  # 修复建议
+{run_dir}/outputs/
+├── session.json        # kind: security-audit-result — 严重度矩阵与结构化发现
+├── understanding.md    # kind: security-report — 分层审计报告（§3-§4 为发现与建议）
+└── evidence.ndjson     # kind: evidence — 每个 scan phase 的逐条取证
 ```
+
+各 tier 覆盖的 scan phase（OWASP、依赖、密钥、CI/CD、STRIDE、Git 历史）合并进同一份严重度矩阵，不再按 phase 拆分独立文件。
 
 ## 集成工作流
 
 ### 与 ralph 集成
 
+chain-file 的 step 形态只接受 `command` / `args?` / `stage?` / `goal_ref?` / `retry_max?` / `decision_ref?`（schema 是 `.strict()`，见 `src/run/chain-admin.ts`）；没有 `index` 或 `skill` 字段：
+
 ```json
 {
   "steps": [
     {
-      "index": 0,
-      "skill": "security-audit",
-      "args": "standard --scope src/api",
-      "stage": "verify"
+      "command": "odyssey-security",
+      "args": "--scope src/api \"api layer\"",
+      "stage": "verify",
+      "retry_max": 1
     }
   ]
 }
@@ -155,7 +156,7 @@ deep 级别包含 STRIDE 威胁建模：
 
 ```bash
 # 先执行安全审计
-/security-audit standard --scope src/auth
+/maestro-odyssey --mode security --scope src/auth "<target>"
 
 # 再执行代码审查（包含安全维度）
 /maestro "review phase 1"
@@ -176,7 +177,7 @@ deep 级别包含 STRIDE 威胁建模：
 使用 `--scope` 限定扫描范围，或降低审计深度：
 
 ```bash
-/security-audit quick --scope src/api
+/maestro-odyssey --mode security --tier quick --scope src/api "<target>"
 ```
 
 ### Q: 如何忽略特定警告？

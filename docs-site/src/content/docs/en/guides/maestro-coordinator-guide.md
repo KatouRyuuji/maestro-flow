@@ -42,7 +42,7 @@ Intent-to-chain planner — classifies user intent, selects the smallest suffici
 /maestro -y "添加 OAuth 支持"   # 自动确认低风险分类与 proposal
 /maestro -c                     # 继续唯一 live 兼容 Session
 /maestro --amend "改为支持 OAuth"  # 修改 live Session 目标
-/maestro status                 # 项目仪表盘（route 到 maestro-manage status）
+/maestro status                 # 项目仪表盘（route 到 maestro session status）
 ```
 
 ### Public Flags
@@ -101,14 +101,14 @@ Output: `{ task_type, scope, issue_id, phase_ref, urgency }`
 | `test` | `test {phase}` |
 | `test_gen` | `auto-test {phase}` |
 | `debug` | `debug "{description}"` |
-| `refactor` | `quality-refactor "{description}"` |
+| `refactor` | `analyze -q → plan --dir → execute --dir` (chain) |
 | `retrospective` | `retrospective {phase}` |
 | `init` | `maestro-init` |
 | `grill` | `grill "{description}"` |
 | `blueprint` | `blueprint "{description}"` |
 | `analyze-macro` | `analyze "{description}"` |
 | `companion` | `/maestro-companion "{description}"` |
-| `status` | `maestro-manage status` |
+| `status` | `maestro session status` |
 | `milestone_close` | `maestro-session-seal` |
 
 ### Multi-Step Chains
@@ -128,7 +128,7 @@ Output: `{ task_type, scope, issue_id, phase_ref, urgency }`
 | `next-milestone` | roadmap → plan → execute | Next milestone |
 | `milestone-close` | session-seal | Close a milestone |
 
-> The full chain catalog and chainMap are in `workflows/maestro.md`. Bare command names (`plan`, `execute`…) are first-tier Skill steps; `maestro-*` and `quality-refactor` are standalone command names.
+> The full chain catalog and chainMap are in `workflows/maestro.md`. Bare command names (`plan`, `execute`…) are first-tier Skill steps; `maestro-*` are standalone command names; `team-*` and `maestro-odyssey` are manual user entrypoints, excluded from chain routing.
 
 ### Minimum Chain Rules
 

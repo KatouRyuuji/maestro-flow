@@ -195,7 +195,7 @@ maestro hooks list      # 可用 Hook 列表
 
 **事件**: `UserPromptSubmit` | **级别**: `standard`
 
-匹配 Skill 调用时注入工作流状态 + 阶段产物树 + 前序成果（`additionalContext`，不重写 prompt）。支持模式：`/maestro-execute {N}`、`/maestro-plan {N}`、`/maestro-analyze {N}`、`/maestro-milestone-audit`、`/quality-review {N}`、`/quality-test {N}`、`/maestro`、`/maestro-coordinate`、`/maestro-link-coordinate`
+匹配 Skill 调用时注入工作流状态 + 阶段产物树 + 前序成果（`additionalContext`，不重写 prompt）。支持模式：首要步骤 skill 调用（`analyze`、`plan`、`execute`、`review`、`test`、`auto-test`、milestone 等，由编排器派发）以及编排入口 `/maestro`、`/maestro-next`、`/maestro-ralph`
 
 协调器 Skill 额外注入 coordinator-tracker bridge 的 next-step 提示：`Chain: full-lifecycle [3/6] | Status: paused | Next: quality-review 2 | Resume: /maestro -c`
 

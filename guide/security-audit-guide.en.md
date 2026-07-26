@@ -4,7 +4,7 @@
 
 ## Overview
 
-The `security-audit` command provides systematic security auditing covering:
+The `/maestro-odyssey --mode security` command provides systematic security auditing covering:
 
 - **OWASP Top 10**: Web application security risks
 - **Dependency Supply Chain**: Third-party library security analysis
@@ -26,7 +26,7 @@ The `security-audit` command provides systematic security auditing covering:
 Quick scan for daily development checks:
 
 ```bash
-/security-audit quick
+/maestro-odyssey --mode security --tier quick "<target>"
 ```
 
 - Scans OWASP Top 10 common vulnerabilities
@@ -38,7 +38,7 @@ Quick scan for daily development checks:
 Standard scan for pre-release checks:
 
 ```bash
-/security-audit standard
+/maestro-odyssey --mode security "<target>"
 ```
 
 - All quick level checks
@@ -51,7 +51,7 @@ Standard scan for pre-release checks:
 Deep scan for security audits:
 
 ```bash
-/security-audit deep
+/maestro-odyssey --mode security --tier deep "<target>"
 ```
 
 - All standard level checks
@@ -63,16 +63,16 @@ Deep scan for security audits:
 
 ```bash
 # Default quick scan
-/security-audit
+/maestro-odyssey --mode security "<target>"
 
 # Specify depth
-/security-audit standard
+/maestro-odyssey --mode security "<target>"
 
 # Limit scan scope
-/security-audit deep --scope src/auth
+/maestro-odyssey --mode security --tier deep --scope src/auth "<target>"
 
 # Combined usage
-/security-audit standard --scope src/api
+/maestro-odyssey --mode security --scope src/api "<target>"
 ```
 
 ## OWASP Top 10 Coverage
@@ -119,30 +119,31 @@ The audit checks dependency supply chain security:
 
 After audit completion, a structured report is generated:
 
+All artifacts are written to the current Run's `outputs/` directory, as declared by the Run contract (see `produces` in `prepare/odyssey-security.md`):
+
 ```
-.security-audit/
-├── summary.md          # Executive summary
-├── owasp-top10.md      # OWASP check results
-├── dependencies.md     # Dependency analysis
-├── secrets.md          # Secrets detection results (standard+)
-├── cicd.md             # CI/CD review results (standard+)
-├── stride.md           # STRIDE analysis (deep)
-├── git-history.md      # Git history analysis (deep)
-└── recommendations.md  # Remediation recommendations
+{run_dir}/outputs/
+├── session.json        # kind: security-audit-result — severity matrix and structured findings
+├── understanding.md    # kind: security-report — tiered audit report (§3-§4 hold findings and remediation)
+└── evidence.ndjson     # kind: evidence — per-scan-phase evidence entries
 ```
+
+The scan phases covered by the selected tier (OWASP, dependencies, secrets, CI/CD, STRIDE, git history) are merged into a single severity matrix rather than split into per-phase files.
 
 ## Workflow Integration
 
 ### Ralph Integration
 
+A chain-file step accepts only `command` / `args?` / `stage?` / `goal_ref?` / `retry_max?` / `decision_ref?` — the schema is `.strict()` (see `src/run/chain-admin.ts`). There is no `index` or `skill` field:
+
 ```json
 {
   "steps": [
     {
-      "index": 0,
-      "skill": "security-audit",
-      "args": "standard --scope src/api",
-      "stage": "verify"
+      "command": "odyssey-security",
+      "args": "--scope src/api \"api layer\"",
+      "stage": "verify",
+      "retry_max": 1
     }
   ]
 }
@@ -152,7 +153,7 @@ After audit completion, a structured report is generated:
 
 ```bash
 # Execute security audit first
-/security-audit standard --scope src/auth
+/maestro-odyssey --mode security --scope src/auth "<target>"
 
 # Then execute code review (including security dimension)
 /quality-review 1 --dimensions security
@@ -173,7 +174,7 @@ After audit completion, a structured report is generated:
 Use `--scope` to limit scan scope, or reduce audit depth:
 
 ```bash
-/security-audit quick --scope src/api
+/maestro-odyssey --mode security --tier quick --scope src/api "<target>"
 ```
 
 ### Q: How to ignore specific warnings?

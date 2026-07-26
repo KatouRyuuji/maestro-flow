@@ -51,7 +51,7 @@ impeccable --chain build  →  impeccable (auto pipeline)  →  ui-codify
 
 | 下一步 | 命令 |
 |--------|------|
-| 基于设计规划 | `/maestro-plan {milestone}` |
+| 基于设计规划 | `/maestro "基于设计规划 M{milestone}"`（编排器派发 plan 步骤） |
 | 精调设计 | `/maestro-impeccable "{phase}" --chain improve` |
 
 ---
@@ -148,12 +148,12 @@ S_PARSE → S_SETUP → S_CHAIN → S_GATE → S_REPORT
 
 ---
 
-### 2.3 maestro-ui-codify — UI 代码化
+### 2.3 /maestro-impeccable --codify — UI 代码化
 
 从现有源代码中逆向提取设计系统，生成参考包并固化为知识资产。
 
 ```
-/maestro-ui-codify <source-path> [--package-name <name>] [--output-dir <path>] [--overwrite]
+/maestro-impeccable --codify <source-path> [--package-name <name>] [--output-dir <path>] [--overwrite]
 ```
 
 | 参数 | 默认值 | 说明 |
@@ -184,17 +184,16 @@ S_PARSE → S_SETUP → S_CHAIN → S_GATE → S_REPORT
 # Step 2: 自动化生产（build chain）
 /maestro-impeccable "新建 landing page" --chain build --threshold 28
 # Step 3: 逆向提取设计系统
-/maestro-ui-codify src/components --package-name my-design-system
+/maestro-impeccable --codify src/components --package-name my-design-system
 ```
 
-**数据流向**：`ui-design` → `design-ref/` → `maestro-plan` 消费 → `ui-craft` 操作源码 → `ui-codify` 逆向提取，形成闭环。
+**数据流向**：`ui-design` → `design-ref/` → `plan` 步骤消费 → `ui-craft` 操作源码 → `ui-codify` 逆向提取，形成闭环。
 
 ### Phase 管线集成
 
 ```bash
 /maestro-impeccable "1" --chain build  # 设计先行
-/maestro-plan 1                         # 基于设计规划
-/maestro-execute 1                      # 执行实现（含内置验证门控 E2.7）
+/maestro "推进 Phase 1"                  # 基于设计规划并实现（编排器派发 plan → execute，含验证门控 E2.7）
 ```
 
 ### 单命令模式
@@ -207,7 +206,7 @@ S_PARSE → S_SETUP → S_CHAIN → S_GATE → S_REPORT
 # 生产加固
 /maestro-impeccable "准备上线" --chain harden --threshold 30
 # 逆向提取
-/maestro-ui-codify src/ui --package-name company-components
+/maestro-impeccable --codify src/ui --package-name company-components
 ```
 
 ---
@@ -230,5 +229,5 @@ S_PARSE → S_SETUP → S_CHAIN → S_GATE → S_REPORT
 # 迭代优化
 /maestro-impeccable "优化 dashboard" --chain improve --threshold 30 --max-loops 5
 # 设计沉淀
-/maestro-ui-codify src --package-name project-design-v1
+/maestro-impeccable --codify src --package-name project-design-v1
 ```

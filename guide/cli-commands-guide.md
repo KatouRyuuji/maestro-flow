@@ -517,7 +517,7 @@ maestro wiki health | orphans | hubs --limit 10 | backlinks <id> | forward <id> 
 <details>
 <summary>maestro kg</summary>
 
-代码知识图谱查询。操作 `.workflow/codebase/knowledge-graph.json`（由 `/manage-codebase-rebuild` 的 KG 管道生成）。
+代码知识图谱查询。操作 `.workflow/codebase/knowledge-graph.json`（由 `maestro kg index` 的 KG 管道生成）。
 
 ```bash
 # 统计

@@ -10,11 +10,11 @@ Maestro 工作流中用于维护、发布和规范管理的辅助命令。
 
 信号驱动的 Overlay 生成器。从多种来源收集工作流缺陷信号，诊断哪些命令需要补充修改，批量生成针对性的 Overlay 补丁。所有修改通过 Overlay 系统（`~/.maestro/overlays/*.json`）完成——不侵入原始命令文件，幂等且重装后保留。
 
-与 `/maestro-overlay`（单次显式创建）不同，`/maestro-amend` 通过分析工作流产物自动**发现**需要修复的内容。
+与 `/maestro-overlay`（单次显式创建）不同，`/maestro-overlay --amend` 通过分析工作流产物自动**发现**需要修复的内容。
 
 ### 使用场景
 
-- `/maestro-execute` 内置验证门控（E2.7）暴露了命令步骤缺失
+- `execute` 步骤内置验证门控（E2.7）暴露了命令步骤缺失
 - `/quality-review` 发现流程层面的不足
 - 工作流执行偏差，根因指向命令定义不完整
 - Issue 追踪显示同类问题反复出现
@@ -45,12 +45,12 @@ Maestro 工作流中用于维护、发布和规范管理的辅助命令。
 ### 常见用法
 
 ```bash
-/maestro-amend --from-verify .workflow/phases/1    # 从验证结果中发现命令缺口
-/maestro-amend --from-review .workflow/phases/2    # 从审查结果中提取流程改进
-/maestro-amend --scan                               # 自动扫描所有信号
-/maestro-amend "maestro-execute 缺少 CLI 编译验证步骤"  # 直接描述问题
-/maestro-amend --dry-run                            # 预览模式（不安装）
-/maestro-amend -y                                   # 跳过确认
+/maestro-overlay --amend --from-verify .workflow/phases/1    # 从验证结果中发现命令缺口
+/maestro-overlay --amend --from-review .workflow/phases/2    # 从审查结果中提取流程改进
+/maestro-overlay --amend --scan                               # 自动扫描所有信号
+/maestro-overlay --amend "maestro-execute 缺少 CLI 编译验证步骤"  # 直接描述问题
+/maestro-overlay --amend --dry-run                            # 预览模式（不安装）
+/maestro-overlay --amend -y                                   # 跳过确认
 ```
 
 ---
@@ -90,7 +90,7 @@ Maestro 工作流中用于维护、发布和规范管理的辅助命令。
 
 ## 三、spec-remove — 规范移除
 
-从 specs 文件中移除指定的 `<spec-entry>` 条目。与 `/spec-add` 对称，使用 `maestro wiki remove-entry` 原子删除并自动更新索引。
+从 specs 文件中移除指定的 `<spec-entry>` 条目。与 `/maestro-spec add` 对称，使用 `maestro wiki remove-entry` 原子删除并自动更新索引。
 
 ### Entry ID 格式
 
@@ -102,21 +102,21 @@ spec-{file-stem}-{NNN}  （如 spec-learnings-003）
 
 ```bash
 maestro wiki list --type spec --json    # 列出所有 spec 条目
-/spec-load --keyword auth               # 按关键词搜索
-/spec-remove spec-learnings-003          # 移除指定条目
+/maestro-spec load --keyword auth               # 按关键词搜索
+/maestro-spec remove spec-learnings-003          # 移除指定条目
 ```
 
 ### 注意事项
 
-- 需先通过 `/spec-setup` 初始化 `.workflow/specs/`
+- 需先通过 `/maestro-spec setup` 初始化 `.workflow/specs/`
 - Entry ID 必须是 spec 类型子节点
-- 移除不可逆（建议先用 `/spec-load` 预览）
+- 移除不可逆（建议先用 `/maestro-spec load` 预览）
 
 ---
 
 ## 四、manage-knowledge-audit — 知识审计淘汰
 
-审计 spec / knowhow / artifact 三存储，识别矛盾、过期、孤立和元数据质量问题。与 `/manage-harvest`（写入/提取）对称——harvest 积累知识，audit 清理知识。
+审计 spec / knowhow / artifact 三存储，识别矛盾、过期、孤立和元数据质量问题。与 `/maestro-knowledge harvest`（写入/提取）对称——harvest 积累知识，audit 清理知识。
 
 ### 审计场景（8 类 28 子场景）
 
@@ -167,11 +167,11 @@ maestro wiki list --type spec --json    # 列出所有 spec 条目
 ### 常见用法
 
 ```bash
-/manage-knowledge-audit --scope all              # 全量审计（交互式）
-/manage-knowledge-audit --scope spec --level P0  # 仅审计 P0 级 spec 问题
-/manage-knowledge-audit --scope knowhow --dry-run # 预览 knowhow 审计
-/manage-knowledge-audit --scope artifact --report # 仅生成 artifact 审计报告
-/manage-knowledge-audit --scope all --mark        # 非交互标记所有问题条目
+/maestro-knowledge audit --scope all              # 全量审计（交互式）
+/maestro-knowledge audit --scope spec --level P0  # 仅审计 P0 级 spec 问题
+/maestro-knowledge audit --scope knowhow --dry-run # 预览 knowhow 审计
+/maestro-knowledge audit --scope artifact --report # 仅生成 artifact 审计报告
+/maestro-knowledge audit --scope all --mark        # 非交互标记所有问题条目
 ```
 
 ---
@@ -268,7 +268,7 @@ Boundary Grill 在以下场景自动触发：
 
 ```bash
 # 使用 -y 标志启用 Auto Mode（自动回答，基于代码分析）
-/maestro-analyze "auth module" -y
+/maestro-next "分析 auth module" -y
 ```
 
 Auto Mode 下，Grill 使用代码分析结果自动回答问题，无需人工交互。

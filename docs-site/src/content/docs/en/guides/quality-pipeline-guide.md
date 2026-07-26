@@ -15,8 +15,8 @@ Complete reference for the Maestro quality pipeline, organized around a **"Revie
 | `test` (Skill chain step) | Conversational UAT | Does it work from the user's perspective? | `TST-{NNN}` |
 | `auto-test` (Skill chain step) | Unified automated testing | Do coverage and regression pass? | `TST-{NNN}` |
 | `/maestro-odyssey --mode debug` | Hypothesis-driven debugging | What is the root cause? | `DBG-{NNN}` |
-| `quality-refactor` | Reflection-driven refactoring | Is technical debt converging? | `WBR-{NNN}` |
-| `maestro-manage sync codebase` | Documentation synchronization | Are docs consistent with code? | — |
+| `/maestro-odyssey --mode improve` | Reflection-driven refactoring | Is technical debt converging? | `WBR-{NNN}` |
+| `maestro kg index` | Documentation synchronization | Are docs consistent with code? | — |
 | `retrospective` (`/maestro "复盘 phase N"`) | Phase retrospective | What insights are reusable? | `INS-{8hex}` |
 
 > Bare command names (`review`, `test`, `auto-test`) are Skill chain steps, routed by `/maestro` or executed via `maestro session start --chain ...` within a canonical Session; quality gates (`post-*`) are decision nodes inserted by the Ralph policy.
@@ -129,10 +129,10 @@ Artifact path: `scratch/{YYYYMMDD}-debug-P{N}-{slug}/` (understanding.md, eviden
 
 ---
 
-## quality-refactor — Reflection-Driven Refactoring
+## /maestro-odyssey --mode improve — Reflection-Driven Refactoring
 
 ```bash
-/quality-refactor [<scope>]    # scope: module path | feature area | all
+/maestro-odyssey --mode improve [<scope>]    # scope: module path | feature area | all
 ```
 
 Each round: **Analysis** (identify impact) → **Planning** (execute after confirmation) → **Reflection** (test verification + strategy adjustment)
@@ -141,10 +141,10 @@ Artifact path: `scratch/{YYYYMMDD}-refactor-{scope}/reflection-log.md`
 
 ---
 
-## maestro-manage sync codebase — Documentation Synchronization
+## maestro kg index — Documentation Synchronization
 
 ```bash
-/maestro-manage sync codebase [--full] [--since <commit|HEAD~N>] [--dry-run]
+maestro kg index [--full] [--since <commit|HEAD~N>] [--dry-run]
 ```
 
 Detects changes via `git diff` → `doc-index.json` traces impact chains → updates `.workflow/codebase/` documents.
@@ -155,10 +155,10 @@ Detects changes via `git diff` → `doc-index.json` traces impact chains → upd
 
 ```bash
 /maestro "复盘 phase N"        # retrospective chain: 4 parallel Lenses (Technical / Process / Quality / Decision)
-/maestro-manage knowledge capture "洞察"   # knowledge capture (knowhow)
+/maestro-knowhow "洞察"   # knowledge capture (knowhow)
 ```
 
-> Since v0.5.56, the phase retrospective is handled by the `retrospective` Skill (routed via `/maestro "复盘 phase N"`); knowledge promotion/capture goes through `/maestro-manage knowledge capture` or `harvest`. The old `maestro-next --promote` has been retired (`/maestro-next` is now a pure router).
+> Since v0.5.56, the phase retrospective is handled by the `retrospective` Skill (routed via `/maestro "复盘 phase N"`); knowledge promotion/capture goes through `/maestro-knowhow` or `harvest`. The old `maestro-next --promote` has been retired (`/maestro-next` is now a pure router).
 
 4 parallel Lenses (Technical / Process / Quality / Decision), insights auto-routed:
 
@@ -203,8 +203,8 @@ Detects changes via `git diff` → `doc-index.json` traces impact chains → upd
          │ All passed
          ▼
 ┌──────────────────────────────────────────────────┐
-│  quality-refactor (optional, handle tech debt)    │
-│  maestro-manage sync codebase (sync docs)         │
+│  /maestro-odyssey --mode improve (optional, handle tech debt)    │
+│  maestro kg index (sync docs)         │
 │  /maestro "复盘 phase N" (retrospective, feedback) │
 └──────────────────────────────────────────────────┘
 ```
@@ -232,15 +232,15 @@ Code just executed
   │    ├─ Root cause clear ──> /maestro "plan <phase> --gaps"
   │    └─ Unclear ──> Continue debugging
   │
-  ├─ Need to reduce tech debt? ──> /quality-refactor <scope>
-  │    ├─ Tests pass ──> /maestro-manage sync codebase
+  ├─ Need to reduce tech debt? ──> /maestro-odyssey --mode improve <scope>
+  │    ├─ Tests pass ──> maestro kg index
   │    └─ Tests fail ──> /maestro-odyssey --mode debug "<scope>"
   │
-  ├─ Code changed but docs not updated? ──> /maestro-manage sync codebase
+  ├─ Code changed but docs not updated? ──> maestro kg index
   │
   └─ Phase complete, need retrospective? ──> /maestro "复盘 phase N" (retrospective)
        ├─ Insights found ──> Auto-route to spec/issue/knowhow
-       └─ Complete ──> /maestro-manage status
+       └─ Complete ──> maestro session status
 ```
 
 </details>

@@ -118,16 +118,16 @@ maestro hooks install --level standard
 
 ```bash
 # 发现问题
-/manage-issue-discover by-prompt "检查 API 错误处理"
+/maestro-issue discover by-prompt "检查 API 错误处理"
 
 # 创建 Issue
-/manage-issue create --title "内存泄漏" --severity high
+/maestro-issue create --title "内存泄漏" --severity high
 
 # 闭环处理
 /maestro-analyze --gaps ISS-001          # 根因分析
 /maestro-plan --gaps                     # 方案规划
 /maestro-execute                         # 执行修复
-/manage-issue close ISS-001 --resolution "Fixed"
+/maestro-issue close ISS-001 --resolution "Fixed"
 ```
 
 **Commander Agent** 可自动推进未分析的 Issue，无需手动干预。
@@ -140,13 +140,13 @@ maestro hooks install --level standard
 
 ```bash
 # 最快路径
-/maestro-quick "修复登录页 Bug"
+/maestro-next "修复登录页 Bug"
 
 # 带规划验证
-/maestro-quick --full "重构 API 层"
+/maestro-next --full "重构 API 层"
 
 # 带决策提取
-/maestro-quick --discuss "数据库迁移策略"
+/maestro-next --discuss "数据库迁移策略"
 ```
 
 ---
@@ -194,18 +194,18 @@ maestro delegate "..." --rule development-implement-feature --mode write
 
 ```bash
 # 初始化（扫描代码库生成规范文件）
-/spec-setup                                    # 已有项目：扫描代码库填充 specs
+/maestro-spec setup                                    # 已有项目：扫描代码库填充 specs
 # 新项目可跳过 -- specs 由 analyze/plan/execute 渐进填充
 
 # 录入规范
-/spec-add coding "所有 API 使用 Hono 框架"
-/spec-add arch "通知模块使用事件驱动架构"
-/spec-add learning "分页 offset=0 会越界"
+/maestro-spec add coding "所有 API 使用 Hono 框架"
+/maestro-spec add arch "通知模块使用事件驱动架构"
+/maestro-spec add learning "分页 offset=0 会越界"
 
 # 加载规范
-/spec-load --role implement
-/spec-load --keyword auth
-/spec-load --role implement --keyword auth
+/maestro-spec load --role implement
+/maestro-spec load --keyword auth
+/maestro-spec load --role implement --keyword auth
 ```
 
 **自动注入**：Hook 在 Agent 启动时按类型自动注入对应规范（coder→coding, tester→test, debugger→debug）。
@@ -328,13 +328,13 @@ maestro stop              # 停止服务
 ### Bug 修复
 
 ```bash
-/maestro-quick "修复移动端登录页布局问题"
+/maestro-next "修复移动端登录页布局问题"
 ```
 
 ### 问题发现与修复
 
 ```bash
-/manage-issue-discover → /maestro-analyze --gaps ISS-xxx → /maestro-plan --gaps → /maestro-execute → close
+/maestro-issue discover → /maestro-analyze --gaps ISS-xxx → /maestro-plan --gaps → /maestro-execute → close
 ```
 
 ### 并行开发

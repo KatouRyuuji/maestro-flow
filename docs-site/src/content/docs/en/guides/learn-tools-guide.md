@@ -10,16 +10,16 @@ A complete reference for Maestro's learning toolkit, covering the principles, us
 
 The learning toolkit is Maestro's **interactive deep learning** module, focused on extracting structured knowledge from code, documentation, and decision history. Each command follows the scientific method -- hypothesis, evidence, verification, codification -- transforming implicit engineering experience into reusable explicit knowledge.
 
-### Comparison with /maestro-manage knowledge capture
+### Comparison with /maestro-knowhow
 
-| Dimension | /maestro-learn subcommands | /maestro-manage knowledge capture |
+| Dimension | /maestro-learn subcommands | /maestro-knowhow |
 |-----------|-----------------|-------------|
 | Interaction mode | Interactive deep learning, multi-round guidance | Atomic operation, single capture |
 | Goal | Systematic acquisition of deep understanding | Quick recording of a single insight |
 | Output | Structural reports, pattern catalog, evidence trail | Single `<spec-entry>` |
 | Duration | Minutes, multi-agent parallel | Seconds, instant completion |
 
-Simple rule: **Use /maestro-learn when you need to think, use /maestro-manage knowledge capture when you need to record**.
+Simple rule: **Use /maestro-learn when you need to think, use /maestro-knowhow when you need to record**.
 
 ---
 

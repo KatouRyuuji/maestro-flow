@@ -63,8 +63,8 @@ icon: "📁"
 │   ├── KNW-retro-*.md/json       # /maestro-learn consult
 │   ├── KNW-opinion-*.md          # /maestro-learn consult
 │   ├── KNW-investigate-*/        # /maestro-learn investigate
-│   ├── KNW-digest-*.md           # /maestro-manage knowledge wiki digest
-│   └── wiki-connections-*.md     # /maestro-manage knowledge wiki connect
+│   ├── KNW-digest-*.md           # /maestro-knowledge wiki digest
+│   └── wiki-connections-*.md     # /maestro-knowledge wiki connect
 │
 ├── scratch/                      # 执行产物（{YYYYMMDD}-{type}[-P{N}]-{slug}）
 │   ├── *-analyze-*/              # 分析：discussion.md, analysis.md, conclusions.json, context.md
@@ -271,7 +271,7 @@ Learn 特殊前缀：`KNW-follow-`, `KNW-decompose-`, `KNW-retro-`, `KNW-opinion
 ```
 
 - `issues/issue-history.jsonl` — 已关闭问题归档
-- `issues/discoveries/` — `/maestro-manage issue discover` 会话产物
+- `issues/discoveries/` — `/maestro-issue discover` 会话产物
 
 ---
 
@@ -410,9 +410,9 @@ v0.5.50+ 移除了 coordinate 图执行子系统（chains 数据层）。原 coo
 | verify | VRF-{NNN} | phase, milestone | （已退役；集成进 `/maestro-ralph` decision gate `post-execute`） |
 | review | REV-{NNN} | phase | `review`（`/maestro "review"`） |
 | debug | DBG-{NNN} | phase, standalone | `/maestro-odyssey --mode debug` |
-| test | TST-{NNN} | phase | `test`（`/maestro "<test intent>"`）或 `/security-audit` |
+| test | TST-{NNN} | phase | `test`（`/maestro "<test intent>"`）或 `/maestro-odyssey --mode security` |
 | brainstorm | BRN-{NNN} | adhoc | `brainstorm`（`/maestro "brainstorm..."`） |
-| collab | CLB-{NNN} | adhoc | `/maestro-collab` / team 链 |
+| collab | CLB-{NNN} | adhoc | `collab`（`/maestro "collab..."`）/ team 链 |
 | ui-design | — | phase, scratch | `/maestro-impeccable --codify` |
 
 ### Session ID 格式
