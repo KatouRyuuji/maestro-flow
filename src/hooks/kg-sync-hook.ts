@@ -8,7 +8,7 @@
  */
 
 import { execSync, spawn } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { kgSyncGuard } from '../utils/cooldown-guard.js';
 import { invalidateSearchIndex } from '../search/daemon-client.js';
@@ -33,6 +33,16 @@ const WORKER_ENV = 'MAESTRO_KG_SYNC_WORKER';
 /** Advisory single-flight marker for the detached worker. */
 const WORKER_PID_FILE = 'kg-sync-worker.pid';
 
+/**
+ * Mirrors `getKgDatabasePath` (src/graph/kg/db/connection.ts) so the not-initialized
+ * and cooldown gates can run without importing it — that module pulls in
+ * `node:sqlite` and the whole graph engine, ~60ms this hook has no use for on the
+ * ~29/30 prompts that are inside the cooldown window.
+ */
+function hasKgDatabase(projectPath: string): boolean {
+  return existsSync(resolve(projectPath, '.workflow', 'kg', 'maestro.db'));
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -53,8 +63,7 @@ export async function evaluateKgSync(
   sessionId: string,
 ): Promise<KgSyncResult> {
   try {
-    const { MaestroGraph } = await import('../graph/kg/engine.js');
-    if (!MaestroGraph.isInitialized(projectPath)) {
+    if (!hasKgDatabase(projectPath)) {
       return { synced: false, reason: 'maestrograph-not-initialized' };
     }
 
@@ -80,6 +89,7 @@ export async function evaluateKgSync(
     }
 
     const start = Date.now();
+    const { MaestroGraph } = await import('../graph/kg/engine.js');
     const mg = await MaestroGraph.open(projectPath);
     let filesChanged = 0;
     try {

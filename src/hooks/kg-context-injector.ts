@@ -48,7 +48,11 @@ function extractFilePaths(text: string): string[] {
   return [...seen];
 }
 
-function extractSymbols(text: string): string[] {
+/**
+ * Symbols the prompt marked as code by backticking them. Used as the gate for
+ * opening the graph at all — see `buildKgContextSections`.
+ */
+function extractBacktickedSymbols(text: string): string[] {
   const seen = new Set<string>();
   for (const m of text.matchAll(BACKTICK_SYMBOL_RE)) {
     const s = m[1];
@@ -56,6 +60,11 @@ function extractSymbols(text: string): string[] {
       if (!seen.has(s)) seen.add(s);
     }
   }
+  return [...seen];
+}
+
+function extractSymbols(text: string): string[] {
+  const seen = new Set<string>(extractBacktickedSymbols(text));
   for (const symbol of text.match(CODE_SYMBOL_RE) ?? []) {
     if (!seen.has(symbol)) seen.add(symbol);
   }
@@ -116,9 +125,17 @@ export async function buildKgContextSections(
   prompt: string,
   projectPath: string,
 ): Promise<ContextSection[]> {
-  const symbols = extractSymbols(prompt).slice(0, MAX_SYMBOLS);
   const files = extractFilePaths(prompt).slice(0, MAX_FILES);
-  if (symbols.length === 0 && files.length === 0) return [];
+
+  // CODE_SYMBOL_RE matches any camelCase / snake_case token, ordinary prose words
+  // included, so a plain-symbol gate is satisfied by nearly every prompt. Opening
+  // the graph for those costs ~80ms (engine import + sqlite open) to look up words
+  // that were never symbols. Require one high-confidence anchor first — a
+  // backticked identifier or an explicit file path. Loose tokens are still resolved
+  // below, once the graph is open and they are nearly free.
+  if (extractBacktickedSymbols(prompt).length === 0 && files.length === 0) return [];
+
+  const symbols = extractSymbols(prompt).slice(0, MAX_SYMBOLS);
 
   try {
     const { MaestroGraph } = await import('../graph/kg/engine.js');
