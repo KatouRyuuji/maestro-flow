@@ -8,14 +8,16 @@ import PlayIcon from 'lucide-react/dist/esm/icons/play.js';
 // ActiveExecutionPanel -- shows the current executing phase with wave details
 // ---------------------------------------------------------------------------
 
+// v2: analyze/plan/execute/review/test are orchestrator-dispatched steps with no
+// slash form — the copyable next action is the intent that routes to them.
 const STATUS_NEXT_COMMAND: Record<string, string> = {
-  not_started: '/maestro-analyze {N}',
-  planning: '/maestro-execute {N}',
-  executing: '/maestro-execute {N}',
-  verifying: '/quality-review {N}',
-  reviewing: '/quality-review {N}',
-  completed: '/maestro-milestone-audit',
-  blocked: '/quality-debug',
+  not_started: '/maestro "analyze phase {N}"',
+  planning: '/maestro "execute phase {N}"',
+  executing: '/maestro "execute phase {N}"',
+  verifying: '/maestro "review phase {N}"',
+  reviewing: '/maestro "review phase {N}"',
+  completed: '/maestro-session-seal',
+  blocked: '/maestro-odyssey "unblock phase {N}" --mode debug',
 };
 
 function getNextActionPhase(phases: PhaseCard[]): PhaseCard | null {

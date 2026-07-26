@@ -82,7 +82,7 @@ export const SPEC_SEED_DOCS: SpecSeedDoc[] = [
     },
     body: `# Learnings
 
-Add entries with: \`/spec-add learning <description>\`
+Add entries with: \`/maestro-spec learning <description>\`
 
 ## Entries
 

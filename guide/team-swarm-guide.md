@@ -248,5 +248,5 @@ const decision = await agent('You are the REFEREE...', { label: 'referee' })
 
 ## 相关文档
 
-- [命令参考](../COMMANDS-CARD-REFERENCE.md) — 所有命令的快速参考
+- [命令使用指南](./command-usage-guide.md) — 命令全景与工作流导航
 - [团队协作指南](./team-lite-guide.md) — 多代理协作指南

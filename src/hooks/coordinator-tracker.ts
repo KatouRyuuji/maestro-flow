@@ -600,7 +600,7 @@ export function buildNextStepHint(data: CoordBridgeData): string | null {
 
   // Resume hint
   if (data.coord_session_id) {
-    lines.push(`Resume: /maestro-link-coordinate -c ${data.coord_session_id}`);
+    lines.push(`Resume: maestro coordinate -c ${data.coord_session_id}`);
   } else if (data.source === 'ralph') {
     lines.push(`Resume: /maestro-ralph -c`);
   } else {

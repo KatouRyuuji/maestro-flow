@@ -1,7 +1,7 @@
 /**
  * Skill Context Hook — UserPromptSubmit
  *
- * When a user invokes a workflow skill (e.g., `/maestro-execute 2`),
+ * When a user invokes a workflow skill (e.g., `/maestro-ralph` or `/maestro-next`),
  * injects the current canonical Session and sealed Run artifacts.
  *
  * Uses `additionalContext` (not `updatedInput`) to avoid interfering

@@ -50,12 +50,12 @@ maestro install          # 交互式选择安装组件
 
 ## 快速上手
 
-### Ralph v2 — 自适应生命周期引擎
+### Ralph — 闭环策略层
 
 主入口。说出目标，Ralph 自动判断开发阶段、构建命令链、在 decision 节点动态调整：
 
 ```bash
-/maestro-ralph-v2 "实现 OAuth2 认证，支持 refresh token"
+/maestro-ralph "实现 OAuth2 认证，支持 refresh token"
 
 # Ralph 自动构建链：analyze → plan → execute → verify → review → test
 # 遇到失败 → 自动插入 debug → fix → retry 循环
@@ -63,9 +63,9 @@ maestro install          # 交互式选择安装组件
 ```
 
 ```bash
-/maestro-ralph-v2 status      # 查看当前会话进度
-/maestro-ralph-v2 continue    # 从 decision 暂停点恢复
-/maestro-ralph-v2 -y "..."    # 全自动，无需确认
+maestro session status        # 查看当前会话进度
+/maestro-ralph -c             # 从 decision 暂停点恢复
+/maestro-ralph -y "..."       # 全自动，无需确认
 ```
 
 ### 核心管线
@@ -91,23 +91,27 @@ brainstorm → blueprint(opt) → analyze → plan → execute → verify
 ### 其他入口
 
 ```bash
-/maestro "添加用户资料页"           # 意图路由，自动选链
-/maestro-quick "修复重定向 bug"     # 最短链路：plan → execute → verify
+/maestro "添加用户资料页"            # 意图到链规划，自动选链
+/maestro-next "修复重定向 bug"       # 纯路由：分类意图 → companion / 单 Run / /maestro
+/maestro-companion "修正 README 拼写"  # 轻量执行：最小 Run 生命周期
 ```
 
 ### Odyssey — 长周期自主循环
 
 适合大型调试、深度重构、UI 优化等需要持续迭代的场景：
 
-| 命令 | 循环模式 |
-|------|---------|
-| `/odyssey-debug` | 考古分析 → 诊断 → 修复 → 确认 → 泛化 → 知识沉淀 |
-| `/odyssey-planex` | 需求解析 → 计划 → 执行 → 严格验证 → 修复循环 |
-| `/odyssey-improve` | 多维审计 → 深度诊断 → 定向修复 → 验证 → 泛化 |
-| `/odyssey-review-test-fix` | 多维审查 → 定向修复 → 测试 → 泛化 → 知识沉淀 |
-| `/odyssey-ui` | 视觉巡检 → 多维审计 → 发散探索 → 修复 → 验证 |
+统一入口 `/maestro-odyssey <intent> --mode <name>`，六种模式：
 
-每个 Odyssey 命令持续运行直到验收标准达成，中间自适应调整策略，发现的知识自动持久化。
+| 模式 | 循环模式 |
+|------|---------|
+| `--mode debug` | 考古分析 → 诊断 → 修复 → 确认 → 泛化 → 知识沉淀 |
+| `--mode planex` | 需求解析 → 计划 → 执行 → 严格验证 → 修复循环 |
+| `--mode improve` | 多维审计 → 深度诊断 → 定向修复 → 验证 → 泛化 |
+| `--mode review` | 多维审查 → 定向修复 → 测试 → 泛化 → 知识沉淀 |
+| `--mode security` | 分层安全审计（OWASP + 依赖 + 密钥 + STRIDE），只读 |
+| `--mode ui` | 视觉巡检 → 多维审计 → 发散探索 → 修复 → 验证 |
+
+Odyssey 持续运行直到验收标准达成，中间自适应调整策略，发现的知识自动持久化。
 
 ---
 

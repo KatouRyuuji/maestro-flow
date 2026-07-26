@@ -248,5 +248,5 @@ const decision = await agent('You are the REFEREE...', { label: 'referee' })
 
 ## Related Documentation
 
-- [Command Reference](../COMMANDS-CARD-REFERENCE.md) — Quick reference for all commands
+- [Command Usage Guide](./command-usage-guide.en.md) — Command panorama and workflow navigation
 - [Team Collaboration Guide](./team-lite-guide.en.md) — Multi-agent collaboration guide

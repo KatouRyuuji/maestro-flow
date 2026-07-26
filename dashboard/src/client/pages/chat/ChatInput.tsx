@@ -32,10 +32,10 @@ const AGENT_SHORT: Record<AgentType, string> = {
 };
 
 const SLASH_COMMANDS: SlashCommand[] = [
-  { name: '/maestro-plan', desc: 'Create detailed phase plan', color: 'var(--color-accent-purple)', bg: 'var(--color-tint-planning)' },
-  { name: '/quality-review', desc: 'Tiered code review', color: 'var(--color-accent-green)', bg: 'var(--color-tint-completed)' },
-  { name: '/maestro-execute', desc: 'Execute phase with parallelization', color: 'var(--color-accent-orange)', bg: 'var(--color-tint-verifying)' },
-  { name: '/quality-debug', desc: 'Parallel hypothesis debugging', color: 'var(--color-accent-blue)', bg: 'var(--color-tint-exploring)' },
+  { name: '/maestro', desc: 'Intent-to-chain planner — builds and runs the Session chain', color: 'var(--color-accent-purple)', bg: 'var(--color-tint-planning)' },
+  { name: '/maestro-ralph', desc: 'Closed-loop policy — decision gates, retry, drift audit', color: 'var(--color-accent-green)', bg: 'var(--color-tint-completed)' },
+  { name: '/maestro-next', desc: 'Pure router — classify intent, pick the channel', color: 'var(--color-accent-orange)', bg: 'var(--color-tint-verifying)' },
+  { name: '/maestro-odyssey', desc: 'Long-running loop — debug/improve/planex/review/security/ui', color: 'var(--color-accent-blue)', bg: 'var(--color-tint-exploring)' },
 ];
 
 type DelegateMessageDelivery = 'inject' | 'after_complete';

@@ -208,6 +208,6 @@ chain-file 的 step 形态只接受 `command` / `args?` / `stage?` / `goal_ref?`
 
 ## 相关文档
 
-- [命令参考](../COMMANDS-CARD-REFERENCE.md) — 所有命令的快速参考
+- [命令参考](../commands/reference.md) — 由 inventory 生成的命令总表
 - [质量管线指南](./quality-pipeline-guide.md) — 质量保证流程
 - [Hooks 指南](./hooks-guide.md) — 工作流 hooks 配置

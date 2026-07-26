@@ -50,12 +50,12 @@ Requires Node.js ≥ 18 and [Claude Code CLI](https://docs.anthropic.com/en/docs
 
 ## Quick Start
 
-### Ralph v2 — Adaptive Lifecycle Engine
+### Ralph — Closed-Loop Policy Layer
 
 The primary entry point. State your goal; Ralph determines the lifecycle stage, builds a command chain, and dynamically adjusts at decision nodes:
 
 ```bash
-/maestro-ralph-v2 "implement OAuth2 auth with refresh tokens"
+/maestro-ralph "implement OAuth2 auth with refresh tokens"
 
 # Ralph auto-builds: analyze → plan → execute → verify → review → test
 # On failure → auto-inserts debug → fix → retry loop
@@ -63,9 +63,9 @@ The primary entry point. State your goal; Ralph determines the lifecycle stage, 
 ```
 
 ```bash
-/maestro-ralph-v2 status      # view session progress
-/maestro-ralph-v2 continue    # resume from decision pause
-/maestro-ralph-v2 -y "..."    # full auto, no confirmations
+maestro session status        # view session progress
+/maestro-ralph -c             # resume from decision pause
+/maestro-ralph -y "..."       # full auto, no confirmations
 ```
 
 ### Core Pipeline
@@ -91,23 +91,27 @@ Three quality modes control pipeline depth:
 ### Other Entry Points
 
 ```bash
-/maestro "add user profile page"        # intent routing, auto chain selection
-/maestro-quick "fix redirect bug"       # shortest path: plan → execute → verify
+/maestro "add user profile page"        # intent-to-chain planning, auto chain selection
+/maestro-next "fix redirect bug"        # pure router: companion / single Run / /maestro
+/maestro-companion "fix a README typo"  # lightweight execution: minimal Run lifecycle
 ```
 
 ### Odyssey — Long-Running Autonomous Loops
 
 For large-scale debugging, deep refactoring, and UI optimization that require sustained iteration:
 
-| Command | Loop pattern |
-|---------|-------------|
-| `/odyssey-debug` | archaeology → diagnosis → fix → confirm → generalize → persist |
-| `/odyssey-planex` | parse requirements → plan → execute → strict verify → fix loop |
-| `/odyssey-improve` | multi-dimension audit → deep diagnosis → targeted fix → verify → generalize |
-| `/odyssey-review-test-fix` | multi-dimension review → targeted fix → test → generalize → persist |
-| `/odyssey-ui` | visual survey → audit → divergent exploration → fix → verify |
+One entry, `/maestro-odyssey <intent> --mode <name>`, with six modes:
 
-Each Odyssey command runs until acceptance criteria are met, adapting strategy mid-loop and auto-persisting discoveries as knowledge.
+| Mode | Loop pattern |
+|------|-------------|
+| `--mode debug` | archaeology → diagnosis → fix → confirm → generalize → persist |
+| `--mode planex` | parse requirements → plan → execute → strict verify → fix loop |
+| `--mode improve` | multi-dimension audit → deep diagnosis → targeted fix → verify → generalize |
+| `--mode review` | multi-dimension review → targeted fix → test → generalize → persist |
+| `--mode security` | tiered security audit (OWASP + deps + secrets + STRIDE), read-only |
+| `--mode ui` | visual survey → audit → divergent exploration → fix → verify |
+
+Odyssey runs until acceptance criteria are met, adapting strategy mid-loop and auto-persisting discoveries as knowledge.
 
 ---
 

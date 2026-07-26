@@ -40,7 +40,7 @@ CLI commands are called `maestro collab *` (user-friendly), but disk layout uses
 
 1. **Identity** — Map local Git identity to `.workflow/collab/members/{uid}.json`
 2. **Shared activity log** — Team-wide append-only JSONL
-3. **Conflict alerts** — `/maestro-plan` / `/maestro-execute` scan log before starting
+3. **Conflict alerts** — the `plan` / `execute` steps scan the log before starting
 4. **One-click sync** — `maestro collab sync` wraps `git stash + pull --rebase + pop + push`
 
 ## Prerequisites

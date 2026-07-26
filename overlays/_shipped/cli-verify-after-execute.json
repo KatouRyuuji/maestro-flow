@@ -1,14 +1,14 @@
 {
   "name": "cli-verify-after-execute",
-  "description": "Run ccw cli quality review after /maestro-execute completes",
-  "targets": ["maestro-execute"],
+  "description": "Run ccw cli quality review after the execute step completes",
+  "targets": ["maestro-ralph"],
   "priority": 50,
   "enabled": true,
   "patches": [
     {
       "section": "execution",
       "mode": "append",
-      "content": "## CLI Verification (overlay)\n\nAfter the phase execution finishes, run a read-only quality review with the CLI tool to catch regressions the execution might have introduced:\n\n```\nccw cli -p \"PURPOSE: Review just-executed changes for correctness and regressions; success = all critical issues surfaced\nTASK: Scan modified files | Check new code against existing patterns | Flag any TODO/FIXME introduced | Verify error handling\nMODE: analysis\nCONTEXT: @./src/**/* | Memory: Just completed maestro-execute for the current phase\nEXPECTED: Issue list with file:line references, severity, and suggested fix\nCONSTRAINTS: Focus on changed files only\n\" --tool gemini --mode analysis --rule analysis-review-code-quality\n```\n\nIf the review surfaces Critical or High issues, open them as maestro issues before marking the phase complete.\n"
+      "content": "## CLI Verification (overlay)\n\nAfter the phase execution finishes, run a read-only quality review with the CLI tool to catch regressions the execution might have introduced:\n\n```\nccw cli -p \"PURPOSE: Review just-executed changes for correctness and regressions; success = all critical issues surfaced\nTASK: Scan modified files | Check new code against existing patterns | Flag any TODO/FIXME introduced | Verify error handling\nMODE: analysis\nCONTEXT: @./src/**/* | Memory: Just completed the execute step for the current phase\nEXPECTED: Issue list with file:line references, severity, and suggested fix\nCONSTRAINTS: Focus on changed files only\n\" --tool gemini --mode analysis --rule analysis-review-code-quality\n```\n\nIf the review surfaces Critical or High issues, open them as maestro issues before marking the phase complete.\n"
     }
   ]
 }

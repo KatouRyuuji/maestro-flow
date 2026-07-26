@@ -296,7 +296,7 @@ describe('buildNextStepHint', () => {
     assert.strictEqual(buildNextStepHint(data), null);
   });
 
-  it('includes coord_session_id in resume hint for link-coordinate', () => {
+  it('includes coord_session_id in resume hint for coordinate sessions', () => {
     const data: CoordBridgeData = {
       session_id: 'test',
       coord_session_id: 'coord-1744668285953-d428',
@@ -315,7 +315,7 @@ describe('buildNextStepHint', () => {
 
     const hint = buildNextStepHint(data);
     assert.ok(hint);
-    assert.ok(hint.includes('/maestro-link-coordinate -c coord-1744668285953-d428'));
+    assert.ok(hint.includes('maestro coordinate -c coord-1744668285953-d428'));
   });
 });
 

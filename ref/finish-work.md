@@ -132,7 +132,7 @@ Knowledge: {len(spec_ids)} spec / {len(knowhow_ids)} knowhow extracted, {skipped
 - Does NOT flip `archived_at` or move files.
 - Does NOT prune `context-package.json`.
 - Does NOT touch `state.json` — caller handles artifact registration.
-- Does NOT create issues — issue creation is out of single-session completion scope (use `/manage-harvest` or `/manage-issue-discover` for that).
+- Does NOT create issues — issue creation is out of single-session completion scope (use `/maestro-knowledge harvest` or `/maestro-issue discover` for that).
 
 ## Errors
 

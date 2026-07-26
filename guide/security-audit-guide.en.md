@@ -205,6 +205,6 @@ Add security audit step in CI/CD pipeline:
 
 ## Related Documentation
 
-- [Command Reference](../COMMANDS-CARD-REFERENCE.md) — Quick reference for all commands
+- [Command Usage Guide](./command-usage-guide.en.md) — Command panorama and workflow navigation
 - [Quality Pipeline Guide](./quality-pipeline-guide.en.md) — Quality assurance workflow
 - [Hooks Guide](./hooks-guide.en.md) — Workflow hooks configuration

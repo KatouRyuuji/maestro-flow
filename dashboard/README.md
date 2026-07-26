@@ -107,26 +107,28 @@ Both endpoints can safely operate on the same file because specs writes go throu
 
 ## Phase Pipeline Commands
 
-| Status | Display Label | Recommended Command |
-|--------|--------------|---------------------|
-| `pending` | Pending | `/maestro-analyze {N}` |
-| `exploring` | Explore | `/maestro-plan {N}` |
-| `planning` | Plan | `/maestro-execute {N}` |
+`analyze` / `plan` / `execute` / `review` / `test` are orchestrator-dispatched steps with no slash form — the recommended action is the intent that routes to them.
+
+| Status | Display Label | Recommended Action |
+|--------|--------------|--------------------|
+| `pending` | Pending | `/maestro "analyze phase {N}"` |
+| `exploring` | Explore | `/maestro "plan phase {N}"` |
+| `planning` | Plan | `/maestro "execute phase {N}"` |
 | `executing` | Execute | *(running)* |
-| `verifying` | Verify | `/quality-review {N}` |
-| `testing` | Test | `/quality-test {N}` |
-| `completed` | Done | `/maestro-milestone-audit` |
-| `blocked` | Blocked | `/quality-debug` |
+| `verifying` | Verify | `/maestro "review phase {N}"` |
+| `testing` | Test | `/maestro "test phase {N}"` |
+| `completed` | Done | `/maestro-session-seal` |
+| `blocked` | Blocked | `/maestro-odyssey "unblock phase {N}" --mode debug` |
 
 ## Pre-Pipeline Setup
 
 | Step | Command | Purpose |
 |------|---------|---------|
 | 1 | `/maestro-init` | Initialize `.workflow/` directory |
-| 2 | `/maestro-brainstorm` *(optional)* | Multi-role brainstorming |
-| 3a | `/maestro-roadmap` | Lightweight interactive roadmap |
-| 3b | `/maestro-spec-generate` | Full spec pipeline (PRD → architecture → roadmap) |
-| 4 | `/maestro-plan 1` | Create Phase 1 execution plan |
+| 2 | `/maestro "brainstorm ..."` *(optional)* | Multi-role brainstorming (`brainstorm` step) |
+| 3a | `/maestro "roadmap ..."` | Lightweight interactive roadmap (`roadmap` step) |
+| 3b | `/maestro "<specification intent>"` | Full spec pipeline via the `blueprint` step (PRD → architecture → roadmap) |
+| 4 | `/maestro "plan phase 1"` | Create Phase 1 execution plan |
 
 ## Development
 
