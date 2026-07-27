@@ -650,6 +650,22 @@ FOR each REQ in requirements targeted:
 Populate `requirement_coverage[]` in report.json.
 Write `.tests/auto-test/traceability.md` (human-readable table).
 
+### Publish Run Artifacts — MANDATORY
+
+`.tests/auto-test/` is the persistent workspace, not the Run truth source. The runtime registers artifacts by scanning `{run_dir}/outputs/` only, so a report that exists solely in the workspace is invisible to `run check`, to artifact registration, and to every downstream consumer of `latest-auto-test`.
+
+Publish after the report (and, on the spec route, the traceability matrix) is final:
+
+```
+COPY .tests/auto-test/report.json       → {run_dir}/outputs/auto-test-report.json
+IF route == spec:
+  COPY .tests/auto-test/traceability.md → {run_dir}/outputs/traceability.md
+```
+
+Copy, do not move — `--re-run` and the resume path read the workspace copy on the next invocation.
+
+**GATE Step 9 publish**: `{run_dir}/outputs/auto-test-report.json` MUST exist before Report Display; BLOCKED if missing.
+
 ### Conditional: Issue Creation (when failures exist)
 
 Require user confirmation (or `-y` flag) before writing to external stores.
@@ -692,7 +708,11 @@ Scenarios: {passed} passed, {failed} failed, {blocked} blocked
 Bugs: {N} discovered
 {IF spec: "Requirement coverage: {pct}% | Verified: {n}/{total}"}
 
-Files:
+Run artifacts:
+  {run_dir}/outputs/auto-test-report.json
+  {IF spec: "{run_dir}/outputs/traceability.md"}
+
+Workspace (persists across Runs):
   .tests/auto-test/state.json
   .tests/auto-test/test-plan.json
   .tests/auto-test/report.json
@@ -731,6 +751,7 @@ Files:
 - [ ] Pressure pass completed on highest-pass-rate layer before completion
 - [ ] report.json includes confidence section
 - [ ] If spec source: traceability matrix built, traceability.md written
+- [ ] Run artifacts published from workspace to `{run_dir}/outputs/` (auto-test-report.json, plus traceability.md on the spec route)
 - [ ] If failures: issues created in issues.jsonl (confirmed by user unless `-y`)
 - [ ] If gap source: validation.json gaps updated (MISSING→COVERED)
 
