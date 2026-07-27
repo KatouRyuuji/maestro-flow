@@ -266,7 +266,11 @@ Gate: each ❌ Missed item must either (a) get an added round or (b) be user-con
 { "risks": [], "assumptions": [], "open_questions": [] }
 ```
 
-**5.4b Write priors.json** (optional, session-scoped shared context): if this is the session's first run, record the spec / doc-index / wiki hits gathered during exploration so downstream plan/execute can reuse them without re-searching. Registered as alias `session-priors` by the contract; skip when nothing worth carrying forward.
+**5.4b Write priors.json** (session-scoped shared context): record the spec / doc-index / wiki hits gathered during exploration so downstream plan/execute can reuse them without re-searching. Registered as alias `session-priors` by the contract.
+
+Write it whenever this run resolved any spec, doc-index, or wiki hit — Required Context makes that the normal case, so skipping should be rare and deliberate. The only skip condition is that all three lists would be empty.
+
+**Never write an empty-but-present priors.json.** Downstream treats the artifact's presence as "priors already resolved" and suppresses its own search (see `prepare/execute.md`, `prepare/plan.md`); an empty file therefore starves plan/execute of context they would otherwise have gathered themselves. Absent is the correct signal for "nothing to carry forward".
 ```json
 { "specs": [], "doc_index": [], "wiki": [] }
 ```
