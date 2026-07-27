@@ -10,15 +10,21 @@ description: Intent-driven issue lifecycle management — describe what you want
 argument-hint: "[intent — e.g. '记录一个登录失败的 bug' | 'list open' | 'close
   ISS-20260101-001' | 'discover']"
 allowed-tools:
-  - Read
-  - Write
-  - Edit
   - Bash
+  - Edit
   - Glob
   - Grep
-  - Agent
+  - Read
   - WebFetch
+  - Write
+  - followup_task
+  - interrupt_agent
+  - list_agents
   - request_user_input
+  - send_message
+  - spawn_agent
+  - spawn_agents_on_csv
+  - wait_agent
 session-mode: none
 version: 0.5.56
 ---
@@ -36,7 +42,7 @@ Intent-driven issue management (renamed from maestro-manage, narrowed to issues)
 </purpose>
 
 <dispatch>
-Run `maestro run skill issue` with the full `$ARGUMENTS` passed through as the user's intent. The step classifies the intent, extracts parameters, and routes to the operation.
+Run `maestro run skill --platform codex issue` with the full `$ARGUMENTS` passed through as the user's intent. The step classifies the intent, extracts parameters, and routes to the operation.
 
 - Free-form intent is classified into create / list / show / update / close / link / discover.
 - Explicit keywords (`create|list|status|show|update|close|link`) and `--flags` still work as deterministic shortcuts and override inferred values.

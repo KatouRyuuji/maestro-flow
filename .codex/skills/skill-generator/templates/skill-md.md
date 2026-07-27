@@ -86,7 +86,7 @@ const workDir = \`${runStart.run_dir}/outputs\`;
 
 ## Completion Protocol
 
-Follow the Completion Status Protocol: return one of DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT with structured reason. Follow the Escalation Protocol: when blocked, report blocker details and request human intervention.
+Follow the Completion Status Protocol (return DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT with structured reason) and the Escalation Protocol (escalate blockers with context to the orchestrator).
 
 ## Reference Documents by Phase
 

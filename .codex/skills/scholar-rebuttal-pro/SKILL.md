@@ -20,14 +20,26 @@ allowed-tools:
   - spawn_agent
   - update_plan
 session-mode: run
-version: 0.5.56
 contract:
-  discovery: self-described
   consumes: []
-  produces: []
+  produces:
+    - path: outputs/rebuttal-draft-v1.md
+      kind: rebuttal-draft
+      alias: latest-rebuttal
+      role: primary
+    - path: outputs/review-analysis.json
+      kind: review-analysis
+      role: attachment
+    - path: outputs/strategy-matrix.md
+      kind: strategy-matrix
+      role: attachment
+    - path: outputs/quality-report.md
+      kind: quality-report
+      role: evidence
   gates:
     entry: []
     exit: []
+version: 0.5.56
 ---
 
 > **Plan tracking**: codex 无 TaskCreate/TaskUpdate/TodoWrite 任务板。进度清单用 `update_plan({ explanation?, plan: [{ step, status }] })` 维护（整体提交步骤数组，status: `pending` | `in_progress` | `completed`），权威状态始终在 session 工件中；依赖/认领（addBlockedBy/owner）是工件字段，不是工具参数。
@@ -433,9 +445,10 @@ EXPECTED: Quality report with improvement suggestions" --to agy --mode analysis
 
 ## Conference Template System
 
-Templates are loaded from:
-- **Custom**: `templates/` under the skill directory (user-provided, `{templateId}-template.md`)
-- **Fallback**: `templates/discussion.md`, then the built-in generic template in Phase 4
+Templates are loaded from (first match wins):
+1. **Custom**: `templates/{templateId}-template.md` under the skill directory (user-provided)
+2. **Custom generic**: `templates/discussion.md` under the skill directory (user-provided)
+3. **Built-in**: Generic rebuttal template hardcoded in Phase 4 (always available, no files needed)
 
 Template selection based on `workflowPreferences.conferenceType`:
 - **ML Conferences**: NeurIPS/ICML/ICLR strategies (novelty, theory, experiments)

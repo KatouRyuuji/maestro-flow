@@ -87,6 +87,7 @@ Generate Phase files for Sequential execution mode, defining fixed-order executi
 ## Completion Status
 
 Return one of: DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT with structured reason.
+Return one of: DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT with structured reason.
 
 ## Next Phase
 
@@ -462,6 +463,7 @@ Write(\`${workDir}/${phaseConfig.output}\`, JSON.stringify(result, null, 2));
 
 ## Completion Status
 
+Return one of: DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT with structured reason.
 Return one of: DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT with structured reason.
 
 ${nextPhase ?

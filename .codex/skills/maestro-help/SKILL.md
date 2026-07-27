@@ -223,14 +223,10 @@ $ARGUMENTS → Parse:
 
 | 命令 | 用途 |
 |------|------|
-| `/maestro-issue` | Issue 管理 |
+| `/maestro-issue` | Issue 管理（意图驱动：报告/列出/关闭/关联） |
 | `/maestro-issue discover` | Issue 发现 |
-| `/maestro-knowhow` | 知识沉淀（knowhow capture） |
-| `/maestro-knowledge wiki` | Wiki 管理 |
-| `/maestro-knowledge harvest` | 收获 |
-| `/maestro-knowledge sync rebuild` | 代码库重建 |
-| `/maestro-knowledge extractors` | 知识图谱提取器管理 |
-| `/maestro-knowledge audit` | 知识审计 |
+| `/maestro-knowledge` | 知识存储管理（意图驱动：audit/harvest/wiki/extractors/domain） |
+| `/maestro-knowhow` | KnowHow 沉淀（意图驱动：按类型捕获可复用知识） |
 
 ### Odyssey 长周期循环 (odyssey)
 

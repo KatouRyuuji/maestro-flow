@@ -103,7 +103,7 @@ Load template from the skill-local `templates/` directory (paths relative to the
 // Template search paths
 const templatePaths = [
   `templates/${templateId}-template.md`, // skill-local, user may add conference-specific templates
-  `templates/discussion.md`              // Fallback to generic discussion template
+  `templates/discussion.md`              // Optional user-provided generic template
 ]
 
 let templateContent = null

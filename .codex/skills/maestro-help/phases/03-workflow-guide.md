@@ -101,7 +101,7 @@ const taskPatterns = [
 ## Bug 追踪工作流
 
 ### Issue 闭环（需要追踪）
-1. `/maestro-issue discover by-prompt "问题描述"` — 发现 Issue
+1. `/maestro-issue discover "问题描述"` — 发现 Issue
 2. `/maestro-issue create --title "Bug 标题" --severity high` — 创建 Issue
 3. `analyze --gaps ISS-xxx` — 根因分析
 4. `plan --gaps` — 方案规划

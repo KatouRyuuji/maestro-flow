@@ -59,7 +59,7 @@ $ARGUMENTS — intent text + optional flags.
 3. **Lifecycle continuation** — "continue"/"next"/"go" are explicit continuation signals → lifecycle_position inference (S_STATE). Truly empty arguments (no text at all) → 1 clarify round via request_user_input; still empty → S_FALLBACK (E001)
 4. **Literal match priority** — keyword match takes precedence; lifecycle is tie-breaker
 5. **Argument pass-through** — the intent phrase is Session metadata only (the positional phrase to `run start`); the selected step's domain payload becomes command input through repeatable `--arg <value>`. The user can modify command inputs at confirmation; `-y` only passes through when the user provided it
-6. **Manual campaigns excluded** — `team-*` and `maestro-odyssey` are never candidates, recommendations, retained utilities, or handoff targets
+6. **Manual campaigns excluded** — `team-*` and `maestro-odyssey` never enter the executable candidate pool and are never executed in this turn; they may only be emitted as suggest-only invocations (see the odyssey campaign rows in the intent routing table)
 7. **Retained commands are suggest-only** — route retained commands to an exact slash command. Never execute them in this turn; `-y` applies only to first-tier steps
 8. **Companion routing is suggest-or-execute** — when complexity == lightweight, output `/maestro-companion "<intent>"` invocation. With `-y`, emit the invocation directly (`/maestro-companion "<intent>" -y`); the companion command owns its own execution. Without `-y`, present it as the recommended channel for user confirmation
 9. **Multi-step routes to the orchestrators** — when intent spans ≥2 steps or needs orchestration, output `/maestro "<intent>"` (manual stepwise) or `/maestro-ralph "<intent>"` (orchestrated closed-loop). This command never creates sessions or manages chains itself
@@ -222,26 +222,24 @@ Dominant step = the step whose keyword appears first or carries the primary verb
 | grill / pressure test / stress test | grill | Socratic pressure-test of a plan/idea against codebase reality — adversarial questioning, terminology collision checks |
 | collab / cross-verify / multi-tool / second opinion | collab | Fan out one requirement to multiple CLI tools, cross-verify findings into a unified conclusion |
 | refactor / tech debt | `/maestro-odyssey "<scope>" --mode improve` (odyssey campaign) | Output invocation; user invokes it |
-| sync docs | `/maestro-knowledge sync codebase` (retained command) | Suggest exact slash command; user invokes it |
-| issue / defect | `/maestro-issue <subcommand> ...` (retained command) | Suggest exact slash command; user invokes it |
-| wiki / knowledge graph | `/maestro-knowledge wiki ...` (retained command) | Suggest exact slash command; user invokes it |
-| spec / rule / constraint | `/maestro-spec load ...` or `/maestro-spec add ...` (retained command) | Suggest exact slash command; user invokes it |
+| issue / defect | `/maestro-issue "<intent>"` (retained command) | Suggest exact slash command; user invokes it |
+| wiki / knowledge graph | `/maestro-knowledge "<intent>"` (retained command) | Suggest exact slash command; user invokes it |
+| spec / rule / constraint | `/maestro-spec "<intent>"` (retained command) | Suggest exact slash command; user invokes it |
 | init / project setup | `/maestro-init ...` (retained command) | Suggest exact slash command; user invokes it |
-| status / dashboard | `/maestro-next` (status is now a next intent) | Suggest exact slash command; user invokes it |
 | security / OWASP | `/maestro-odyssey "<scope>" --mode security` (odyssey campaign) | Output invocation; user invokes it |
 | learn / explore code / follow | `/maestro-learn follow|investigate|decompose|consult ...` (retained command) | Suggest exact slash command; user invokes it |
 | UI design / design system / polish / impeccable | `/maestro-impeccable "<intent>" ...` (retained command) | Suggest exact slash command; user invokes it |
-| harvest / extract knowledge | `/maestro-knowledge harvest ...` (retained command) | Suggest exact slash command; user invokes it |
+| harvest / extract knowledge | `/maestro-knowledge "<intent>"` (retained command) | Suggest exact slash command; user invokes it |
 | fork / parallel dev | `/maestro-fork ...` (retained command) | Suggest exact slash command; user invokes it |
-| note / record observation | `/maestro-knowhow` (retained command) | Suggest exact slash command; user invokes it |
-| promote / distill insights | `/maestro-knowledge harvest` (retained command) | Suggest exact slash command; user invokes it |
+| note / record observation | `/maestro-knowhow "<intent>"` (retained command) | Suggest exact slash command; user invokes it |
+| promote / distill insights | `/maestro-knowledge "<intent>"` (retained command) | Suggest exact slash command; user invokes it |
 
 **Auxiliary workflow clusters:**
 
 | Cluster | Trigger | Chain |
 |---------|---------|-------|
 | Learning | New code / unknown module | maestro-learn follow → maestro-learn decompose → maestro-learn consult |
-| Knowledge | Distill experience | maestro-knowledge harvest → maestro-knowhow → maestro-spec add |
+| Knowledge | Distill experience | maestro-knowledge harvest → maestro-knowhow capture → maestro-spec add |
 | Issue | Defect management | maestro-issue discover → maestro-issue |
 
 ### A_EXECUTE_STEP
@@ -280,7 +278,7 @@ maestro run start "<short goal>" --cmd <step> --session YYYYMMDD-<step>-<topic> 
 #      Seal run as blocked. Do NOT proceed to step 4.
 
 # 4. Load the execution manual (follow the `next` hint from start)
-maestro run brief --platform codex <run_id>
+#    Execute the `next` hint returned by step 3's start verbatim — append no flag.
 #    Returns: workflow content, run-mode summary, goal, gate status
 
 # 5. LLM executes the workflow (core process)

@@ -843,7 +843,7 @@ Complete reading
 
 \`\`\`javascript
 // Universal design standards (MUST READ)
-const designSpec = Read('.codex/skills/skill-generator/specs/skill-requirements.md');
+const designSpec = Read('.claude/skills/skill-generator/specs/skill-requirements.md');
 
 // Key content checkpoints:
 const checkpoints = {
@@ -889,7 +889,7 @@ const specs = [];
 // 1. Design specification (P0)
 specs.push({
   file: 'specs/skill-requirements.md',
-  content: Read('.codex/skills/skill-generator/specs/skill-requirements.md'),
+  content: Read('.claude/skills/skill-generator/specs/skill-requirements.md'),
   priority: 'P0'
 });
 
@@ -928,7 +928,7 @@ Write(\`\${workDir}/spec-study-complete.flag\`, JSON.stringify(result, null, 2))
 ## Success Criteria
 
 Completion criteria:
-- [ ] Read skill-requirements.md
+- [ ] Read SKILL-DESIGN-SPEC.md
 - [ ] Read execution mode corresponding template files
 - [ ] Understand directory structure conventions
 - [ ] Understand naming standards

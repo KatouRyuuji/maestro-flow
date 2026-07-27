@@ -9,15 +9,21 @@ description: Intent-driven knowledge-store management — describe what you want
 argument-hint: "[intent — e.g. '审计知识库' | 'harvest 这个 session' | 'wiki health' |
   '注册术语 MVP' | 'extractors']"
 allowed-tools:
-  - Read
-  - Write
-  - Edit
   - Bash
+  - Edit
   - Glob
   - Grep
-  - Agent
+  - Read
   - WebFetch
+  - Write
+  - followup_task
+  - interrupt_agent
+  - list_agents
   - request_user_input
+  - send_message
+  - spawn_agent
+  - spawn_agents_on_csv
+  - wait_agent
 session-mode: none
 version: 0.5.56
 ---
@@ -35,7 +41,7 @@ Intent-driven knowledge-store management (the knowledge group extracted from mae
 </purpose>
 
 <dispatch>
-Classify the intent in `$ARGUMENTS` into one operation, then run `maestro run skill <step>` and follow it completely.
+Classify the intent in `$ARGUMENTS` into one operation, then run `maestro run skill --platform codex <step>` and follow it completely.
 
 1. Explicit keyword present → use its step (deterministic shortcut).
 2. Otherwise infer from the intent (see the table above), e.g. "审计/清理知识库" → audit, "从工件/session 提取" → harvest, "知识图谱/wiki 健康" → wiki, "注册术语 X" → domain.

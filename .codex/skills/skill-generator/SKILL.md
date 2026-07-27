@@ -140,7 +140,7 @@ IMPORTANT: Before any generation operation, read the following specification doc
 
 | Document | Purpose | Priority |
 |----------|---------|----------|
-| [specs/skill-requirements.md](specs/skill-requirements.md) | Universal design spec - defines structure, naming, quality standards for all Skills | **P0 - Critical** |
+| [specs/skill-requirements.md](specs/skill-requirements.md) | Skill design spec - defines structure, naming, quality standards | **P0 - Critical** |
 | [specs/reference-docs-spec.md](specs/reference-docs-spec.md) | Reference document generation spec - ensures generated Skills have proper phase-based Reference Documents with usage timing guidance | **P0 - Critical** |
 
 ### Template Files (Read Before Generation)
@@ -256,7 +256,7 @@ Phase 5: Validation & Documentation
 
 ```javascript
 // Phase 0: Read specifications (in-memory)
-Read('.codex/skills/skill-generator/specs/skill-requirements.md');
+Read('.claude/skills/skill-generator/specs/skill-requirements.md');
 Read('.claude/skills/skill-generator/templates/*.md'); // All templates
 
 // Phase 1: Gather requirements
@@ -315,7 +315,7 @@ Specification documents that must be read before any generation operation
 
 | Document | Purpose | When to Use |
 |----------|---------|-------------|
-| [specs/skill-requirements.md](specs/skill-requirements.md) | Universal Skill design specification | Understand Skill structure and naming conventions - **REQUIRED** |
+| [specs/skill-requirements.md](specs/skill-requirements.md) | Skill design specification | Understand Skill structure and naming conventions - **REQUIRED** |
 | [specs/reference-docs-spec.md](specs/reference-docs-spec.md) | Reference document generation specification | Ensure Reference Documents have proper phase-based organization - **REQUIRED** |
 
 ### Phase 1: Requirements Discovery
@@ -444,7 +444,7 @@ Specification documents that must be read before any generation operation
 
 | Document | Purpose | When to Use |
 |----------|---------|-------------|
-| [specs/skill-requirements.md](specs/skill-requirements.md) | Universal Skill design specification | Understand Skill structure and naming conventions - **REQUIRED** |
+| [specs/skill-requirements.md](specs/skill-requirements.md) | Skill design specification | Understand Skill structure and naming conventions - **REQUIRED** |
 | [specs/reference-docs-spec.md](specs/reference-docs-spec.md) | Reference document generation specification | Ensure Reference Documents have proper phase-based organization - **REQUIRED** |
 
 ### Phase 1: Requirements Discovery

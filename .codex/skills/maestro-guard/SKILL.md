@@ -8,6 +8,7 @@ allowed-tools:
   - Glob
   - Read
   - Write
+  - request_user_input
 session-mode: none
 version: 0.5.56
 ---

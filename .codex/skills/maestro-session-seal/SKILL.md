@@ -81,7 +81,7 @@ Skip if `--skip-knowledge`. Otherwise:
    ```
 4. **Persist** selected items:
    - Specs → recommend `/maestro-spec add ...`
-   - Knowhow → recommend `/maestro-knowledge harvest --session {session_id}` for extraction, then `/maestro-knowhow` for manual recording of extracted insights
+   - Knowhow → recommend `/maestro-knowledge harvest --session {session_id}` for extraction, then `/maestro-knowhow capture` for manual recording of extracted insights
    - Record promoted IDs in `session.json.lifecycle.promoted[]`（前缀区分 spec:/knowhow:）
 
 ### Step 3: Seal Session
@@ -120,7 +120,6 @@ Status: DONE
 | Condition | Suggestion |
 |-----------|-----------|
 | Next session activated | step `analyze` (`maestro run prepare --platform codex analyze` + `maestro run create analyze --session {next-slug} --intent "{goal}"`) |
-| DAG complete (all sealed) | `/maestro-next` |
 | Knowledge review needed | `/maestro-knowledge audit` |
 </completion>
 
