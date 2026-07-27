@@ -11,11 +11,12 @@ import { join } from 'node:path';
 
 import {
   readRunKnowledgeDelta,
+  promoteSessionKnowledge,
   recordActiveRunKnowledgeInputs,
   runKnowledgeDeltaSchema,
   summarizeSessionKnowledge,
 } from './knowledge.js';
-import { completeRun, createRun } from './runtime.js';
+import { completeRun, createRun, sealSession } from './runtime.js';
 import { SessionStore } from './store.js';
 
 const roots: string[] = [];
@@ -194,5 +195,57 @@ describe('Run knowledge delta', () => {
     expect(summary.candidates.every(candidate =>
       candidate.stage === 'corroborated' && candidate.run_ids.length === 2
     )).toBe(true);
+  });
+
+  it('promotes an explicitly selected observed candidate and persists a replay-safe receipt', () => {
+    const projectRoot = root();
+    installCommand(projectRoot);
+    const created = createRun({
+      projectRoot,
+      command: 'knowledge-demo',
+      sessionId: 'knowledge-session',
+      intent: 'promote reviewed knowledge',
+    });
+    writeKnowledgeReport(projectRoot, created.session_id, created.run_id);
+    completeRun(projectRoot, created.run_id, created.session_id);
+    sealSession(projectRoot, created.session_id, 'ready for knowledge promotion');
+
+    const before = summarizeSessionKnowledge(projectRoot, created.session_id);
+    const candidate = before.candidates.find(item => item.source_kind === 'decision')!;
+    expect(() => promoteSessionKnowledge(projectRoot, created.session_id, { all: true }))
+      .toThrow(/No corroborated pending candidates/);
+
+    const promoted = promoteSessionKnowledge(projectRoot, created.session_id, {
+      candidateIds: [candidate.candidate_id],
+    });
+    expect(promoted.promoted).toEqual([
+      expect.objectContaining({
+        candidate_id: candidate.candidate_id,
+        target: 'spec',
+        outcome: 'created',
+      }),
+    ]);
+
+    const after = summarizeSessionKnowledge(projectRoot, created.session_id);
+    const recorded = after.candidates.find(item => item.candidate_id === candidate.candidate_id)!;
+    expect(recorded).toMatchObject({
+      status: 'promoted',
+      promoted_id: promoted.promoted[0].promoted_id,
+      promotion_receipt: {
+        outcome: 'created',
+        content_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      },
+    });
+    expect(new SessionStore(projectRoot).readBundle(created.session_id).session.lifecycle.promoted_spec_ids)
+      .toContain(promoted.promoted[0].promoted_id);
+
+    const replay = promoteSessionKnowledge(projectRoot, created.session_id, {
+      candidateIds: [candidate.candidate_id],
+    });
+    expect(replay.promoted).toEqual([]);
+    expect(replay.already_promoted).toEqual([{
+      candidate_id: candidate.candidate_id,
+      promoted_id: promoted.promoted[0].promoted_id,
+    }]);
   });
 });

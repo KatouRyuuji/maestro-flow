@@ -6,7 +6,10 @@ import {
   buildKnowledgeUsageStats,
   type KnowledgeUsageConcentration,
 } from '../graph/kg/knowledge-usage.js';
-import { summarizeSessionKnowledge } from '../run/knowledge.js';
+import {
+  promoteSessionKnowledge,
+  summarizeSessionKnowledge,
+} from '../run/knowledge.js';
 
 const KNOWLEDGE_SOURCE_TYPES = ['spec', 'knowhow', 'issue', 'domain', 'codebase'] as const;
 
@@ -26,6 +29,51 @@ export function registerKnowledgeCommand(program: Command): void {
   const knowledge = program
     .command('knowledge')
     .description('Inspect project knowledge usage and lifecycle signals');
+
+  knowledge
+    .command('promote')
+    .description('Promote selected pending Session knowledge with durable receipts')
+    .argument('<session-id>', 'Session identifier')
+    .option('--candidate <ids>', 'Comma-separated candidate IDs')
+    .option('--all', 'Promote all corroborated pending candidates')
+    .option('--include-observed', 'Allow --all to include single-Run candidates')
+    .option('--json', 'Output as JSON')
+    .action((
+      sessionId: string,
+      opts: { candidate?: string; all?: boolean; includeObserved?: boolean; json?: boolean },
+    ) => {
+      try {
+        const candidateIds = opts.candidate
+          ?.split(',')
+          .map(id => id.trim())
+          .filter(Boolean);
+        const result = promoteSessionKnowledge(resolve('.'), sessionId, {
+          candidateIds,
+          all: opts.all,
+          includeObserved: opts.includeObserved,
+        });
+        if (opts.json) {
+          console.log(JSON.stringify(result, null, 2));
+          return;
+        }
+        console.log(`Promoted ${result.promoted.length} knowledge candidate(s) from ${sessionId}:`);
+        for (const item of result.promoted) {
+          console.log(
+            `  ${item.candidate_id} → ${item.promoted_id} `
+            + `(${item.target}, ${item.outcome})`,
+          );
+        }
+        if (result.already_promoted.length > 0) {
+          console.log(`Already promoted: ${result.already_promoted.length} candidate(s).`);
+        }
+        if (result.skipped_observed.length > 0) {
+          console.log(`Skipped ${result.skipped_observed.length} observed-only candidate(s).`);
+        }
+      } catch (error) {
+        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        process.exitCode = 1;
+      }
+    });
 
   knowledge
     .command('session')

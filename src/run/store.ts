@@ -560,6 +560,26 @@ export class SessionStore {
     });
   }
 
+  /**
+   * Record post-Run knowledge lifecycle metadata without reopening immutable
+   * Session execution state. Only the lifecycle object and sidecar transaction
+   * are exposed to the caller.
+   */
+  updateKnowledgeLifecycle<T>(
+    sessionId: string,
+    mutator: (lifecycle: SessionState['lifecycle'], tx: StoreTransaction) => T,
+  ): T {
+    return this.withLock(() => {
+      const draft = clone(this.readBundleUnlocked(sessionId));
+      const tx = new StoreTransaction(this, sessionId);
+      const result = mutator(draft.session.lifecycle, tx);
+      sessionStateV13Schema.parse(draft.session);
+      tx.addBundle(draft);
+      this.writeBatchUnlocked(tx.writes);
+      return result;
+    });
+  }
+
   findRun(runId: string, sessionId?: string): { sessionId: string; run: CommandRun } {
     if (sessionId) return { sessionId, run: this.readRun(sessionId, runId) };
     if (!existsSync(this.sessionsRoot)) throw new Error(`Run not found: ${runId}`);

@@ -1,10 +1,14 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 
 import type { CommandRun } from './schemas.js';
 import { SessionStore, type StoreTransaction } from './store.js';
+import { parseSpecEntries } from '../tools/spec-entry-parser.js';
+import { appendSpecEntry } from '../tools/spec-writer.js';
+import { resolveSpecDir, type SpecCategory } from '../tools/spec-loader.js';
+import { executeAdd } from '../tools/store-knowhow.js';
 
 const nonEmptyString = z.string().min(1);
 
@@ -35,6 +39,11 @@ export const knowledgeCandidateSchema = z.object({
   last_recorded_at: nonEmptyString,
   status: z.enum(['pending', 'promoted', 'rejected']),
   promoted_id: z.string().nullable(),
+  promotion_receipt: z.object({
+    outcome: z.enum(['created', 'reaffirmed']),
+    promoted_at: nonEmptyString,
+    content_hash: z.string().regex(/^[a-f0-9]{64}$/),
+  }).strict().nullable().optional(),
 }).strict();
 
 export const runKnowledgeDeltaSchema = z.object({
@@ -65,6 +74,28 @@ export interface SessionKnowledgeSummary {
   }>;
 }
 
+export interface PromoteSessionKnowledgeOptions {
+  candidateIds?: string[];
+  all?: boolean;
+  includeObserved?: boolean;
+}
+
+export interface KnowledgePromotionResult {
+  schema_version: 'knowledge-promotion-result/1.0';
+  session_id: string;
+  promoted: Array<{
+    candidate_id: string;
+    target: KnowledgeCandidate['target'];
+    promoted_id: string;
+    outcome: 'created' | 'reaffirmed';
+  }>;
+  already_promoted: Array<{
+    candidate_id: string;
+    promoted_id: string;
+  }>;
+  skipped_observed: string[];
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -90,6 +121,14 @@ function candidateId(target: KnowledgeCandidate['target'], content: string): str
   const normalized = content.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
   const hash = createHash('sha256').update(`${target}\0${normalized}`).digest('hex').slice(0, 16);
   return `KDC-${hash}`;
+}
+
+function normalizedText(value: string): string {
+  return value.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function contentHash(value: string): string {
+  return createHash('sha256').update(normalizedText(value)).digest('hex');
 }
 
 function addInput(
@@ -140,6 +179,7 @@ function addCandidate(
     last_recorded_at: now,
     status: 'pending',
     promoted_id: null,
+    promotion_receipt: null,
   });
 }
 
@@ -279,6 +319,11 @@ export function summarizeSessionKnowledge(
         if (candidate.last_recorded_at > existing.last_recorded_at) {
           existing.last_recorded_at = candidate.last_recorded_at;
         }
+        if (candidate.status === 'promoted') {
+          existing.status = 'promoted';
+          existing.promoted_id = candidate.promoted_id;
+          existing.promotion_receipt = candidate.promotion_receipt;
+        }
       } else {
         candidates.set(candidate.candidate_id, { ...structuredClone(candidate), run_ids: [ledger.run_id] });
       }
@@ -306,5 +351,219 @@ export function summarizeSessionKnowledge(
         || right.occurrences - left.occurrences
         || left.candidate_id.localeCompare(right.candidate_id)
       ),
+  };
+}
+
+function specBody(content: string): string {
+  return content.replace(/^###\s+.*?(?:\r?\n){1,2}/, '').trim();
+}
+
+function findExistingSpec(
+  projectRoot: string,
+  title: string,
+): { id: string; content: string } | null {
+  const specsDir = resolveSpecDir(projectRoot, 'project');
+  if (!existsSync(specsDir)) return null;
+  for (const file of readdirSync(specsDir).filter(name => name.endsWith('.md')).sort()) {
+    const parsed = parseSpecEntries(readFileSync(join(specsDir, file), 'utf8'));
+    const entry = parsed.entries.find(item => normalizedText(item.title) === normalizedText(title));
+    if (entry) {
+      return {
+        id: entry.sid ?? `legacy:${file}:${entry.lineStart}`,
+        content: specBody(entry.content),
+      };
+    }
+    const legacy = parsed.legacy.find(item => normalizedText(item.title) === normalizedText(title));
+    if (legacy) return { id: `legacy:${file}:${legacy.lineStart}`, content: legacy.content.trim() };
+  }
+  return null;
+}
+
+function promoteSpecCandidate(
+  projectRoot: string,
+  sessionId: string,
+  candidate: KnowledgeCandidate,
+): { promoted_id: string; outcome: 'created' | 'reaffirmed' } {
+  const existing = findExistingSpec(projectRoot, candidate.title);
+  if (existing) {
+    if (normalizedText(existing.content) !== normalizedText(candidate.content)) {
+      throw new Error(
+        `Candidate ${candidate.candidate_id} conflicts with existing spec title "${candidate.title}"; `
+        + 'resolve with spec supersede/conflict before promotion',
+      );
+    }
+    return { promoted_id: existing.id, outcome: 'reaffirmed' };
+  }
+
+  const validCategories: SpecCategory[] = ['coding', 'arch', 'debug', 'test', 'review', 'learning', 'ui'];
+  const category = validCategories.includes(candidate.category as SpecCategory)
+    ? candidate.category as SpecCategory
+    : 'learning';
+  const result = appendSpecEntry(
+    projectRoot,
+    category,
+    candidate.title,
+    candidate.content,
+    ['session-knowledge', candidate.source_kind],
+    `session:${sessionId}:${candidate.candidate_id}`,
+    'project',
+    undefined,
+    `Promoted from ${candidate.evidence_refs.join(', ')}`,
+  );
+  if (!result.ok || !result.sid) {
+    const replay = findExistingSpec(projectRoot, candidate.title);
+    if (result.duplicate && replay && normalizedText(replay.content) === normalizedText(candidate.content)) {
+      return { promoted_id: replay.id, outcome: 'reaffirmed' };
+    }
+    throw new Error(`Failed to promote spec candidate ${candidate.candidate_id}`);
+  }
+  return { promoted_id: result.sid, outcome: 'created' };
+}
+
+function promoteKnowhowCandidate(
+  projectRoot: string,
+  candidate: KnowledgeCandidate,
+): { promoted_id: string; outcome: 'created' | 'reaffirmed' } {
+  const date = candidate.first_recorded_at.slice(0, 10).replace(/-/g, '');
+  const explicitId = `tip-${date}-${candidate.candidate_id.slice(4)}`;
+  const previousRoot = process.env.MAESTRO_PROJECT_ROOT;
+  process.env.MAESTRO_PROJECT_ROOT = projectRoot;
+  try {
+    const response = executeAdd({
+      operation: 'add',
+      limit: 20,
+      id: explicitId,
+      type: 'tip',
+      title: candidate.title,
+      description: `Promoted from ${candidate.evidence_refs.join(', ')}`,
+      body: candidate.content,
+      keywords: ['session-knowledge', candidate.source_kind],
+      tags: ['promoted'],
+    });
+    if (!response.success) throw new Error(response.error ?? 'unknown knowhow promotion error');
+    const result = response.result as { id: string; replayed: boolean };
+    return { promoted_id: result.id, outcome: result.replayed ? 'reaffirmed' : 'created' };
+  } finally {
+    if (previousRoot === undefined) delete process.env.MAESTRO_PROJECT_ROOT;
+    else process.env.MAESTRO_PROJECT_ROOT = previousRoot;
+  }
+}
+
+/**
+ * Promote selected pending candidates. `--all` remains conservative: observed
+ * candidates require an explicit id or includeObserved=true.
+ */
+export function promoteSessionKnowledge(
+  projectRoot: string,
+  sessionId: string,
+  options: PromoteSessionKnowledgeOptions,
+): KnowledgePromotionResult {
+  if (options.all && options.candidateIds?.length) {
+    throw new Error('Use either candidate IDs or --all, not both');
+  }
+  if (!options.all && !options.candidateIds?.length) {
+    throw new Error('Select candidates with --candidate <ids> or --all');
+  }
+
+  const summary = summarizeSessionKnowledge(projectRoot, sessionId);
+  const requested = new Set(options.candidateIds ?? []);
+  const unknown = [...requested].filter(id => !summary.candidates.some(candidate => candidate.candidate_id === id));
+  if (unknown.length > 0) throw new Error(`Unknown candidate IDs: ${unknown.join(', ')}`);
+
+  const pending = summary.candidates.filter(candidate => candidate.status === 'pending');
+  const alreadyPromoted = options.candidateIds
+    ? summary.candidates
+      .filter(candidate => requested.has(candidate.candidate_id)
+        && candidate.status === 'promoted'
+        && candidate.promoted_id)
+      .map(candidate => ({
+        candidate_id: candidate.candidate_id,
+        promoted_id: candidate.promoted_id!,
+      }))
+    : [];
+  const selected = options.all
+    ? pending.filter(candidate => options.includeObserved || candidate.stage === 'corroborated')
+    : pending.filter(candidate => requested.has(candidate.candidate_id));
+  const skippedObserved = options.all && !options.includeObserved
+    ? pending.filter(candidate => candidate.stage === 'observed').map(candidate => candidate.candidate_id)
+    : [];
+  if (selected.length === 0 && alreadyPromoted.length === 0) {
+    if (options.all && skippedObserved.length === 0) {
+      return {
+        schema_version: 'knowledge-promotion-result/1.0',
+        session_id: sessionId,
+        promoted: [],
+        already_promoted: [],
+        skipped_observed: [],
+      };
+    }
+    throw new Error(
+      skippedObserved.length > 0
+        ? 'No corroborated pending candidates; pass --include-observed or select explicit candidate IDs'
+        : 'No pending candidates selected',
+    );
+  }
+
+  // Preflight title conflicts before the first project knowledge write.
+  for (const candidate of selected.filter(item => item.target === 'spec')) {
+    const existing = findExistingSpec(projectRoot, candidate.title);
+    if (existing && normalizedText(existing.content) !== normalizedText(candidate.content)) {
+      throw new Error(
+        `Candidate ${candidate.candidate_id} conflicts with existing spec title "${candidate.title}"; `
+        + 'resolve with spec supersede/conflict before promotion',
+      );
+    }
+  }
+
+  const promoted = selected.map(candidate => {
+    const result = candidate.target === 'spec'
+      ? promoteSpecCandidate(projectRoot, sessionId, candidate)
+      : promoteKnowhowCandidate(projectRoot, candidate);
+    return {
+      candidate_id: candidate.candidate_id,
+      target: candidate.target,
+      promoted_id: result.promoted_id,
+      outcome: result.outcome,
+    };
+  });
+
+  const store = new SessionStore(projectRoot);
+  const promotedAt = nowIso();
+  store.updateKnowledgeLifecycle(sessionId, (lifecycle, tx) => {
+    for (const item of promoted) {
+      const target = item.target === 'spec'
+        ? lifecycle.promoted_spec_ids
+        : lifecycle.promoted_knowhow_ids;
+      if (!target.includes(item.promoted_id)) target.push(item.promoted_id);
+    }
+    for (const runId of new Set(summary.candidates.flatMap(candidate => candidate.run_ids))) {
+      const delta = readRunKnowledgeDelta(store, sessionId, runId);
+      let changed = false;
+      for (const candidate of delta.candidates) {
+        const item = promoted.find(entry => entry.candidate_id === candidate.candidate_id);
+        if (!item) continue;
+        candidate.status = 'promoted';
+        candidate.promoted_id = item.promoted_id;
+        candidate.promotion_receipt = {
+          outcome: item.outcome,
+          promoted_at: promotedAt,
+          content_hash: contentHash(candidate.content),
+        };
+        changed = true;
+      }
+      if (changed) {
+        delta.revision++;
+        delta.updated_at = promotedAt;
+        tx.writeJson(deltaPath(store, sessionId, runId), delta, runKnowledgeDeltaSchema);
+      }
+    }
+  });
+
+  return {
+    schema_version: 'knowledge-promotion-result/1.0',
+    session_id: sessionId,
+    promoted,
+    already_promoted: alreadyPromoted,
+    skipped_observed: skippedObserved,
   };
 }
