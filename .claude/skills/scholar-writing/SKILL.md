@@ -4,6 +4,13 @@ disable-model-invocation: true
 description: End-to-end academic paper writing workflow. Takes a research repository and produces a publication-ready LaTeX manuscript for top ML/AI conferences (NeurIPS, ICML, ICLR, ACL, AAAI, COLM). Covers repo understanding, structure planning, section drafting, citation management, anti-AI polishing, and conference formatting. Triggers on "write paper", "draft paper", "scholar writing", "paper writing workflow".
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, WebSearch, WebFetch, TodoWrite, AskUserQuestion, Task
 session-mode: run
+contract:
+  consumes: []
+  produces:
+    - { path: outputs/delivery.json, kind: delivery-manifest, alias: latest-paper-delivery, role: primary }
+  gates:
+    entry: []
+    exit: []
 ---
 
 <required_reading>
@@ -22,7 +29,11 @@ Follow `~/.maestro/workflows/run-mode.md`. If an orchestrator injected `run_id` 
 maestro run create scholar-writing --session <YYYYMMDD-scholar-writing-{topic}> --intent "<short phrase>"
 ```
 
-Session slug is ASCII-only, ≤64 chars. The paper itself lives in the user's `outputDir` (a working area in the user's repo, like source code — **not** the Run truth source). Write the workflow synthesis and the delivery manifest (paths to `paper.tex` / `paper.pdf` / `references.bib`, verification status, remaining action items) to `{run_dir}/report.md`, and the delivery-paths list to `{run_dir}/outputs/`. Close per the Final Checklist.
+Session slug is ASCII-only, ≤64 chars. The paper itself lives in the user's `outputDir` (a working area in the user's repo, like source code — **not** the Run truth source). Write the workflow synthesis and the delivery manifest (paths to `paper.tex` / `paper.pdf` / `references.bib`, verification status, remaining action items) to `{run_dir}/report.md`, and the machine-readable delivery-paths list to `{run_dir}/outputs/delivery.json` — the contract registers it as the primary artifact `latest-paper-delivery`, and the runtime only scans `{run_dir}/outputs/`, so a manifest written anywhere else is invisible. Close per the Final Checklist.
+
+```json
+{ "paper_tex": "", "paper_pdf": "", "references_bib": "", "sections": [], "verified": false, "open_items": [] }
+```
 
 ## Pre-load (before execution)
 
@@ -304,6 +315,7 @@ Written to: `outputDir/.writing/paper-notes.md`
 
 ### Final Checklist
 - [ ] All 6 phases completed
+- [ ] `{run_dir}/outputs/delivery.json` written (primary artifact — `run check` cannot register the delivery without it)
 - [ ] paper.tex compiles without errors
 - [ ] All citations verified (no remaining `[CITATION NEEDED]`)
 - [ ] Anti-AI score >= 35 for all sections
