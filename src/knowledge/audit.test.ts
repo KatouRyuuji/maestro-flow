@@ -1,0 +1,116 @@
+import { afterEach, describe, expect, it } from 'vitest';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { auditKnowledge } from './audit.js';
+
+const roots: string[] = [];
+
+function root(): string {
+  const path = mkdtempSync(join(tmpdir(), 'maestro-knowledge-audit-'));
+  roots.push(path);
+  return path;
+}
+
+function writeUnsynchronizedChain(projectRoot: string): string {
+  const dir = join(projectRoot, '.workflow', 'specs');
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, 'coding-conventions.md');
+  writeFileSync(path, `---
+category: coding
+---
+
+<spec-entry category="coding" keywords="store" date="2026-07-01" sid="S-old" title="Old store rule">
+
+### Old store rule
+
+Use the old store.
+
+</spec-entry>
+
+<spec-entry category="coding" keywords="store" date="2026-07-02" sid="S-new" title="New store rule" supersedes="S-old">
+
+### New store rule
+
+Use the canonical store.
+
+</spec-entry>
+`, 'utf8');
+  return path;
+}
+
+afterEach(() => {
+  for (const path of roots.splice(0)) rmSync(path, { recursive: true, force: true });
+});
+
+describe('knowledge audit and pruning', () => {
+  it('requires an explicit prune plan before apply', async () => {
+    await expect(auditKnowledge(root(), { apply: true })).rejects.toThrow('--apply requires --prune');
+  });
+
+  it('keeps the default audit read-only and exposes deterministic lifecycle repair', async () => {
+    const projectRoot = root();
+    const specPath = writeUnsynchronizedChain(projectRoot);
+
+    const report = await auditKnowledge(projectRoot, { scope: 'spec' });
+    expect(report.findings).toContainEqual(expect.objectContaining({
+      subtype: 'unsynchronized-supersession',
+      target: 'S-old',
+      recommended_action: 'deprecate',
+    }));
+    expect(report.prune_plan).toEqual([]);
+    expect(readFileSync(specPath, 'utf8')).not.toContain('sid="S-old" title="Old store rule" status="deprecated"');
+
+    const planned = await auditKnowledge(projectRoot, { scope: 'spec', prune: true });
+    expect(planned.prune_plan).toEqual([
+      expect.objectContaining({
+        action: 'deprecate',
+        target_id: 'S-old',
+        successor_id: 'S-new',
+      }),
+    ]);
+    expect(readFileSync(specPath, 'utf8')).not.toContain('sid="S-old" title="Old store rule" status="deprecated"');
+  });
+
+  it('backs up before soft-deprecating and is idempotent on rerun', async () => {
+    const projectRoot = root();
+    const specPath = writeUnsynchronizedChain(projectRoot);
+
+    const applied = await auditKnowledge(projectRoot, {
+      scope: 'spec',
+      prune: true,
+      apply: true,
+    });
+    expect(applied.applied.count).toBe(1);
+    expect(applied.applied.backup_dir).toMatch(/^\.workflow\/\.trash\/knowledge-audit-/);
+    expect(existsSync(join(projectRoot, applied.applied.backup_dir!))).toBe(true);
+    expect(readFileSync(specPath, 'utf8')).toContain(
+      'sid="S-old" title="Old store rule" status="deprecated" superseded-by="S-new"',
+    );
+    expect(existsSync(join(projectRoot, '.workflow', '.knowledge-audit', 'audit-log.jsonl')))
+      .toBe(true);
+
+    const rerun = await auditKnowledge(projectRoot, { scope: 'spec', prune: true, apply: true });
+    expect(rerun.prune_plan).toEqual([]);
+    expect(rerun.applied).toEqual({ count: 0, backup_dir: null });
+  });
+
+  it('declares that usage signals cannot independently trigger pruning', async () => {
+    const report = await auditKnowledge(root(), { scope: 'all', prune: true });
+    expect(report.safety).toEqual({
+      usage_only_never_pruned: true,
+      physical_delete: false,
+      apply_requires_prune: true,
+    });
+    expect(report.prune_plan.every(action => action.reason === 'unsynchronized-supersession'))
+      .toBe(true);
+  });
+});

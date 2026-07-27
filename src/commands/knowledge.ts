@@ -10,6 +10,7 @@ import {
   promoteSessionKnowledge,
   summarizeSessionKnowledge,
 } from '../run/knowledge.js';
+import { auditKnowledge, type KnowledgeAuditScope } from '../knowledge/audit.js';
 
 const KNOWLEDGE_SOURCE_TYPES = ['spec', 'knowhow', 'issue', 'domain', 'codebase'] as const;
 
@@ -29,6 +30,63 @@ export function registerKnowledgeCommand(program: Command): void {
   const knowledge = program
     .command('knowledge')
     .description('Inspect project knowledge usage and lifecycle signals');
+
+  knowledge
+    .command('audit')
+    .description('Audit knowledge health and optionally apply a safe soft-prune plan')
+    .option('--scope <scope>', 'Audit scope: spec|knowhow|all', 'all')
+    .option('--prune', 'Include a deterministic soft-prune plan')
+    .option('--apply', 'Apply the prune plan after backups (requires --prune)')
+    .option('--json', 'Output as JSON')
+    .action(async (opts: {
+      scope?: string;
+      prune?: boolean;
+      apply?: boolean;
+      json?: boolean;
+    }) => {
+      try {
+        if (!['spec', 'knowhow', 'all'].includes(opts.scope ?? 'all')) {
+          throw new Error('--scope must be one of spec, knowhow, all');
+        }
+        const result = await auditKnowledge(resolve('.'), {
+          scope: (opts.scope ?? 'all') as KnowledgeAuditScope,
+          prune: opts.prune,
+          apply: opts.apply,
+        });
+        if (opts.json) {
+          console.log(JSON.stringify(result, null, 2));
+          return;
+        }
+        console.log(`Knowledge audit: ${result.findings.length} finding(s)`);
+        console.log(
+          `Pipeline: ${result.pipeline.ledgers} ledgers · `
+          + `${result.pipeline.pending_corroborated} corroborated pending · `
+          + `${result.pipeline.pending_observed} observed pending · `
+          + `${result.pipeline.promoted} promoted`,
+        );
+        if (result.usage) {
+          console.log(
+            `Exposure: top10 ${percent(result.usage.impressionConcentration.top10Share)} · `
+            + `Gini ${result.usage.impressionConcentration.gini.toFixed(3)}`,
+          );
+        }
+        for (const finding of result.findings) {
+          console.log(
+            `  ${finding.priority} ${finding.store}/${finding.subtype} `
+            + `${finding.target}: ${finding.evidence}`,
+          );
+        }
+        if (opts.prune) console.log(`Prune plan: ${result.prune_plan.length} soft action(s)`);
+        if (opts.apply) {
+          console.log(
+            `Applied: ${result.applied.count} · backup: ${result.applied.backup_dir ?? 'not needed'}`,
+          );
+        }
+      } catch (error) {
+        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        process.exitCode = 1;
+      }
+    });
 
   knowledge
     .command('promote')
