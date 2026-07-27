@@ -11,7 +11,7 @@ export function registerSkillsCommand(program: Command): void {
     .description('List effective commands, Skills, and optional Run-resolvable steps')
     .option('--json', 'Machine-readable output (one JSON line per entry)')
     .option('--quiet', 'Suppress decorative output')
-    .option('--platform <platform>', 'Filter by platform: claude | codex | agent | agy')
+    .option('--platform <platform>', 'Filter by platform: claude | codex | agent | agy | pi')
     .option('--steps', 'Include prepare/workflow step names resolvable by maestro run next')
     .action(async (opts: { json?: boolean; quiet?: boolean; platform?: string; steps?: boolean }) => {
       const run = await loadSkillsCommand();

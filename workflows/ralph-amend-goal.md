@@ -57,9 +57,10 @@ Runtime performs the audited metadata update. Never write `session.json`, `statu
 
 When `invalidated_steps` or `new_gaps` is non-empty, a planning Skill must run in the same Session and emit one typed `chain-proposal/1.0`:
 
-1. Reuse an already pending planning Run when one exists; otherwise create an amendment planning Run through `maestro session start --chain plan --session {session_id} --arg "{change_request}"`.
-2. Load it with `run brief`, execute the planning contract, and call `run check`.
-3. Accept exactly one valid proposal with `session done ... --apply-proposal`; reject by omission and note; revise on the same Run.
+1. Inspect the exact Session chain. If exactly one pending execution step has `command=plan`, allocate that existing step with `maestro session next --session {session_id} --pick {plan_step_id} --inline-brief --json`. Multiple pending plan steps require explicit selection.
+2. If no pending plan step exists, create one ad-hoc amendment Run without changing the chain: `maestro run create plan --session {session_id} --arg "{change_request}"`. Never rebuild or replace the existing Session chain to allocate this Run.
+3. Use the returned inline brief for the picked chain step; use the create response or `run brief` only when re-attaching the ad-hoc Run. Execute the planning contract and call `run check`.
+4. Accept exactly one valid proposal with `session done ... --apply-proposal`; reject by omission and note; revise on the same Run.
 
 The proposal may change only the pending tail and must respect the Run's declared chain effects. Amendment metadata and chain mutation therefore remain separate audited Runtime transitions.
 

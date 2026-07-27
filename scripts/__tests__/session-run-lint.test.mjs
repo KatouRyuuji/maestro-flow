@@ -182,7 +182,6 @@ test('source lint accepts alias-free Odyssey workflows while enforcing prepare a
   assert.doesNotMatch(ralph, /Read state\.json\.artifacts/);
   for (const prompt of [maestro, ralph]) {
     assert.doesNotMatch(prompt, /maestro ralph\s/);
-    assert.doesNotMatch(prompt, /maestro skills\s/);
   }
 
   const codexMaestro = readFileSync(join(repoRoot, '.codex', 'skills', 'Maestro', 'SKILL.md'), 'utf8');
@@ -190,7 +189,23 @@ test('source lint accepts alias-free Odyssey workflows while enforcing prepare a
   for (const prompt of [codexMaestro, codexRalph]) {
     assert.match(prompt, /argument-hint: <intent> \[-y\] \[-c\] \[--amend\]/);
     assert.doesNotMatch(prompt, /maestro ralph\s/);
-    assert.doesNotMatch(prompt, /maestro skills\s/);
+  }
+  for (const prompt of [ralph, codexRalph]) {
+    for (const token of [
+      'S_INFER → S_DECOMPOSE → S_ASSESS → S_BUILD → S_CREATE',
+      '### A_INFER',
+      '### A_DECOMPOSE',
+      '### A_ASSESS',
+      'confidence_score',
+      'risk ≠ high AND confidence_score ≥ 60',
+      'Confidence below 60 cannot enter S_RUN_LOOP',
+      'at least 2 independently releasable milestones',
+      '--platform {target_platform}',
+      'pi-maestro-flow',
+    ]) {
+      assert.match(prompt, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    }
+    assert.doesNotMatch(prompt, /maestro skills --steps --json --platform claude/);
   }
 
   const orchestratorLoop = readFileSync(join(repoRoot, 'workflows', 'orchestrator-run-loop.md'), 'utf8');
@@ -216,6 +231,19 @@ test('source lint accepts alias-free Odyssey workflows while enforcing prepare a
   assert.match(ralph, /session done --json/);
   const amendFlow = readFileSync(join(repoRoot, 'workflows', 'ralph-amend-goal.md'), 'utf8');
   assert.match(amendFlow, /maestro session meta update --session \{session_id\} --decomposition-file -/);
+  assert.match(amendFlow, /maestro session next --session \{session_id\} --pick \{plan_step_id\} --inline-brief --json/);
+  assert.match(amendFlow, /maestro run create plan --session \{session_id\} --arg "\{change_request\}"/);
+  assert.doesNotMatch(amendFlow, /session start --chain plan/);
+  const ralphPrepare = readFileSync(join(repoRoot, 'prepare', 'ralph.md'), 'utf8');
+  assert.match(ralphPrepare, /\| init \| `init` \|/);
+  assert.match(ralphPrepare, /\| specs-setup \| `specs-setup` \|/);
+  assert.match(ralphPrepare, /--platform \{target_platform\}/);
+  assert.match(ralphPrepare, /package\.json#pi\.skills/);
+  assert.doesNotMatch(ralphPrepare, /maestro skills --steps --json --platform claude/);
+  const maestroPrepare = readFileSync(join(repoRoot, 'prepare', 'maestro.md'), 'utf8');
+  assert.match(maestroPrepare, /--platform \{target_platform\}/);
+  assert.match(maestroPrepare, /package\.json#pi\.skills/);
+  assert.doesNotMatch(maestroPrepare, /maestro skills --steps --json --platform claude/);
   for (const workflow of [full, lite, orchestratorLoop, amendFlow]) {
     assert.doesNotMatch(workflow, /maestro ralph\s/);
     assert.doesNotMatch(workflow, /maestro run decide\s/);

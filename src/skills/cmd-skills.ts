@@ -16,7 +16,7 @@ export interface SkillsCmdOptions {
   steps?: boolean;
 }
 
-const VALID_PLATFORMS: SkillPlatform[] = ['claude', 'codex', 'agent', 'agy'];
+const VALID_PLATFORMS: SkillPlatform[] = ['claude', 'codex', 'agent', 'agy', 'pi'];
 
 export async function runSkills(opts: SkillsCmdOptions): Promise<number> {
   if (opts.platform && !VALID_PLATFORMS.includes(opts.platform)) {
@@ -26,7 +26,7 @@ export async function runSkills(opts: SkillsCmdOptions): Promise<number> {
   if (!opts.platform) {
     console.error(`[maestro skills] WARNING: --platform not specified — returning ALL platforms.`);
     console.error(`  Available: ${VALID_PLATFORMS.join(', ')}`);
-    console.error(`  Usage: maestro skills --platform <claude|codex|agent|agy>`);
+    console.error(`  Usage: maestro skills --platform <claude|codex|agent|agy|pi>`);
     console.error('');
   }
   const all = scanAllSkills(undefined, opts.platform ? { platform: opts.platform } : {});

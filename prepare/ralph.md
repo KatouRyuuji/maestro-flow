@@ -24,8 +24,8 @@ Ralph 是闭环编排策略层。本文件定义 **命令选择**（Stage Mappin
 | grill | `grill "{intent}"` | — | all（`-y` 时透传 `-y` 到 grill args） |
 | brainstorm | `brainstorm "{intent}" [--from grill:{grill_id}]` | — | all |
 | blueprint | `blueprint "{intent}"` | — | all |
-| init | `maestro-init` | — | all |
-| specs-setup | `maestro-spec setup` | — | all（仅当 `.workflow/specs/` 不存在时插入） |
+| init | `init` | — | all |
+| specs-setup | `specs-setup` | — | all（仅当 `.workflow/specs/` 不存在时插入） |
 | analyze-macro | `analyze "{intent}"` | `post-analyze-scope` | all |
 | roadmap | `roadmap --from analyze:{analyze_macro_id}` | — | all（仅 scope_verdict=large + wants_roadmap） |
 | analyze | `analyze --session {session}` | — | all |
@@ -54,7 +54,7 @@ Ralph 是闭环编排策略层。本文件定义 **命令选择**（Stage Mappin
 6. **终点硬约束**：有 `session_id` → chain 以 `session-seal`(decision:post-session) 结尾；standalone → 以最后一个质量门结尾。
 7. **goal_ref 传播**：有 decomposition 时，每个 step 按 `stage ∈ goal.lifecycle` 匹配 `goal_ref`。
 8. **占位符**：`{session}` `{intent}` 由运行时替换。
-9. **skill 名预校验**：通过 `maestro skills --steps --json --platform claude` 拉取可用 commands + skills + steps 注册表，匹配 skill 名；未命中 → 报错 E005，阻断建链。省略 `--platform` 会返回全平台混合结果，必须显式指定。
+9. **skill 名预校验**：先把当前 host 映射为 Skill scanner 接受的 `target_platform`（`claude|codex|agent|agy|pi`），再通过 `maestro skills --steps --json --platform {target_platform}` 拉取该平台的 commands + skills + steps 注册表并匹配 step 名；未命中 → 报错 E005，阻断建链。不得省略 `--platform`，也不得为非 Claude host 回退到 `claude`。`pi` 的 Skill 来源是已安装 `pi-maestro-flow` npm 包中 `package.json#pi.skills` 声明的目录，不是用户主目录下的裸 `.pi/skills`。
 10. **step 形态**：chain-file step 仅 `command/args?/stage?/goal_ref?/retry_max?/decision_ref?`。
 11. **scope_verdict gating**（起点 = analyze-macro 时）：
     - `large` + `wants_roadmap` → 保留 roadmap + analyze；plan 用 `--session`

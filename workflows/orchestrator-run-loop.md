@@ -80,7 +80,7 @@ Maestro 与 Ralph 共享这一执行循环。编排层调用 `maestro session ..
 
    `maestro session create "{intent}" --id {slug} --chain-file {path}`
 
-4. 建链前 prompt 必须用 `maestro skills --steps --json --platform claude` 预校验每个 step 名（省略 `--platform` 会返回全平台混合注册表）；未命中即 E005，阻断建链。Runtime resolver 在 `session next` 分配 Run 前独立复校 command、Skill 和 lifecycle step。两级校验都不可省略。
+4. 建链前 prompt 必须把当前 host 映射为 Skill scanner 支持的 `target_platform`（`claude|codex|agent|agy|pi`），再用 `maestro skills --steps --json --platform {target_platform}` 预校验每个 step 名（省略 `--platform` 会返回全平台混合注册表）；未命中即 E005，阻断建链。`pi` 平台从已安装 `pi-maestro-flow` npm 包的 `package.json#pi.skills` 发现 Skill，不扫描用户主目录下的裸 `.pi/skills`。Runtime resolver 在 `session next` 分配 Run 前独立复校 command、Skill 和 lifecycle step。两级校验都不可省略。
 
 ### 2. Locate and allocate
 

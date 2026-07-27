@@ -47,7 +47,7 @@ chain 包含 analyze/plan/execute 等执行 stage 且 `.workflow/specs/` 不存�
 
 ### 2. Skill 名预校验
 
-所有 step 的 skill 名通过 `maestro skills --steps --json --platform claude` 预校验（project 覆盖 global）。省略 `--platform` 会返回全平台混合注册表并打 WARNING，必须显式指定。未命中 → 报错 E005，阻断建链。
+先把当前 host 映射为 Skill scanner 接受的 `target_platform`（`claude|codex|agent|agy|pi`），再通过 `maestro skills --steps --json --platform {target_platform}` 预校验所有 step 名（project 覆盖 global）。不得省略 `--platform`，也不得为非 Claude host 回退到 `claude`；未命中 → 报错 E005，阻断建链。`pi` 的 Skill 来源是已安装 `pi-maestro-flow` npm 包中 `package.json#pi.skills` 声明的目录。
 
 ### 3. 组装 chain-file
 

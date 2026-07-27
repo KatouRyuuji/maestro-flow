@@ -308,7 +308,7 @@ List the currently active commands, Skills, and steps that can be resolved by `m
 
 ```bash
 maestro skills                          # 列出命令与 Skill
-maestro skills --platform codex         # 按平台过滤：claude | codex | agent | agy
+maestro skills --platform codex         # 按平台过滤：claude | codex | agent | agy | pi
 maestro skills --steps                  # 包含 prepare/workflow 可解析步骤名
 maestro skills --json                   # 机器可读（每行一条 JSON）
 ```

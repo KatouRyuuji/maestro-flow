@@ -12,14 +12,17 @@
 //   - ~/.agents/skills/*/SKILL.md           type: skill,   scope: global,  platform: agent
 //   - <cwd>/.agy/skills/*/SKILL.md          type: skill,   scope: project, platform: agy
 //   - ~/.agy/skills/*/SKILL.md              type: skill,   scope: global,  platform: agy
+//   - <pi-maestro-flow>/<pi.skills>/*/SKILL.md
+//     discovered from the npm package manifest; project package overrides runtime package
 // ---------------------------------------------------------------------------
 
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseSkillManifest } from './skill-resolver.js';
 
-export type SkillPlatform = 'claude' | 'codex' | 'agent' | 'agy';
+export type SkillPlatform = 'claude' | 'codex' | 'agent' | 'agy' | 'pi';
 
 export interface ScannedSkill {
   type: 'command' | 'skill';
@@ -104,6 +107,77 @@ export interface ScanOptions {
   platform?: SkillPlatform;
 }
 
+export interface PiSkillSource {
+  dir: string;
+  scope: 'global' | 'project';
+}
+
+/**
+ * Locate Pi skills through the owning npm package.
+ *
+ * npm may keep maestro-flow under pi-maestro-flow/node_modules or dedupe both
+ * packages into the same node_modules directory, so inspect both ancestors and
+ * sibling package slots. The package manifest's `pi.skills` field is the only
+ * directory authority.
+ */
+export function discoverPiSkillSources(
+  workflowRoot: string = resolve(process.cwd()),
+  runtimeModulePath: string = fileURLToPath(import.meta.url),
+): PiSkillSource[] {
+  const discovered = new Map<string, PiSkillSource>();
+
+  const addPackage = (packageRoot: string, scope: 'global' | 'project') => {
+    for (const dir of readPiSkillDirs(packageRoot)) {
+      const key = process.platform === 'win32' ? dir.toLowerCase() : dir;
+      const existing = discovered.get(key);
+      if (!existing || (existing.scope === 'global' && scope === 'project')) {
+        discovered.set(key, { dir, scope });
+      }
+    }
+  };
+
+  addPackage(workflowRoot, 'project');
+  addPackage(join(workflowRoot, 'node_modules', 'pi-maestro-flow'), 'project');
+
+  let cursor = dirname(resolve(runtimeModulePath));
+  while (true) {
+    addPackage(cursor, 'global');
+    addPackage(join(cursor, 'node_modules', 'pi-maestro-flow'), 'global');
+    const parent = dirname(cursor);
+    if (parent === cursor) break;
+    cursor = parent;
+  }
+
+  return Array.from(discovered.values()).sort((a, b) => {
+    if (a.scope !== b.scope) return a.scope === 'global' ? -1 : 1;
+    return a.dir.localeCompare(b.dir);
+  });
+}
+
+function readPiSkillDirs(packageRoot: string): string[] {
+  const manifestPath = join(packageRoot, 'package.json');
+  if (!existsSync(manifestPath)) return [];
+
+  try {
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+      name?: unknown;
+      pi?: { skills?: unknown };
+    };
+    if (manifest.name !== 'pi-maestro-flow' || !Array.isArray(manifest.pi?.skills)) return [];
+
+    return manifest.pi.skills
+      .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+      .map(entry => resolve(packageRoot, entry))
+      .filter(dir => {
+        const fromRoot = relative(packageRoot, dir);
+        return fromRoot === ''
+          || (!isAbsolute(fromRoot) && fromRoot !== '..' && !fromRoot.startsWith(`..${sep}`));
+      });
+  } catch {
+    return [];
+  }
+}
+
 export function scanAllSkills(
   workflowRoot: string = resolve(process.cwd()),
   opts: ScanOptions = {},
@@ -157,6 +231,14 @@ export function scanAllSkills(
       files: collectSkillFiles(join(workflowRoot, '.agy', 'skills')),
       type: 'skill', scope: 'project', platform: 'agy', nameFn: skillName,
     },
+    // Pi Agent (pi-maestro-flow npm package)
+    ...discoverPiSkillSources(workflowRoot).map(source => ({
+      files: collectSkillFiles(source.dir),
+      type: 'skill' as const,
+      scope: source.scope,
+      platform: 'pi' as const,
+      nameFn: skillName,
+    })),
   ];
 
   const sources = opts.platform
