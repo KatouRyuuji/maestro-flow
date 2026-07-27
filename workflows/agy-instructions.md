@@ -215,13 +215,16 @@ maestro load --type spec --category coding
 
 ### Record
 
-| What | Command |
-|------|---------|
-| Spec | `maestro spec add <category> "title" "content" --keywords kw1,kw2 --description "summary"` |
-| Knowhow | `maestro knowhow add --type <type> --title "..." --body "..."` (`--spec-category <cat>` for agent injection) |
+| Context | Command |
+|---------|---------|
+| Active Run relation | `maestro knowledge record <knowledge-id> --run <run-id> --signal cited|validated|contradicted` |
+| Active Run candidate | `maestro knowledge stage spec|knowhow "title" "content" --run <run-id> [--category <cat>]` |
+| Outside a Run / explicit direct write | `maestro spec add ...` or `maestro knowhow add ...` |
 
 Category routing: decisions→`arch`, patterns→`coding`, pitfalls→`debug`/`learning`, rules→`review`, tests→`test`.
-`session-mode: run` commands receive a finish checklist (handoff, knowledge capture, conflict annotation, verdict) when `maestro run check` is all green — execute every item, no skipping.
+During a Run, accepted decisions and locked constraints belong in `report.md`; completion stages them as candidates and returns exact candidate IDs. Search/injection is exposure only, while explicit load is consumed. Review with `maestro knowledge session <session-id>` and promote selected IDs explicitly.
+Direct spec/knowhow writes are reserved for explicit knowledge-management work outside routine Run completion.
+`session-mode: run` commands receive a finish checklist (handoff, relation/candidate staging, conflict annotation, verdict) when `maestro run check` is all green — execute every item, no skipping.
 
 ### Supersession & Conflict (dual-track)
 

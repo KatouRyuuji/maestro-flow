@@ -18,7 +18,7 @@ describe('run-response/1.0', () => {
     const next = { suggest_only: true as const, command: 'maestro run check r', reason: 'check the Run' };
     const hash = `sha256:${'a'.repeat(64)}`;
     const briefResult = {
-      schema_version: 'brief-result/1.0' as const,
+      schema_version: 'brief-result/1.1' as const,
       session_id: 's', run_id: 'r', run_dir: '.workflow/sessions/s/runs/r', upstream: {},
       session: {
         session_id: 's', intent: 'test brief', status: 'running' as const,
@@ -51,6 +51,31 @@ describe('run-response/1.0', () => {
           identity_current: true, command_contract_hash: null,
         },
         argument_requirements: [], reuse_assessments: [],
+      },
+      knowledge_context: {
+        schema_version: 'knowledge-reconciliation-card/1.0' as const,
+        run: {
+          unique_inputs: 0,
+          signals: { consumed: 0, cited: 0, validated: 0, contradicted: 0 },
+          knowledge_ids: [],
+        },
+        session: {
+          unique_inputs: 0,
+          pending_candidates: 0,
+          corroborated_candidates: 0,
+          promoting_candidates: 0,
+          promoted_candidates: 0,
+        },
+        policy: {
+          search_and_injection: 'exposure_only' as const,
+          explicit_load: 'consumed' as const,
+          completion: 'stage_candidates' as const,
+          promotion: 'explicit_review' as const,
+        },
+        review: {
+          command: 'maestro knowledge session s',
+          promote_template: 'maestro knowledge promote s --candidate <candidate-id>',
+        },
       },
       continuity: {
         prev_handoff: null,
@@ -85,6 +110,17 @@ describe('run-response/1.0', () => {
       expect(success.continuation).toBeNull();
       expect(runResponseSchema.parse(failure)).toMatchObject({ operation, ok: false, exit_code: 1 });
     }
+    const { knowledge_context: _knowledgeContext, ...legacyBrief } = briefResult;
+    expect(runResponseSchema.parse(createRunResponseSuccess({
+      operation: 'brief',
+      locator: { session_id: 's', run_id: 'r' },
+      result: { ...legacyBrief, schema_version: 'brief-result/1.0' as const },
+      next,
+    }))).toMatchObject({
+      operation: 'brief',
+      ok: true,
+      result: { schema_version: 'brief-result/1.0' },
+    });
   });
 
   it('parses and emits a success envelope with exit 0', () => {

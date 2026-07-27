@@ -225,14 +225,16 @@ maestro load --type spec --category coding
 
 ### Record
 
-| What | Command |
-|------|---------|
-| Spec | `/maestro-spec "<constraint>"` (guided; category inferred, or state it as the first word) · `maestro spec add <category> "title" "content" --keywords kw1,kw2 --description "summary"` (direct CLI write) |
-| Knowhow | `/maestro-knowhow` (`--spec-category <cat>` for agent injection) |
+| Context | Command |
+|---------|---------|
+| Active Run relation | `maestro knowledge record <knowledge-id> --run <run-id> --signal cited|validated|contradicted` |
+| Active Run candidate | `maestro knowledge stage spec|knowhow "title" "content" --run <run-id> [--category <cat>]` |
+| Outside a Run / explicit direct write | `/maestro-spec "<constraint>"` or `/maestro-knowhow` |
 
 Category routing: decisions→`arch`, patterns→`coding`, pitfalls→`debug`/`learning`, rules→`review`, tests→`test`.
-Entry routing: slash commands run guided workflows; `maestro spec add` CLI writes directly (use `--json` in the supersede flow to obtain the sid).
-`session-mode: run` commands receive a finish checklist (handoff, knowledge capture, conflict annotation, verdict) when `maestro run check` is all green — execute every item, no skipping.
+During a Run, accepted decisions and locked constraints belong in `report.md`; completion stages them as candidates and returns exact candidate IDs. Search/injection is exposure only, while explicit load is consumed. Review with `maestro knowledge session <session-id>` and promote selected IDs explicitly.
+Direct `maestro spec add` / `/maestro-knowhow` writes are reserved for explicit knowledge-management work outside routine Run completion.
+`session-mode: run` commands receive a finish checklist (handoff, relation/candidate staging, conflict annotation, verdict) when `maestro run check` is all green — execute every item, no skipping.
 
 ### Supersession & Conflict (dual-track)
 
@@ -243,7 +245,7 @@ New knowledge relates to old entries in two ways — different semantics, differ
 | **supersede** | New rule replaces old rule (evolution) | `maestro spec supersede <old-sid> --by <new-sid>` | Old entry `deprecated` (excluded from search/load), evolution chain preserved |
 | **conflict** | Both rules are valid (dispute) | `maestro spec conflict mark <file> <line> --note "<reason>"` | Old entry `contested` (search ×0.5, `[CONTESTED]` badge, still injected), human adjudicates — resolution via `/maestro-knowledge audit` |
 
-Supersede flow: `maestro spec add ... --json` (→ new-sid) → `spec supersede <old-sid> --by <new-sid>`; view the evolution chain with `spec history <sid>`.
+Supersede flow during a Run: record the old entry as `contradicted` and review the replacement candidate. If ordinary promotion reports an existing-title conflict, use `maestro spec add ... --json` (→ new-sid) then `spec supersede <old-sid> --by <new-sid>`; view the evolution chain with `spec history <sid>`.
 
 **Three orthogonal axes**: `confidence` (human/audit adjudication) ⊥ `status` (active/deprecated lifecycle) ⊥ time-decay (automatic freshness). Do not conflate them.
 

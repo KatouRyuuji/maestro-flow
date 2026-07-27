@@ -8,11 +8,18 @@ import {
 } from '../graph/kg/knowledge-usage.js';
 import {
   promoteSessionKnowledge,
+  recordActiveRunKnowledgeInputs,
+  recordRunKnowledgeInputs,
+  stageRunKnowledgeCandidate,
   summarizeSessionKnowledge,
+  type KnowledgeInputSignal,
 } from '../run/knowledge.js';
 import { auditKnowledge, type KnowledgeAuditScope } from '../knowledge/audit.js';
+import { SessionStore } from '../run/store.js';
 
 const KNOWLEDGE_SOURCE_TYPES = ['spec', 'knowhow', 'issue', 'domain', 'codebase'] as const;
+const KNOWLEDGE_INPUT_SIGNALS = ['consumed', 'cited', 'validated', 'contradicted'] as const;
+const KNOWLEDGE_CANDIDATE_TARGETS = ['spec', 'knowhow'] as const;
 
 function percent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
@@ -82,6 +89,115 @@ export function registerKnowledgeCommand(program: Command): void {
             `Applied: ${result.applied.count} · backup: ${result.applied.backup_dir ?? 'not needed'}`,
           );
         }
+      } catch (error) {
+        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        process.exitCode = 1;
+      }
+    });
+
+  knowledge
+    .command('record')
+    .description('Record an explicit relation between stable knowledge IDs and the active Run')
+    .argument('<knowledge-ids...>', 'Stable knowledge IDs (space- or comma-separated)')
+    .option('--signal <signal>', `Relation: ${KNOWLEDGE_INPUT_SIGNALS.join('|')}`, 'consumed')
+    .option('--run <run-id>', 'Explicit active Run ID')
+    .option('--session <session-id>', 'Explicit Session ID (requires --run)')
+    .option('--json', 'Output as JSON')
+    .action((
+      rawIds: string[],
+      opts: { signal?: string; run?: string; session?: string; json?: boolean },
+    ) => {
+      try {
+        if (!KNOWLEDGE_INPUT_SIGNALS.includes(opts.signal as KnowledgeInputSignal)) {
+          throw new Error(`--signal must be one of ${KNOWLEDGE_INPUT_SIGNALS.join(', ')}`);
+        }
+        if (opts.session && !opts.run) throw new Error('--session requires --run');
+        const ids = rawIds.flatMap(value => value.split(',')).map(value => value.trim()).filter(Boolean);
+        const result = opts.run
+          ? recordRunKnowledgeInputs(
+              resolve('.'),
+              opts.run,
+              ids,
+              opts.signal as KnowledgeInputSignal,
+              'manual',
+              opts.session,
+            )
+          : recordActiveRunKnowledgeInputs(
+              resolve('.'),
+              ids,
+              opts.signal as KnowledgeInputSignal,
+              'manual',
+            );
+        if (!result) {
+          throw new Error('No unique active Run found; pass --run and optionally --session');
+        }
+        if (opts.json) {
+          console.log(JSON.stringify(result, null, 2));
+          return;
+        }
+        console.log(
+          `Recorded ${result.recorded} knowledge relation(s) on `
+          + `${result.session_id}/${result.run_id} as ${opts.signal}.`,
+        );
+      } catch (error) {
+        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        process.exitCode = 1;
+      }
+    });
+
+  knowledge
+    .command('stage')
+    .description('Stage a reviewable spec or knowhow candidate on the active Run')
+    .argument('<target>', `Candidate target: ${KNOWLEDGE_CANDIDATE_TARGETS.join('|')}`)
+    .argument('<title>', 'Candidate title')
+    .argument('<content>', 'Candidate content')
+    .option('--category <category>', 'Spec/knowhow category')
+    .option('--evidence <refs>', 'Comma-separated evidence references')
+    .option('--run <run-id>', 'Explicit active Run ID')
+    .option('--session <session-id>', 'Explicit Session ID (requires --run)')
+    .option('--json', 'Output as JSON')
+    .action((
+      target: string,
+      title: string,
+      content: string,
+      opts: {
+        category?: string;
+        evidence?: string;
+        run?: string;
+        session?: string;
+        json?: boolean;
+      },
+    ) => {
+      try {
+        if (!KNOWLEDGE_CANDIDATE_TARGETS.includes(target as 'spec' | 'knowhow')) {
+          throw new Error(`target must be one of ${KNOWLEDGE_CANDIDATE_TARGETS.join(', ')}`);
+        }
+        if (opts.session && !opts.run) throw new Error('--session requires --run');
+        const store = new SessionStore(resolve('.'));
+        const active = opts.run
+          ? { runId: opts.run, sessionId: opts.session }
+          : store.findUniqueActiveRun();
+        if (!active) throw new Error('No unique active Run found; pass --run and optionally --session');
+        const result = stageRunKnowledgeCandidate(
+          resolve('.'),
+          active.runId,
+          {
+            target: target as 'spec' | 'knowhow',
+            title,
+            content,
+            category: opts.category,
+            evidenceRefs: opts.evidence?.split(','),
+          },
+          active.sessionId,
+        );
+        if (opts.json) {
+          console.log(JSON.stringify(result, null, 2));
+          return;
+        }
+        console.log(
+          `Staged ${result.candidate_id} on ${result.session_id}/${result.run_id}; `
+          + `review after completion with "maestro knowledge session ${result.session_id}".`,
+        );
       } catch (error) {
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
         process.exitCode = 1;

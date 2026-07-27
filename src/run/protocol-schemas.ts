@@ -420,6 +420,37 @@ const briefGuidancePartSchema = z.object({ path: z.string(), content: z.string()
 /** run-mode.md is loaded via Skill @required_reading, not brief injection. Brief carries only a path + hash for freshness. */
 const briefRunModeRefSchema = z.object({ path: z.string(), hash: z.string().nullable() }).strict();
 const briefGuidanceDriftKeySchema = z.enum(['command', 'resolved_prompt', 'prepare', 'workflow', 'run_mode']);
+const knowledgeSignalTotalsSchema = z.object({
+  consumed: z.number().int().nonnegative(),
+  cited: z.number().int().nonnegative(),
+  validated: z.number().int().nonnegative(),
+  contradicted: z.number().int().nonnegative(),
+}).strict();
+export const knowledgeReconciliationCardSchema = z.object({
+  schema_version: z.literal('knowledge-reconciliation-card/1.0'),
+  run: z.object({
+    unique_inputs: z.number().int().nonnegative(),
+    signals: knowledgeSignalTotalsSchema,
+    knowledge_ids: z.array(nonEmptyString),
+  }).strict(),
+  session: z.object({
+    unique_inputs: z.number().int().nonnegative(),
+    pending_candidates: z.number().int().nonnegative(),
+    corroborated_candidates: z.number().int().nonnegative(),
+    promoting_candidates: z.number().int().nonnegative(),
+    promoted_candidates: z.number().int().nonnegative(),
+  }).strict(),
+  policy: z.object({
+    search_and_injection: z.literal('exposure_only'),
+    explicit_load: z.literal('consumed'),
+    completion: z.literal('stage_candidates'),
+    promotion: z.literal('explicit_review'),
+  }).strict(),
+  review: z.object({
+    command: nonEmptyString,
+    promote_template: nonEmptyString,
+  }).strict(),
+}).strict();
 
 /**
  * Canonical Resume Packet. Compatibility aliases intentionally do not live in
@@ -471,6 +502,11 @@ export const briefResultV10Schema = z.object({
     anchor: briefAnchorSchema,
   }).strict(),
   recovery: z.object({ next: briefNextSchema }).strict(),
+}).strict();
+
+export const briefResultV11Schema = briefResultV10Schema.extend({
+  schema_version: z.literal('brief-result/1.1'),
+  knowledge_context: knowledgeReconciliationCardSchema,
 }).strict();
 
 const recallExactCandidateSchema = z.object({
@@ -704,7 +740,7 @@ export const runResponseSuccessSchema = z.union([
     operation: z.literal('brief'),
     ok: z.literal(true),
     exit_code: z.literal(0),
-    result: briefResultV10Schema,
+    result: z.union([briefResultV10Schema, briefResultV11Schema]),
     error: z.null(),
   }).strict(),
   responseCommonSchema.extend({
@@ -780,7 +816,7 @@ export type TransitionOutcome = z.infer<typeof transitionOutcomeSchema>;
 export type PersistedTransitionRecord = z.infer<typeof persistedTransitionRecordSchema>;
 export type TransitionPointer = z.infer<typeof transitionPointerSchema>;
 export type ExecutionContract = z.infer<typeof executionContractV11Schema>;
-export type BriefResult = z.infer<typeof briefResultV10Schema>;
+export type BriefResult = z.infer<typeof briefResultV11Schema>;
 export type RunRecall = z.infer<typeof runRecallV11Schema>;
 export type RecallConfirmationTargetIdentity = z.infer<typeof recallConfirmationTargetIdentitySchema>;
 export type RecallConfirmationFinalTarget = z.infer<typeof recallConfirmationFinalTargetSchema>;

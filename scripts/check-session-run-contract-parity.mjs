@@ -29,17 +29,30 @@ const GUIDE_REQUIREMENTS = [
   {
     id: 'docs.structure',
     path: 'guide/session-run-structure-guide.md',
-    tokens: ['session/1.3', 'command-run/1.3', 'run-response/1.0', ...REQUIRED_OPERATIONS],
+    tokens: [
+      'session/1.3', 'command-run/1.3', 'run-response/1.0',
+      'brief-result/1.1', 'knowledge_context', ...REQUIRED_OPERATIONS,
+    ],
   },
   {
     id: 'docs.cli.zh',
     path: 'guide/cli-commands-guide.md',
-    tokens: ['session/1.3', 'command-run/1.3', 'run-response/1.0', ...REQUIRED_OPERATIONS],
+    tokens: [
+      'session/1.3', 'command-run/1.3', 'run-response/1.0',
+      'brief-result/1.1', 'knowledge_context',
+      'maestro knowledge record', 'maestro knowledge stage', 'maestro knowledge promote',
+      ...REQUIRED_OPERATIONS,
+    ],
   },
   {
     id: 'docs.cli.en',
     path: 'guide/cli-commands-guide.en.md',
     tokens: ['session/1.3', 'command-run/1.3', 'run-response/1.0', ...REQUIRED_OPERATIONS],
+  },
+  {
+    id: 'docs.prepare-authoring',
+    path: 'guide/prepare-workflow-authoring-spec.md',
+    tokens: ['brief-result/1.1', 'briefResultV11Schema', 'knowledge reconciliation card'],
   },
 ];
 
@@ -132,6 +145,75 @@ addCheck('cache.search.version', Number.isNaN(cacheVersion) ? null : cacheVersio
 const protocolSchemas = read('src/run/protocol-schemas.ts');
 const operations = enumLiterals(protocolSchemas, 'export const runOperationSchema', 'const responseCommonSchema');
 addCheck('response.operations.complete', operations, REQUIRED_OPERATIONS, sameValues(operations, REQUIRED_OPERATIONS));
+const knowledgeCardVersion = schemaLiteral(
+  protocolSchemas,
+  'export const knowledgeReconciliationCardSchema',
+  'export const briefResultV10Schema',
+);
+addCheck(
+  'brief.knowledge-context.schema',
+  {
+    version: knowledgeCardVersion,
+    attached: block(
+      protocolSchemas,
+      'export const briefResultV11Schema',
+      'const recallExactCandidateSchema',
+    ).includes('knowledge_context: knowledgeReconciliationCardSchema'),
+    legacyAccepted: block(
+      protocolSchemas,
+      'export const runResponseSuccessSchema',
+      'export const runResponseErrorSchema',
+    ).includes('z.union([briefResultV10Schema, briefResultV11Schema])'),
+  },
+  { version: 'knowledge-reconciliation-card/1.0', attached: true, legacyAccepted: true },
+  knowledgeCardVersion === 'knowledge-reconciliation-card/1.0'
+    && block(
+      protocolSchemas,
+      'export const briefResultV11Schema',
+      'const recallExactCandidateSchema',
+    ).includes('knowledge_context: knowledgeReconciliationCardSchema')
+    && block(
+      protocolSchemas,
+      'export const runResponseSuccessSchema',
+      'export const runResponseErrorSchema',
+    ).includes('z.union([briefResultV10Schema, briefResultV11Schema])'),
+);
+
+const knowledgeCommands = read('src/commands/knowledge.ts');
+const knowledgeLifecycleCli = {
+  record: knowledgeCommands?.includes(".command('record')") ?? false,
+  stage: knowledgeCommands?.includes(".command('stage')") ?? false,
+  session: knowledgeCommands?.includes(".command('session')") ?? false,
+  promote: knowledgeCommands?.includes(".command('promote')") ?? false,
+};
+addCheck(
+  'cli.knowledge-lifecycle',
+  knowledgeLifecycleCli,
+  { record: true, stage: true, session: true, promote: true },
+  Object.values(knowledgeLifecycleCli).every(Boolean),
+);
+
+const runtime = read('src/run/runtime.ts');
+const runMode = read('workflows/run-mode.md');
+const knowledgeCompletionContract = {
+  receipt: runtime?.includes('knowledgeCandidateReceipt(prepared.sessionId, knowledgeDelta)') ?? false,
+  finishRecord: runtime?.includes('maestro knowledge record <knowledge-id>') ?? false,
+  finishStage: runtime?.includes('maestro knowledge stage knowhow') ?? false,
+  promptReceipt: runMode?.includes('knowledge-candidate-receipt/1.0') ?? false,
+  promptNoDirectWrite: runMode?.includes('Routine Run completion MUST NOT call `maestro spec add`') ?? false,
+};
+addCheck(
+  'runtime.prompt.knowledge-completion',
+  knowledgeCompletionContract,
+  {
+    receipt: true,
+    finishRecord: true,
+    finishStage: true,
+    promptReceipt: true,
+    promptNoDirectWrite: true,
+  },
+  Object.values(knowledgeCompletionContract).every(Boolean),
+);
 
 const runCommands = read('src/commands/run.ts');
 const acceptReuseCommand = block(runCommands, ".command('accept-reuse <run-id>')", "\n  run.command(");

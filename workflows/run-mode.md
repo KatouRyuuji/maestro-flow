@@ -18,7 +18,7 @@ Human-facing usage should prefer `session create`, `session done`, and `session 
 ## Prepare (optional, read-only)
 
 - `maestro run prepare <step>` resolves what a step would consume and produce without side effects.
-- `maestro run prepare <step> --session <id>` also returns read-only `session_guidance`: current chain step, next pending step, open decisions, reminders, and the suggested next command.
+- `maestro run prepare <step> --session <id>` also returns read-only `session_guidance`: current chain step, next pending step, open decisions, the knowledge candidate backlog, reminders, and the suggested next command.
 - Read-only and idempotent — it never allocates a Session or creates directories.
 - Use it to preview upstream availability and the derived artifact contract before committing to a Run.
 
@@ -36,7 +36,7 @@ Human-facing usage should prefer `session create`, `session done`, and `session 
    - Command inputs: when the command contract or `argument-hint` requires them, pass each value with repeatable `--arg <value>`. If a legacy caller needs raw positional passthrough after `--`, use the lower-level `maestro run create <command-name> ... -- <args...>` compatibility verb.
 4. The runtime resolves the Session in this order: an explicit compatible `--session`, an unambiguous canonical topic match, otherwise a newly allocated topic Session. Paused or historical similarity is read-only and never authorizes selection, resume, or mutation.
 5. Retain the returned `session_id`, `run_id`, `run_dir`, and `upstream`. Do not locate Sessions or artifacts with glob, mtime, directory ordering, or hidden command folders.
-6. `maestro run brief <run_id>` returns the Resume Packet — same-Session sealed artifacts, the authoritative upstream map, and open decisions — for continuing an existing Run.
+6. `maestro run brief <run_id>` returns the `brief-result/1.1` Resume Packet — same-Session sealed artifacts, the authoritative upstream map, open decisions, and a compact `knowledge_context` reconciliation card — for continuing an existing Run. Protocol readers retain `brief-result/1.0` compatibility.
 
 **Session slug examples:**
 ```
@@ -67,6 +67,15 @@ maestro run create odyssey --session 20260715-odyssey-planex-todo -- --mode plan
 - Protocol files (`session.json`, `run.json`, `artifacts.json`) are runtime-owned and MUST NOT be edited directly.
 - Consume upstream only from the `upstream` map returned by `maestro session start` / `maestro session create`.
 
+## Knowledge Reconciliation
+
+- Search results and automatic prompt injection are **exposure only**. They may increase global impression statistics, but they never prove that a Run read, cited, validated, or contradicted an entry.
+- Explicit `maestro load` / wiki loads are recorded as `consumed` on the unique active Run. Record stronger relations by stable ID with `maestro knowledge record <knowledge-id> --run {run_id} --signal cited|validated|contradicted`.
+- Put accepted decisions and locked constraints in `report.md` frontmatter. `session done` converts them into pending spec candidates in the Run's `knowledge-delta.json`; it does not write project specs.
+- Stage reusable recipes, pitfalls, or other explicit candidates before completion with `maestro knowledge stage spec|knowhow "<title>" "<content>" --run {run_id} [--category <category>]`. Routine Run completion MUST NOT call `maestro spec add` or `maestro knowhow add` directly.
+- Completion returns a `knowledge-candidate-receipt/1.0` with the exact staged candidate IDs. Review the Session backlog with `maestro knowledge session {session_id}` and promote selected IDs with `maestro knowledge promote {session_id} --candidate <candidate-id>`. `--all` promotes corroborated pending candidates only unless the caller explicitly includes observed candidates. If a reviewed replacement conflicts with an existing spec title, use the explicit `maestro spec add ... --json` → `maestro spec supersede <old-sid> --by <new-sid>` resolution path instead of duplicating a successful promotion.
+- Promotion is independent of Session sealing. A pending backlog is visible in prepare/seal guidance and remains durable after seal; seal never silently promotes or discards it.
+
 ## Chain Effects and Proposals
 
 - Every Session uses the same ordered chain. There is no static/dynamic Session type and no strategy promotion; whether a step leaves the remaining chain unchanged or proposes adaptation is decided by that step's Skill contract and output.
@@ -79,14 +88,15 @@ maestro run create odyssey --session 20260715-odyssey-planex-todo -- --mode plan
 ## Completion
 
 1. Run `maestro run check {run_id}` and repair any blocking artifact or exit gate it reports.
-2. When every gate is clean, `run check` emits a `finish` checklist — handoff frontmatter, knowledge record, conflict marking (supersede / contest stale spec-knowhow entries), verdict choice, plus norms declared by the workflow. Work through it before completing; it is prompt-layer guidance, never a blocking gate.
-3. Run `maestro session done {run_id} --session {session_id}`. The artifact gate is derived from the Run contract and evaluated automatically. Completion may return a structured `suggest_only` next action, but it never executes that action or creates another Run. `maestro session done {run_id}` remains the machine-compatible spelling.
+2. When every gate is clean, `run check` emits a `finish` checklist — handoff frontmatter, knowledge relation/candidate staging, conflict marking, verdict choice, plus norms declared by the workflow. Work through it before completing; it is prompt-layer guidance, never a blocking gate.
+3. Run `maestro session done {run_id} --session {session_id}`. The artifact gate is derived from the Run contract and evaluated automatically. Completion atomically seals the Run and stages handoff-derived knowledge candidates, returning their receipt; it never promotes project knowledge, executes the suggested next action, or creates another Run. `maestro run complete {run_id}` remains the machine-compatible spelling.
    - **Artifact registration and state updates are performed by `session done`** — it registers `outputs/` into `artifacts.json` and writes Session state. A workflow never registers artifacts itself and MUST NOT restate this; writing the files under `{run_dir}/outputs/` is the whole of its obligation.
    - `done` / `done-with-concerns` enforce required success artifacts and exit gates.
    - `needs-retry` / `blocked` close the failed attempt without requiring success artifacts; missing/invalid outputs remain diagnostic evidence, not a blocker to retrying or pausing the chain.
 4. The caller explicitly invokes `maestro session next --session {session_id}` only after accepting the suggestion and its preconditions. `session next` is the sole normal allocator for the next chain-bound Run.
    - `suggest_only` describes Runtime passivity; it is not an implicit user-confirmation gate. For an already confirmed Session, the orchestrator accepts `continuation.authority=automatic` itself, executes the command in the same turn, and reads the next receipt.
-5. Report success only when the Run is completed. Completed artifacts are immutable; later Runs in the same Session reuse eligible sealed outputs through `upstream` rather than copying them.
+5. Read the completion receipt. If it contains candidate IDs, surface `maestro knowledge session {session_id}` as the review action; do not rewrite the same facts directly into spec/knowhow.
+6. Report success only when the Run is completed. Completed artifacts are immutable; later Runs in the same Session reuse eligible sealed outputs through `upstream` rather than copying them.
 
 ## Legacy/Admin Compatibility
 

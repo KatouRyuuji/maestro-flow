@@ -25,7 +25,13 @@ import {
   type TargetPlatform,
 } from '../core/skill-converter.js';
 import { deriveHandoff, readReportFrontmatter } from './report.js';
-import { stageHandoffKnowledgeCandidates } from './knowledge.js';
+import {
+  buildKnowledgeReconciliationCard,
+  knowledgeCandidateReceipt,
+  stageHandoffKnowledgeCandidates,
+  summarizeSessionKnowledge,
+  type KnowledgeCandidateReceipt,
+} from './knowledge.js';
 import {
   gateSchema,
   type ArtifactRegistry,
@@ -37,7 +43,7 @@ import {
   type SessionState,
 } from './schemas.js';
 import {
-  briefResultV10Schema,
+  briefResultV11Schema,
   commandRebindAuditSchema,
   completeInputSnapshotSchema,
   executionContractV11Schema,
@@ -217,6 +223,12 @@ export interface SealSessionResult {
   status: 'sealed';
   sealed_at: string;
   run_count: number;
+  knowledge: {
+    pending_candidates: number;
+    promoting_candidates: number;
+    promoted_candidates: number;
+    review_command: string;
+  };
 }
 
 export interface GateSummary {
@@ -266,6 +278,8 @@ export interface CompleteRunResult extends CheckRunResult {
     status: 'applied';
     operations: Array<{ op: string; target: string; status: string }>;
   } | null;
+  /** Candidate staging receipt; project knowledge still requires explicit review/promotion. */
+  knowledge: KnowledgeCandidateReceipt | null;
   transition: TransitionMutationReceipt;
 }
 
@@ -312,6 +326,13 @@ export interface PrepareSessionGuidance {
   current_step: PrepareChainStepHint | null;
   next_pending_step: PrepareChainStepHint | null;
   open_decisions: PrepareDecisionHint[];
+  knowledge?: {
+    unique_inputs: number;
+    pending_candidates: number;
+    corroborated_candidates: number;
+    promoting_candidates: number;
+    review_command: string;
+  };
   reminders: string[];
   next: { command: string | null; reason: string };
 }
@@ -2004,8 +2025,9 @@ function buildFinishChecklist(projectRoot: string, run: CommandRun, frontmatter:
   if (!frontmatter.summary.trim()) {
     lines.push('report.md handoff frontmatter is empty — fill summary (plus concerns/decisions) before completing; the sealed handoff is derived from it.');
   }
-  lines.push('Record new knowledge before sealing: constraints/rules → `maestro spec add`, reusable recipes/pitfalls → `/maestro-knowhow capture`; skip only if nothing new was learned.');
-  lines.push('Mark every spec/knowhow entry this Run contradicted: replaced by a better rule → `maestro spec add ... --json` then `maestro spec supersede <old-sid> --by <new-sid>`; both sides defensible → `maestro spec conflict mark <file> <line> --note "<reason>"` and let `/maestro-knowledge audit` adjudicate. Never seal with a known-stale entry unmarked.');
+  lines.push(`Stage knowledge before sealing: put accepted decisions and locked constraints in report.md frontmatter (completion stages them automatically); reusable recipes/pitfalls → \`maestro knowledge stage knowhow "<title>" "<content>" --run ${run.run_id}\`. Do not write project spec/knowhow directly from routine Run completion.`);
+  lines.push(`Reconcile reused knowledge by stable ID: \`maestro knowledge record <knowledge-id> --run ${run.run_id} --signal cited|validated|contradicted\`. A search result or automatic injection is exposure only; it is not evidence of use.`);
+  lines.push('For contradicted canonical knowledge, record the contradiction before sealing. After candidate review/promotion, replace stale rules with `maestro spec supersede <old-sid> --by <new-sid>`; if both rules remain valid, use `maestro spec conflict mark <file> <line> --note "<reason>"`. Never leave a known-stale entry unmarked.');
   lines.push('Pick the verdict honestly: `done` (clean) or `done-with-concerns` (works but carries caveats — list every caveat in concerns).');
   lines.push(...resolveStepContent(projectRoot, run.command.name).finish);
   return lines;
@@ -2275,7 +2297,16 @@ export function sealSession(projectRoot: string, sessionId: string, summary = ''
   const projected = ensureSessionProjection(state, projectSessionEntry(bundle.session), false);
   if (projected.active_session_id === sessionId) projected.active_session_id = null;
   writeStateJson(projectRoot, projected);
-  return result;
+  const knowledge = summarizeSessionKnowledge(projectRoot, sessionId, { readOnly: true });
+  return {
+    ...result,
+    knowledge: {
+      pending_candidates: knowledge.candidates.filter(candidate => candidate.status === 'pending').length,
+      promoting_candidates: knowledge.candidates.filter(candidate => candidate.status === 'promoting').length,
+      promoted_candidates: knowledge.candidates.filter(candidate => candidate.status === 'promoted').length,
+      review_command: `maestro knowledge session ${sessionId}`,
+    },
+  };
 }
 
 function artifactId(sequence: number, ordinal: number): string {
@@ -2732,6 +2763,7 @@ export function applyCompleteRunMutation(
         },
         chain_transition: null,
         chain_proposal: null,
+        knowledge: null,
       },
     };
   }
@@ -2746,7 +2778,7 @@ export function applyCompleteRunMutation(
   }
   mergeNotesIntoConcerns(run.handoff, options.notes ?? []);
   mergeDecisionsIntoHandoff(run.handoff, options.decisions ?? []);
-  stageHandoffKnowledgeCandidates(store, tx, prepared.sessionId, run);
+  const knowledgeDelta = stageHandoffKnowledgeCandidates(store, tx, prepared.sessionId, run);
   run.status = 'sealed';
   run.sealed_at = localISO();
   draft.session.latest_completed_run_id = runId;
@@ -2777,6 +2809,7 @@ export function applyCompleteRunMutation(
       next_action: completionNextPointer(draft.session, runId),
       chain_transition: chainTransition,
       chain_proposal: chainProposal,
+      knowledge: knowledgeCandidateReceipt(prepared.sessionId, knowledgeDelta),
     },
   };
 }
@@ -3180,6 +3213,11 @@ function prepareSessionGuidance(
   }
 
   const session = store.readBundle(sessionId).session;
+  const knowledgeSummary = summarizeSessionKnowledge(projectRoot, sessionId, { readOnly: true });
+  const pendingKnowledge = knowledgeSummary.candidates
+    .filter(candidate => candidate.status === 'pending');
+  const promotingKnowledge = knowledgeSummary.candidates
+    .filter(candidate => candidate.status === 'promoting');
   const chain = session.orchestration.chain;
   const activeIndex = activeStepIndex(session);
   const nextExecutionIndex = nextPendingIndex(session, true);
@@ -3232,7 +3270,7 @@ function prepareSessionGuidance(
       reason: `next pending step is ${chain[nextExecutionIndex].step_id}`,
     };
   } else {
-    reminders.push('No pending chain execution step remains; seal the Session when handoff and knowledge capture are complete.');
+    reminders.push('No pending chain execution step remains; seal the Session after reviewing the knowledge candidate backlog.');
     next = {
       command: `maestro run seal-session ${session.session_id}`,
       reason: 'chain has no pending execution steps',
@@ -3241,6 +3279,12 @@ function prepareSessionGuidance(
 
   if (openDecisions.length > 0 && !reminders.some(item => item.includes('decision'))) {
     reminders.push(`Open decision(s): ${openDecisions.map(point => point.point_id).join(', ')}.`);
+  }
+  if (pendingKnowledge.length > 0 || promotingKnowledge.length > 0) {
+    reminders.push(
+      `Knowledge backlog: ${pendingKnowledge.length} pending, ${promotingKnowledge.length} promoting; `
+      + `review with \`maestro knowledge session ${sessionId}\`.`,
+    );
   }
 
   return {
@@ -3251,6 +3295,14 @@ function prepareSessionGuidance(
     current_step: currentStep,
     next_pending_step: nextPendingStep,
     open_decisions: openDecisions,
+    knowledge: {
+      unique_inputs: knowledgeSummary.unique_inputs,
+      pending_candidates: pendingKnowledge.length,
+      corroborated_candidates: pendingKnowledge
+        .filter(candidate => candidate.stage === 'corroborated').length,
+      promoting_candidates: promotingKnowledge.length,
+      review_command: `maestro knowledge session ${sessionId}`,
+    },
     reminders,
     next,
   };
@@ -3407,8 +3459,8 @@ export function briefRun(
     orchestration: { chain_effects: [...(contract.orchestration?.chain_effects ?? [])] },
   });
 
-  return briefResultV10Schema.parse({
-    schema_version: 'brief-result/1.0',
+  return briefResultV11Schema.parse({
+    schema_version: 'brief-result/1.1',
     session_id: context.session_id,
     run_id: runId,
     run_dir: context.run_dir,
@@ -3445,6 +3497,7 @@ export function briefRun(
       freshness,
     },
     execution_contract: executionContract,
+    knowledge_context: buildKnowledgeReconciliationCard(projectRoot, context.session_id, runId),
     continuity: { prev_handoff: prevHandoff, anchor },
     recovery: { next: briefNext(bundle.session, runId, run.status) },
   });

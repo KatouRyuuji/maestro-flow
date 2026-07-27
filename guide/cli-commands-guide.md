@@ -21,6 +21,7 @@ Maestro 提供 35+ 个终端命令，通过 `maestro <command>` 直接调用。�
 | `explore` | -- | 轻量并行代码搜索（API 端点驱动） |
 | `load` | -- | 统一知识加载（spec/knowhow/session/domain 等） |
 | `search` | -- | 统一知识搜索（wiki + code 混合） |
+| `knowledge` | -- | Run 知识关系、候选审查/晋升、统计与安全剪枝 |
 | `search-daemon` | -- | 搜索守护进程管理（start/stop/status） |
 | `embedding` | -- | 嵌入模型管理（status/warmup/rebuild） |
 | `coordinate` | `coord` | 图工作流协调器 |
@@ -146,6 +147,24 @@ maestro delegate "continue" --to gemini --resume
 ---
 
 ## 知识管理
+
+<details>
+<summary>maestro knowledge</summary>
+
+Run 知识生命周期与项目知识维护：
+
+```bash
+maestro knowledge record spec:S-1 --run <run-id> --signal validated
+maestro knowledge stage knowhow "事务写入配方" "统一通过 SessionStore transaction 写入" --run <run-id> --category recipe
+maestro knowledge session <session-id>
+maestro knowledge promote <session-id> --candidate KDC-...
+maestro knowledge stats
+maestro knowledge audit --scope all --prune
+```
+
+`search` 和自动注入只代表 exposure；显式 `load` 记录为 consumed。`record` 写入 `cited` / `validated` / `contradicted` 等 Run 关系；`stage` 只创建待审查 candidate。`session done` 返回精确 candidate receipt，但不会直接写项目 spec/knowhow。`promote --all` 默认只晋升跨 Run 佐证的候选。
+
+</details>
 
 <details>
 <summary>maestro load</summary>
@@ -382,7 +401,7 @@ maestro session evidence <session-id> --status accepted
 maestro skills --platform codex --steps --json
 ```
 
-`run brief` 的成功结果固定为 `brief-result/1.0`：`session`/`run` 是 durable authority，
+`run brief` 的成功结果固定为 `brief-result/1.1`（读取兼容 `1.0`）：`session`/`run` 是 durable authority，
 `guidance` 携带 prepare、workflow、完整 run-mode 以及 captured/current hash drift，
 `execution_contract` 是 invocation、inputs、outputs、gates、reuse 的唯一结构化执行视图，
 `continuity` 携带 handoff/anchor，`recovery.next` 与外层 envelope `next` 必须完全一致。
@@ -418,7 +437,7 @@ maestro run next --session <id> --json
 | `create` | `run create`；legacy confirmed `run new` | `create` 需要 command；Session identity 建议显式传 `--session` |
 | `next` | `run next` | 可选 `--session`/`--pick`；选择 pending step 并分配 chain Run |
 | `complete` | `run complete` | 可选 run ID；支持 `--chain-proposal` 原子应用已接受 Skill proposal，并保留 request/revision/lease guards |
-| `brief` | `run brief <run-id>` | 返回强校验的 `brief-result/1.0` Resume Packet；外层与结果层 next 一致 |
+| `brief` | `run brief <run-id>` | 返回强校验的 `brief-result/1.1` Resume Packet（含 `knowledge_context`，读取兼容 `1.0`）；外层与结果层 next 一致 |
 | `recall` | `run recall <command> --intent <text>` | 只读 advisory projection，不授权 mutation |
 | `fork` | legacy `run recall-confirm fork` / `run fork` | confirmation-token 管理兼容面 |
 | `import` | legacy `run recall-confirm import` / `run import` | confirmation-token 管理兼容面 |

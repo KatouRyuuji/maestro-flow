@@ -14,7 +14,7 @@ import { mkdtempSync } from 'node:fs';
 import { Command } from 'commander';
 import { createSessionState } from './defaults.js';
 import { sessionStateSchema } from './schemas.js';
-import { briefResultV10Schema, commandRebindAuditSchema, executionContractSchema } from './protocol-schemas.js';
+import { briefResultV11Schema, commandRebindAuditSchema, executionContractSchema } from './protocol-schemas.js';
 import { SessionStore } from './store.js';
 import {
   briefRun,
@@ -697,9 +697,11 @@ finish:
     expect(clean.gates.blocking).toEqual([]);
     expect(clean.next?.command).toBe(`maestro run complete ${created.run_id}`);
     expect(clean.finish?.some(line => line.includes('finding ID'))).toBe(true);
-    expect(clean.finish?.some(line => line.includes('maestro spec add'))).toBe(true);
+    expect(clean.finish?.some(line => line.includes('maestro knowledge stage'))).toBe(true);
+    expect(clean.finish?.some(line => line.includes('maestro knowledge record'))).toBe(true);
     expect(clean.finish?.some(line => line.includes('spec supersede'))).toBe(true);
     expect(clean.finish?.some(line => line.includes('spec conflict mark'))).toBe(true);
+    expect(clean.finish?.some(line => line.includes('Do not write project spec/knowhow directly'))).toBe(true);
     expect(clean.finish?.some(line => line.includes('handoff frontmatter is empty'))).toBe(false);
 
     completeRun(projectRoot, created.run_id);
@@ -724,6 +726,12 @@ finish:
     expect(completeRun(projectRoot, created.run_id).sealed).toBe(true);
     const sealed = sealSession(projectRoot, created.session_id, 'All work complete');
     expect(sealed.status).toBe('sealed');
+    expect(sealed.knowledge).toEqual({
+      pending_candidates: 0,
+      promoting_candidates: 0,
+      promoted_candidates: 0,
+      review_command: `maestro knowledge session ${created.session_id}`,
+    });
     const session = new SessionStore(projectRoot).readBundle(created.session_id).session;
     const state = readStateJson(projectRoot);
     expect(session.lifecycle.seal_summary).toBe('All work complete');
@@ -864,12 +872,23 @@ gates:
     });
 
     const brief = briefRun(projectRoot, created.run_id, created.session_id);
-    expect(brief.schema_version).toBe('brief-result/1.0');
+    expect(brief.schema_version).toBe('brief-result/1.1');
     expect(brief.execution_contract.invocation.args).toEqual(['--target', 'core']);
     expect(brief.guidance.prepare).toBeNull();
     expect(brief.guidance.workflow?.content).toContain('Perform the bounded task');
     expect(brief.guidance.freshness).toMatchObject({ status: 'none', changed: [] });
-    expect(briefResultV10Schema.parse(brief)).toEqual(brief);
+    expect(brief.knowledge_context).toMatchObject({
+      schema_version: 'knowledge-reconciliation-card/1.0',
+      run: { unique_inputs: 0 },
+      session: { pending_candidates: 0 },
+      policy: {
+        search_and_injection: 'exposure_only',
+        explicit_load: 'consumed',
+        completion: 'stage_candidates',
+        promotion: 'explicit_review',
+      },
+    });
+    expect(briefResultV11Schema.parse(brief)).toEqual(brief);
     for (const removed of ['command', 'goal', 'args', 'argument_requirements', 'reuse_assessments', 'gates', 'outputs']) {
       expect(brief).not.toHaveProperty(removed);
     }
@@ -1056,6 +1075,13 @@ gates:
       latest_completed_run_id: planRun.run_id,
       current_step: null,
       open_decisions: [],
+      knowledge: {
+        unique_inputs: 0,
+        pending_candidates: 2,
+        corroborated_candidates: 0,
+        promoting_candidates: 0,
+        review_command: `maestro knowledge session ${planRun.session_id}`,
+      },
       next: {
         command: `maestro run seal-session ${planRun.session_id}`,
         reason: 'chain has no pending execution steps',

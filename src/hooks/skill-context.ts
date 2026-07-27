@@ -288,6 +288,7 @@ async function buildCanonicalSessionSection(cwd: string, state: WorkflowState, s
       `## Session Context for ${skill.skill}`,
       `Session: ${sessionId} | ${session.status ?? 'unknown'} | ${session.intent ?? ''}`,
       `Run: ${session.active_run_id ?? session.latest_completed_run_id ?? '-'}`,
+      'Knowledge policy: search/injection=exposure-only | explicit-load=consumed | promotion=explicit-review',
     ];
     const aliases = Object.entries(registry.aliases ?? {});
     if (aliases.length > 0) {
@@ -297,6 +298,19 @@ async function buildCanonicalSessionSection(cwd: string, state: WorkflowState, s
         if (!artifact) continue;
         lines.push(`- ${alias} → ${id} | ${artifact.kind ?? 'artifact'} | ${artifact.status ?? 'unknown'} | ${artifact.relative_path ?? ''}`);
       }
+    }
+    try {
+      const { summarizeSessionKnowledge } = await import('../run/knowledge.js');
+      const knowledge = summarizeSessionKnowledge(cwd, sessionId, { readOnly: true });
+      const pending = knowledge.candidates.filter(candidate => candidate.status === 'pending');
+      const promoting = knowledge.candidates.filter(candidate => candidate.status === 'promoting');
+      lines.push(
+        `Knowledge backlog: ${pending.length} pending | `
+        + `${pending.filter(candidate => candidate.stage === 'corroborated').length} corroborated | `
+        + `${promoting.length} promoting | review: maestro knowledge session ${sessionId}`,
+      );
+    } catch {
+      // Legacy/partial Session: policy remains visible even when no valid ledger summary exists.
     }
     try {
       const { inspectSessionContinuation, renderContinuationCard } = await import('../run/continuation.js');

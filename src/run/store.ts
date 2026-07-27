@@ -585,6 +585,40 @@ export class SessionStore {
     });
   }
 
+  /**
+   * Mutate one Run-owned sidecar only while that Run remains the canonical
+   * active Run. This avoids rewriting the coordinated Session bundle for
+   * high-frequency knowledge relation/candidate updates.
+   */
+  updateActiveRunSidecar<T, R>(
+    sessionId: string,
+    runId: string,
+    path: string,
+    schema: z.ZodType<T>,
+    initial: T,
+    mutator: (draft: T) => R,
+  ): R {
+    const safePath = this.assertWorkflowPath(path);
+    return this.withLock(() => {
+      const bundle = this.readBundleUnlocked(sessionId);
+      if (bundle.session.status !== 'running' || bundle.session.active_run_id !== runId) {
+        throw new Error(`Run ${runId} is not the active Run for Session ${sessionId}`);
+      }
+      const run = this.readRunUnlocked(sessionId, runId);
+      if (run.status === 'sealed' || run.status === 'completed') {
+        throw new Error(`Run ${runId} is ${run.status} and cannot mutate Run sidecars`);
+      }
+      const current = existsSync(safePath)
+        ? this.readValidated(safePath, schema)
+        : schema.parse(initial);
+      const draft = clone(current);
+      const result = mutator(draft);
+      schema.parse(draft);
+      this.writeBatchUnlocked([{ path: safePath, value: draft, schema }]);
+      return result;
+    });
+  }
+
   findRun(runId: string, sessionId?: string): { sessionId: string; run: CommandRun } {
     if (sessionId) return { sessionId, run: this.readRun(sessionId, runId) };
     if (!existsSync(this.sessionsRoot)) throw new Error(`Run not found: ${runId}`);

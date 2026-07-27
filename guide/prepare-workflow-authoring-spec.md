@@ -44,7 +44,7 @@ Maestro 的 step 内容分三层，各有既有规范管辖：
 |------|------|-----------|------|
 | `run prepare <step>` | **prepare 全文**、workflow 路径+行数、run-mode 摘要、refs(path+when) | workflow 全文 | `runtime.ts:884-904` |
 | `run create <step>` | session_id、run_id、run_dir、**upstream（alias→artifact 注入）**、entry_gates、**next（渐进提示，指向 brief）** | 任何文件内容 | `runtime.ts:539-620` |
-| `run brief <run-id>` | `brief-result/1.0`：Session/Run authority、**prepare + workflow + run-mode 全文**、guidance drift、canonical upstream、execution contract、handoff/anchor、recovery next | 顶层 args / requirements / reuse / gates / outputs 兼容副本 | `briefResultV10Schema`、`briefRun` |
+| `run brief <run-id>` | `brief-result/1.1`：Session/Run authority、**prepare + workflow + run-mode 全文**、guidance drift、canonical upstream、execution contract、knowledge reconciliation card、handoff/anchor、recovery next；读取兼容 `1.0` | 顶层 args / requirements / reuse / gates / outputs 兼容副本 | `briefResultV11Schema`（兼容 `briefResultV10Schema`）、`briefRun` |
 | `run skill <step>` | **prepare + workflow 全文**、refs | run-mode、session 状态 | `runtime.ts:906-923` |
 | `run check / complete` | gate 评估、artifact 扫描/注册结果 | 内容 | `runtime.ts:622+` |
 

@@ -127,6 +127,7 @@ describe('evaluateSkillContext', () => {
     assert.ok(ctx.includes('Session Context'));
     assert.ok(ctx.includes('20260713-auth-refactor'));
     assert.ok(ctx.includes('20260713-002-execute'));
+    assert.ok(ctx.includes('search/injection=exposure-only'));
   });
 
   it('returns sealed artifact aliases', async () => {
@@ -155,6 +156,8 @@ describe('evaluateSkillContext', () => {
     assert.ok(ctx.includes(sessionId));
     assert.ok(ctx.includes('Action: dispatch_next'));
     assert.ok(ctx.includes('Auto: true'));
+    assert.ok(ctx.includes('Knowledge backlog: 0 pending'));
+    assert.ok(ctx.includes(`review: maestro knowledge session ${sessionId}`));
   });
 
   it('does not let an unrelated prompt resume a live Session', async () => {

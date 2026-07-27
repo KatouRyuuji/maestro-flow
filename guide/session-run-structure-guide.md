@@ -345,7 +345,7 @@ LLM 眼里的全流程（**零协议 schema 学习**，prepare 可选——不�
    · Read upstream[].path                   ← 读上游 typed json
    · Write outputs/*.json                   ← 直写，无 schema 学习成本
    · Write report.md（含 frontmatter，§7.5）
-   （中途可选）maestro run brief <run>       ← brief-result/1.0：Session authority + guidance drift + execution contract + 完整 run-mode.md，防压缩遗忘
+   （中途可选）maestro run brief <run>       ← brief-result/1.1：Session authority + guidance drift + execution contract + knowledge_context；读取兼容 1.0
 
 5. maestro run complete <run> [--chain-proposal outputs/chain-proposal.json]
                                                ← proposal 与 Run seal 原子提交；不隐式 next

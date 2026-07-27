@@ -156,6 +156,9 @@ test('source lint accepts alias-free Odyssey workflows while enforcing prepare a
   assert.match(lite, /team-session\.json.*single coordinator-owned state file/);
   assert.match(lite, /complete top-level `_meta` object/);
   assert.match(lite, /`kind` and `schema` are required together/);
+  assert.match(lite, /maestro knowledge stage knowhow/);
+  assert.match(lite, /maestro knowledge record <knowledge-id>/);
+  assert.match(lite, /maestro knowledge session <session_id>/);
 
   const full = readFileSync(join(repoRoot, 'workflows', 'run-mode.md'), 'utf8');
   assert.match(full, /complete top-level `_meta` object/);
@@ -163,9 +166,18 @@ test('source lint accepts alias-free Odyssey workflows while enforcing prepare a
   assert.match(full, /Session is a durable \*\*topic grouping\/index\*\*/);
   assert.match(full, /same Session.*canonical `upstream`\/Artifact Registry map/);
   assert.match(full, /Historical similarity is read-only evidence/);
-  assert.match(full, /Completion may return a structured `suggest_only` next action, but it never executes that action or creates another Run/);
+  assert.match(full, /Completion atomically seals the Run and stages handoff-derived knowledge candidates.*never promotes project knowledge, executes the suggested next action, or creates another Run/);
   assert.match(full, /deprecated admin-only compatibility commands/);
+  assert.match(full, /compact `knowledge_context` reconciliation card/);
+  assert.match(full, /`brief-result\/1\.1` Resume Packet/);
+  assert.match(full, /knowledge-candidate-receipt\/1\.0/);
+  assert.match(full, /Routine Run completion MUST NOT call `maestro spec add` or `maestro knowhow add` directly/);
   assert.doesNotMatch(full, /same normalized intent/);
+
+  const seal = readFileSync(join(repoRoot, '.claude', 'commands', 'maestro-session-seal.md'), 'utf8');
+  assert.match(seal, /maestro knowledge session \{session_id\} --json/);
+  assert.match(seal, /maestro knowledge promote \{session_id\} --candidate/);
+  assert.doesNotMatch(seal, /Scan session artifacts|recommend `\/maestro-spec add/);
 
   const maestro = readFileSync(join(repoRoot, '.claude', 'commands', 'maestro.md'), 'utf8');
   assert.match(maestro, /argument-hint: "<intent> \[-y\] \[-c\] \[--amend\] \[--dry-run\]"/);

@@ -126,14 +126,16 @@ Append outcome:
 **Files:** {modified/created, or "none"}
 ```
 
+Before completion, put accepted decisions/locked constraints in `report.md`. If a reusable recipe or pitfall emerged, stage it now:
+
 ```bash
+maestro knowledge stage knowhow "<title>" "<content>" --run <run_id>
 maestro session done <run_id> --verdict done --workflow-root .
 ```
 
 Display: `Companion done. Run: {run_id} | Evidence: {path}`
 
-If reusable insights emerged, suggest (never auto-execute):
-`/maestro-spec add ...` or `/maestro-knowhow`
+If the completion receipt contains candidate IDs, display its `review_command`. Do not persist the same insight again through `/maestro-spec` or `/maestro-knowhow`.
 
 If execution revealed the task requires multi-phase audit/diagnosis (e.g., root cause unknown, >3 files need coordinated changes), suggest: `/maestro-odyssey "<scope>" --mode debug|improve` for re-planning.
 

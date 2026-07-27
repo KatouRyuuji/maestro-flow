@@ -11,10 +11,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  buildKnowledgeReconciliationCard,
   readRunKnowledgeDelta,
   promoteSessionKnowledge,
   recordActiveRunKnowledgeInputs,
+  recordRunKnowledgeInputs,
   runKnowledgeDeltaSchema,
+  stageRunKnowledgeCandidate,
   summarizeSessionKnowledge,
 } from './knowledge.js';
 import { completeRun, createRun, sealSession } from './runtime.js';
@@ -75,6 +78,9 @@ describe('Run knowledge delta', () => {
       sessionId: 'knowledge-session',
       intent: 'track knowledge consumption',
     });
+    const sessionDir = join(projectRoot, '.workflow', 'sessions', created.session_id);
+    const authorityBefore = ['session.json', 'gates.json', 'artifacts.json', 'evidence.json']
+      .map(file => readFileSync(join(sessionDir, file), 'utf8'));
 
     expect(recordActiveRunKnowledgeInputs(projectRoot, ['spec:SPC-1', 'spec:SPC-1', 'knowhow:K1']))
       .toEqual({
@@ -82,6 +88,9 @@ describe('Run knowledge delta', () => {
         run_id: created.run_id,
         recorded: 2,
       });
+    expect(['session.json', 'gates.json', 'artifacts.json', 'evidence.json']
+      .map(file => readFileSync(join(sessionDir, file), 'utf8')))
+      .toEqual(authorityBefore);
 
     const delta = readRunKnowledgeDelta(
       new SessionStore(projectRoot),
@@ -92,6 +101,31 @@ describe('Run knowledge delta', () => {
       expect.objectContaining({ knowledge_id: 'spec:SPC-1', signal: 'consumed', count: 1 }),
       expect.objectContaining({ knowledge_id: 'knowhow:K1', signal: 'consumed', count: 1 }),
     ]);
+
+    expect(recordRunKnowledgeInputs(
+      projectRoot,
+      created.run_id,
+      ['spec:SPC-1'],
+      'validated',
+      'manual',
+      created.session_id,
+    )).toMatchObject({ recorded: 1 });
+    expect(buildKnowledgeReconciliationCard(
+      projectRoot,
+      created.session_id,
+      created.run_id,
+    )).toMatchObject({
+      run: {
+        unique_inputs: 2,
+        signals: { consumed: 2, cited: 0, validated: 1, contradicted: 0 },
+        knowledge_ids: ['knowhow:K1', 'spec:SPC-1'],
+      },
+      policy: {
+        search_and_injection: 'exposure_only',
+        completion: 'stage_candidates',
+        promotion: 'explicit_review',
+      },
+    });
   });
 
   it('does not guess attribution when multiple Runs are active', () => {
@@ -135,13 +169,40 @@ describe('Run knowledge delta', () => {
     });
     writeKnowledgeReport(projectRoot, created.session_id, created.run_id);
 
-    expect(completeRun(projectRoot, created.run_id, created.session_id).sealed).toBe(true);
+    const manual = stageRunKnowledgeCandidate(
+      projectRoot,
+      created.run_id,
+      {
+        target: 'knowhow',
+        title: 'SessionStore recipe',
+        content: 'Use SessionStore transactions for coordinated writes.',
+        category: 'recipe',
+        evidenceRefs: ['artifact:manual'],
+      },
+      created.session_id,
+    );
+    expect(() => promoteSessionKnowledge(projectRoot, created.session_id, {
+      candidateIds: [manual.candidate_id],
+    })).toThrow(/require sealed source Runs/);
+    const completed = completeRun(projectRoot, created.run_id, created.session_id);
+    expect(completed.sealed).toBe(true);
+    expect(completed.knowledge).toMatchObject({
+      staged_count: 3,
+      staged_candidate_ids: expect.arrayContaining([manual.candidate_id]),
+      review_command: `maestro knowledge session ${created.session_id}`,
+    });
     const delta = readRunKnowledgeDelta(
       new SessionStore(projectRoot),
       created.session_id,
       created.run_id,
     );
     expect(delta.candidates).toEqual([
+      expect.objectContaining({
+        candidate_id: manual.candidate_id,
+        target: 'knowhow',
+        source_kind: 'manual',
+        status: 'pending',
+      }),
       expect.objectContaining({
         target: 'spec',
         source_kind: 'decision',
@@ -216,7 +277,8 @@ describe('Run knowledge delta', () => {
     });
     writeKnowledgeReport(projectRoot, created.session_id, created.run_id);
     completeRun(projectRoot, created.run_id, created.session_id);
-    sealSession(projectRoot, created.session_id, 'ready for knowledge promotion');
+    expect(sealSession(projectRoot, created.session_id, 'ready for knowledge promotion').knowledge)
+      .toMatchObject({ pending_candidates: 2, promoting_candidates: 0, promoted_candidates: 0 });
 
     const before = summarizeSessionKnowledge(projectRoot, created.session_id);
     const candidate = before.candidates.find(item => item.source_kind === 'decision')!;

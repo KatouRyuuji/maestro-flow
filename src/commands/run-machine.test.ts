@@ -93,7 +93,7 @@ describe('built-bin run-response/1.0', () => {
       ok: true,
       next: { suggest_only: true, command: `maestro run check ${locator.run_id}` },
       result: {
-        schema_version: 'brief-result/1.0',
+        schema_version: 'brief-result/1.1',
         session: { session_id: locator.session_id, open_decisions: [] },
         run: { run_id: locator.run_id },
         recovery: { next: { suggest_only: true, command: `maestro run check ${locator.run_id}` } },
@@ -351,7 +351,19 @@ describe('built-bin run-response/1.0', () => {
       continuation: { action: 'seal_session', authority: 'automatic', reason_code: 'CHAIN_COMPLETE' },
     });
     expect(decideMissing.body).toMatchObject({ operation: 'decide', ok: false, error: { code: 'SESSION_NOT_FOUND' } });
-    expect(seal.body).toMatchObject({ operation: 'seal-session', ok: true, result: { status: 'sealed' } });
+    expect(seal.body).toMatchObject({
+      operation: 'seal-session',
+      ok: true,
+      result: {
+        status: 'sealed',
+        knowledge: {
+          pending_candidates: 0,
+          promoting_candidates: 0,
+          promoted_candidates: 0,
+          review_command: 'maestro knowledge session seal-ok',
+        },
+      },
+    });
     expect(sealBlocked.body).toMatchObject({ operation: 'seal-session', ok: false, error: { code: 'SESSION_SEAL_BLOCKED' } });
   });
 

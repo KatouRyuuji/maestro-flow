@@ -347,7 +347,11 @@ export function continuationAfterCheck(
     command: next.command,
     reason: next.reason,
     preconditions: clean
-      ? ['work through the finish checklist', 'choose an honest completion verdict']
+      ? [
+          'work through the finish checklist',
+          'stage Run knowledge and record explicit knowledge relations',
+          'choose an honest completion verdict',
+        ]
       : ['repair the same Run', 're-run check until blocking gates and scan errors are clear'],
   });
 }

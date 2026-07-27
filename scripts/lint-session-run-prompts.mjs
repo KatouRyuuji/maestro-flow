@@ -224,7 +224,26 @@ const canonicalRunMode = join(root, 'workflows', 'run-mode.md');
 if (!existsSync(canonicalRunMode)) errors.push('workflows/run-mode.md: missing canonical Run workflow');
 else {
   const text = readFileSync(canonicalRunMode, 'utf8');
-  for (const token of ['maestro run create', 'topic grouping/index', 'same Session', 'Historical similarity is read-only', '{run_dir}/outputs/', 'complete top-level `_meta` object', '`kind` and `schema` are required together', 'maestro run check', 'session done', 'suggest_only', 'session next', 'deprecated admin-only']) {
+  for (const token of [
+    'maestro run create',
+    'topic grouping/index',
+    'same Session',
+    'Historical similarity is read-only',
+    '{run_dir}/outputs/',
+    'complete top-level `_meta` object',
+    '`kind` and `schema` are required together',
+    'maestro run check',
+    'session done',
+    'suggest_only',
+    'session next',
+    'deprecated admin-only',
+    'brief-result/1.1',
+    'knowledge_context',
+    'maestro knowledge record',
+    'maestro knowledge stage',
+    'knowledge-candidate-receipt/1.0',
+    'maestro knowledge promote',
+  ]) {
     if (!text.includes(token)) errors.push(`workflows/run-mode.md: missing ${token}`);
   }
   errors.push(...validateRunCreateArgumentChannels(text, 'workflows/run-mode.md'));
@@ -236,7 +255,16 @@ const canonicalRunModeLite = join(root, 'workflows', 'run-mode-lite.md');
 if (!existsSync(canonicalRunModeLite)) errors.push('workflows/run-mode-lite.md: missing canonical team Run workflow');
 else {
   const text = readFileSync(canonicalRunModeLite, 'utf8');
-  for (const token of ['Team State Authority', 'team-session.json', 'merge-write', 'complete top-level `_meta` object', '`kind` and `schema` are required together']) {
+  for (const token of [
+    'Team State Authority',
+    'team-session.json',
+    'merge-write',
+    'complete top-level `_meta` object',
+    '`kind` and `schema` are required together',
+    'maestro knowledge record',
+    'maestro knowledge stage',
+    'maestro knowledge session',
+  ]) {
     if (!text.includes(token)) errors.push(`workflows/run-mode-lite.md: missing ${token}`);
   }
   errors.push(...validateRunCreateArgumentChannels(text, 'workflows/run-mode-lite.md'));

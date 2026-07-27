@@ -96,6 +96,40 @@ export interface KnowledgePromotionResult {
   skipped_observed: string[];
 }
 
+export interface KnowledgeReconciliationCard {
+  schema_version: 'knowledge-reconciliation-card/1.0';
+  run: {
+    unique_inputs: number;
+    signals: Record<KnowledgeInputSignal, number>;
+    knowledge_ids: string[];
+  };
+  session: {
+    unique_inputs: number;
+    pending_candidates: number;
+    corroborated_candidates: number;
+    promoting_candidates: number;
+    promoted_candidates: number;
+  };
+  policy: {
+    search_and_injection: 'exposure_only';
+    explicit_load: 'consumed';
+    completion: 'stage_candidates';
+    promotion: 'explicit_review';
+  };
+  review: {
+    command: string;
+    promote_template: string;
+  };
+}
+
+export interface KnowledgeCandidateReceipt {
+  schema_version: 'knowledge-candidate-receipt/1.0';
+  staged_candidate_ids: string[];
+  staged_count: number;
+  review_command: string;
+  promote_template: string;
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -161,14 +195,14 @@ function addCandidate(
   input: Pick<KnowledgeCandidate, 'target' | 'action' | 'title' | 'content' | 'category' | 'source_kind'>
     & { evidence_refs: string[] },
   now: string,
-): void {
+): string {
   const id = candidateId(input.target, input.content);
   const existing = draft.candidates.find(candidate => candidate.candidate_id === id);
   if (existing) {
     existing.occurrences++;
     existing.last_recorded_at = now;
     existing.evidence_refs = [...new Set([...existing.evidence_refs, ...input.evidence_refs])];
-    return;
+    return id;
   }
   draft.candidates.push({
     candidate_id: id,
@@ -181,6 +215,7 @@ function addCandidate(
     promoted_id: null,
     promotion_receipt: null,
   });
+  return id;
 }
 
 export function readRunKnowledgeDelta(
@@ -212,22 +247,96 @@ export function recordActiveRunKnowledgeInputs(
     const store = new SessionStore(projectRoot);
     const target = store.findUniqueActiveRun();
     if (!target) return null;
-    const path = deltaPath(store, target.sessionId, target.runId);
-    const now = nowIso();
-    store.updateJsonFile(
-      path,
-      runKnowledgeDeltaSchema,
-      createDelta(target.sessionId, target.runId, now),
-      draft => {
-        for (const id of ids) addInput(draft, id, signal, source, now);
-        draft.revision++;
-        draft.updated_at = now;
-      },
+    return recordRunKnowledgeInputs(
+      projectRoot,
+      target.runId,
+      ids,
+      signal,
+      source,
+      target.sessionId,
     );
-    return { session_id: target.sessionId, run_id: target.runId, recorded: ids.length };
   } catch {
     return null;
   }
+}
+
+/**
+ * Record an explicit knowledge relation against one authoritative active Run.
+ * Unlike the best-effort load hook, this command-facing surface fails closed.
+ */
+export function recordRunKnowledgeInputs(
+  projectRoot: string,
+  runId: string,
+  knowledgeIds: string[],
+  signal: KnowledgeInputSignal = 'consumed',
+  source: z.infer<typeof knowledgeInputSchema>['source'] = 'manual',
+  sessionId?: string,
+): { session_id: string; run_id: string; recorded: number } {
+  const ids = [...new Set(knowledgeIds.map(id => id.trim()).filter(Boolean))];
+  if (ids.length === 0) throw new Error('At least one knowledge ID is required');
+  const store = new SessionStore(projectRoot);
+  const located = store.findRun(runId, sessionId);
+  const now = nowIso();
+  const path = deltaPath(store, located.sessionId, runId);
+  return store.updateActiveRunSidecar(
+    located.sessionId,
+    runId,
+    path,
+    runKnowledgeDeltaSchema,
+    createDelta(located.sessionId, runId, now),
+    draft => {
+      for (const id of ids) addInput(draft, id, signal, source, now);
+      draft.revision++;
+      draft.updated_at = now;
+      return { session_id: located.sessionId, run_id: runId, recorded: ids.length };
+    },
+  );
+}
+
+export function stageRunKnowledgeCandidate(
+  projectRoot: string,
+  runId: string,
+  input: {
+    target: KnowledgeCandidate['target'];
+    action?: KnowledgeCandidate['action'];
+    title: string;
+    content: string;
+    category?: string | null;
+    evidenceRefs?: string[];
+  },
+  sessionId?: string,
+): { session_id: string; run_id: string; candidate_id: string } {
+  const title = input.title.trim();
+  const content = input.content.trim();
+  if (!title || !content) throw new Error('Knowledge candidate title and content are required');
+  const store = new SessionStore(projectRoot);
+  const located = store.findRun(runId, sessionId);
+  const now = nowIso();
+  const path = deltaPath(store, located.sessionId, runId);
+  return store.updateActiveRunSidecar(
+    located.sessionId,
+    runId,
+    path,
+    runKnowledgeDeltaSchema,
+    createDelta(located.sessionId, runId, now),
+    draft => {
+      const candidateId = addCandidate(draft, {
+        target: input.target,
+        action: input.action ?? 'propose',
+        title,
+        content,
+        category: input.category?.trim() || null,
+        source_kind: 'manual',
+        evidence_refs: [...new Set([
+          `run:${runId}`,
+          ...(input.evidenceRefs ?? []).map(ref => ref.trim()).filter(Boolean),
+        ])],
+      }, now);
+      draft.revision++;
+      draft.updated_at = now;
+      return { session_id: located.sessionId, run_id: runId, candidate_id: candidateId };
+    },
+  );
 }
 
 /**
@@ -363,6 +472,67 @@ export function summarizeSessionKnowledge(
         || right.occurrences - left.occurrences
         || left.candidate_id.localeCompare(right.candidate_id)
       ),
+  };
+}
+
+export function buildKnowledgeReconciliationCard(
+  projectRoot: string,
+  sessionId: string,
+  runId: string,
+): KnowledgeReconciliationCard {
+  const store = new SessionStore(projectRoot);
+  const delta = readRunKnowledgeDelta(store, sessionId, runId, true);
+  const summary = summarizeSessionKnowledge(projectRoot, sessionId, { readOnly: true });
+  const runSignals: Record<KnowledgeInputSignal, number> = {
+    consumed: 0,
+    cited: 0,
+    validated: 0,
+    contradicted: 0,
+  };
+  const knowledgeIds = new Set<string>();
+  for (const input of delta.inputs) {
+    runSignals[input.signal] += input.count;
+    knowledgeIds.add(input.knowledge_id);
+  }
+  const pending = summary.candidates.filter(candidate => candidate.status === 'pending');
+  return {
+    schema_version: 'knowledge-reconciliation-card/1.0',
+    run: {
+      unique_inputs: knowledgeIds.size,
+      signals: runSignals,
+      knowledge_ids: [...knowledgeIds].sort(),
+    },
+    session: {
+      unique_inputs: summary.unique_inputs,
+      pending_candidates: pending.length,
+      corroborated_candidates: pending.filter(candidate => candidate.stage === 'corroborated').length,
+      promoting_candidates: summary.candidates.filter(candidate => candidate.status === 'promoting').length,
+      promoted_candidates: summary.candidates.filter(candidate => candidate.status === 'promoted').length,
+    },
+    policy: {
+      search_and_injection: 'exposure_only',
+      explicit_load: 'consumed',
+      completion: 'stage_candidates',
+      promotion: 'explicit_review',
+    },
+    review: {
+      command: `maestro knowledge session ${sessionId}`,
+      promote_template: `maestro knowledge promote ${sessionId} --candidate <candidate-id>`,
+    },
+  };
+}
+
+export function knowledgeCandidateReceipt(
+  sessionId: string,
+  delta: RunKnowledgeDelta | null,
+): KnowledgeCandidateReceipt {
+  const candidateIds = delta?.candidates.map(candidate => candidate.candidate_id).sort() ?? [];
+  return {
+    schema_version: 'knowledge-candidate-receipt/1.0',
+    staged_candidate_ids: candidateIds,
+    staged_count: candidateIds.length,
+    review_command: `maestro knowledge session ${sessionId}`,
+    promote_template: `maestro knowledge promote ${sessionId} --candidate <candidate-id>`,
   };
 }
 
@@ -516,6 +686,17 @@ export function promoteSessionKnowledge(
   const skippedObserved = options.all && !options.includeObserved
     ? pending.filter(candidate => candidate.stage === 'observed').map(candidate => candidate.candidate_id)
     : [];
+  const store = new SessionStore(projectRoot);
+  const unsealedSources = selected.flatMap(candidate =>
+    candidate.run_ids
+      .filter(runId => store.readRun(sessionId, runId).status !== 'sealed')
+      .map(runId => `${candidate.candidate_id}:${runId}`)
+  );
+  if (unsealedSources.length > 0) {
+    throw new Error(
+      `Knowledge candidates require sealed source Runs before promotion: ${unsealedSources.join(', ')}`,
+    );
+  }
   if (selected.length === 0 && alreadyPromoted.length === 0) {
     if (options.all && skippedObserved.length === 0) {
       return {
@@ -566,7 +747,6 @@ export function promoteSessionKnowledge(
 
   // Phase 1: persist deterministic promotion intents before any project write.
   // A crash after this point is resumable because `promoting` candidates remain selectable.
-  const store = new SessionStore(projectRoot);
   const intentAt = nowIso();
   store.updateKnowledgeLifecycle(sessionId, (_lifecycle, tx) => {
     for (const runId of new Set(plan.flatMap(item => item.candidate.run_ids))) {
