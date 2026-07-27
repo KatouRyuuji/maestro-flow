@@ -150,10 +150,10 @@ Copy-paste-ready 模板。所有 `.codex/` 文件中的 `spawn_agent()` 调用�
 
 ```ts
 spawn_agent({
-  task_name: "ralph_exec_step_1",
-  message: "Session: ralph-20260714-120000\n\n<task content>",
+  task_name: "run_exec_step_1",
+  message: "Session: 20260714-maestro-example\n\n<task content>",
   fork_turns: "none",
-  agent_type: "ralph_executor"   // → 加载 .codex/agents/ralph-executor.toml
+  agent_type: "run_executor"   // → 加载 .codex/agents/run-executor.toml
 })
 wait_agent({ timeout_ms: 3600000 })
 ```

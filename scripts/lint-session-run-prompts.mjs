@@ -100,7 +100,7 @@ for (const file of readdirSync(commandDir).filter((name) => name.endsWith('.md')
     const text = readFileSync(path, 'utf8');
     for (const [pattern, message] of [
       [/maestro ralph skills\b/, 'must use the canonical maestro skills namespace'],
-      [/\bralph-executor\b/, 'must dispatch the canonical run-executor'],
+      [/\bralph[-_]executor\b/, 'must dispatch the canonical run-executor'],
       [/--engine\s+ralph\b|engine\s*={1,2}\s*["']ralph["']/, 'must not classify a Session by Ralph engine'],
       [/(?:session_type|chain_mode|strategy)\s*[:=]\s*["']?(?:static|adaptive|maestro|ralph|fixed|dynamic)\b/i, 'must not persist a static/dynamic or Maestro/Ralph Session type'],
     ]) {
@@ -307,6 +307,19 @@ const legacyRunExecutor = join(root, '.claude', 'agents', 'ralph-executor.md');
 if (!existsSync(legacyRunExecutor)) errors.push('.claude/agents/ralph-executor.md: missing compatibility alias');
 else if (!readFileSync(legacyRunExecutor, 'utf8').includes('run-executor')) {
   errors.push('.claude/agents/ralph-executor.md: compatibility alias must delegate to run-executor');
+}
+
+for (const path of [
+  join(root, '.codex', 'skills', 'maestro-ralph', 'SKILL.md'),
+  join(root, '.codex', 'skills', 'maestro-ralph', 'optimization-strategy.md'),
+  join(root, '.codex', 'multi-agents-v2-schema.md'),
+  join(root, 'docs-site', 'src', 'client', 'data', 'inventory-v2.json'),
+  join(root, 'docs-site', 'src', 'content', 'docs', 'commands', 'reference.md'),
+]) {
+  if (!existsSync(path)) continue;
+  if (/\bralph[-_]executor\b/i.test(readFileSync(path, 'utf8'))) {
+    errors.push(`${relative(root, path)}: active Ralph surface must use the canonical run-executor`);
+  }
 }
 
 

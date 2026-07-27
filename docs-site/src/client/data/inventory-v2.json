@@ -84,8 +84,8 @@
       "name": "maestro-ralph",
       "file": ".claude/commands/maestro-ralph.md",
       "category": "maestro",
-      "description": "Adaptive lifecycle orchestrator — compose, dispatch ralph-executor agent, evaluate decision, loop",
-      "argumentHint": "<intent>|status|continue [-y] [--amend] [--roadmap]"
+      "description": "Closed-loop policy over the canonical Session/Run chain — dispatch run-executor, evaluate decisions, retry, and stop",
+      "argumentHint": "<intent> [-y] [-c] [--amend]"
     },
     {
       "name": "maestro-next",

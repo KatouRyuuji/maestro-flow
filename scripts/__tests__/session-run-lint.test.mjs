@@ -74,7 +74,7 @@ test('Run executor lint keeps completion ownership with the orchestrator', () =>
   const complete = [
     'maestro run brief <run-id>',
     'maestro run check <run-id>',
-    'Do not call `maestro run complete` — completion is handled by the orchestrator',
+    'Do not call `maestro session done` or `maestro run complete` — completion is handled by the orchestrator',
   ].join('\n');
   assert.deepEqual(validateExecutorLifecycleBoundary(complete, 'executor.md'), []);
 
@@ -82,7 +82,7 @@ test('Run executor lint keeps completion ownership with the orchestrator', () =>
     'maestro run brief <run-id>\nmaestro run check <run-id>',
     'executor.md',
   );
-  assert.ok(missing.includes('executor.md: missing Do not call `maestro run complete`'));
+  assert.ok(missing.includes('executor.md: missing Do not call `maestro session done`'));
   assert.ok(missing.includes('executor.md: missing handled by the orchestrator'));
 });
 
@@ -168,7 +168,7 @@ test('source lint accepts alias-free Odyssey workflows while enforcing prepare a
   assert.doesNotMatch(full, /same normalized intent/);
 
   const maestro = readFileSync(join(repoRoot, '.claude', 'commands', 'maestro.md'), 'utf8');
-  assert.match(maestro, /argument-hint: "<intent> \[-y\] \[-c\] \[--amend\]"/);
+  assert.match(maestro, /argument-hint: "<intent> \[-y\] \[-c\] \[--amend\] \[--dry-run\]"/);
   assert.match(maestro, /Compatibility commands are out of band/);
   assert.match(maestro, /Historical similarity remains read-only evidence/);
   assert.doesNotMatch(maestro, /resolved paused Session.*maestro session resume/);
@@ -182,7 +182,6 @@ test('source lint accepts alias-free Odyssey workflows while enforcing prepare a
   assert.doesNotMatch(ralph, /Read state\.json\.artifacts/);
   for (const prompt of [maestro, ralph]) {
     assert.doesNotMatch(prompt, /maestro ralph\s/);
-    assert.doesNotMatch(prompt, /maestro session\s/);
     assert.doesNotMatch(prompt, /maestro skills\s/);
   }
 
@@ -191,7 +190,6 @@ test('source lint accepts alias-free Odyssey workflows while enforcing prepare a
   for (const prompt of [codexMaestro, codexRalph]) {
     assert.match(prompt, /argument-hint: <intent> \[-y\] \[-c\] \[--amend\]/);
     assert.doesNotMatch(prompt, /maestro ralph\s/);
-    assert.doesNotMatch(prompt, /maestro session\s/);
     assert.doesNotMatch(prompt, /maestro skills\s/);
   }
 
@@ -207,21 +205,20 @@ test('source lint accepts alias-free Odyssey workflows while enforcing prepare a
     'handoff `next[]`',
     '### `complete` / `decide` 闭环',
     'run_already_created=true',
-    'run decide --json',
+    'session decide --json',
     'reason_code=DECISION_CARD_READY',
   ]) {
     assert.match(orchestratorLoop, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
   assert.match(ralph, /Decision is mandatory/);
   assert.match(ralph, /every Ralph-created chain/);
-  assert.match(ralph, /run decide \.\.\. --json/);
-  assert.match(ralph, /run complete\|done --json/);
+  assert.match(ralph, /session decide --json/);
+  assert.match(ralph, /session done --json/);
   const amendFlow = readFileSync(join(repoRoot, 'workflows', 'ralph-amend-goal.md'), 'utf8');
-  assert.match(amendFlow, /maestro run edit --session \{session_id\} --decomposition-file -/);
-  assert.doesNotMatch(amendFlow, /maestro run edit \{session_id\} --decomposition-file -/);
+  assert.match(amendFlow, /maestro session meta update --session \{session_id\} --decomposition-file -/);
   for (const workflow of [full, lite, orchestratorLoop, amendFlow]) {
     assert.doesNotMatch(workflow, /maestro ralph\s/);
-    assert.doesNotMatch(workflow, /maestro session\s/);
+    assert.doesNotMatch(workflow, /maestro run decide\s/);
     assert.doesNotMatch(workflow, /\bralph next\b/);
   }
 });

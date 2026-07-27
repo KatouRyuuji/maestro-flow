@@ -2,9 +2,9 @@
 
 ## 已完成修复
 
-### F1. agent_type 注入（已修复）
+### F1. `run_executor` agent_type 注入（已迁移）
 
-所有 `spawn_agent` 调用已补充 `agent_type: "ralph_executor"`，对应 `.codex/agents/ralph-executor.toml`（`name = "ralph_executor"`）。修复前 executor 以默认 agent 身份运行，不会加载 executor 的 developer_instructions。
+所有 Run 执行派发都使用 `agent_type: "run_executor"`，对应 `.codex/agents/run-executor.toml`（`name = "run_executor"`）。评估等通用派发仍使用各自的 agent type 或默认 agent；旧执行器名称只保留为兼容 alias，不得出现在新派发中。
 
 ---
 

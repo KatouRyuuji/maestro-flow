@@ -30,9 +30,9 @@ Initialize project with auto state detection — creates .workflow/ directory st
 
 ### `maestro-ralph`
 
-**Usage:** `<intent>|status|continue [-y] [--amend] [--roadmap]`
+**Usage:** `<intent> [-y] [-c] [--amend]`
 
-Adaptive lifecycle orchestrator — compose, dispatch ralph-executor agent, evaluate decision, loop
+Closed-loop policy over the canonical Session/Run chain — dispatch run-executor, evaluate decisions, retry, and stop
 
 **Invocation:** Automatic entrypoint and explicit slash command
 
