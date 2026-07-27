@@ -360,7 +360,7 @@ export async function recordSpecInjectionCredibility(
     const ids = nodes.map(n => n.id);
     // One transaction for the batch — same shape as the CLI search path in
     // src/commands/search.ts, and ~10x cheaper than N implicit transactions.
-    mg.getConnection().transaction(() => store.incrementSearchHits(ids));
+    mg.getConnection().transaction(() => store.incrementImpressions(ids));
   } catch { /* analytics must never break injection */ } finally {
     mg?.close();
   }

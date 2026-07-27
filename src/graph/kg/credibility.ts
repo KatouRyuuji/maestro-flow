@@ -147,7 +147,7 @@ export class CredibilityStore {
     return this.db.prepare('SELECT * FROM credibility').all() as unknown as CredibilityRow[];
   }
 
-  incrementSearchHits(nodeIds: string[], nowMs: number = Date.now()): void {
+  incrementImpressions(nodeIds: string[], nowMs: number = Date.now()): void {
     if (nodeIds.length === 0) return;
     const stmt = this.db.prepare(
       'UPDATE credibility SET search_hits = search_hits + 1, last_hit_at = ? WHERE node_id = ?'
@@ -155,10 +155,26 @@ export class CredibilityStore {
     for (const id of nodeIds) stmt.run(nowMs, id);
   }
 
+  /**
+   * Backward-compatible alias. `search_hits` is an exposure counter: a result
+   * was returned or injected, not necessarily opened or used.
+   */
+  incrementSearchHits(nodeIds: string[], nowMs: number = Date.now()): void {
+    this.incrementImpressions(nodeIds, nowMs);
+  }
+
   incrementConsumption(nodeId: string, nowMs: number = Date.now()): void {
     this.db.prepare(
       'UPDATE credibility SET consumption_count = consumption_count + 1, last_consumed_at = ? WHERE node_id = ?'
     ).run(nowMs, nodeId);
+  }
+
+  incrementConsumptions(nodeIds: string[], nowMs: number = Date.now()): void {
+    if (nodeIds.length === 0) return;
+    const stmt = this.db.prepare(
+      'UPDATE credibility SET consumption_count = consumption_count + 1, last_consumed_at = ? WHERE node_id = ?'
+    );
+    for (const id of nodeIds) stmt.run(nowMs, id);
   }
 
   cleanOrphans(): number {

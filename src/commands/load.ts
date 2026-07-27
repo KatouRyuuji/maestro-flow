@@ -89,6 +89,18 @@ function entryToJson(e: WikiEntry, brief: boolean): Record<string, unknown> {
   };
 }
 
+async function recordLoadedKnowledge(entries: WikiEntry[]): Promise<void> {
+  try {
+    const { recordKnowledgeConsumptions } = await import('../graph/kg/knowledge-usage.js');
+    recordKnowledgeConsumptions(
+      process.cwd(),
+      entries.map(entry => ({ id: entry.id, sourceRef: entry.sourceRef })),
+    );
+  } catch {
+    // Usage analytics must never block knowledge loading.
+  }
+}
+
 export function registerLoadCommand(program: Command): void {
   program
     .command('load')
@@ -176,6 +188,10 @@ export function registerLoadCommand(program: Command): void {
         console.error('No entries found.');
         return;
       }
+
+      // Listing is discovery only. Returning full content is an explicit
+      // consumption signal, regardless of whether output is text or JSON.
+      if (!isList) await recordLoadedKnowledge(entries);
 
       if (opts.json) {
         console.log(JSON.stringify({

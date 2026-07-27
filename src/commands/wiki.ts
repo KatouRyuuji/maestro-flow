@@ -232,6 +232,16 @@ export function registerWikiCommand(program: Command): void {
         return;
       }
 
+      try {
+        const { recordKnowledgeConsumptions } = await import('../graph/kg/knowledge-usage.js');
+        recordKnowledgeConsumptions(
+          process.cwd(),
+          entries.map(entry => ({ id: entry.id, sourceRef: entry.sourceRef })),
+        );
+      } catch {
+        // Usage analytics must never block knowledge loading.
+      }
+
       if (opts.json) {
         console.log(JSON.stringify({
           totalLoaded: entries.length,

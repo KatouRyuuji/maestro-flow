@@ -330,7 +330,8 @@ export async function runUnifiedSearch(q: string, opts: UnifiedSearchOptions & {
     ...sessionTopology(entry),
   }));
 
-  // Async credibility search_hits increment (best-effort, never blocks)
+  // Async impression increment (best-effort, never blocks). A returned result
+  // is exposure, not evidence that the caller opened or used the knowledge.
   if (!readOnlyProbe && results.length > 0) {
     incrementSearchHitsAsync(
       results.map(result => ({ id: result.id, sourceRef: result.sourceRef })),
@@ -382,7 +383,7 @@ function incrementSearchHitsAsync(
         site: 'incrementSearchHitsAsync.incrementSearchHits',
         queryId,
       });
-      mg.getConnection().transaction(() => store.incrementSearchHits(existingIds));
+      mg.getConnection().transaction(() => store.incrementImpressions(existingIds));
     } finally {
       mg.close();
     }

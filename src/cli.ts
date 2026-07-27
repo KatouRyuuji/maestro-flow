@@ -58,6 +58,7 @@ const commandLoaders: Record<string, () => Promise<(p: Command) => void>> = {
   bv:         async () => (await import('./commands/brainstorm-visualize.js')).registerBrainstormVisualizeCommand,
   knowhow:    async () => (await import('./commands/knowhow.js')).registerKnowhowCommand,
   kh:         async () => (await import('./commands/knowhow.js')).registerKnowhowCommand,
+  knowledge:  async () => (await import('./commands/knowledge.js')).registerKnowledgeCommand,
   'delegate-config': async () => (await import('./commands/tools.js')).registerToolsCommand,
   dc:                async () => (await import('./commands/tools.js')).registerToolsCommand,
   config:  async () => (await import('./commands/config.js')).registerConfigCommand,
