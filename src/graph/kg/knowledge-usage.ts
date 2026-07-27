@@ -10,6 +10,11 @@ export interface KnowledgeUsageRef {
   sourceRef?: string | null;
 }
 
+export interface KnowledgeConsumptionRecord {
+  recorded: number;
+  nodeIds: string[];
+}
+
 export interface KnowledgeUsageBySource {
   sourceType: string;
   nodes: number;
@@ -88,34 +93,42 @@ function resolveNodeId(ref: KnowledgeUsageRef): string | null {
  * Record only explicit content loads. Listing and search result exposure must
  * not call this function.
  */
+export function recordKnowledgeConsumptionsDetailed(
+  projectRoot: string,
+  refs: KnowledgeUsageRef[],
+  nowMs: number = Date.now(),
+): KnowledgeConsumptionRecord {
+  if (refs.length === 0) return { recorded: 0, nodeIds: [] };
+  let graph: MaestroGraph | null = null;
+  try {
+    const root = resolve(projectRoot);
+    if (!MaestroGraph.isInitialized(root)) return { recorded: 0, nodeIds: [] };
+    graph = MaestroGraph.openSync(root);
+    if (!graph) return { recorded: 0, nodeIds: [] };
+
+    const candidateIds = [...new Set(
+      refs.map(resolveNodeId).filter((id): id is string => Boolean(id)),
+    )];
+    if (candidateIds.length === 0) return { recorded: 0, nodeIds: [] };
+    const existingIds = [...graph.getQueryBuilder().getNodesByIds(candidateIds).keys()];
+    if (existingIds.length === 0) return { recorded: 0, nodeIds: [] };
+
+    const store = new CredibilityStore(graph.rawDb);
+    graph.getConnection().transaction(() => store.incrementConsumptions(existingIds, nowMs));
+    return { recorded: existingIds.length, nodeIds: existingIds };
+  } catch {
+    return { recorded: 0, nodeIds: [] };
+  } finally {
+    graph?.close();
+  }
+}
+
 export function recordKnowledgeConsumptions(
   projectRoot: string,
   refs: KnowledgeUsageRef[],
   nowMs: number = Date.now(),
 ): number {
-  if (refs.length === 0) return 0;
-  let graph: MaestroGraph | null = null;
-  try {
-    const root = resolve(projectRoot);
-    if (!MaestroGraph.isInitialized(root)) return 0;
-    graph = MaestroGraph.openSync(root);
-    if (!graph) return 0;
-
-    const candidateIds = [...new Set(
-      refs.map(resolveNodeId).filter((id): id is string => Boolean(id)),
-    )];
-    if (candidateIds.length === 0) return 0;
-    const existingIds = [...graph.getQueryBuilder().getNodesByIds(candidateIds).keys()];
-    if (existingIds.length === 0) return 0;
-
-    const store = new CredibilityStore(graph.rawDb);
-    graph.getConnection().transaction(() => store.incrementConsumptions(existingIds, nowMs));
-    return existingIds.length;
-  } catch {
-    return 0;
-  } finally {
-    graph?.close();
-  }
+  return recordKnowledgeConsumptionsDetailed(projectRoot, refs, nowMs).recorded;
 }
 
 function concentration(values: number[]): KnowledgeUsageConcentration {

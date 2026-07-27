@@ -6,6 +6,7 @@ import {
   buildKnowledgeUsageStats,
   type KnowledgeUsageConcentration,
 } from '../graph/kg/knowledge-usage.js';
+import { summarizeSessionKnowledge } from '../run/knowledge.js';
 
 const KNOWLEDGE_SOURCE_TYPES = ['spec', 'knowhow', 'issue', 'domain', 'codebase'] as const;
 
@@ -25,6 +26,46 @@ export function registerKnowledgeCommand(program: Command): void {
   const knowledge = program
     .command('knowledge')
     .description('Inspect project knowledge usage and lifecycle signals');
+
+  knowledge
+    .command('session')
+    .description('Summarize knowledge inputs and pending candidates across a Session')
+    .argument('<session-id>', 'Session identifier')
+    .option('--json', 'Output as JSON')
+    .action((sessionId: string, opts: { json?: boolean }) => {
+      try {
+        const summary = summarizeSessionKnowledge(resolve('.'), sessionId);
+        if (opts.json) {
+          console.log(JSON.stringify(summary, null, 2));
+          return;
+        }
+
+        console.log(`Session knowledge: ${summary.session_id}`);
+        console.log(
+          `${summary.ledger_count}/${summary.run_count} run ledgers · `
+          + `${summary.unique_inputs} unique inputs · `
+          + `${summary.candidates.length} candidates`,
+        );
+        console.log(
+          `Signals: ${summary.input_totals.consumed} consumed · `
+          + `${summary.input_totals.cited} cited · `
+          + `${summary.input_totals.validated} validated · `
+          + `${summary.input_totals.contradicted} contradicted`,
+        );
+        if (summary.candidates.length > 0) {
+          console.log('\nCandidates:');
+          for (const candidate of summary.candidates) {
+            console.log(
+              `  ${candidate.candidate_id} [${candidate.stage}/${candidate.status}] `
+              + `${candidate.target}:${candidate.category ?? 'uncategorized'} · ${candidate.title}`,
+            );
+          }
+        }
+      } catch (error) {
+        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        process.exitCode = 1;
+      }
+    });
 
   knowledge
     .command('stats')

@@ -25,6 +25,7 @@ import {
   type TargetPlatform,
 } from '../core/skill-converter.js';
 import { deriveHandoff, readReportFrontmatter } from './report.js';
+import { stageHandoffKnowledgeCandidates } from './knowledge.js';
 import {
   gateSchema,
   type ArtifactRegistry,
@@ -2745,6 +2746,7 @@ export function applyCompleteRunMutation(
   }
   mergeNotesIntoConcerns(run.handoff, options.notes ?? []);
   mergeDecisionsIntoHandoff(run.handoff, options.decisions ?? []);
+  stageHandoffKnowledgeCandidates(store, tx, prepared.sessionId, run);
   run.status = 'sealed';
   run.sealed_at = localISO();
   draft.session.latest_completed_run_id = runId;
