@@ -1,7 +1,7 @@
 <!-- session-mode: inherited -->
 # Run Mode Lite
 
-Lightweight Session/Run lifecycle for team skills. Only two actions: **start** and **done**. `run create` / `session done` remain compatibility spellings. No `prepare`, no `brief`, no workflow content loading.
+Lightweight Session/Run lifecycle for team skills. Only two actions: **start** and **done**. `run create` / `run complete` remain compatibility spellings. No `prepare`, no `brief`, no workflow content loading.
 
 ## Create
 
