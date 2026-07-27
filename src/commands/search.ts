@@ -134,6 +134,10 @@ export interface UnifiedSearchOptions {
   evidenceQueryId?: string | null;
   /** Wiki candidate selection policy. Default: balanced. */
   diversity?: 'balanced' | 'off';
+  /** Mixed search defers impressions until cross-source truncation is complete. */
+  deferImpressions?: boolean;
+  /** Final mixed display size used when reserving an exploration candidate. */
+  explorationLimit?: number;
 }
 
 // ── Lazy offline client ────────────────────────────────────────────────
@@ -223,20 +227,10 @@ function jaccard(left: Set<string>, right: Set<string>): number {
   return intersection / (left.size + right.size - intersection);
 }
 
-/**
- * Stable wiki selection: identity/family caps first, then high-lambda MMR.
- * One final slot may explore a lower-exposure candidate above a strict
- * relevance floor. Exposure never changes the relevance score.
- */
-export function selectDiverseWikiCandidates(
+function buildWikiCandidatePool(
   filtered: ScoredWikiCandidate[],
-  options: {
-    limit: number;
-    applyCaps: boolean;
-    diversity?: 'balanced' | 'off';
-    impressions?: Map<string, number>;
-  },
-): SelectedWikiCandidate[] {
+  applyCaps: boolean,
+): ScoredWikiCandidate[] {
   const PARENT_CAP = 2;
   const KG_CODE_CAP = 3;
   const seen = new Set<string>();
@@ -249,7 +243,7 @@ export function selectDiverseWikiCandidates(
     const parent = familyKey(candidate.entry);
     const parentCount = parentCounts.get(parent) ?? 0;
     if (parentCount >= PARENT_CAP) continue;
-    if (options.applyCaps) {
+    if (applyCaps) {
       const category = candidate.entry.category ?? '';
       const cap = CATEGORY_CAPS[category];
       if (cap !== undefined) {
@@ -266,6 +260,25 @@ export function selectDiverseWikiCandidates(
     parentCounts.set(parent, parentCount + 1);
     pool.push(candidate);
   }
+  return pool;
+}
+
+/**
+ * Stable wiki selection: identity/family caps first, then high-lambda MMR.
+ * One final slot may explore a lower-exposure candidate above a strict
+ * relevance floor. Exposure never changes the relevance score.
+ */
+export function selectDiverseWikiCandidates(
+  filtered: ScoredWikiCandidate[],
+  options: {
+    limit: number;
+    applyCaps: boolean;
+    diversity?: 'balanced' | 'off';
+    impressions?: Map<string, number>;
+    explorationLimit?: number;
+  },
+): SelectedWikiCandidate[] {
+  const pool = buildWikiCandidatePool(filtered, options.applyCaps);
 
   const limit = Math.max(0, options.limit);
   if (limit === 0 || pool.length === 0) return [];
@@ -280,6 +293,7 @@ export function selectDiverseWikiCandidates(
   const tokens = new Map(pool.map(candidate => [candidate.entry.id, semanticTokens(candidate.entry)]));
   const remaining = [...pool];
   const selected: SelectedWikiCandidate[] = [];
+  const maxSimilarity = new Map(remaining.map(candidate => [candidate.entry.id, 0]));
   const lambda = 0.88;
   while (remaining.length > 0 && selected.length < limit) {
     let bestIndex = 0;
@@ -287,11 +301,7 @@ export function selectDiverseWikiCandidates(
     for (let index = 0; index < remaining.length; index++) {
       const candidate = remaining[index];
       const relevance = candidate.score / maxScore;
-      const similarity = selected.length === 0
-        ? 0
-        : Math.max(...selected.map(item =>
-          jaccard(tokens.get(candidate.entry.id)!, tokens.get(item.entry.id)!)
-        ));
+      const similarity = maxSimilarity.get(candidate.entry.id) ?? 0;
       const value = lambda * relevance - (1 - lambda) * similarity;
       if (value > bestValue + Number.EPSILON) {
         bestIndex = index;
@@ -299,19 +309,32 @@ export function selectDiverseWikiCandidates(
       }
     }
     const [candidate] = remaining.splice(bestIndex, 1);
+    maxSimilarity.delete(candidate.entry.id);
     selected.push({
       ...candidate,
       selectionReason: selected.length === 0 ? 'relevance' : 'diversity',
     });
+    const selectedTokens = tokens.get(candidate.entry.id)!;
+    for (const remainingCandidate of remaining) {
+      const similarity = jaccard(tokens.get(remainingCandidate.entry.id)!, selectedTokens);
+      if (similarity > (maxSimilarity.get(remainingCandidate.entry.id) ?? 0)) {
+        maxSimilarity.set(remainingCandidate.entry.id, similarity);
+      }
+    }
   }
 
   // A bounded exploration slot prevents exposure feedback loops. It is only
   // used when counters exist and the candidate remains at least 35% as
   // relevant as the top result.
   const impressions = options.impressions;
-  if (limit >= 4 && pool.length > limit && impressions && impressions.size > 0) {
-    const selectedIds = new Set(selected.map(item => item.entry.id));
-    const selectedFamilies = new Set(selected.map(item => familyKey(item.entry)));
+  const explorationLimit = Math.min(limit, options.explorationLimit ?? limit);
+  if (explorationLimit >= 4
+    && pool.length > explorationLimit
+    && impressions
+    && impressions.size > 0) {
+    const explorationBase = selected.slice(0, explorationLimit);
+    const selectedIds = new Set(explorationBase.map(item => item.entry.id));
+    const selectedFamilies = new Set(explorationBase.map(item => familyKey(item.entry)));
     const eligible = pool
       .filter(candidate =>
         !selectedIds.has(candidate.entry.id)
@@ -326,17 +349,22 @@ export function selectDiverseWikiCandidates(
       );
     const explorer = eligible[0];
     const selectedMaxExposure = Math.max(
-      ...selected.map(item => impressions.get(item.entry.id) ?? 0),
+      ...explorationBase.map(item => impressions.get(item.entry.id) ?? 0),
     );
     if (explorer && (impressions.get(explorer.entry.id) ?? 0) < selectedMaxExposure) {
-      selected[selected.length - 1] = { ...explorer, selectionReason: 'exploration' };
+      const explorerIndex = selected.findIndex(item => item.entry.id === explorer.entry.id);
+      if (explorerIndex >= 0) {
+        selected[explorerIndex] = { ...explorer, selectionReason: 'exploration' };
+      } else {
+        selected[selected.length - 1] = { ...explorer, selectionReason: 'exploration' };
+      }
     }
   }
   return selected;
 }
 
 export async function runUnifiedSearch(q: string, opts: UnifiedSearchOptions & { skipEmbedding?: boolean }): Promise<SearchResult[]> {
-  const limit = opts.limit > 0 ? opts.limit : 20;
+  const limit = Math.min(500, opts.limit > 0 ? Math.trunc(opts.limit) : 20);
   const executionMode = opts.executionMode ?? 'default';
   const readOnlyProbe = executionMode === 'read-only-probe';
   // Facet filters run after candidate truncation — widen the pool when any
@@ -424,7 +452,12 @@ export async function runUnifiedSearch(q: string, opts: UnifiedSearchOptions & {
   // CATEGORY_CAPS only when user didn't explicitly select a wiki facet.
   const applyCaps = !opts.type && !opts.category && !opts.tag && !opts.keyword;
   let impressions: Map<string, number> | undefined;
-  if (!readOnlyProbe && (opts.diversity ?? 'balanced') === 'balanced') {
+  const explorationLimit = Math.min(limit, opts.explorationLimit ?? limit);
+  const explorationPossible = explorationLimit >= 4
+    && buildWikiCandidatePool(filtered, applyCaps).length > explorationLimit;
+  if (!readOnlyProbe
+    && explorationPossible
+    && (opts.diversity ?? 'balanced') === 'balanced') {
     try {
       const { readKnowledgeUsageSignals } = await import('../graph/kg/knowledge-usage.js');
       const signals = readKnowledgeUsageSignals(
@@ -446,6 +479,7 @@ export async function runUnifiedSearch(q: string, opts: UnifiedSearchOptions & {
     applyCaps,
     diversity: opts.diversity,
     impressions,
+    explorationLimit,
   });
   _lastSearchMeta = {
     embeddingUsed,
@@ -473,7 +507,7 @@ export async function runUnifiedSearch(q: string, opts: UnifiedSearchOptions & {
 
   // Async impression increment (best-effort, never blocks). A returned result
   // is exposure, not evidence that the caller opened or used the knowledge.
-  if (!readOnlyProbe && results.length > 0) {
+  if (!readOnlyProbe && !opts.deferImpressions && results.length > 0) {
     incrementSearchHitsAsync(
       results.map(result => ({ id: result.id, sourceRef: result.sourceRef })),
       opts.evidenceRecorder,
@@ -551,7 +585,9 @@ export async function runKgSearch(
   try {
     const { MaestroGraph } = await import('../graph/kg/engine.js');
     if (!MaestroGraph.isInitialized(projectRoot)) return { results: [], summary: {} };
-    const mg = await MaestroGraph.open(projectRoot);
+    const mg = recordImpressions
+      ? await MaestroGraph.open(projectRoot)
+      : await MaestroGraph.openReadOnly(projectRoot);
     try {
       const output = mg.searchUnified(q, { limit });
       const results: KgSearchResult[] = output.directMatches.map(r => ({
@@ -564,13 +600,21 @@ export async function runKgSearch(
         score: r.score,
       }));
       if (recordImpressions && results.length > 0) {
-        const { CredibilityStore } = await import('../graph/kg/credibility.js');
-        const store = new CredibilityStore(mg.rawDb);
-        const knowledgeIds = results
-          .filter(result => result.sourceType !== 'codegraph')
-          .map(result => result.id);
-        const existingIds = [...mg.getQueryBuilder().getNodesByIds(knowledgeIds).keys()];
-        mg.getConnection().transaction(() => store.incrementImpressions(existingIds));
+        try {
+          const { CredibilityStore } = await import('../graph/kg/credibility.js');
+          const store = new CredibilityStore(mg.rawDb);
+          const knowledgeIds = results
+            .filter(result => result.sourceType !== 'codegraph')
+            .map(result => result.id);
+          const existingIds = [...mg.getQueryBuilder().getNodesByIds(knowledgeIds).keys()];
+          mg.getConnection().transaction(() => store.incrementImpressions(existingIds));
+        } catch (error) {
+          if (process.env.MAESTRO_DEBUG === '1') {
+            console.error(
+              `[search] KG impression write failed: ${error instanceof Error ? error.message : error}`,
+            );
+          }
+        }
       }
       return { results, summary: output.summary };
     } finally {
@@ -776,7 +820,7 @@ export async function runMixedSearch(
   options: UnifiedSearchOptions & { skipEmbedding?: boolean },
   dependencies: Partial<MixedSearchDependencies> = {},
 ): Promise<MixedSearchOutcome> {
-  const limit = options.limit > 0 ? options.limit : 20;
+  const limit = Math.min(500, options.limit > 0 ? Math.trunc(options.limit) : 20);
   const candidateLimit = Math.min(500, Math.max(limit * 3, 60));
   const wikiSearch = dependencies.wikiSearch ?? runUnifiedSearch;
   const codeSearch = dependencies.codeSearch ?? runCodeSearch;
@@ -795,15 +839,35 @@ export async function runMixedSearch(
       executionMode,
     );
   const [wikiResults, codeOutcome] = await Promise.all([
-    wikiSearch(q, { ...wikiOptions, limit: candidateLimit, executionMode }),
+    wikiSearch(q, {
+      ...wikiOptions,
+      limit: candidateLimit,
+      executionMode,
+      deferImpressions: dependencies.wikiSearch === undefined,
+      explorationLimit: limit,
+    }),
     codePromise,
   ]);
+  const results = merge(wikiResults, codeOutcome.results, limit, q);
+
+  if (executionMode === 'default' && dependencies.wikiSearch === undefined) {
+    const exposedWiki = results
+      .filter(result => result.source === 'wiki')
+      .map(result => ({ id: result.id, sourceRef: result.sourceRef }));
+    if (exposedWiki.length > 0) {
+      incrementSearchHitsAsync(
+        exposedWiki,
+        options.evidenceRecorder,
+        options.evidenceQueryId ?? null,
+      );
+    }
+  }
 
   return {
     candidateLimit,
     wikiResults,
     codeOutcome,
-    results: merge(wikiResults, codeOutcome.results, limit, q),
+    results,
   };
 }
 
@@ -830,7 +894,7 @@ export function registerSearchCommand(program: Command): void {
     .option('--json', 'Output as JSON')
     .action(async (queryParts: string[], opts) => {
       const q = queryParts.join(' ');
-      const limit = parseInt(opts.limit, 10) || 20;
+      const limit = Math.min(500, Math.max(1, parseInt(opts.limit, 10) || 20));
       const resolvedTag = opts.tag ?? opts.kind;
       const wikiOnly = opts.wikiOnly === true || typeof resolvedTag === 'string' || typeof opts.keyword === 'string';
       const codeOnly = opts.code === true && !opts.all;
@@ -1287,6 +1351,7 @@ export interface MergedResult {
   source: 'wiki' | 'code';
   /** Stable entry id — usable with `maestro load --id`. */
   id: string;
+  sourceRef?: string | null;
   kind: string;
   name: string;
   detail: string;
@@ -1437,6 +1502,7 @@ export function mergeAndNormalize(wiki: SearchResult[], code: CodeSearchResult[]
     merged.push({
       source: 'wiki',
       id: r.id,
+      sourceRef: r.sourceRef,
       kind: r.type,
       name: r.title,
       detail: r.category ? `${r.category}  ${r.id}` : r.id,
@@ -1475,5 +1541,19 @@ export function mergeAndNormalize(wiki: SearchResult[], code: CodeSearchResult[]
     if (a.source !== b.source) return a.source === 'wiki' ? -1 : 1;
     return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
   });
-  return merged.slice(0, limit);
+  const finalResults = merged.slice(0, limit);
+  const explorer = merged.find(result =>
+    result.source === 'wiki' && result.selectionReason === 'exploration'
+  );
+  if (explorer && !finalResults.some(result => result.id === explorer.id) && finalResults.length > 0) {
+    let replaceIndex = -1;
+    for (let index = finalResults.length - 1; index >= 0; index--) {
+      if (finalResults[index].source === 'wiki') {
+        replaceIndex = index;
+        break;
+      }
+    }
+    finalResults[replaceIndex >= 0 ? replaceIndex : finalResults.length - 1] = explorer;
+  }
+  return finalResults;
 }

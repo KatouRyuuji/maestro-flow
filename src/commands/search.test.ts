@@ -145,6 +145,51 @@ describe('balanced wiki candidate selection', () => {
     });
     expect(selected.map(item => item.score)).toEqual(expect.arrayContaining([8.4]));
   });
+
+  it('reserves exploration against the final mixed display size', () => {
+    const candidates = Array.from({ length: 8 }, (_, index) => ({
+      entry: wikiEntry(`mixed-${index + 1}`, [], {
+        parent: `mixed-family-${index}-unique`,
+        title: `Mixed candidate ${index + 1}`,
+        summary: `Independent mixed evidence ${index + 1}`,
+      }),
+      score: 10 - index * 0.4,
+    }));
+    const impressions = new Map(candidates.map((candidate, index) => [
+      candidate.entry.id,
+      index === 7 ? 0 : 100,
+    ]));
+    const selected = selectDiverseWikiCandidates(candidates, {
+      limit: 8,
+      explorationLimit: 4,
+      applyCaps: false,
+      diversity: 'balanced',
+      impressions,
+    });
+    expect(selected).toContainEqual(expect.objectContaining({
+      entry: expect.objectContaining({ id: 'mixed-8' }),
+      selectionReason: 'exploration',
+    }));
+  });
+
+  it('selects a large candidate pool without cubic similarity recomputation', () => {
+    const candidates = Array.from({ length: 400 }, (_, index) => ({
+      entry: wikiEntry(`perf-${index}`, [`tag-${index % 17}`], {
+        parent: `family-${index}-unique`,
+        title: `Candidate topic ${index}`,
+        summary: `Shared retrieval terms and distinct evidence ${index}`,
+      }),
+      score: 400 - index,
+    }));
+    const started = performance.now();
+    const selected = selectDiverseWikiCandidates(candidates, {
+      limit: 200,
+      applyCaps: false,
+      diversity: 'balanced',
+    });
+    expect(selected).toHaveLength(200);
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
 });
 
 describe('search session/run topology exposure', () => {

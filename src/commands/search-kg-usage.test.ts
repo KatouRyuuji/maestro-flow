@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { CredibilityStore } from '../graph/kg/credibility.js';
 import { MaestroGraph } from '../graph/kg/engine.js';
@@ -68,6 +68,29 @@ describe('KG search usage attribution', () => {
       reopened = await MaestroGraph.open(root);
       expect(new CredibilityStore(reopened.rawDb).get('spec:alpha')?.search_hits).toBe(1);
       reopened.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('returns valid KG results when impression persistence fails', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'maestro-kg-search-failure-'));
+    try {
+      const graph = await MaestroGraph.init(root);
+      graph.getConnection().transaction(() =>
+        graph.getQueryBuilder().insertNodes([node('spec:alpha')])
+      );
+      graph.close();
+      const failure = vi.spyOn(CredibilityStore.prototype, 'incrementImpressions')
+        .mockImplementation(() => {
+          throw new Error('simulated usage write failure');
+        });
+      try {
+        const output = await runKgSearch('alpha', 10, true, root);
+        expect(output.results.map(result => result.id)).toContain('spec:alpha');
+      } finally {
+        failure.mockRestore();
+      }
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

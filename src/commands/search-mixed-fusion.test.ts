@@ -192,6 +192,22 @@ describe('mixed provider candidate pool', () => {
       }),
     );
   });
+
+  it('keeps the reserved wiki exploration slot after mixed truncation', async () => {
+    const wiki = Array.from({ length: 5 }, (_, index) => ({
+      ...wikiResult(`wiki-${index}`, 10 - index),
+      selectionReason: index === 4 ? 'exploration' as const : 'diversity' as const,
+    }));
+    const code = Array.from({ length: 5 }, (_, index) =>
+      codeResult(`code-${index}`, 10 - index));
+
+    const results = mergeAndNormalize(wiki, code, 4, 'plain terms');
+    expect(results).toContainEqual(expect.objectContaining({
+      id: 'wiki-4',
+      source: 'wiki',
+      selectionReason: 'exploration',
+    }));
+  });
 });
 
 describe('legacy mixed rank and score contract', () => {
