@@ -151,8 +151,9 @@ function reportError(error: unknown): void {
   process.exitCode = 1;
 }
 
-/** Deprecation notice for session-level commands migrating to `maestro session`. */
-function sessionMigrationNotice(verb: string, sessionVerb?: string): void {
+/** Deprecation notice for human-facing aliases migrating to `maestro session`. */
+function sessionMigrationNotice(verb: string, sessionVerb?: string, machineMode = false): void {
+  if (machineMode) return;
   const target = sessionVerb ?? verb;
   console.error(`[maestro run] deprecated: "maestro run ${verb}" is now "maestro session ${target}". This alias stays for backward compatibility.`);
 }
@@ -628,7 +629,7 @@ export function registerRunCommand(program: Command): void {
       workflowRoot: string;
     }) => {
       const projectRoot = resolve(opts.workflowRoot);
-      sessionMigrationNotice('next');
+      sessionMigrationNotice('next', undefined, opts.json);
       try {
         const outcome = runNextStep(projectRoot, {
           sessionId: opts.session,
@@ -821,7 +822,7 @@ Compatibility boundary:
       json?: boolean;
       workflowRoot: string;
     }) => {
-      sessionMigrationNotice('complete', 'done');
+      sessionMigrationNotice('complete', 'done', opts.json);
       try {
         const projectRoot = resolve(opts.workflowRoot);
 
@@ -1146,7 +1147,7 @@ Compatibility boundary:
       json?: boolean;
       workflowRoot: string;
     }) => {
-      sessionMigrationNotice('decide');
+      sessionMigrationNotice('decide', undefined, opts.json);
       try {
         const verdict = opts.verdict.trim().toLowerCase();
         if (!['proceed', 'fix', 'escalate'].includes(verdict)) {
@@ -1230,7 +1231,7 @@ Compatibility boundary:
     .option('--json', 'emit one run-response/1.0 envelope on stdout')
     .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
     .action((sessionId: string, opts: { summary: string; json?: boolean; workflowRoot: string }) => {
-      sessionMigrationNotice('seal-session', 'seal');
+      sessionMigrationNotice('seal-session', 'seal', opts.json);
       try {
         const result = sealSession(resolve(opts.workflowRoot), sessionId, opts.summary);
         if (opts.json) machineSuccess('seal-session', result, { session_id: result.session_id, run_id: null });
