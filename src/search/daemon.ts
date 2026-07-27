@@ -97,13 +97,42 @@ export async function startDaemon(
       if (!addr || typeof addr === 'string') { reject(new Error('bad addr')); return; }
       const port = addr.port;
       const info: DaemonInfo = { pid: process.pid, port, startedAt: new Date().toISOString() };
-      writeFileSync(getDaemonPath(workflowRoot), JSON.stringify(info));
+      // The liveness check at the top of startDaemon runs *before* the ~1s index
+      // rebuild, so two daemons can both pass it and get here. A plain write would
+      // let the second one silently orphan the first: still resident, still holding
+      // a full wiki index, with no descriptor pointing at it and no reclaim path
+      // short of the 30-minute idle timeout. Claim the descriptor atomically and
+      // stand down if we lost.
+      if (!claimDescriptor(workflowRoot, info)) {
+        server.close();
+        reject(new Error('another daemon already owns this workflowRoot'));
+        return;
+      }
       try { unlinkSync(join(workflowRoot, 'search-daemon-spawning')); } catch {}
       resetIdle(server);
       res({ port, server });
     });
     server.on('error', reject);
   });
+}
+
+/**
+ * Write the descriptor only if no live daemon already owns this workflowRoot.
+ * `wx` makes the common case a single atomic syscall; the fallback replaces a
+ * descriptor left behind by a daemon that is no longer alive.
+ */
+function claimDescriptor(workflowRoot: string, info: DaemonInfo): boolean {
+  const path = getDaemonPath(workflowRoot);
+  try {
+    writeFileSync(path, JSON.stringify(info), { flag: 'wx' });
+    return true;
+  } catch { /* descriptor exists — decide whether it is still owned */ }
+  const existing = readDaemonInfo(workflowRoot);
+  if (existing && existing.pid !== process.pid && isDaemonAlive(existing)) return false;
+  try {
+    writeFileSync(path, JSON.stringify(info));
+    return true;
+  } catch { return false; }
 }
 
 async function handleRequest(

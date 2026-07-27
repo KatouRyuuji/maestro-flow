@@ -5,7 +5,7 @@
 
 import { connect } from 'node:net';
 import { join } from 'node:path';
-import { existsSync, readFileSync, unlinkSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 
 export type { DaemonInfo, DaemonSearchRequest, DaemonSearchResponse } from './daemon-types.js';
 export { getDaemonPath, readDaemonInfo, isDaemonAlive } from './daemon-types.js';
@@ -65,25 +65,39 @@ export function stopDaemon(workflowRoot: string): boolean {
 const SPAWN_LOCK_FILE = 'search-daemon-spawning';
 const SPAWN_LOCK_TTL_MS = 60_000;
 
+/**
+ * Claim the right to spawn a daemon, or return false if someone else holds it.
+ *
+ * Uses `wx` (create-or-fail) rather than existsSync-then-write: with the latter,
+ * two hooks firing together both see no lock and both spawn, and the loser stays
+ * resident holding a full wiki index with no descriptor pointing at it. The TTL
+ * still covers a holder that died before the daemon came up.
+ */
+function claimSpawnLock(lockPath: string): boolean {
+  const take = (): boolean => {
+    try {
+      const fd = openSync(lockPath, 'wx');
+      try { writeFileSync(fd, String(Date.now())); } finally { closeSync(fd); }
+      return true;
+    } catch { return false; }
+  };
+  if (take()) return true;
+  try {
+    const age = Date.now() - parseInt(readFileSync(lockPath, 'utf-8'), 10);
+    if (age >= 0 && age < SPAWN_LOCK_TTL_MS) return false;
+  } catch { /* unreadable — treat as stale */ }
+  // Stale lock: drop it and re-race, so only one caller can take it over.
+  try { unlinkSync(lockPath); } catch { /* another caller got there first */ }
+  return take();
+}
+
 export async function spawnDaemon(workflowRoot: string): Promise<void> {
   const existing = readDaemonInfo(workflowRoot);
   if (existing && isDaemonAlive(existing)) return;
 
-  const lockPath = join(workflowRoot, SPAWN_LOCK_FILE);
-  if (existsSync(lockPath)) {
-    try {
-      const lockContent = readFileSync(lockPath, 'utf-8');
-      const lockTime = parseInt(lockContent, 10);
-      if (Date.now() - lockTime < SPAWN_LOCK_TTL_MS) return;
-    } catch { /* stale lock, proceed */ }
-  }
+  if (!claimSpawnLock(join(workflowRoot, SPAWN_LOCK_FILE))) return;
 
   if (existing) try { unlinkSync(getDaemonPath(workflowRoot)); } catch {}
-
-  try {
-    const { writeFileSync: writeSync } = await import('node:fs');
-    writeSync(lockPath, String(Date.now()));
-  } catch { /* best-effort */ }
 
   const { spawn: spawnProc } = await import('node:child_process');
   const { resolve: resolvePath, dirname } = await import('node:path');
