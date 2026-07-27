@@ -74,17 +74,23 @@ interface RawHit {
 /**
  * Resolve the score threshold for a daemon response.
  *
- * Daemon hybrid scores are normalized (≤ ~1.2×decay) while BM25-only raw
- * scores commonly exceed 5 — a fixed absolute threshold silently empties
- * results whenever embedding is active. Hybrid mode uses a relative cut
- * against the top score; BM25 keeps the absolute default. When the response
- * does not report `embeddingUsed`, infer the mode from the score scale.
+ * Scale decides, not mode. The absolute default only means anything against raw
+ * BM25 magnitudes, which commonly exceed 5; a normalized response needs a cut
+ * relative to its own top score.
+ *
+ * This used to read `embeddingUsed ?? top < HYBRID_SCALE_CUTOFF`, which made the
+ * scale heuristic dead code whenever the daemon answered at all — it always
+ * reports the flag. The hook always asks with `skipEmbedding`, so the flag came
+ * back false, the absolute 1.0 was applied, and every hit was dropped: measured
+ * across 4 queries × BM25-only and hybrid, daemon top scores were 0.893-0.996 and
+ * `>= 1.0` left 0 of 9-10 typed hits every time. The daemon normalizes BM25-only
+ * responses too, so `embeddingUsed` was never the right signal.
  */
 function adaptiveMinScore(raw: RawHit[], embeddingUsed?: boolean): number {
   const top = raw.reduce((m, r) => Math.max(m, r.score), 0);
   if (top <= 0) return DEFAULT_MIN_SCORE;
-  const hybrid = embeddingUsed ?? top < HYBRID_SCALE_CUTOFF;
-  return hybrid ? HYBRID_RELATIVE_FACTOR * top : DEFAULT_MIN_SCORE;
+  const normalized = top < HYBRID_SCALE_CUTOFF || embeddingUsed === true;
+  return normalized ? HYBRID_RELATIVE_FACTOR * top : DEFAULT_MIN_SCORE;
 }
 
 function toHits(raw: RawHit[], limit: number, minScore: number): WikiSearchHit[] {
