@@ -521,8 +521,15 @@ export function readCoordBridge(sessionId: string): CoordBridgeData | null {
 export function readLatestSession(
   workspaceRoot: string,
   existingBridge?: CoordBridgeData | null,
+  /**
+   * Already-computed `readMaestroSession` result, if the caller has one. Pass
+   * `null` to say "computed, found nothing" — callers that check it first would
+   * otherwise pay the whole session scan twice for the same answer. Omit to let
+   * this function do the scan itself.
+   */
+  maestroSession?: CoordBridgeData | null,
 ): CoordBridgeData | null {
-  const maestro = readMaestroSession(workspaceRoot);
+  const maestro = maestroSession !== undefined ? maestroSession : readMaestroSession(workspaceRoot);
   const coord = readLatestCoordinateSession(workspaceRoot);
 
   const candidates = [maestro, coord, existingBridge ?? null].filter(

@@ -1234,10 +1234,13 @@ const HOOK_RUNNERS: Record<string, HookRunner> = {
     // Read status.json (/maestro & /maestro-coordinate)
     let bridgeData: CoordBridgeData | null = readMaestroSession(workspace);
 
-    // Fallback: pick most recently updated session
+    // Fallback: pick most recently updated session. readMaestroSession above
+    // already returned null, so hand that in — otherwise readLatestSession runs
+    // the identical scan (56 session dirs, 533 KB of session.json) a second time
+    // for an answer we have.
     if (!bridgeData) {
       const existing = readCoordBridge(sessionId);
-      bridgeData = readLatestSession(workspace, existing);
+      bridgeData = readLatestSession(workspace, existing, null);
     }
 
     if (!bridgeData) return;
