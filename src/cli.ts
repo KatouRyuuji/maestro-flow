@@ -71,6 +71,8 @@ const commandLoaders: Record<string, () => Promise<(p: Command) => void>> = {
   'search-daemon': async () => (await import('./commands/search.js')).registerSearchCommand,
   'search-start-daemon': async () => (await import('./commands/search.js')).registerSearchCommand,
   embedding:  async () => (await import('./commands/search.js')).registerSearchCommand,
+  'arch-kb':  async () => (await import('./commands/arch-kb.js')).registerArchKbCommand,
+  akb:        async () => (await import('./commands/arch-kb.js')).registerArchKbCommand,
   domain:     async () => (await import('./commands/domain.js')).registerDomainCommand,
   workspace:  async () => (await import('./commands/workspace.js')).registerWorkspaceCommand,
   ws:         async () => (await import('./commands/workspace.js')).registerWorkspaceCommand,

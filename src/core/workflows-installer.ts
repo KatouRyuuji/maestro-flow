@@ -79,15 +79,29 @@ export function installRefFiles(
   return { sourceDir, targetDir, filesInstalled: copied.files, dirsCreated: copied.dirs, installedFiles: copied.installedFiles };
 }
 
+export function installArchKb(
+  packageRoot: string,
+  targetDir = paths.archKb,
+): WorkflowsInstallResult {
+  const sourceDir = join(packageRoot, 'resources', 'arch-kb');
+  if (!existsSync(sourceDir) || !statSync(sourceDir).isDirectory()) {
+    return { sourceDir, targetDir, filesInstalled: 0, dirsCreated: 0, installedFiles: [] };
+  }
+  const copied = copyDirectory(sourceDir, targetDir);
+  return { sourceDir, targetDir, filesInstalled: copied.files, dirsCreated: copied.dirs, installedFiles: copied.installedFiles };
+}
+
 export function installAllStepContent(packageRoot: string): {
   workflows: WorkflowsInstallResult;
   prepare: WorkflowsInstallResult;
   ref: WorkflowsInstallResult;
+  archKb: WorkflowsInstallResult;
 } {
   const result = {
     workflows: installWorkflowsOnly(packageRoot),
     prepare: installPrepareFiles(packageRoot),
     ref: installRefFiles(packageRoot),
+    archKb: installArchKb(packageRoot),
   };
 
   // This direct subcommand is intentionally overwrite-only. Record only the
@@ -98,6 +112,7 @@ export function installAllStepContent(packageRoot: string): {
   if (result.workflows.filesInstalled > 0) selectedIds.add('workflows');
   if (result.prepare.filesInstalled > 0) selectedIds.add('prepare');
   if (result.ref.filesInstalled > 0) selectedIds.add('ref');
+  if (result.archKb.filesInstalled > 0) selectedIds.add('arch-kb');
   const manifest = createManifest('global', paths.home, {
     hookLevel: prior?.hookLevel,
     selectedComponentIds: Array.from(selectedIds),
@@ -115,6 +130,7 @@ export function installAllStepContent(packageRoot: string): {
     ...result.workflows.installedFiles,
     ...result.prepare.installedFiles,
     ...result.ref.installedFiles,
+    ...result.archKb.installedFiles,
   ]) {
     addFile(manifest, filePath);
   }

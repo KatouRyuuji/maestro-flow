@@ -213,6 +213,7 @@ maestro/
 - **[GET SHIT DONE](https://github.com/gsd-build/get-shit-done)** — Spec 驱动开发与上下文工程理念
 - **[Claude-Code-Workflow](https://github.com/catlog22/Claude-Code-Workflow)** — 前身项目，开创多 CLI 编排
 - **[Impeccable](https://github.com/pbakaus/impeccable)** — UI 设计技能（[Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0)）
+- **[Awesome Architecture](https://github.com/study8677/awesome-architecture)** — 架构知识库（`maestro arch-kb`），31 个架构模板 + 40 章教程 + 6 个案例（[MIT](https://opensource.org/licenses/MIT)）
 
 ---
 

@@ -16,6 +16,7 @@ export const paths = {
   workflows: join(MAESTRO_HOME, 'workflows'),
   prepare: join(MAESTRO_HOME, 'prepare'),
   ref: join(MAESTRO_HOME, 'ref'),
+  archKb: join(MAESTRO_HOME, 'arch-kb'),
 
   project(root: string) {
     return {

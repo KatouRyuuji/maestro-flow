@@ -165,7 +165,19 @@ Session: `maestro explore show` / `maestro explore output <id>`
 
 ## Knowledge System
 
-**Gate rule**: Before editing code or making design decisions, run `maestro search` to retrieve historical knowledge (spec rules, knowhow lessons, design decisions) — avoid repeating known pitfalls or violating established conventions. This is knowledge reuse, not code search — code navigation (Grep/Read/explore) can proceed in parallel without waiting for knowledge results. Empty results ≠ exempt: if a hint is returned, execute it and retry; once confirmed no prior knowledge exists, proceed normally and record findings at task end per Record.
+**Knowledge-first principle**: Before executing ANY non-trivial task, search existing knowledge first — `maestro search "<task keywords>"`. The knowledge base may contain operational recipes, prior decisions, known pitfalls, or established conventions that shortcut the entire task. This applies to ALL task types, not just code editing:
+
+| Task type | Search first for |
+|-----------|------------------|
+| Process/ops (install, sync, release, conversion) | Operational recipes (RCP-), decisions (DCS-) |
+| Code change | Specs, conventions, prior decisions in the affected module |
+| Debug | Prior diagnoses, known pitfalls, debug notes |
+| Architecture/design | ADRs, constraints, quality attribute tradeoffs |
+| Review | Review standards, prior review findings |
+
+File system exploration (ls/grep/read) is a **fallback** for when knowledge search returns nothing — not the first resort. Code navigation (`Grep`/`Read`/`explore`) can proceed in parallel without waiting for knowledge results.
+
+Empty results ≠ exempt: if a hint is returned, execute it and retry; once confirmed no prior knowledge exists, proceed normally and record findings at task end per Record.
 
 **Re-search triggers** (re-query mid-task with new keywords, never repeat old queries): entering a new module/subsystem boundary; same fix failed twice; before architecture/approach decisions.
 

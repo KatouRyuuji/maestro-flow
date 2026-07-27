@@ -174,6 +174,16 @@ export const COMPONENT_DEFS: ComponentDef[] = [
     platform: 'shared',
   },
   {
+    id: 'arch-kb',
+    label: 'Arch-KB',
+    description: 'Architecture knowledge base (~/.maestro/arch-kb/) — from awesome-architecture',
+    sourcePath: join('resources', 'arch-kb'),
+    target: () => join(paths.home, 'arch-kb'),
+    alwaysGlobal: true,
+    mandatory: true,
+    platform: 'shared',
+  },
+  {
     id: 'templates',
     label: 'Templates',
     description: 'Prompt & task templates (~/.maestro/templates/)',

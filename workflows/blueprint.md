@@ -214,6 +214,27 @@ Generate detailed PRD with functional/non-functional requirements.
 
 Generate architecture decisions, component design, and technology selections.
 
+**Step 6.0: Architecture Knowledge Query (arch-kb)** — OPTIONAL, keyword-triggered
+
+Query the isolated architecture knowledge base for template scaffolding:
+
+```bash
+# Match system type to architecture templates (inject as ADR seed)
+maestro arch-kb match "{product_brief one-liner + key constraints}" --json
+
+# Get review checklist for architecture quality gate
+maestro arch-kb checklist consistency,resilience,scale,security --json
+
+# Technology selection guidance (if stack not yet decided)
+maestro arch-kb tech-select database
+maestro arch-kb tech-select api
+```
+
+- If `arch-kb match` returns ≥1 template with score > 0: inject matched template's **§8 决策与权衡** and **§4 架构全景图** as seed context into Step 6.1 CLI prompt
+- If no match: proceed without template (current behavior)
+- arch-kb is isolated from `maestro search` — only triggered by this explicit call
+- `arch-kb checklist` output feeds into Step 6.2 review criteria
+
 **Step 6.1: Architecture Analysis via CLI (role: review)** — MANDATORY, NOT SUBSTITUTABLE
 - System architecture style with justification
 - Core components and responsibilities

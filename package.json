@@ -22,6 +22,7 @@
     "bin",
     "dist",
     "resources/lifecycle-fs",
+    "resources/arch-kb",
     "shared",
     "templates",
     "prepare",

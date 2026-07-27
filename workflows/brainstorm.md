@@ -246,6 +246,27 @@ Seven sub-phases producing guidance-specification.md:
 
 `--yes`: auto-selects variant 1.
 
+### Step 3.9: Architecture Knowledge Injection (arch-kb, Auto Mode)
+
+Query the isolated architecture knowledge base to seed the system-architect role:
+
+```bash
+# Get thinking framework for structured analysis
+maestro arch-kb framework --json
+
+# Match system type to architecture templates
+maestro arch-kb match "{guidance-specification one-liner}" --json --limit 3
+
+# Get relevant patterns for key concerns
+maestro arch-kb patterns "{top 2-3 quality attributes from guidance}" --json --limit 3
+```
+
+- Inject `arch-kb framework` output as **thinking skeleton** into system-architect role prompt (需求→约束→质量属性→候选→取舍→决策)
+- If `arch-kb match` returns templates: inject matched template sections as **reference architecture** context for system-architect
+- If `arch-kb patterns` returns results: inject as **pattern candidates** for system-architect to evaluate
+- arch-kb is isolated from `maestro search` — only triggered by this explicit call
+- Store as `arch_kb_context` (in-memory), passed to Step 4 system-architect agent prompt
+
 ### Step 4: Parallel Role Analysis (Auto Mode)
 
 Spawn `role-design-author` per role in parallel. ALWAYS use absolute paths. Pass `null` (literal string) for absent optional fields.
