@@ -231,15 +231,15 @@ Dominant step = the step whose keyword appears first or carries the primary verb
 | UI design / design system / polish / impeccable | `/maestro-impeccable "<intent>" ...` (retained command) | Suggest exact slash command; user invokes it |
 | harvest / extract knowledge | `/maestro-knowledge "<intent>"` (retained command) | Suggest exact slash command; user invokes it |
 | fork / parallel dev | `/maestro-fork ...` (retained command) | Suggest exact slash command; user invokes it |
-| note / record observation | `/maestro-knowhow "<intent>"` (retained command) | Suggest exact slash command; user invokes it |
-| promote / distill insights | `/maestro-knowledge "<intent>"` (retained command) | Suggest exact slash command; user invokes it |
+| note / record observation during active Run | `maestro knowledge stage knowhow "<title>" "<content>" --run <run-id>` | Stage a reviewable candidate; do not direct-write project knowledge |
+| promote / distill insights | `maestro knowledge session <session-id>` → `maestro knowledge promote ...` | Review candidate receipts before explicit promotion |
 
 **Auxiliary workflow clusters:**
 
 | Cluster | Trigger | Chain |
 |---------|---------|-------|
 | Learning | New code / unknown module | maestro-learn follow → maestro-learn decompose → maestro-learn consult |
-| Knowledge | Distill experience | maestro-knowledge harvest → maestro-knowhow capture → maestro-spec add |
+| Knowledge | Reconcile experience | knowledge record/stage → session done receipt → knowledge session/promote |
 | Issue | Defect management | maestro-issue discover → maestro-issue |
 
 ### A_EXECUTE_STEP

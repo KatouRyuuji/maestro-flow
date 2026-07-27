@@ -1,7 +1,7 @@
 ---
 name: maestro-session-seal
 disable-model-invocation: true
-description: Seal current session with knowledge extraction and DAG progression
+description: Seal current session with knowledge candidate review and DAG progression
 argument-hint: "[--session <session_id>] [-y] [--skip-knowledge]"
 allowed-tools:
   - Bash
@@ -32,9 +32,9 @@ version: 0.5.57
 </required_reading>
 
 <purpose>
-Seal a completed session: verify all runs are done, extract knowledge (specs/knowhow promotion), mark session as sealed, and recommend the next dep-ready session from the DAG.
+Seal a completed session: verify all Runs are sealed, review the durable knowledge candidate backlog, mark the Session as sealed, and recommend the next dep-ready Session from the DAG.
 
-Replaces the deprecated `maestro-milestone-complete` with session-level semantics and integrated knowledge capture.
+Run completion already stages accepted decisions, locked constraints, and explicit `maestro knowledge stage` entries. This command reviews those receipts; it does not re-extract the same artifacts or write project knowledge through a second path.
 </purpose>
 
 <context>
@@ -45,7 +45,7 @@ $ARGUMENTS -- optional session ID and flags.
 |------|--------|---------|
 | `--session <id>` | Target session (slug or full ID) | `active_session_id` |
 | `-y` / `--yes` | Auto mode — skip confirmations | false |
-| `--skip-knowledge` | Skip knowledge extraction step | false |
+| `--skip-knowledge` | Leave candidate backlog pending and continue sealing | false |
 </context>
 
 <execution>
@@ -60,29 +60,24 @@ Note: maestro-next suggests session-seal when 'Tests green + active session'. Th
 4. Verify critical gates passed (entry/exit gates from last verify/review run). If no verify/review run exists in this session, treat gate check as not applicable (pass) but emit W002.
 5. If not ready → display blockers, suggest next action (e.g., "run the `review` step first")
 
-### Step 2: Knowledge Extraction
+### Step 2: Knowledge Reconciliation
 
-This step is a session-scoped lightweight knowledge extraction. For comprehensive artifact-based extraction, use `/maestro-knowledge harvest --session {session_id}`. `--skip-knowledge` can be compensated later via harvest.
-
-Skip if `--skip-knowledge`. Otherwise:
-
-1. **Scan session artifacts** — read all sealed run outputs across the session. Per-run error handling: if a run's output files are missing or run.json is malformed, skip that run with W003 and continue extraction from remaining runs.
-2. **Extract candidates**:
-   - Decisions with `status: accepted` from `runs/*/run.json.handoff.decisions[]` → spec candidates
-   - Patterns/recipes discovered during execution → knowhow candidates
-   - Risks that materialized or were mitigated → learning candidates
-3. **Present to user** via `request_user_input`:
+1. Run `maestro knowledge session {session_id} --json`. Treat its Run ledgers and candidate IDs as authoritative; do not rescan outputs to recreate candidates.
+2. Explain signal semantics when relevant: search/injection is exposure only; explicit loads are consumed; `cited`, `validated`, and `contradicted` are explicit Run relations.
+3. If `--skip-knowledge`, report the pending/promoting counts and continue. The backlog remains durable after seal.
+4. Otherwise present pending candidates via `request_user_input`:
    ```
-   question: "以下知识候选项值得持久化吗？"
+   question: "以下知识候选项值得晋升到项目知识库吗？"
    options:
-     - "全部保存" (save all candidates as specs/knowhow)
+     - "晋升已佐证项" (promote corroborated candidates)
      - "逐个选择" (review each candidate)
-     - "跳过" (no knowledge extraction)
+     - "暂不晋升" (leave backlog pending)
    ```
-4. **Persist** selected items:
-   - Specs → recommend `/maestro-spec add ...`
-   - Knowhow → recommend `/maestro-knowledge harvest --session {session_id}` for extraction, then `/maestro-knowhow capture` for manual recording of extracted insights
-   - Record promoted IDs in `session.json.lifecycle.promoted[]`（前缀区分 spec:/knowhow:）
+5. Promote only through the receipt-aware CLI:
+   - Corroborated selection → `maestro knowledge promote {session_id} --all`
+   - Explicit selection → `maestro knowledge promote {session_id} --candidate <candidate-id,...>`
+   - `-y` may run `--all`, which remains conservative and skips observed-only candidates. It MUST NOT add `--include-observed` without explicit user selection.
+6. For a replacement candidate, try the selected promotion. If it reports an existing-title conflict, the reviewed candidate authorizes the explicit `maestro spec add ... --json` → `maestro spec supersede <old-sid> --by <new-sid>` resolution path. For coexisting valid rules, use `maestro spec conflict mark ...`. Never direct-write a candidate that was already promoted successfully.
 
 ### Step 3: Seal Session
 
@@ -109,7 +104,7 @@ Skip if `--skip-knowledge`. Otherwise:
 ```
 === SESSION SEALED ===
 Session: {session_id}
-Knowledge: {N} specs, {M} knowhow items promoted
+Knowledge: {promoted_count} promoted, {pending_count} pending
 Next dep-ready: {next_slug or "none (DAG complete)"}
 --- STATUS ---
 Status: DONE
@@ -120,7 +115,8 @@ Status: DONE
 | Condition | Suggestion |
 |-----------|-----------|
 | Next session activated | step `analyze` (`maestro run prepare --platform codex analyze` + `maestro run create analyze --session {next-slug} --intent "{goal}"`) |
-| Knowledge review needed | `/maestro-knowledge audit` |
+| Knowledge candidates pending | `maestro knowledge session {session_id}` |
+| Knowledge health review needed | `/maestro-knowledge audit` |
 </completion>
 
 <error_codes>
@@ -132,14 +128,14 @@ Status: DONE
 | E004 | error | Critical gates failed | Run verify/review to resolve |
 | W001 | warning | No knowledge candidates found | Proceed to seal |
 | W002 | warning | No verify/review run in session — gate check skipped | Consider running verify before seal |
-| W003 | warning | Some run outputs unreadable/malformed, skipped during extraction | Check run integrity |
+| W003 | warning | Candidate backlog left pending | Review later with `maestro knowledge session {session_id}` |
 </error_codes>
 
 <success_criteria>
 - [ ] Target session resolved and verified as ready for seal
-- [ ] Knowledge candidates extracted from session evidence/artifacts
-- [ ] User reviewed and confirmed knowledge items (or skipped)
-- [ ] Selected knowledge promoted to project-level specs/knowhow
+- [ ] Knowledge candidate receipt/backlog loaded via `maestro knowledge session`
+- [ ] User reviewed candidates, or pending backlog was reported and deliberately retained
+- [ ] Selected knowledge promoted only through `maestro knowledge promote`
 - [ ] Session sealed via CLI (`session.json.lifecycle.sealed_at` written)
 - [ ] `state.json.sessions[].status` updated to `sealed`
 - [ ] Dep-ready sessions identified and activation offered to user
