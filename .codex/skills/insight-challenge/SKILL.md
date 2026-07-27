@@ -12,7 +12,7 @@ allowed-tools:
   - Read
   - Write
 session-mode: none
-version: 0.5.56
+version: 0.5.57
 ---
 
 # Insight Challenge
