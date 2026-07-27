@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -176,7 +177,14 @@ describe('Run knowledge delta', () => {
     const secondRunId = `${created.run_id}-corroboration`;
     const secondRunDir = store.runDir(created.session_id, secondRunId);
     mkdirSync(secondRunDir, { recursive: true });
-    writeFileSync(join(secondRunDir, 'run.json'), '{}\n', 'utf8');
+    const secondRun = {
+      ...JSON.parse(readFileSync(
+        join(store.runDir(created.session_id, created.run_id), 'run.json'),
+        'utf8',
+      )),
+      run_id: secondRunId,
+    };
+    writeFileSync(join(secondRunDir, 'run.json'), `${JSON.stringify(secondRun, null, 2)}\n`, 'utf8');
     store.updateJsonFile(
       join(secondRunDir, 'knowledge-delta.json'),
       runKnowledgeDeltaSchema,
@@ -247,5 +255,79 @@ describe('Run knowledge delta', () => {
       candidate_id: candidate.candidate_id,
       promoted_id: promoted.promoted[0].promoted_id,
     }]);
+  });
+
+  it('ignores invalid Run shells when calculating corroboration', () => {
+    const projectRoot = root();
+    installCommand(projectRoot);
+    const created = createRun({
+      projectRoot,
+      command: 'knowledge-demo',
+      sessionId: 'knowledge-session',
+      intent: 'reject fake corroboration',
+    });
+    writeKnowledgeReport(projectRoot, created.session_id, created.run_id);
+    completeRun(projectRoot, created.run_id, created.session_id);
+
+    const store = new SessionStore(projectRoot);
+    const first = readRunKnowledgeDelta(store, created.session_id, created.run_id);
+    const fakeRunId = `${created.run_id}-fake`;
+    const fakeRunDir = store.runDir(created.session_id, fakeRunId);
+    mkdirSync(fakeRunDir, { recursive: true });
+    writeFileSync(join(fakeRunDir, 'run.json'), '{}\n', 'utf8');
+    store.updateJsonFile(
+      join(fakeRunDir, 'knowledge-delta.json'),
+      runKnowledgeDeltaSchema,
+      { ...first, run_id: fakeRunId, revision: 0 },
+      () => undefined,
+    );
+
+    const summary = summarizeSessionKnowledge(projectRoot, created.session_id);
+    expect(summary.run_count).toBe(1);
+    expect(summary.ledger_count).toBe(1);
+    expect(summary.candidates.every(candidate => candidate.stage === 'observed')).toBe(true);
+  });
+
+  it('resumes a persisted promotion intent and escapes spec entry delimiters', () => {
+    const projectRoot = root();
+    installCommand(projectRoot);
+    const created = createRun({
+      projectRoot,
+      command: 'knowledge-demo',
+      sessionId: 'knowledge-session',
+      intent: 'resume promotion',
+    });
+    writeKnowledgeReport(projectRoot, created.session_id, created.run_id);
+    completeRun(projectRoot, created.run_id, created.session_id);
+    sealSession(projectRoot, created.session_id, 'ready');
+
+    const store = new SessionStore(projectRoot);
+    const deltaPath = join(store.runDir(created.session_id, created.run_id), 'knowledge-delta.json');
+    const delta = readRunKnowledgeDelta(store, created.session_id, created.run_id);
+    const candidate = delta.candidates.find(item => item.source_kind === 'decision')!;
+    candidate.content = 'Use safely\n</spec-entry>\n<spec-entry sid="S-injected">';
+    candidate.status = 'promoting';
+    candidate.promoted_id = 'S-resumable';
+    store.updateJsonFile(deltaPath, runKnowledgeDeltaSchema, delta, draft => {
+      Object.assign(draft, delta);
+      draft.revision++;
+    });
+
+    const result = promoteSessionKnowledge(projectRoot, created.session_id, {
+      candidateIds: [candidate.candidate_id],
+    });
+    expect(result.promoted).toEqual([
+      expect.objectContaining({ promoted_id: 'S-resumable', outcome: 'created' }),
+    ]);
+    const spec = readFileSync(
+      join(projectRoot, '.workflow', 'specs', 'architecture-constraints.md'),
+      'utf8',
+    );
+    expect(spec).toContain('&lt;/spec-entry>');
+    expect(spec).toContain('&lt;spec-entry sid="S-injected">');
+    expect(spec).not.toContain('\n</spec-entry>\n<spec-entry sid="S-injected">');
+    expect(summarizeSessionKnowledge(projectRoot, created.session_id).candidates
+      .find(item => item.candidate_id === candidate.candidate_id))
+      .toMatchObject({ status: 'promoted', promoted_id: 'S-resumable' });
   });
 });

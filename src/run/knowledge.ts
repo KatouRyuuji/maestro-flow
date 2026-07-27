@@ -37,7 +37,7 @@ export const knowledgeCandidateSchema = z.object({
   occurrences: z.number().int().positive(),
   first_recorded_at: nonEmptyString,
   last_recorded_at: nonEmptyString,
-  status: z.enum(['pending', 'promoted', 'rejected']),
+  status: z.enum(['pending', 'promoting', 'promoted', 'rejected']),
   promoted_id: z.string().nullable(),
   promotion_receipt: z.object({
     outcome: z.enum(['created', 'reaffirmed']),
@@ -187,12 +187,13 @@ export function readRunKnowledgeDelta(
   store: SessionStore,
   sessionId: string,
   runId: string,
+  readOnly = false,
 ): RunKnowledgeDelta {
-  return store.readJsonFile(
-    deltaPath(store, sessionId, runId),
-    runKnowledgeDeltaSchema,
-    createDelta(sessionId, runId),
-  );
+  const path = deltaPath(store, sessionId, runId);
+  const fallback = createDelta(sessionId, runId);
+  return readOnly
+    ? store.readJsonFileReadOnly(path, runKnowledgeDeltaSchema, fallback)
+    : store.readJsonFile(path, runKnowledgeDeltaSchema, fallback);
 }
 
 /**
@@ -209,15 +210,8 @@ export function recordActiveRunKnowledgeInputs(
   if (ids.length === 0) return null;
   try {
     const store = new SessionStore(projectRoot);
-    const active = store.listSessions({ statuses: ['running'] }).candidates
-      .filter(candidate => candidate.session.active_run_id)
-      .map(candidate => ({
-        sessionId: candidate.sessionId,
-        runId: candidate.session.active_run_id!,
-      }));
-    if (active.length !== 1) return null;
-
-    const target = active[0];
+    const target = store.findUniqueActiveRun();
+    if (!target) return null;
     const path = deltaPath(store, target.sessionId, target.runId);
     const now = nowIso();
     store.updateJsonFile(
@@ -286,16 +280,31 @@ export function stageHandoffKnowledgeCandidates(
 export function summarizeSessionKnowledge(
   projectRoot: string,
   sessionId: string,
+  options: { readOnly?: boolean; strict?: boolean } = {},
 ): SessionKnowledgeSummary {
   const store = new SessionStore(projectRoot);
   if (!store.sessionExists(sessionId)) throw new Error(`Session not found: ${sessionId}`);
   const runsDir = join(store.sessionDir(sessionId), 'runs');
   const runIds = existsSync(runsDir)
-    ? readdirSync(runsDir).filter(runId => existsSync(join(store.runDir(sessionId, runId), 'run.json'))).sort()
+    ? readdirSync(runsDir).filter(runId => {
+      if (!existsSync(join(store.runDir(sessionId, runId), 'run.json'))) return false;
+      try {
+        const run = options.readOnly
+          ? store.readRunReadOnly(sessionId, runId)
+          : store.readRun(sessionId, runId);
+        if (run.run_id !== runId) {
+          throw new Error(`Run authority mismatch: directory ${runId} contains ${run.run_id}`);
+        }
+        return true;
+      } catch (error) {
+        if (options.strict) throw error;
+        return false;
+      }
+    }).sort()
     : [];
   const ledgers = runIds
     .filter(runId => existsSync(deltaPath(store, sessionId, runId)))
-    .map(runId => readRunKnowledgeDelta(store, sessionId, runId));
+    .map(runId => readRunKnowledgeDelta(store, sessionId, runId, options.readOnly));
 
   const inputTotals: Record<KnowledgeInputSignal, number> = {
     consumed: 0,
@@ -323,6 +332,9 @@ export function summarizeSessionKnowledge(
           existing.status = 'promoted';
           existing.promoted_id = candidate.promoted_id;
           existing.promotion_receipt = candidate.promotion_receipt;
+        } else if (candidate.status === 'promoting' && existing.status === 'pending') {
+          existing.status = 'promoting';
+          existing.promoted_id = candidate.promoted_id;
         }
       } else {
         candidates.set(candidate.candidate_id, { ...structuredClone(candidate), run_ids: [ledger.run_id] });
@@ -358,6 +370,19 @@ function specBody(content: string): string {
   return content.replace(/^###\s+.*?(?:\r?\n){1,2}/, '').trim();
 }
 
+function safeSpecContent(content: string): string {
+  return content.replace(/<(\/?spec-entry\b)/gi, '&lt;$1');
+}
+
+function plannedSpecId(candidate: KnowledgeCandidate): string {
+  return `S-${candidate.first_recorded_at.slice(0, 10).replace(/-/g, '')}-${candidate.candidate_id.slice(4)}`;
+}
+
+function plannedKnowhowId(candidate: KnowledgeCandidate): string {
+  const date = candidate.first_recorded_at.slice(0, 10).replace(/-/g, '');
+  return `tip-${date}-${candidate.candidate_id.slice(4)}`;
+}
+
 function findExistingSpec(
   projectRoot: string,
   title: string,
@@ -383,10 +408,12 @@ function promoteSpecCandidate(
   projectRoot: string,
   sessionId: string,
   candidate: KnowledgeCandidate,
+  plannedId: string,
 ): { promoted_id: string; outcome: 'created' | 'reaffirmed' } {
+  const content = safeSpecContent(candidate.content);
   const existing = findExistingSpec(projectRoot, candidate.title);
   if (existing) {
-    if (normalizedText(existing.content) !== normalizedText(candidate.content)) {
+    if (normalizedText(existing.content) !== normalizedText(content)) {
       throw new Error(
         `Candidate ${candidate.candidate_id} conflicts with existing spec title "${candidate.title}"; `
         + 'resolve with spec supersede/conflict before promotion',
@@ -403,16 +430,17 @@ function promoteSpecCandidate(
     projectRoot,
     category,
     candidate.title,
-    candidate.content,
+    content,
     ['session-knowledge', candidate.source_kind],
     `session:${sessionId}:${candidate.candidate_id}`,
     'project',
     undefined,
     `Promoted from ${candidate.evidence_refs.join(', ')}`,
+    plannedId,
   );
   if (!result.ok || !result.sid) {
     const replay = findExistingSpec(projectRoot, candidate.title);
-    if (result.duplicate && replay && normalizedText(replay.content) === normalizedText(candidate.content)) {
+    if (result.duplicate && replay && normalizedText(replay.content) === normalizedText(content)) {
       return { promoted_id: replay.id, outcome: 'reaffirmed' };
     }
     throw new Error(`Failed to promote spec candidate ${candidate.candidate_id}`);
@@ -423,16 +451,15 @@ function promoteSpecCandidate(
 function promoteKnowhowCandidate(
   projectRoot: string,
   candidate: KnowledgeCandidate,
+  plannedId: string,
 ): { promoted_id: string; outcome: 'created' | 'reaffirmed' } {
-  const date = candidate.first_recorded_at.slice(0, 10).replace(/-/g, '');
-  const explicitId = `tip-${date}-${candidate.candidate_id.slice(4)}`;
   const previousRoot = process.env.MAESTRO_PROJECT_ROOT;
   process.env.MAESTRO_PROJECT_ROOT = projectRoot;
   try {
     const response = executeAdd({
       operation: 'add',
       limit: 20,
-      id: explicitId,
+      id: plannedId,
       type: 'tip',
       title: candidate.title,
       description: `Promoted from ${candidate.evidence_refs.join(', ')}`,
@@ -470,7 +497,9 @@ export function promoteSessionKnowledge(
   const unknown = [...requested].filter(id => !summary.candidates.some(candidate => candidate.candidate_id === id));
   if (unknown.length > 0) throw new Error(`Unknown candidate IDs: ${unknown.join(', ')}`);
 
-  const pending = summary.candidates.filter(candidate => candidate.status === 'pending');
+  const pending = summary.candidates.filter(candidate =>
+    candidate.status === 'pending' || candidate.status === 'promoting'
+  );
   const alreadyPromoted = options.candidateIds
     ? summary.candidates
       .filter(candidate => requested.has(candidate.candidate_id)
@@ -504,10 +533,20 @@ export function promoteSessionKnowledge(
     );
   }
 
-  // Preflight title conflicts before the first project knowledge write.
+  // Preflight every selected spec before recording the promotion intent.
+  // This also catches two candidates whose truncated titles collide.
+  const selectedSpecTitles = new Map<string, KnowledgeCandidate>();
   for (const candidate of selected.filter(item => item.target === 'spec')) {
+    const normalizedTitle = normalizedText(candidate.title);
+    const prior = selectedSpecTitles.get(normalizedTitle);
+    if (prior && normalizedText(safeSpecContent(prior.content)) !== normalizedText(safeSpecContent(candidate.content))) {
+      throw new Error(
+        `Candidates ${prior.candidate_id} and ${candidate.candidate_id} conflict on spec title "${candidate.title}"`,
+      );
+    }
+    selectedSpecTitles.set(normalizedTitle, candidate);
     const existing = findExistingSpec(projectRoot, candidate.title);
-    if (existing && normalizedText(existing.content) !== normalizedText(candidate.content)) {
+    if (existing && normalizedText(existing.content) !== normalizedText(safeSpecContent(candidate.content))) {
       throw new Error(
         `Candidate ${candidate.candidate_id} conflicts with existing spec title "${candidate.title}"; `
         + 'resolve with spec supersede/conflict before promotion',
@@ -515,10 +554,43 @@ export function promoteSessionKnowledge(
     }
   }
 
-  const promoted = selected.map(candidate => {
+  const plan = selected.map(candidate => {
+    const existing = candidate.target === 'spec'
+      ? findExistingSpec(projectRoot, candidate.title)
+      : null;
+    const promotedId = candidate.promoted_id
+      ?? existing?.id
+      ?? (candidate.target === 'spec' ? plannedSpecId(candidate) : plannedKnowhowId(candidate));
+    return { candidate, promotedId };
+  });
+
+  // Phase 1: persist deterministic promotion intents before any project write.
+  // A crash after this point is resumable because `promoting` candidates remain selectable.
+  const store = new SessionStore(projectRoot);
+  const intentAt = nowIso();
+  store.updateKnowledgeLifecycle(sessionId, (_lifecycle, tx) => {
+    for (const runId of new Set(plan.flatMap(item => item.candidate.run_ids))) {
+      const delta = readRunKnowledgeDelta(store, sessionId, runId);
+      let changed = false;
+      for (const candidate of delta.candidates) {
+        const item = plan.find(entry => entry.candidate.candidate_id === candidate.candidate_id);
+        if (!item || candidate.status === 'promoted') continue;
+        candidate.status = 'promoting';
+        candidate.promoted_id = item.promotedId;
+        changed = true;
+      }
+      if (changed) {
+        delta.revision++;
+        delta.updated_at = intentAt;
+        tx.writeJson(deltaPath(store, sessionId, runId), delta, runKnowledgeDeltaSchema);
+      }
+    }
+  });
+
+  const promoted = plan.map(({ candidate, promotedId }) => {
     const result = candidate.target === 'spec'
-      ? promoteSpecCandidate(projectRoot, sessionId, candidate)
-      : promoteKnowhowCandidate(projectRoot, candidate);
+      ? promoteSpecCandidate(projectRoot, sessionId, candidate, promotedId)
+      : promoteKnowhowCandidate(projectRoot, candidate, promotedId);
     return {
       candidate_id: candidate.candidate_id,
       target: candidate.target,
@@ -527,7 +599,6 @@ export function promoteSessionKnowledge(
     };
   });
 
-  const store = new SessionStore(projectRoot);
   const promotedAt = nowIso();
   store.updateKnowledgeLifecycle(sessionId, (lifecycle, tx) => {
     for (const item of promoted) {

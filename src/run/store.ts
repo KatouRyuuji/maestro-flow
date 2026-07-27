@@ -530,6 +530,11 @@ export class SessionStore {
     return this.readRunUnlocked(sessionId, runId);
   }
 
+  /** Validate a Run without lock acquisition, recovery, or filesystem writes. */
+  readRunReadOnly(sessionId: string, runId: string): CommandRun {
+    return this.readRunUnlocked(sessionId, runId);
+  }
+
   private readRunUnlocked(sessionId: string, runId: string): CommandRun {
     const raw = this.readValidated(join(this.runDir(sessionId, runId), 'run.json'), commandRunReadSchema);
     if (raw.schema_version === 'command-run/1.3') return raw;
@@ -594,53 +599,82 @@ export class SessionStore {
 
   /** Enumerate canonical Session files only; state.json is never consulted. */
   listSessions(filters: SessionListFilters = {}): SessionListResult {
-    return this.withLock(() => {
-      const candidates: SessionListCandidate[] = [];
-      const exclusions: SessionListExclusion[] = [];
-      if (!existsSync(this.sessionsRoot)) return { candidates, exclusions };
-      for (const sessionId of readdirSync(this.sessionsRoot).sort()) {
-        const path = join(this.sessionsRoot, sessionId);
-        try {
-          if (!statSync(path).isDirectory() || !existsSync(join(path, 'session.json'))) continue;
-          const session = this.readBundleUnlocked(sessionId).session;
-          if (filters.statuses && !filters.statuses.includes(session.status)) {
-            exclusions.push({ sessionId, code: 'STATUS_FILTERED', detail: session.status });
-            continue;
-          }
-          if (filters.engines && !filters.engines.includes(session.orchestration.engine)) {
-            exclusions.push({ sessionId, code: 'ENGINE_FILTERED', detail: session.orchestration.engine });
-            continue;
-          }
-          let identity = session.intent_identity;
-          if (!identity && filters.intentIdentity) {
-            identity = createIntentIdentity(
-              this.projectRoot,
-              filters.intentIdentity.command,
-              session.intent,
-              { source: 'derived_legacy', backfillStatus: 'derived' },
-            );
-          }
-          if (filters.intentIdentity) {
-            if (!identity) {
-              exclusions.push({ sessionId, code: 'IDENTITY_UNAVAILABLE', detail: 'no native or derivable identity' });
-              continue;
-            }
-            if (!sameIntentIdentity(identity, filters.intentIdentity)) {
-              exclusions.push({ sessionId, code: 'IDENTITY_MISMATCH', detail: identity.normalized_hash });
-              continue;
-            }
-          }
-          candidates.push({ sessionId, session: clone(session), identity: identity ? clone(identity) : null });
-        } catch (error) {
-          exclusions.push({
-            sessionId,
-            code: 'CORRUPT',
-            detail: error instanceof Error ? error.message : String(error),
-          });
+    return this.withLock(() => this.listSessionsUnlocked(filters));
+  }
+
+  /** Enumerate Sessions without lock acquisition, recovery, or projection writes. */
+  listSessionsReadOnly(filters: SessionListFilters = {}): SessionListResult {
+    return this.listSessionsUnlocked(filters);
+  }
+
+  private listSessionsUnlocked(filters: SessionListFilters): SessionListResult {
+    const candidates: SessionListCandidate[] = [];
+    const exclusions: SessionListExclusion[] = [];
+    if (!existsSync(this.sessionsRoot)) return { candidates, exclusions };
+    for (const sessionId of readdirSync(this.sessionsRoot).sort()) {
+      const path = join(this.sessionsRoot, sessionId);
+      try {
+        if (!statSync(path).isDirectory() || !existsSync(join(path, 'session.json'))) continue;
+        const session = this.readBundleUnlocked(sessionId).session;
+        if (filters.statuses && !filters.statuses.includes(session.status)) {
+          exclusions.push({ sessionId, code: 'STATUS_FILTERED', detail: session.status });
+          continue;
         }
+        if (filters.engines && !filters.engines.includes(session.orchestration.engine)) {
+          exclusions.push({ sessionId, code: 'ENGINE_FILTERED', detail: session.orchestration.engine });
+          continue;
+        }
+        let identity = session.intent_identity;
+        if (!identity && filters.intentIdentity) {
+          identity = createIntentIdentity(
+            this.projectRoot,
+            filters.intentIdentity.command,
+            session.intent,
+            { source: 'derived_legacy', backfillStatus: 'derived' },
+          );
+        }
+        if (filters.intentIdentity) {
+          if (!identity) {
+            exclusions.push({ sessionId, code: 'IDENTITY_UNAVAILABLE', detail: 'no native or derivable identity' });
+            continue;
+          }
+          if (!sameIntentIdentity(identity, filters.intentIdentity)) {
+            exclusions.push({ sessionId, code: 'IDENTITY_MISMATCH', detail: identity.normalized_hash });
+            continue;
+          }
+        }
+        candidates.push({ sessionId, session: clone(session), identity: identity ? clone(identity) : null });
+      } catch (error) {
+        exclusions.push({
+          sessionId,
+          code: 'CORRUPT',
+          detail: error instanceof Error ? error.message : String(error),
+        });
       }
-      return { candidates, exclusions };
-    });
+    }
+    return { candidates, exclusions };
+  }
+
+  /**
+   * Resolve the unique active Run from canonical session.json files only.
+   * This avoids parsing every coordinated Session bundle on each knowledge load.
+   */
+  findUniqueActiveRun(): { sessionId: string; runId: string } | null {
+    if (!existsSync(this.sessionsRoot)) return null;
+    let active: { sessionId: string; runId: string } | null = null;
+    for (const sessionId of readdirSync(this.sessionsRoot).sort()) {
+      const sessionPath = join(this.sessionsRoot, sessionId, 'session.json');
+      if (!existsSync(sessionPath)) continue;
+      try {
+        const session = this.readValidated(sessionPath, sessionStateSchema);
+        if (session.status !== 'running' || !session.active_run_id) continue;
+        if (active) return null;
+        active = { sessionId, runId: session.active_run_id };
+      } catch {
+        // Corrupt sessions cannot be authoritative active-run candidates.
+      }
+    }
+    return active;
   }
 
   issueRecallConfirmation(input: IssueRecallConfirmationInput): { token: string; record: RecallConfirmationRecord } {
@@ -1039,6 +1073,11 @@ export class SessionStore {
 
   readJsonFile<T>(path: string, schema: z.ZodType<T>, fallback?: T): T {
     if (!this.lock.isHeld) return this.withLock(() => this.readJsonFileUnlocked(path, schema, fallback));
+    return this.readJsonFileUnlocked(path, schema, fallback);
+  }
+
+  /** Read and validate a sidecar without lock acquisition or recovery writes. */
+  readJsonFileReadOnly<T>(path: string, schema: z.ZodType<T>, fallback?: T): T {
     return this.readJsonFileUnlocked(path, schema, fallback);
   }
 
