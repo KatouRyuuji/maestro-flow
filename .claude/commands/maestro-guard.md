@@ -8,6 +8,7 @@ allowed-tools:
   - Write
   - Bash
   - Glob
+  - AskUserQuestion
 session-mode: none
 ---
 <purpose>
