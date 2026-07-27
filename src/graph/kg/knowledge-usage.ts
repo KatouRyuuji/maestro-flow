@@ -15,6 +15,11 @@ export interface KnowledgeConsumptionRecord {
   nodeIds: string[];
 }
 
+export interface KnowledgeUsageSignal {
+  impressions: number;
+  consumptions: number;
+}
+
 export interface KnowledgeUsageBySource {
   sourceType: string;
   nodes: number;
@@ -52,6 +57,8 @@ export interface KnowledgeUsageStats {
     impressions: 'returned-or-injected';
     consumptions: 'explicit-content-load';
     affectsRanking: false;
+    impressionsMayFillExplorationSlot: true;
+    consumptionsAffectRetrieval: false;
   };
   filter: { sourceType: string | null };
   bySource: KnowledgeUsageBySource[];
@@ -129,6 +136,43 @@ export function recordKnowledgeConsumptions(
   nowMs: number = Date.now(),
 ): number {
   return recordKnowledgeConsumptionsDetailed(projectRoot, refs, nowMs).recorded;
+}
+
+/**
+ * Read exposure/use counters for retrieval diversification. Signals are keyed
+ * by the caller's Wiki id and are never folded into the relevance score.
+ */
+export function readKnowledgeUsageSignals(
+  projectRoot: string,
+  refs: KnowledgeUsageRef[],
+): Map<string, KnowledgeUsageSignal> {
+  const output = new Map<string, KnowledgeUsageSignal>();
+  if (refs.length === 0) return output;
+  let graph: MaestroGraph | null = null;
+  try {
+    const root = resolve(projectRoot);
+    if (!MaestroGraph.isInitialized(root)) return output;
+    graph = MaestroGraph.openSync(root);
+    if (!graph) return output;
+    const store = new CredibilityStore(graph.rawDb);
+    const resolved = refs
+      .map(ref => ({ ref, nodeId: resolveNodeId(ref) }))
+      .filter((item): item is { ref: KnowledgeUsageRef; nodeId: string } => Boolean(item.nodeId));
+    const rows = store.getMany([...new Set(resolved.map(item => item.nodeId))]);
+    for (const item of resolved) {
+      const row = rows.get(item.nodeId);
+      if (!row) continue;
+      output.set(item.ref.id, {
+        impressions: row.search_hits,
+        consumptions: row.consumption_count,
+      });
+    }
+    return output;
+  } catch {
+    return output;
+  } finally {
+    graph?.close();
+  }
 }
 
 function concentration(values: number[]): KnowledgeUsageConcentration {
@@ -232,6 +276,8 @@ export function buildKnowledgeUsageStats(
       impressions: 'returned-or-injected',
       consumptions: 'explicit-content-load',
       affectsRanking: false,
+      impressionsMayFillExplorationSlot: true,
+      consumptionsAffectRetrieval: false,
     },
     filter: { sourceType },
     bySource: sourceRows.map(row => ({

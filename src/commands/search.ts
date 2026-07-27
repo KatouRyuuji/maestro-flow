@@ -50,6 +50,8 @@ export interface SearchResult {
   runId?: string;
   runCount?: number;
   related?: string[];
+  /** Why this wiki candidate entered the final list; does not alter score. */
+  selectionReason?: 'relevance' | 'diversity' | 'exploration';
 }
 
 /** A code search result from CodeGraph. */
@@ -130,6 +132,8 @@ export interface UnifiedSearchOptions {
   evidenceRecorder?: (event: SearchEvidenceEvent) => void;
   /** Query identity attached to raw evidence events. */
   evidenceQueryId?: string | null;
+  /** Wiki candidate selection policy. Default: balanced. */
+  diversity?: 'balanced' | 'off';
 }
 
 // ── Lazy offline client ────────────────────────────────────────────────
@@ -182,6 +186,8 @@ async function getIndexer(executionMode: SearchExecutionMode = 'default'): Promi
 export interface SearchMeta {
   embeddingUsed: boolean;
   embeddingDocs: number;
+  diversityApplied?: boolean;
+  explorationUsed?: boolean;
 }
 
 let _lastSearchMeta: SearchMeta = { embeddingUsed: false, embeddingDocs: 0 };
@@ -189,6 +195,145 @@ export function getLastSearchMeta(): SearchMeta { return _lastSearchMeta; }
 
 // One-shot attribution when a supposedly-running daemon can't be reached (G-C12).
 let _daemonFallbackNoted = false;
+
+interface ScoredWikiCandidate {
+  entry: WikiEntry;
+  score: number;
+}
+
+interface SelectedWikiCandidate extends ScoredWikiCandidate {
+  selectionReason: 'relevance' | 'diversity' | 'exploration';
+}
+
+function familyKey(entry: WikiEntry): string {
+  return (entry.parent ?? entry.id).replace(/-\d{2,3}$/, '');
+}
+
+function semanticTokens(entry: WikiEntry): Set<string> {
+  const text = `${entry.title} ${entry.summary} ${entry.tags.join(' ')} ${entry.category ?? ''}`
+    .normalize('NFKC')
+    .toLowerCase();
+  return new Set(text.match(/[\p{L}\p{N}_-]+/gu) ?? []);
+}
+
+function jaccard(left: Set<string>, right: Set<string>): number {
+  if (left.size === 0 || right.size === 0) return 0;
+  let intersection = 0;
+  for (const token of left) if (right.has(token)) intersection++;
+  return intersection / (left.size + right.size - intersection);
+}
+
+/**
+ * Stable wiki selection: identity/family caps first, then high-lambda MMR.
+ * One final slot may explore a lower-exposure candidate above a strict
+ * relevance floor. Exposure never changes the relevance score.
+ */
+export function selectDiverseWikiCandidates(
+  filtered: ScoredWikiCandidate[],
+  options: {
+    limit: number;
+    applyCaps: boolean;
+    diversity?: 'balanced' | 'off';
+    impressions?: Map<string, number>;
+  },
+): SelectedWikiCandidate[] {
+  const PARENT_CAP = 2;
+  const KG_CODE_CAP = 3;
+  const seen = new Set<string>();
+  const pool: ScoredWikiCandidate[] = [];
+  const catCounts = new Map<string, number>();
+  const parentCounts = new Map<string, number>();
+  let kgCodeCount = 0;
+  for (const candidate of filtered) {
+    if (seen.has(candidate.entry.id)) continue;
+    const parent = familyKey(candidate.entry);
+    const parentCount = parentCounts.get(parent) ?? 0;
+    if (parentCount >= PARENT_CAP) continue;
+    if (options.applyCaps) {
+      const category = candidate.entry.category ?? '';
+      const cap = CATEGORY_CAPS[category];
+      if (cap !== undefined) {
+        const count = catCounts.get(category) ?? 0;
+        if (count >= cap) continue;
+        catCounts.set(category, count + 1);
+      }
+      if (candidate.entry.id.startsWith('kg-code')) {
+        if (kgCodeCount >= KG_CODE_CAP) continue;
+        kgCodeCount++;
+      }
+    }
+    seen.add(candidate.entry.id);
+    parentCounts.set(parent, parentCount + 1);
+    pool.push(candidate);
+  }
+
+  const limit = Math.max(0, options.limit);
+  if (limit === 0 || pool.length === 0) return [];
+  if ((options.diversity ?? 'balanced') === 'off') {
+    return pool.slice(0, limit).map(candidate => ({
+      ...candidate,
+      selectionReason: 'relevance',
+    }));
+  }
+
+  const maxScore = Math.max(pool[0].score, Number.EPSILON);
+  const tokens = new Map(pool.map(candidate => [candidate.entry.id, semanticTokens(candidate.entry)]));
+  const remaining = [...pool];
+  const selected: SelectedWikiCandidate[] = [];
+  const lambda = 0.88;
+  while (remaining.length > 0 && selected.length < limit) {
+    let bestIndex = 0;
+    let bestValue = Number.NEGATIVE_INFINITY;
+    for (let index = 0; index < remaining.length; index++) {
+      const candidate = remaining[index];
+      const relevance = candidate.score / maxScore;
+      const similarity = selected.length === 0
+        ? 0
+        : Math.max(...selected.map(item =>
+          jaccard(tokens.get(candidate.entry.id)!, tokens.get(item.entry.id)!)
+        ));
+      const value = lambda * relevance - (1 - lambda) * similarity;
+      if (value > bestValue + Number.EPSILON) {
+        bestIndex = index;
+        bestValue = value;
+      }
+    }
+    const [candidate] = remaining.splice(bestIndex, 1);
+    selected.push({
+      ...candidate,
+      selectionReason: selected.length === 0 ? 'relevance' : 'diversity',
+    });
+  }
+
+  // A bounded exploration slot prevents exposure feedback loops. It is only
+  // used when counters exist and the candidate remains at least 35% as
+  // relevant as the top result.
+  const impressions = options.impressions;
+  if (limit >= 4 && pool.length > limit && impressions && impressions.size > 0) {
+    const selectedIds = new Set(selected.map(item => item.entry.id));
+    const selectedFamilies = new Set(selected.map(item => familyKey(item.entry)));
+    const eligible = pool
+      .filter(candidate =>
+        !selectedIds.has(candidate.entry.id)
+        && !selectedFamilies.has(familyKey(candidate.entry))
+        && candidate.score / maxScore >= 0.35
+        && impressions.has(candidate.entry.id)
+      )
+      .sort((left, right) =>
+        (impressions.get(left.entry.id) ?? 0) - (impressions.get(right.entry.id) ?? 0)
+        || right.score - left.score
+        || left.entry.id.localeCompare(right.entry.id)
+      );
+    const explorer = eligible[0];
+    const selectedMaxExposure = Math.max(
+      ...selected.map(item => impressions.get(item.entry.id) ?? 0),
+    );
+    if (explorer && (impressions.get(explorer.entry.id) ?? 0) < selectedMaxExposure) {
+      selected[selected.length - 1] = { ...explorer, selectionReason: 'exploration' };
+    }
+  }
+  return selected;
+}
 
 export async function runUnifiedSearch(q: string, opts: UnifiedSearchOptions & { skipEmbedding?: boolean }): Promise<SearchResult[]> {
   const limit = opts.limit > 0 ? opts.limit : 20;
@@ -278,44 +423,39 @@ export async function runUnifiedSearch(q: string, opts: UnifiedSearchOptions & {
 
   // CATEGORY_CAPS only when user didn't explicitly select a wiki facet.
   const applyCaps = !opts.type && !opts.category && !opts.tag && !opts.keyword;
-  // Per-parent cap: a container entry and its -NNN chunks share a parent key.
-  // Keep the top 2 per parent — one file cannot flood top-N, while chunk hits
-  // (a documented load-the-parent workflow) stay visible (G-C11).
-  const PARENT_CAP = 2;
-  // kg-code symbol knowhow are code projections — code search already covers
-  // them; cap wiki-side presence so human knowledge isn't drowned out.
-  const KG_CODE_CAP = 3;
-  const seen = new Set<string>();
-  const deduped: typeof filtered = [];
-  const catCounts = new Map<string, number>();
-  const parentCounts = new Map<string, number>();
-  let kgCodeCount = 0;
-  for (const r of filtered) {
-    if (seen.has(r.entry.id)) continue;
-    const parentKey = r.entry.id.replace(/-\d{2,3}$/, '');
-    const parentCount = parentCounts.get(parentKey) ?? 0;
-    if (parentCount >= PARENT_CAP) continue;
-    if (applyCaps) {
-      const cat = r.entry.category ?? '';
-      const cap = CATEGORY_CAPS[cat];
-      if (cap !== undefined) {
-        const count = catCounts.get(cat) ?? 0;
-        if (count >= cap) continue;
-        catCounts.set(cat, count + 1);
-      }
-      if (r.entry.id.startsWith('kg-code')) {
-        if (kgCodeCount >= KG_CODE_CAP) continue;
-        kgCodeCount++;
-      }
+  let impressions: Map<string, number> | undefined;
+  if (!readOnlyProbe && (opts.diversity ?? 'balanced') === 'balanced') {
+    try {
+      const { readKnowledgeUsageSignals } = await import('../graph/kg/knowledge-usage.js');
+      const signals = readKnowledgeUsageSignals(
+        resolve('.'),
+        filtered.map(candidate => ({
+          id: candidate.entry.id,
+          sourceRef: candidate.entry.sourceRef,
+        })),
+      );
+      impressions = new Map(
+        [...signals.entries()].map(([id, signal]) => [id, signal.impressions]),
+      );
+    } catch {
+      // Missing/corrupt usage signals disable exploration, never search.
     }
-    seen.add(r.entry.id);
-    parentCounts.set(parentKey, parentCount + 1);
-    deduped.push(r);
-    if (deduped.length >= limit) break;
   }
+  const deduped = selectDiverseWikiCandidates(filtered, {
+    limit,
+    applyCaps,
+    diversity: opts.diversity,
+    impressions,
+  });
+  _lastSearchMeta = {
+    embeddingUsed,
+    embeddingDocs,
+    diversityApplied: (opts.diversity ?? 'balanced') === 'balanced',
+    explorationUsed: deduped.some(candidate => candidate.selectionReason === 'exploration'),
+  };
 
   const maxScore = deduped.length > 0 ? deduped[0].score : 1;
-  const results = deduped.map(({ entry, score }) => ({
+  const results = deduped.map(({ entry, score, selectionReason }) => ({
     id: entry.id,
     type: entry.type,
     title: entry.title,
@@ -327,6 +467,7 @@ export async function runUnifiedSearch(q: string, opts: UnifiedSearchOptions & {
     sourceRef: entry.sourceRef,
     workspace: entry.source.workspace,
     confidence: (entry.ext?.confidence as string) || undefined,
+    selectionReason,
     ...sessionTopology(entry),
   }));
 
@@ -401,11 +542,16 @@ export interface KgSearchResult {
   score: number;
 }
 
-async function runKgSearch(q: string, limit: number): Promise<{ results: KgSearchResult[]; summary: Record<string, number> }> {
+export async function runKgSearch(
+  q: string,
+  limit: number,
+  recordImpressions: boolean = true,
+  projectRoot: string = resolve('.'),
+): Promise<{ results: KgSearchResult[]; summary: Record<string, number> }> {
   try {
     const { MaestroGraph } = await import('../graph/kg/engine.js');
-    if (!MaestroGraph.isInitialized(resolve('.'))) return { results: [], summary: {} };
-    const mg = await MaestroGraph.open(resolve('.'));
+    if (!MaestroGraph.isInitialized(projectRoot)) return { results: [], summary: {} };
+    const mg = await MaestroGraph.open(projectRoot);
     try {
       const output = mg.searchUnified(q, { limit });
       const results: KgSearchResult[] = output.directMatches.map(r => ({
@@ -417,6 +563,15 @@ async function runKgSearch(q: string, limit: number): Promise<{ results: KgSearc
         filePath: r.node.filePath,
         score: r.score,
       }));
+      if (recordImpressions && results.length > 0) {
+        const { CredibilityStore } = await import('../graph/kg/credibility.js');
+        const store = new CredibilityStore(mg.rawDb);
+        const knowledgeIds = results
+          .filter(result => result.sourceType !== 'codegraph')
+          .map(result => result.id);
+        const existingIds = [...mg.getQueryBuilder().getNodesByIds(knowledgeIds).keys()];
+        mg.getConnection().transaction(() => store.incrementImpressions(existingIds));
+      }
       return { results, summary: output.summary };
     } finally {
       mg.close();
@@ -669,6 +824,7 @@ export function registerSearchCommand(program: Command): void {
     .option('--include-linked-code', 'Include explicitly shared linked CodeGraph results')
     .option('--read-only-probe', 'Run a hermetic no-daemon, no-persistence search probe')
     .option('--include-deprecated', 'Include superseded/deprecated spec entries (hidden by default)')
+    .option('--diversity <mode>', 'Wiki diversity policy: balanced|off', 'balanced')
     .option('--no-emb', 'Skip embedding, use BM25 only')
     .option('--limit <n>', 'Max results', '20')
     .option('--json', 'Output as JSON')
@@ -682,6 +838,10 @@ export function registerSearchCommand(program: Command): void {
 
       if (opts.type && !VALID_TYPES.includes(opts.type)) {
         console.error(`Error: --type must be one of ${VALID_TYPES.join(', ')} (got "${opts.type}")`);
+        process.exit(1);
+      }
+      if (!['balanced', 'off'].includes(opts.diversity)) {
+        console.error('Error: --diversity must be one of balanced, off');
         process.exit(1);
       }
       if (resolvedTag && opts.code) {
@@ -707,7 +867,11 @@ export function registerSearchCommand(program: Command): void {
 
       // --kg: MaestroGraph unified search
       if (kgMode) {
-        const { results: kgResults, summary } = await runKgSearch(q, limit);
+        const { results: kgResults, summary } = await runKgSearch(
+          q,
+          limit,
+          opts.readOnlyProbe !== true,
+        );
         if (opts.json) {
           console.log(JSON.stringify({ query: q, engine: 'maestrograph', count: kgResults.length, summary, results: kgResults }, null, 2));
           return;
@@ -745,6 +909,7 @@ export function registerSearchCommand(program: Command): void {
           ? 'read-only-probe' as const
           : 'default' as const,
         includeDeprecated: opts.includeDeprecated === true,
+        diversity: opts.diversity as 'balanced' | 'off',
       };
       let wikiResults: SearchResult[];
       let codeOutcome: CodeSearchOutcome;
@@ -1141,6 +1306,7 @@ export interface MergedResult {
   runId?: string;
   runCount?: number;
   related?: string[];
+  selectionReason?: 'relevance' | 'diversity' | 'exploration';
 }
 
 const WIKI_TYPE_BOOST: Record<string, number> = {
@@ -1284,6 +1450,7 @@ export function mergeAndNormalize(wiki: SearchResult[], code: CodeSearchResult[]
       runId: r.runId,
       runCount: r.runCount,
       related: r.related,
+      selectionReason: r.selectionReason,
     });
   }
   for (let i = 0; i < codeScored.length; i++) {

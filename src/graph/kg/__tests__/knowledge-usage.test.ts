@@ -7,6 +7,7 @@ import { CredibilityStore } from '../credibility.js';
 import { MaestroGraph } from '../engine.js';
 import {
   buildKnowledgeUsageStats,
+  readKnowledgeUsageSignals,
   recordKnowledgeConsumptions,
 } from '../knowledge-usage.js';
 import type {
@@ -78,6 +79,8 @@ describe('knowledge usage signals', () => {
           impressions: 'returned-or-injected',
           consumptions: 'explicit-content-load',
           affectsRanking: false,
+          impressionsMayFillExplorationSlot: true,
+          consumptionsAffectRetrieval: false,
         });
         expect(stats.bySource).toEqual([
           {
@@ -144,6 +147,14 @@ describe('knowledge usage signals', () => {
         { id: 'duplicate', sourceRef: 'spec:a' },
         { id: 'missing' },
       ], 500)).toBe(2);
+      expect(readKnowledgeUsageSignals(root, [
+        { id: 'spec-a' },
+        { id: 'alias', sourceRef: 'knowhow:b' },
+        { id: 'missing' },
+      ])).toEqual(new Map([
+        ['spec-a', { impressions: 0, consumptions: 1 }],
+        ['alias', { impressions: 0, consumptions: 1 }],
+      ]));
 
       const reopened = await MaestroGraph.open(root);
       try {

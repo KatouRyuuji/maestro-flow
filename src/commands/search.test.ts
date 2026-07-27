@@ -14,7 +14,11 @@ vi.mock('../search/daemon-client.js', () => ({
   getDaemonPath: vi.fn(),
 }));
 
-import { registerSearchCommand, runUnifiedSearch } from './search.js';
+import {
+  registerSearchCommand,
+  runUnifiedSearch,
+  selectDiverseWikiCandidates,
+} from './search.js';
 
 function wikiEntry(id: string, tags: string[], overrides: Partial<WikiEntry> = {}): WikiEntry {
   return {
@@ -68,6 +72,78 @@ describe('search tag facet', () => {
     const search = program.commands.find(command => command.name() === 'search');
     expect(search?.options.some(option => option.long === '--tag')).toBe(true);
     expect(search?.options.some(option => option.long === '--kind')).toBe(true);
+    expect(search?.options.some(option => option.long === '--diversity')).toBe(true);
+  });
+});
+
+describe('balanced wiki candidate selection', () => {
+  it('collapses chunk families to two results before selection', () => {
+    const candidates = [
+      { entry: wikiEntry('guide-001', [], { parent: 'guide' }), score: 10 },
+      { entry: wikiEntry('guide-002', [], { parent: 'guide' }), score: 9.9 },
+      { entry: wikiEntry('guide-003', [], { parent: 'guide' }), score: 9.8 },
+      { entry: wikiEntry('other', []), score: 9.7 },
+    ];
+    const selected = selectDiverseWikiCandidates(candidates, {
+      limit: 4,
+      applyCaps: false,
+      diversity: 'off',
+    });
+    expect(selected.map(item => item.entry.id)).toEqual(['guide-001', 'guide-002', 'other']);
+  });
+
+  it('uses MMR to surface a distinct family before near-duplicate results', () => {
+    const similar = (id: string) => wikiEntry(id, ['store'], {
+      title: 'Canonical SessionStore atomic write',
+      summary: 'SessionStore atomic write lock transaction',
+      category: 'coding',
+    });
+    const candidates = [
+      { entry: similar('store-a'), score: 10 },
+      { entry: similar('store-b'), score: 9.9 },
+      { entry: similar('store-c'), score: 9.8 },
+      {
+        entry: wikiEntry('search-diversity', ['retrieval'], {
+          title: 'MMR retrieval diversity',
+          summary: 'Broad knowledge exploration',
+          category: 'learning',
+        }),
+        score: 9.7,
+      },
+    ];
+    const selected = selectDiverseWikiCandidates(candidates, {
+      limit: 4,
+      applyCaps: false,
+      diversity: 'balanced',
+    });
+    expect(selected[0].entry.id).toBe('store-a');
+    expect(selected[1].entry.id).toBe('search-diversity');
+    expect(selected[1].selectionReason).toBe('diversity');
+  });
+
+  it('reserves one relevance-floored slot for a lower-exposure family', () => {
+    const candidates = Array.from({ length: 5 }, (_, index) => ({
+      entry: wikiEntry(`candidate-${index + 1}`, [], {
+        title: `Distinct topic ${index + 1}`,
+        summary: `Independent evidence ${index + 1}`,
+      }),
+      score: 10 - index * 0.4,
+    }));
+    const impressions = new Map(candidates.map((candidate, index) => [
+      candidate.entry.id,
+      index === 4 ? 0 : 100 - index,
+    ]));
+    const selected = selectDiverseWikiCandidates(candidates, {
+      limit: 4,
+      applyCaps: false,
+      diversity: 'balanced',
+      impressions,
+    });
+    expect(selected.at(-1)).toMatchObject({
+      entry: { id: 'candidate-5' },
+      selectionReason: 'exploration',
+    });
+    expect(selected.map(item => item.score)).toEqual(expect.arrayContaining([8.4]));
   });
 });
 

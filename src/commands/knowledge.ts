@@ -205,7 +205,10 @@ export function registerKnowledgeCommand(program: Command): void {
 
         console.log('Knowledge usage statistics');
         console.log('Impressions are returned/injected results; consumptions are explicit content loads.');
-        console.log('Neither signal affects search ranking.\n');
+        console.log(
+          'Neither changes relevance scores; impressions may fill one relevance-floored '
+          + 'exploration slot, while consumptions never affect retrieval.\n',
+        );
 
         for (const source of stats.bySource) {
           console.log(
