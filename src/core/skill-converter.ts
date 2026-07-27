@@ -863,9 +863,23 @@ const PI_HOST_MIRROR_BLOCK = `<host_mirror>
 
 const PI_PROFILE: ConversionProfile = {
   bodyReplacements: [
-    [/maestro skills --platform claude\b/g, 'maestro skills --platform pi'],
+    [
+      /\b(maestro skills\b[^\n`]*?--platform)\s+(?:claude|\{target_platform\})/g,
+      '$1 pi',
+    ],
     [/<task_tracking>[\s\S]*?<\/task_tracking>/g, PI_HOST_MIRROR_BLOCK],
-    [/\bmaestro run (prepare|skill|brief)\b(?![^\n`]*--platform)/g, 'maestro run $1 --platform pi'],
+    [
+      /\b(maestro (?:run (?:start|create|prepare|skill|brief)|session (?:start|create)))\b([^\n`]*?--platform)\s+(?:claude|\{target_platform\})/g,
+      '$1$2 pi',
+    ],
+    [
+      /\bmaestro run (start|create|prepare|skill|brief)\b(?![^\n`]*--platform)/g,
+      'maestro run $1 --platform pi',
+    ],
+    [
+      /\bmaestro session (start|create)\b(?![^\n`]*--platform)/g,
+      'maestro session $1 --platform pi',
+    ],
     [/\bTaskCreate\s*\(\s*\{([^}]*)\}\s*\)/g, (_m: string, params: string) => `todo({ action: "create", ${params.trim()} })`],
     [/\bTaskUpdate\s*\(\s*\{([^}]*)\}\s*\)/g, (_m: string, params: string) => `todo({ action: "update", ${params.trim()} })`],
     [/\bTaskCreate\b/g, 'todo({ action: "create" })'],

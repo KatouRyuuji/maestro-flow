@@ -587,7 +587,7 @@ export function registerRunCommand(program: Command): void {
     .option('--session <id>', 'attach prior-step context from a Session (read-only)')
     .option('--topic <text>', 'resolve prior-step context from the unique running topic Session (read-only)')
     .option('--workflow-root <path>', 'project root', process.cwd())
-    .option('--platform <name>', 'target platform for tool substitution (claude|codex|agy|agents-standard)')
+    .option('--platform <name>', 'target platform for tool substitution (claude|codex|agy|agents-standard|pi)')
     .action((step: string, opts: { session?: string; topic?: string; workflowRoot: string; platform?: string }) => {
       try {
         const platform = opts.platform as TargetPlatform | undefined;
@@ -957,7 +957,7 @@ Compatibility boundary:
     .command('brief <run-id>')
     .description('Return Resume Packet for a running Run (re-attach workflow + goals + gate status)')
     .option('--session <id>', 'explicit Session ID')
-    .option('--platform <name>', 'target platform for tool substitution (claude|codex|agy|agents-standard)')
+    .option('--platform <name>', 'target platform for tool substitution (claude|codex|agy|agents-standard|pi)')
     .option('--json', 'emit one run-response/1.0 envelope on stdout')
     .option('--workflow-root <path>', 'project root', process.cwd())
     .action((runId: string, opts: { session?: string; platform?: string; workflowRoot: string; json?: boolean }) => {
@@ -1106,7 +1106,7 @@ Compatibility boundary:
   run
     .command('skill <step>')
     .description('Load prepare + workflow content for a step (stateless, no Session)')
-    .option('--platform <name>', 'target platform for tool substitution (claude|codex|agy|agents-standard)')
+    .option('--platform <name>', 'target platform for tool substitution (claude|codex|agy|agents-standard|pi)')
     .option('--workflow-root <path>', 'project root', process.cwd())
     .action((step: string, opts: { platform?: string; workflowRoot: string }) => {
       try {
