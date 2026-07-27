@@ -1,5 +1,4 @@
 import {
-  appendFileSync,
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -175,23 +174,49 @@ function inspectPipeline(projectRoot: string): {
     promoted: 0,
   };
   const findings: KnowledgeAuditFinding[] = [];
+  const sessionsRoot = join(projectRoot, '.workflow', 'sessions');
+  if (!existsSync(sessionsRoot)) return { summary, findings };
   const store = new SessionStore(projectRoot);
-  const sessions = store.listSessions().candidates;
-  summary.sessions = sessions.length;
+  const listed = store.listSessionsReadOnly();
+  const sessions = listed.candidates;
+  summary.sessions = sessions.length + listed.exclusions.length;
+  for (const exclusion of listed.exclusions) {
+    findings.push({
+      id: stableId('KAU', 'session-corrupt', exclusion.sessionId, exclusion.detail),
+      store: 'pipeline',
+      priority: 'P1',
+      subtype: 'invalid-session-authority',
+      target: exclusion.sessionId,
+      evidence: `${exclusion.code}: ${exclusion.detail}`,
+      recommended_action: 'review',
+    });
+  }
   for (const session of sessions) {
     try {
-      const knowledge = summarizeSessionKnowledge(projectRoot, session.sessionId);
+      const knowledge = summarizeSessionKnowledge(projectRoot, session.sessionId, {
+        readOnly: true,
+        strict: true,
+      });
       summary.ledgers += knowledge.ledger_count;
       for (const candidate of knowledge.candidates) {
         if (candidate.status === 'promoted') summary.promoted++;
-        else if (candidate.status === 'pending' && candidate.stage === 'corroborated') {
+        else if ((candidate.status === 'pending' || candidate.status === 'promoting')
+          && candidate.stage === 'corroborated') {
           summary.pending_corroborated++;
-        } else if (candidate.status === 'pending') {
+        } else if (candidate.status === 'pending' || candidate.status === 'promoting') {
           summary.pending_observed++;
         }
       }
-    } catch {
-      // Corrupt Session authority is reported by SessionStore.listSessions.
+    } catch (error) {
+      findings.push({
+        id: stableId('KAU', 'ledger-corrupt', session.sessionId),
+        store: 'pipeline',
+        priority: 'P1',
+        subtype: 'invalid-knowledge-ledger',
+        target: session.sessionId,
+        evidence: error instanceof Error ? error.message : String(error),
+        recommended_action: 'review',
+      });
     }
   }
   if (summary.pending_corroborated > 0) {
@@ -324,7 +349,8 @@ function deprecateSpecAction(action: KnowledgePruneAction): void {
   let found = false;
   updateFileAtomic(action.target_file, current => {
     if (current === null) throw new Error(`Missing spec file: ${action.target_file}`);
-    const lines = current.split('\n');
+    const eol = current.includes('\r\n') ? '\r\n' : '\n';
+    const lines = current.split(/\r?\n/);
     for (let index = 0; index < lines.length; index++) {
       const line = lines[index];
       if (!line.includes('<spec-entry') || !line.includes(`sid="${action.target_id}"`)) continue;
@@ -333,7 +359,7 @@ function deprecateSpecAction(action: KnowledgePruneAction): void {
       if (/\sstatus="[^"]*"/.test(updated)) {
         updated = updated.replace(/\sstatus="[^"]*"/, ' status="deprecated"');
       } else {
-        updated = updated.replace(/>$/, ' status="deprecated">');
+        updated = updated.replace(/>\s*$/, ' status="deprecated">');
       }
       if (/\ssuperseded-by="[^"]*"/.test(updated)) {
         updated = updated.replace(
@@ -341,13 +367,13 @@ function deprecateSpecAction(action: KnowledgePruneAction): void {
           ` superseded-by="${action.successor_id}"`,
         );
       } else {
-        updated = updated.replace(/>$/, ` superseded-by="${action.successor_id}">`);
+        updated = updated.replace(/>\s*$/, ` superseded-by="${action.successor_id}">`);
       }
       lines[index] = updated;
       break;
     }
     if (!found) throw new Error(`Spec sid not found: ${action.target_id}`);
-    return lines.join('\n');
+    return lines.join(eol);
   });
 }
 
@@ -364,13 +390,14 @@ function applyPrunePlan(
     mkdirSync(dirname(destination), { recursive: true });
     copyFileSync(file, destination);
   }
-  for (const action of plan) deprecateSpecAction(action);
+  try {
+    for (const action of plan) deprecateSpecAction(action);
 
-  const logDir = join(projectRoot, '.workflow', '.knowledge-audit');
-  mkdirSync(logDir, { recursive: true });
-  const appliedAt = new Date().toISOString();
-  for (const action of plan) {
-    appendFileSync(join(logDir, 'audit-log.jsonl'), `${JSON.stringify({
+    const logDir = join(projectRoot, '.workflow', '.knowledge-audit');
+    mkdirSync(logDir, { recursive: true });
+    const appliedAt = new Date().toISOString();
+    const logPath = join(logDir, 'audit-log.jsonl');
+    const records = plan.map(action => JSON.stringify({
       audit_id: stableId('AUD', appliedAt, action.id),
       action_id: action.id,
       store: action.store,
@@ -379,7 +406,27 @@ function applyPrunePlan(
       reason: action.reason,
       applied_at: appliedAt,
       backup_path: relative(projectRoot, backupDir).replaceAll('\\', '/'),
-    })}\n`, 'utf8');
+    })).join('\n') + '\n';
+    updateFileAtomic(logPath, current => (current ?? '') + records);
+  } catch (error) {
+    const rollbackErrors: string[] = [];
+    for (const file of uniqueFiles) {
+      const backup = join(backupDir, relative(projectRoot, file));
+      try {
+        updateFileAtomic(file, () => readFileSync(backup, 'utf8'));
+      } catch (rollbackError) {
+        rollbackErrors.push(
+          `${file}: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+        );
+      }
+    }
+    if (rollbackErrors.length > 0) {
+      throw new Error(
+        `Knowledge prune failed and rollback was incomplete: ${rollbackErrors.join('; ')}`,
+        { cause: error },
+      );
+    }
+    throw error;
   }
   return {
     count: plan.length,
@@ -414,7 +461,7 @@ export async function auditKnowledge(
 
   let usage: KnowledgeUsageStats | null = null;
   if (MaestroGraph.isInitialized(projectRoot)) {
-    const graph = await MaestroGraph.open(projectRoot);
+    const graph = await MaestroGraph.openReadOnly(projectRoot);
     try {
       usage = buildKnowledgeUsageStats(graph.rawDb, null, 10);
       addUsageFinding(usage, findings);

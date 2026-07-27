@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { auditKnowledge } from './audit.js';
+import { createRun } from '../run/runtime.js';
 
 const roots: string[] = [];
 
@@ -45,6 +46,19 @@ Use the canonical store.
 </spec-entry>
 `, 'utf8');
   return path;
+}
+
+function installCommand(projectRoot: string): void {
+  const commandDir = join(projectRoot, '.claude', 'commands');
+  const workflowDir = join(projectRoot, 'workflows');
+  mkdirSync(commandDir, { recursive: true });
+  mkdirSync(workflowDir, { recursive: true });
+  writeFileSync(
+    join(commandDir, 'audit-demo.md'),
+    '<contract>\nconsumes: []\nproduces: []\ngates:\n  entry: []\n  exit: []\n</contract>\n',
+    'utf8',
+  );
+  writeFileSync(join(workflowDir, 'audit-demo.md'), '# audit-demo\n', 'utf8');
 }
 
 afterEach(() => {
@@ -104,7 +118,8 @@ describe('knowledge audit and pruning', () => {
   });
 
   it('declares that usage signals cannot independently trigger pruning', async () => {
-    const report = await auditKnowledge(root(), { scope: 'all', prune: true });
+    const projectRoot = root();
+    const report = await auditKnowledge(projectRoot, { scope: 'all', prune: true });
     expect(report.safety).toEqual({
       usage_only_never_pruned: true,
       physical_delete: false,
@@ -112,5 +127,69 @@ describe('knowledge audit and pruning', () => {
     });
     expect(report.prune_plan.every(action => action.reason === 'unsynchronized-supersession'))
       .toBe(true);
+    expect(existsSync(join(projectRoot, '.workflow', 'sessions'))).toBe(false);
+  });
+
+  it('soft-deprecates CRLF spec entries without reporting a false success', async () => {
+    const projectRoot = root();
+    const specPath = writeUnsynchronizedChain(projectRoot);
+    writeFileSync(specPath, readFileSync(specPath, 'utf8').replace(/\n/g, '\r\n'), 'utf8');
+
+    const applied = await auditKnowledge(projectRoot, {
+      scope: 'spec',
+      prune: true,
+      apply: true,
+    });
+    const content = readFileSync(specPath, 'utf8');
+    expect(applied.applied.count).toBe(1);
+    expect(content).toContain('sid="S-old" title="Old store rule" status="deprecated"');
+    expect(content).toContain('\r\n');
+  });
+
+  it('reports corrupt Session authority instead of returning a clean pipeline', async () => {
+    const projectRoot = root();
+    const sessionDir = join(projectRoot, '.workflow', 'sessions', 'corrupt-session');
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(join(sessionDir, 'session.json'), '{}\n', 'utf8');
+
+    const report = await auditKnowledge(projectRoot, { scope: 'all' });
+    expect(report.findings).toContainEqual(expect.objectContaining({
+      store: 'pipeline',
+      priority: 'P1',
+      subtype: 'invalid-session-authority',
+      target: 'corrupt-session',
+    }));
+  });
+
+  it('reports an invalid knowledge ledger instead of swallowing it', async () => {
+    const projectRoot = root();
+    installCommand(projectRoot);
+    const created = createRun({
+      projectRoot,
+      command: 'audit-demo',
+      sessionId: 'ledger-session',
+      intent: 'audit invalid ledger',
+    });
+    writeFileSync(
+      join(
+        projectRoot,
+        '.workflow',
+        'sessions',
+        created.session_id,
+        'runs',
+        created.run_id,
+        'knowledge-delta.json',
+      ),
+      '{}\n',
+      'utf8',
+    );
+
+    const report = await auditKnowledge(projectRoot, { scope: 'all' });
+    expect(report.findings).toContainEqual(expect.objectContaining({
+      store: 'pipeline',
+      priority: 'P1',
+      subtype: 'invalid-knowledge-ledger',
+      target: created.session_id,
+    }));
   });
 });
