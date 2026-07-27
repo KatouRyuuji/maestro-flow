@@ -15,8 +15,8 @@ contract:
     - { path: outputs/acceptance.json, kind: acceptance, role: evidence }
     - { path: outputs/coverage.json, kind: coverage, role: evidence }
     - { path: outputs/uat.md, kind: uat-log, role: attachment }
-    - { path: outputs/issue-candidates.json, kind: issue-candidates, role: attachment, optional: true }
-    - { path: outputs/e2e-results.json, kind: e2e-results, role: evidence, optional: true }
+    - { path: outputs/issue-candidates.json, kind: issue-candidates, role: attachment, required: false }
+    - { path: outputs/e2e-results.json, kind: e2e-results, role: evidence, required: false }
   gates:
     exit: [coverage-met, pass-rate-met]
 refs:

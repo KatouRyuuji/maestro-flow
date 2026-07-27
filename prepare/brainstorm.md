@@ -7,7 +7,7 @@ contract:
     - { kind: context-package, alias: upstream-context, required: false }
   produces:
     - { path: outputs/guidance-specification.md, kind: guidance, alias: current-guidance, role: primary }
-    - { path: outputs/design-research.md, kind: design-research, role: attachment, optional: true }
+    - { path: outputs/design-research.md, kind: design-research, role: attachment, required: false }
     - { path: "outputs/{role}/analysis.md", kind: analysis, role: attachment }
     - { path: outputs/context-package.json, kind: context-package, alias: brainstorm-context, role: attachment }
   gates:

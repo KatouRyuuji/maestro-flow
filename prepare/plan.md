@@ -16,7 +16,7 @@ contract:
     - { path: outputs/waves.json, kind: execution-waves, role: attachment }
     - { path: outputs/dependency-graph.json, kind: dependency-graph, role: evidence }
     - { path: outputs/collision-report.json, kind: collision-report, role: evidence }
-    - { path: outputs/plan-check.json, kind: plan-check, role: evidence, optional: true }
+    - { path: outputs/plan-check.json, kind: plan-check, role: evidence, required: false }
   gates:
     exit: [context-collected, plan-generated, plan-checked, plan-confirmed]
 refs:

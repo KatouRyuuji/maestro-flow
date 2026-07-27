@@ -8,7 +8,7 @@ contract:
   produces:
     - { path: outputs/product-brief.md, kind: blueprint, alias: current-blueprint, role: primary }
     - { path: outputs/blueprint-config.json, kind: blueprint-config, role: evidence }
-    - { path: outputs/discovery-context.json, kind: discovery-context, role: evidence, optional: true }
+    - { path: outputs/discovery-context.json, kind: discovery-context, role: evidence, required: false }
     - { path: outputs/refined-requirements.json, kind: refined-requirements, role: evidence }
     - { path: outputs/glossary.json, kind: glossary, role: attachment }
     - { path: outputs/requirements/, kind: requirements-spec, role: attachment }
