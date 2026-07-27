@@ -157,7 +157,7 @@ Assemble and create per `prepare/maestro.md` §3–§4. Maestro-specific policy:
 
 ### A_CONTINUE
 
-Use read-only `run recall` plus `session status {session_id}`. A paused Session follows shared `run recover`; sealed/archived Sessions are terminal. Multiple live candidates require explicit selection.
+Use read-only `run recall` plus `session status {session_id}`. A paused Session is out of scope here — report it and route to `/maestro-ralph -c` for audited recovery (S_FALLBACK); sealed/archived Sessions are terminal. Multiple live candidates require explicit selection.
 
 ### A_AMEND
 
