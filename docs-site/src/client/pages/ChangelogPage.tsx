@@ -17,6 +17,18 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    version: '0.5.58',
+    date: '2026-07',
+    changes: [
+      { type: 'feat', text_en: 'Add a governed knowledge lifecycle from Run evidence capture through conservative promotion, deterministic audit, reconciliation, and reversible pruning', text_zh: '新增受治理的知识生命周期：从 Run 证据采集到保守晋升、确定性审计、协调与可回滚剪枝' },
+      { type: 'feat', text_en: 'Distinguish knowledge exposure from explicit consumption and record knowledge deltas with precise provenance across Session and Run execution', text_zh: '区分知识曝光与显式消费，并在 Session/Run 执行中记录带精确来源的知识增量' },
+      { type: 'feat', text_en: 'Add knowledge search diversity and exploration slots, unified KG identity and facets, plus an end-to-end knowledge review command', text_zh: '新增知识检索多样性与探索位、统一 KG 身份与 facets，并补齐端到端知识审查命令' },
+      { type: 'refactor', text_en: 'Migrate Ralph fully onto the canonical Run Executor and bind Pi skills to the Session/Run platform contract', text_zh: '将 Ralph 全面迁移到标准 Run Executor，并把 Pi skills 绑定到 Session/Run 平台契约' },
+      { type: 'fix', text_en: 'Harden promotion transactions, evidence validation, audit read-only guarantees, rollback safety, machine-mode stderr, and mutable command refresh', text_zh: '加固晋升事务、佐证校验、审计只读保证、回滚安全、机器模式 stderr 与可变命令刷新' },
+      { type: 'docs', text_en: 'Document the reconciled knowledge architecture and align command, workflow, skill, and Pi teammate-tool mirrors', text_zh: '沉淀协调后的知识系统架构，并对齐 command、workflow、skill 与 Pi teammate-tool 镜像' },
+    ],
+  },
+  {
     version: '0.5.56',
     date: '2026-07',
     changes: [
