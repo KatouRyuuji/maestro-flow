@@ -154,19 +154,17 @@ maestro delegate "continue" --to gemini --resume
 Run 知识生命周期与项目知识维护：
 
 ```bash
-maestro knowledge record spec:S-1 --run <run-id> --signal validated
 maestro knowledge stage knowhow "事务写入配方" "统一通过 SessionStore transaction 写入" --run <run-id> --category recipe
 maestro knowledge stage knowhow "长文配方" --content-file recipe.md --run <run-id>
-maestro knowledge reconcile --run <run-id> --session <session-id>
+maestro knowledge stage spec "规则" "内容" --run <run-id> --signal validated --signal-ids spec:S-1
 maestro knowledge review <session-id> [--refresh]
-maestro knowledge resolve KDC-... --session <session-id> --as related --target <knowledge-id> --reason "确认关联"
-maestro knowledge session <session-id>
+maestro knowledge review <session-id> --resolve KDC-... --as related --target <knowledge-id> --reason "确认关联"
 maestro knowledge promote <session-id> --candidate KDC-...
-maestro knowledge stats
+maestro knowledge promote <session-id> --all
 maestro knowledge audit --scope all --prune
 ```
 
-`search` 和自动注入只代表 exposure；显式 `load` 记录为 consumed。`record` 写入 `cited` / `validated` / `contradicted` 等 Run 关系；`stage` 只创建待审查 candidate。`session done` 返回精确 candidate receipt，但不会直接写项目 spec/knowhow。`review` 展示 diversified matches、证据和可复制的下一步命令；仅在 receipt missing/stale 时使用 `--refresh`。`promote --all` 默认只晋升跨 Run 佐证的候选。
+`search` 和自动注入只代表 exposure；显式 `load` 自动记录为 consumed。`stage --signal --signal-ids` 在暂存 candidate 的同时记录 `cited` / `validated` / `contradicted` 等 Run 关系。`session done` 返回精确 candidate receipt，但不会直接写项目 spec/knowhow。`review` 展示 diversified matches、证据和可复制的下一步命令；`--refresh` 内含 reconcile；`--resolve` 内含裁决。`promote --all` 晋升所有 eligible 候选（observed-only 输出警告）。
 
 </details>
 

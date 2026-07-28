@@ -239,7 +239,7 @@ else {
     'deprecated admin-only',
     'brief-result/1.1',
     'knowledge_context',
-    'maestro knowledge record',
+    '--signal-ids',
     'maestro knowledge stage',
     'knowledge-candidate-receipt/1.0',
     'maestro knowledge promote',
@@ -261,7 +261,7 @@ else {
     'merge-write',
     'complete top-level `_meta` object',
     '`kind` and `schema` are required together',
-    'maestro knowledge record',
+    '--signal-ids',
     'maestro knowledge stage',
     'maestro knowledge review',
   ]) {

@@ -53,29 +53,12 @@ async function run(...args: string[]): Promise<void> {
 }
 
 describe('maestro knowledge Run lifecycle CLI', () => {
-  it('records explicit signals and stages reviewable candidates on the active Run', async () => {
+  it('stages candidates with inline signals on the active Run', async () => {
     const created = createRun({
       projectRoot,
       command: 'knowledge-cli',
       sessionId: 'knowledge-cli-session',
       intent: 'exercise knowledge lifecycle CLI',
-    });
-
-    await run(
-      'record',
-      'spec:S-1,knowhow:K-1',
-      '--run',
-      created.run_id,
-      '--session',
-      created.session_id,
-      '--signal',
-      'validated',
-      '--json',
-    );
-    expect(JSON.parse(logs.at(-1)!)).toMatchObject({
-      session_id: created.session_id,
-      run_id: created.run_id,
-      recorded: 2,
     });
 
     await run(
@@ -91,10 +74,15 @@ describe('maestro knowledge Run lifecycle CLI', () => {
       'recipe',
       '--evidence',
       'artifact:A-1',
+      '--signal',
+      'validated',
+      '--signal-ids',
+      'spec:S-1,knowhow:K-1',
       '--json',
     );
-    const staged = JSON.parse(logs.at(-1)!) as { candidate_id: string };
+    const staged = JSON.parse(logs.at(-1)!) as { candidate_id: string; signal_recorded: number };
     expect(staged.candidate_id).toMatch(/^KDC-[a-f0-9]{16}$/);
+    expect(staged.signal_recorded).toBe(2);
 
     const delta = readRunKnowledgeDelta(
       new SessionStore(projectRoot),
@@ -115,6 +103,39 @@ describe('maestro knowledge Run lifecycle CLI', () => {
     expect(errors).toEqual([]);
   });
 
+  it('rejects invalid signal options before staging a candidate', async () => {
+    const created = createRun({
+      projectRoot,
+      command: 'knowledge-cli',
+      sessionId: 'knowledge-cli-session',
+      intent: 'validate signal options before mutation',
+    });
+
+    await run(
+      'stage',
+      'knowhow',
+      'Must not persist',
+      'Invalid signal options must leave the Run ledger unchanged.',
+      '--run',
+      created.run_id,
+      '--session',
+      created.session_id,
+      '--signal',
+      'unsupported',
+      '--signal-ids',
+      'spec:S-1',
+    );
+
+    const delta = readRunKnowledgeDelta(
+      new SessionStore(projectRoot),
+      created.session_id,
+      created.run_id,
+    );
+    expect(delta.inputs).toEqual([]);
+    expect(delta.candidates).toEqual([]);
+    expect(errors).toContain('Error: --signal must be one of consumed, cited, validated, contradicted');
+  });
+
   it('fails closed when explicit Run authority is not active', async () => {
     const created = createRun({
       projectRoot,
@@ -127,7 +148,10 @@ describe('maestro knowledge Run lifecycle CLI', () => {
       bundle.session.active_run_id = null;
     });
 
-    await run('record', 'spec:S-1', '--run', created.run_id, '--session', created.session_id);
+    await run(
+      'stage', 'spec', 'Blocked', 'content',
+      '--run', created.run_id, '--session', created.session_id,
+    );
     expect(process.exitCode).toBe(1);
     expect(errors.join('\n')).toContain('is not the active Run');
   });
@@ -182,7 +206,7 @@ Use one SessionStore transaction.
         canonical_id: 'S-store',
       }],
     });
-    await run('session', created.session_id, '--json');
+    await run('review', created.session_id, '--json');
     expect(JSON.parse(logs.at(-1)!)).toMatchObject({
       candidates: [{
         candidate_id: candidateId,
@@ -194,10 +218,10 @@ Use one SessionStore transaction.
     });
 
     await run(
-      'resolve',
-      candidateId,
-      '--session',
+      'review',
       created.session_id,
+      '--resolve',
+      candidateId,
       '--as',
       'duplicate',
       '--target',
@@ -206,11 +230,8 @@ Use one SessionStore transaction.
       'Confirmed exact duplicate',
       '--json',
     );
-    expect(JSON.parse(logs.at(-1)!)).toMatchObject({
-      candidate_id: candidateId,
-      promotion_eligibility: 'suppressed',
-      canonical_id: 'S-store',
-    });
+    const reviewAfterResolve = JSON.parse(logs.at(-1)!);
+    expect(reviewAfterResolve.candidates[0].reconciliation.promotion_eligibility).toBe('suppressed');
     expect(readRunKnowledgeDelta(
       new SessionStore(projectRoot),
       created.session_id,
@@ -354,17 +375,6 @@ Use independent file writes for coordinated state.
     });
 
     await run(
-      'record',
-      'S-old-storage',
-      '--signal',
-      'consumed',
-      '--run',
-      created.run_id,
-      '--session',
-      created.session_id,
-      '--json',
-    );
-    await run(
       'stage',
       'spec',
       'Canonical storage policy',
@@ -375,6 +385,10 @@ Use independent file writes for coordinated state.
       'arch',
       '--evidence',
       'report.md#decision-storage',
+      '--signal',
+      'consumed',
+      '--signal-ids',
+      'S-old-storage',
       '--run',
       created.run_id,
       '--session',
@@ -412,10 +426,10 @@ Use independent file writes for coordinated state.
     ]);
 
     await run(
-      'resolve',
-      candidateId,
-      '--session',
+      'review',
       created.session_id,
+      '--resolve',
+      candidateId,
       '--as',
       'supersede',
       '--target',
@@ -424,11 +438,8 @@ Use independent file writes for coordinated state.
       'Coordinated state now requires one atomic SessionStore transaction',
       '--json',
     );
-    expect(JSON.parse(logs.at(-1)!)).toMatchObject({
-      candidate_id: candidateId,
-      promotion_eligibility: 'eligible',
-      canonical_id: 'S-old-storage',
-    });
+    const resolvedView = JSON.parse(logs.at(-1)!);
+    expect(resolvedView.candidates[0].reconciliation.promotion_eligibility).toBe('eligible');
 
     const runDir = new SessionStore(projectRoot).runDir(created.session_id, created.run_id);
     writeFileSync(join(runDir, 'report.md'), `---

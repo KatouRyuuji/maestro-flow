@@ -8,7 +8,6 @@ import {
   type KnowledgeUsageConcentration,
 } from '../graph/kg/knowledge-usage.js';
 import {
-  recordActiveRunKnowledgeInputs,
   recordRunKnowledgeInputs,
   stageRunKnowledgeCandidate,
   summarizeSessionKnowledge,
@@ -252,64 +251,6 @@ export function registerKnowledgeCommand(program: Command): void {
     });
 
   knowledge
-    .command('record')
-    .description('Record an explicit relation between stable knowledge IDs and the active Run')
-    .argument('<knowledge-ids...>', 'Stable knowledge IDs (space- or comma-separated)')
-    .option('--signal <signal>', `Relation: ${KNOWLEDGE_INPUT_SIGNALS.join('|')}`, 'consumed')
-    .option('--run <run-id>', 'Explicit active Run ID')
-    .option('--session <session-id>', 'Explicit Session ID (requires --run)')
-    .option('--json', 'Output as JSON')
-    .option('--workflow-root <path>', 'Project root containing .workflow', process.cwd())
-    .action((
-      rawIds: string[],
-      opts: {
-        signal?: string;
-        run?: string;
-        session?: string;
-        json?: boolean;
-        workflowRoot: string;
-      },
-    ) => {
-      try {
-        if (!KNOWLEDGE_INPUT_SIGNALS.includes(opts.signal as KnowledgeInputSignal)) {
-          throw new Error(`--signal must be one of ${KNOWLEDGE_INPUT_SIGNALS.join(', ')}`);
-        }
-        if (opts.session && !opts.run) throw new Error('--session requires --run');
-        const ids = rawIds.flatMap(value => value.split(',')).map(value => value.trim()).filter(Boolean);
-        const projectRoot = resolve(opts.workflowRoot);
-        const result = opts.run
-          ? recordRunKnowledgeInputs(
-              projectRoot,
-              opts.run,
-              ids,
-              opts.signal as KnowledgeInputSignal,
-              'manual',
-              opts.session,
-            )
-          : recordActiveRunKnowledgeInputs(
-              projectRoot,
-              ids,
-              opts.signal as KnowledgeInputSignal,
-              'manual',
-            );
-        if (!result) {
-          throw new Error('No unique active Run found; pass --run and optionally --session');
-        }
-        if (opts.json) {
-          console.log(JSON.stringify(result, null, 2));
-          return;
-        }
-        console.log(
-          `Recorded ${result.recorded} knowledge relation(s) on `
-          + `${result.session_id}/${result.run_id} as ${opts.signal}.`,
-        );
-      } catch (error) {
-        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
-        process.exitCode = 1;
-      }
-    });
-
-  knowledge
     .command('stage')
     .description('Stage a reviewable spec or knowhow candidate on the active Run')
     .argument('<target>', `Candidate target: ${KNOWLEDGE_CANDIDATE_TARGETS.join('|')}`)
@@ -319,6 +260,8 @@ export function registerKnowledgeCommand(program: Command): void {
     .option('--action <action>', `Candidate intent: ${KNOWLEDGE_CANDIDATE_ACTIONS.join('|')}`, 'propose')
     .option('--category <category>', 'Spec/knowhow category')
     .option('--evidence <refs>', 'Comma-separated evidence references')
+    .option('--signal <signal>', `Also record a knowledge signal: ${KNOWLEDGE_INPUT_SIGNALS.join('|')}`)
+    .option('--signal-ids <ids>', 'Comma-separated knowledge IDs for --signal')
     .option('--run <run-id>', 'Explicit active Run ID')
     .option('--session <session-id>', 'Explicit Session ID (requires --run)')
     .option('--json', 'Output as JSON')
@@ -332,6 +275,8 @@ export function registerKnowledgeCommand(program: Command): void {
         action?: string;
         contentFile?: string;
         evidence?: string;
+        signal?: string;
+        signalIds?: string;
         run?: string;
         session?: string;
         json?: boolean;
@@ -364,6 +309,21 @@ export function registerKnowledgeCommand(program: Command): void {
           ? { runId: opts.run, sessionId: opts.session }
           : store.findUniqueActiveRun();
         if (!active) throw new Error('No unique active Run found; pass --run and optionally --session');
+
+        let signal: KnowledgeInputSignal | null = null;
+        let signalIds: string[] = [];
+        if (opts.signal && opts.signalIds) {
+          if (!KNOWLEDGE_INPUT_SIGNALS.includes(opts.signal as KnowledgeInputSignal)) {
+            throw new Error(`--signal must be one of ${KNOWLEDGE_INPUT_SIGNALS.join(', ')}`);
+          }
+          signal = opts.signal as KnowledgeInputSignal;
+          signalIds = opts.signalIds.split(',').map(value => value.trim()).filter(Boolean);
+        } else if (opts.signal && !opts.signalIds) {
+          throw new Error('--signal requires --signal-ids');
+        } else if (!opts.signal && opts.signalIds) {
+          throw new Error('--signal-ids requires --signal');
+        }
+
         const result = stageRunKnowledgeCandidate(
           projectRoot,
           active.runId,
@@ -377,13 +337,24 @@ export function registerKnowledgeCommand(program: Command): void {
           },
           active.sessionId,
         );
+        const signalResult = signal
+          ? recordRunKnowledgeInputs(
+              projectRoot,
+              active.runId,
+              signalIds,
+              signal,
+              'manual',
+              active.sessionId,
+            )
+          : null;
         if (opts.json) {
-          console.log(JSON.stringify(result, null, 2));
+          console.log(JSON.stringify({ ...result, signal_recorded: signalResult?.recorded ?? 0 }, null, 2));
           return;
         }
         console.log(
-          `Staged ${result.candidate_id} on ${result.session_id}/${result.run_id}; `
-          + `review after completion with "maestro knowledge review ${result.session_id}".`,
+          `Staged ${result.candidate_id} on ${result.session_id}/${result.run_id}`
+          + (signalResult ? `; recorded ${signalResult.recorded} signal(s) as ${opts.signal}` : '')
+          + `; review after completion with "maestro knowledge review ${result.session_id}".`,
         );
       } catch (error) {
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
@@ -393,7 +364,7 @@ export function registerKnowledgeCommand(program: Command): void {
 
   knowledge
     .command('reconcile')
-    .description('Match Run candidates against existing knowledge before completion or review')
+    .description('[internal] Match Run candidates against existing knowledge (auto-run by check; use review --refresh)')
     .option('--run <run-id>', 'Explicit active or sealed Run ID')
     .option('--session <session-id>', 'Explicit Session ID (requires --run)')
     .option('--json', 'Output as JSON')
@@ -443,7 +414,7 @@ export function registerKnowledgeCommand(program: Command): void {
 
   knowledge
     .command('resolve')
-    .description('Confirm duplicate, relation, conflict, supersession, or uniqueness')
+    .description('[alias] Confirm disposition (prefer: review --resolve <id> --as <choice> --reason "...")')
     .argument('<candidate-id>', 'Knowledge candidate ID')
     .requiredOption('--session <session-id>', 'Session identifier')
     .requiredOption('--as <resolution>', `Resolution: ${KNOWLEDGE_RESOLUTIONS.join('|')}`)
@@ -501,8 +472,7 @@ export function registerKnowledgeCommand(program: Command): void {
       ],
       [],
     )
-    .option('--all', 'Promote all corroborated pending candidates')
-    .option('--include-observed', 'Allow --all to include single-Run candidates')
+    .option('--all', 'Promote all eligible pending candidates (observed-only emits a warning)')
     .option('--json', 'Output as JSON')
     .option('--workflow-root <path>', 'Project root containing .workflow', process.cwd())
     .action((
@@ -510,7 +480,6 @@ export function registerKnowledgeCommand(program: Command): void {
       opts: {
         candidate: string[];
         all?: boolean;
-        includeObserved?: boolean;
         json?: boolean;
         workflowRoot: string;
       },
@@ -519,7 +488,6 @@ export function registerKnowledgeCommand(program: Command): void {
         const result = promoteReconciledSessionKnowledge(resolve(opts.workflowRoot), sessionId, {
           candidateIds: opts.candidate,
           all: opts.all,
-          includeObserved: opts.includeObserved,
         });
         if (opts.json) {
           console.log(JSON.stringify(result, null, 2));
@@ -536,7 +504,7 @@ export function registerKnowledgeCommand(program: Command): void {
           console.log(`Already promoted: ${result.already_promoted.length} candidate(s).`);
         }
         if (result.skipped_observed.length > 0) {
-          console.log(`Skipped ${result.skipped_observed.length} observed-only candidate(s).`);
+          console.log(`Warning: ${result.skipped_observed.length} observed-only candidate(s) promoted without corroboration.`);
         }
         if (result.skipped_review_required.length > 0) {
           console.log(
@@ -557,14 +525,47 @@ export function registerKnowledgeCommand(program: Command): void {
     .description('Review Session candidates with evidence-backed matches and next commands')
     .argument('<session-id>', 'Session identifier')
     .option('--refresh', 'Refresh every candidate source Run before review')
+    .option('--resolve <candidate-id>', 'Resolve a candidate before review')
+    .option('--as <resolution>', `Resolution for --resolve: ${KNOWLEDGE_RESOLUTIONS.join('|')}`)
+    .option('--target <knowledge-id>', 'Evidence-backed canonical knowledge ID for --resolve')
+    .option('--reason <reason>', 'Human review reason for --resolve')
     .option('--json', 'Output as JSON')
     .option('--workflow-root <path>', 'Project root containing .workflow', process.cwd())
     .action(async (
       sessionId: string,
-      opts: { refresh?: boolean; json?: boolean; workflowRoot: string },
+      opts: {
+        refresh?: boolean;
+        resolve?: string;
+        as?: string;
+        target?: string;
+        reason?: string;
+        json?: boolean;
+        workflowRoot: string;
+      },
     ) => {
       try {
         const projectRoot = resolve(opts.workflowRoot);
+        if (opts.resolve) {
+          if (!opts.as) throw new Error('--resolve requires --as');
+          if (!opts.reason) throw new Error('--resolve requires --reason');
+          if (!KNOWLEDGE_RESOLUTIONS.includes(opts.as as KnowledgeResolutionChoice)) {
+            throw new Error(`--as must be one of ${KNOWLEDGE_RESOLUTIONS.join(', ')}`);
+          }
+          const resolved = resolveKnowledgeCandidate(
+            projectRoot,
+            sessionId,
+            opts.resolve,
+            opts.as as KnowledgeResolutionChoice,
+            { targetId: opts.target, reason: opts.reason },
+          );
+          if (!opts.json) {
+            console.log(
+              `Resolved ${resolved.candidate_id} as ${resolved.disposition}; `
+              + `promotion ${resolved.promotion_eligibility}; `
+              + `canonical ${resolved.canonical_id ?? 'new knowledge'}.`,
+            );
+          }
+        }
         let view = buildKnowledgeSessionView(projectRoot, sessionId);
         if (opts.refresh) {
           for (const runId of uniqueRunIds(view.candidates)) {
@@ -585,54 +586,8 @@ export function registerKnowledgeCommand(program: Command): void {
     });
 
   knowledge
-    .command('session')
-    .description('Summarize knowledge inputs and pending candidates across a Session')
-    .argument('<session-id>', 'Session identifier')
-    .option('--json', 'Output as JSON')
-    .option('--workflow-root <path>', 'Project root containing .workflow', process.cwd())
-    .action((sessionId: string, opts: { json?: boolean; workflowRoot: string }) => {
-      try {
-        const view = buildKnowledgeSessionView(resolve(opts.workflowRoot), sessionId);
-        const { candidates } = view;
-        if (opts.json) {
-          console.log(JSON.stringify(view, null, 2));
-          return;
-        }
-
-        console.log(`Session knowledge: ${view.session_id}`);
-        console.log(
-          `${view.ledger_count}/${view.run_count} run ledgers · `
-          + `${view.unique_inputs} unique inputs · `
-          + `${candidates.length} candidates`,
-        );
-        console.log(
-          `Signals: ${view.input_totals.consumed} consumed · `
-          + `${view.input_totals.cited} cited · `
-          + `${view.input_totals.validated} validated · `
-          + `${view.input_totals.contradicted} contradicted`,
-        );
-        if (candidates.length > 0) {
-          console.log('\nCandidates:');
-          for (const candidate of candidates) {
-            console.log(
-              `  ${candidate.candidate_id} [${candidate.stage}/${candidate.status}] `
-              + `${candidate.target}:${candidate.category ?? 'uncategorized'} · ${candidate.title}`
-              + (candidate.reconciliation
-                ? ` · ${candidate.reconciliation.disposition}/`
-                  + `${candidate.reconciliation.promotion_eligibility}`
-                : ' · reconciliation missing'),
-            );
-          }
-        }
-      } catch (error) {
-        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
-        process.exitCode = 1;
-      }
-    });
-
-  knowledge
     .command('stats')
-    .description('Show knowledge exposure, explicit consumption, and concentration')
+    .description('[deprecated] Show knowledge exposure, explicit consumption, and concentration')
     .option('--type <type>', `Filter by source type: ${KNOWLEDGE_SOURCE_TYPES.join(', ')}`)
     .option('--limit <n>', 'Max top entries', '10')
     .option('--json', 'Output as JSON')
@@ -643,6 +598,7 @@ export function registerKnowledgeCommand(program: Command): void {
       json?: boolean;
       workflowRoot: string;
     }) => {
+      console.error('Warning: "maestro knowledge stats" is deprecated; credibility signals are write-only (see docs §1.1 X3). Use "maestro knowledge audit" instead.');
       if (opts.type && !KNOWLEDGE_SOURCE_TYPES.includes(opts.type as typeof KNOWLEDGE_SOURCE_TYPES[number])) {
         console.error(`Error: --type must be one of ${KNOWLEDGE_SOURCE_TYPES.join(', ')}`);
         process.exitCode = 1;

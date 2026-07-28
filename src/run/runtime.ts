@@ -2040,7 +2040,7 @@ export function createRun(options: CreateRunOptions): CreateRunResult {
 
 /**
  * Finish-work checklist injected when `run check` finds every gate clean.
- * Core norms (handoff frontmatter, knowledge record, verdict semantics) are
+ * Core norms (handoff frontmatter, knowledge staging, verdict semantics) are
  * runtime-built; workflow frontmatter `finish:` lines extend them. Mirrors the
  * core/extension split of the injection builder (inject.ts).
  */
@@ -2050,8 +2050,8 @@ function buildFinishChecklist(projectRoot: string, run: CommandRun, frontmatter:
     lines.push('report.md handoff frontmatter is empty — fill summary (plus concerns/decisions) before completing; the sealed handoff is derived from it.');
   }
   lines.push(`Stage knowledge before sealing: put accepted decisions and locked constraints in report.md frontmatter (completion stages them automatically); reusable recipes/pitfalls → \`maestro knowledge stage knowhow "<title>" "<content>" --run ${run.run_id}\`. Do not write project spec/knowhow directly from routine Run completion.`);
-  lines.push(`Inspect the reconciliation receipt created by this check. Resolve semantic duplicates, conflicts, or supersession candidates with \`maestro knowledge resolve <candidate-id> --session <session-id> --as <duplicate|related|conflict|supersede|unique> --target <knowledge-id> --reason "<reason>"\`. Unresolved items may be sealed but cannot be promoted.`);
-  lines.push(`Reconcile reused knowledge by stable ID: \`maestro knowledge record <knowledge-id> --run ${run.run_id} --signal cited|validated|contradicted\`. A search result or automatic injection is exposure only; it is not evidence of use.`);
+  lines.push(`Inspect the reconciliation receipt created by this check. Resolve semantic duplicates, conflicts, or supersession candidates with \`maestro knowledge review <session-id> --resolve <candidate-id> --as <duplicate|related|conflict|supersede|unique> --target <knowledge-id> --reason "<reason>"\`. Unresolved items may be sealed but cannot be promoted.`);
+  lines.push(`Record stronger knowledge relations during staging: \`maestro knowledge stage <target> "<title>" "<content>" --run ${run.run_id} --signal cited|validated|contradicted --signal-ids <knowledge-ids>\`. A search result or automatic injection is exposure only; it is not evidence of use.`);
   lines.push('For contradicted canonical knowledge, record the contradiction before sealing. After candidate review/promotion, replace stale rules with `maestro spec supersede <old-sid> --by <new-sid>`; if both rules remain valid, use `maestro spec conflict mark <file> <line> --note "<reason>"`. Never leave a known-stale entry unmarked.');
   lines.push('Pick the verdict honestly: `done` (clean) or `done-with-concerns` (works but carries caveats — list every caveat in concerns).');
   lines.push(...resolveStepContent(projectRoot, run.command.name).finish);
@@ -3648,7 +3648,7 @@ export function briefRun(
           conflicts: receipt?.counts.conflicts ?? 0,
           review_required: receipt?.counts.review_required ?? 0,
           suppressed: receipt?.counts.suppressed ?? 0,
-          command: `maestro knowledge reconcile --run ${runId} --session ${context.session_id}`,
+          command: `maestro knowledge review ${context.session_id} --refresh`,
         },
       };
     })(),

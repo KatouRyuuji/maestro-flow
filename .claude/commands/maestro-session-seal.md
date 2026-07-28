@@ -58,19 +58,19 @@ Note: maestro-next suggests session-seal when 'Tests green + active session'. Th
 2. Explain signal semantics when relevant: search/injection is exposure only; explicit loads are consumed; `cited`, `validated`, and `contradicted` are explicit Run relations.
 3. Report exact/semantic duplicates, related/extends candidates, potential conflicts, supersession candidates, missing receipts, and promotion eligibility separately. Exact duplicates are suppressed automatically; unresolved `review_required` candidates cannot be promoted.
 4. If `--skip-knowledge`, report the pending/promoting/review-required/suppressed counts and continue. The backlog and reconciliation receipts remain durable after seal.
-5. Otherwise resolve review-required candidates before promotion with `maestro knowledge resolve <candidate-id> --session {session_id} --as duplicate|related|conflict|supersede|unique [--target <knowledge-id>] --reason "<reason>"`. A target must come from that candidate's evidence-backed matches.
+5. Otherwise resolve review-required candidates before promotion with `maestro knowledge review {session_id} --resolve <candidate-id> --as duplicate|related|conflict|supersede|unique [--target <knowledge-id>] --reason "<reason>"`. A target must come from that candidate's evidence-backed matches.
 6. Present eligible pending candidates via `[@ask] AskUserQuestion`:
    ```
    question: "以下知识候选项值得晋升到项目知识库吗？"
    options:
-     - "晋升已佐证项" (promote corroborated candidates)
+     - "晋升全部合格项" (promote all eligible candidates)
      - "逐个选择" (review each candidate)
      - "暂不晋升" (leave backlog pending)
    ```
 7. Promote only through the receipt-aware CLI:
-   - Corroborated selection → `maestro knowledge promote {session_id} --all`
+   - Bulk selection → `maestro knowledge promote {session_id} --all`
    - Explicit selection → repeat `maestro knowledge promote {session_id} --candidate <candidate-id>` for each selection (comma-separated compatibility remains supported)
-   - `-y` may run `--all`, which remains conservative and skips observed-only, review-required, and suppressed candidates. It MUST NOT add `--include-observed` or auto-resolve a candidate without explicit user selection.
+   - `-y` may run `--all`, which promotes all eligible candidates (observed-only emits a warning) and skips review-required and suppressed candidates. It MUST NOT auto-resolve a candidate without explicit user selection.
 8. For a replacement candidate, confirm `--as supersede` and then promote it; promotion creates the successor and links the evolution chain. For coexisting valid rules, confirm `related` or `conflict` as appropriate. Never direct-write a candidate that was already promoted successfully.
 
 ### Step 3: Seal Session
@@ -123,7 +123,7 @@ Status: DONE
 | W001 | warning | No knowledge candidates found | Proceed to seal |
 | W002 | warning | No verify/review run in session — gate check skipped | Consider running verify before seal |
 | W003 | warning | Candidate backlog left pending | Review later with `maestro knowledge review {session_id}` |
-| W004 | warning | Reconciliation review remains unresolved | Seal may continue; promotion stays blocked until `maestro knowledge resolve` |
+| W004 | warning | Reconciliation review remains unresolved | Seal may continue; promotion stays blocked until `maestro knowledge review --resolve` |
 </error_codes>
 
 <success_criteria>

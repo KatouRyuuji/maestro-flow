@@ -83,7 +83,6 @@ export interface SessionKnowledgeSummary {
 export interface PromoteSessionKnowledgeOptions {
   candidateIds?: string[];
   all?: boolean;
-  includeObserved?: boolean;
 }
 
 export interface KnowledgePromotionResult {
@@ -798,8 +797,9 @@ function confirmedSupersessionTarget(
 }
 
 /**
- * Promote selected pending candidates. `--all` remains conservative: observed
- * candidates require an explicit id or includeObserved=true.
+ * Promote selected pending candidates. `--all` promotes every eligible pending
+ * candidate whose source Runs are sealed; observed-only candidates are promoted
+ * with a warning rather than being skipped.
  */
 export function promoteSessionKnowledge(
   projectRoot: string,
@@ -853,7 +853,7 @@ export function promoteSessionKnowledge(
       }))
     : [];
   const eligiblePending = options.all
-    ? pending.filter(candidate => options.includeObserved || candidate.stage === 'corroborated')
+    ? pending
     : pending.filter(candidate => requested.has(candidate.candidate_id));
   const skippedReviewRequired = options.all
     ? eligiblePending
@@ -872,8 +872,8 @@ export function promoteSessionKnowledge(
     : [];
   const blockedForAll = new Set([...skippedReviewRequired, ...skippedSuppressed]);
   const selected = eligiblePending.filter(candidate => !blockedForAll.has(candidate.candidate_id));
-  const skippedObserved = options.all && !options.includeObserved
-    ? pending.filter(candidate => candidate.stage === 'observed').map(candidate => candidate.candidate_id)
+  const skippedObserved = options.all
+    ? selected.filter(candidate => candidate.stage === 'observed').map(candidate => candidate.candidate_id)
     : [];
   const unsealedSources = selected.flatMap(candidate =>
     candidate.run_ids
@@ -886,7 +886,7 @@ export function promoteSessionKnowledge(
     );
   }
   if (selected.length === 0 && alreadyPromoted.length === 0) {
-    if (options.all && skippedObserved.length === 0) {
+    if (options.all) {
       return {
         schema_version: 'knowledge-promotion-result/1.0',
         session_id: sessionId,
@@ -897,11 +897,7 @@ export function promoteSessionKnowledge(
         skipped_suppressed: skippedSuppressed,
       };
     }
-    throw new Error(
-      skippedObserved.length > 0
-        ? 'No corroborated pending candidates; pass --include-observed or select explicit candidate IDs'
-        : 'No pending candidates selected',
-    );
+    throw new Error('No pending candidates selected');
   }
 
   // Preflight every selected spec before recording the promotion intent.

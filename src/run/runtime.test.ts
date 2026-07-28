@@ -698,7 +698,7 @@ finish:
     expect(clean.next?.command).toBe(`maestro run complete ${created.run_id}`);
     expect(clean.finish?.some(line => line.includes('finding ID'))).toBe(true);
     expect(clean.finish?.some(line => line.includes('maestro knowledge stage'))).toBe(true);
-    expect(clean.finish?.some(line => line.includes('maestro knowledge record'))).toBe(true);
+    expect(clean.finish?.some(line => line.includes('--signal cited|validated|contradicted'))).toBe(true);
     expect(clean.finish?.some(line => line.includes('spec supersede'))).toBe(true);
     expect(clean.finish?.some(line => line.includes('spec conflict mark'))).toBe(true);
     expect(clean.finish?.some(line => line.includes('Do not write project spec/knowhow directly'))).toBe(true);

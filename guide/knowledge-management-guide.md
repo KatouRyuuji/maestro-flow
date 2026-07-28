@@ -53,33 +53,36 @@ Maestro 知识沉淀分两种：**约束**和**积累**。约束是编码规范�
 Run 不再把结论直接写入 Spec/Knowhow，而是经过可审查的两阶段流程：
 
 ```text
-search/load → record → stage → reconcile → review/resolve
-            → run complete → promote selected → session seal
+[auto] search/load → 自动记录 consumed
+[auto] check → 自动 reconcile
+[auto] complete → 自动暂存 decisions/constraints
+[manual] review → 审查 + 裁决
+[manual] promote → 显式提升
+[manual] seal → 收口
 ```
 
 ```bash
-# 记录当前 Run 实际使用的知识
-maestro knowledge record <knowledge-id...> \
-  --signal consumed --run <run-id> --session <session-id>
-
-# 暂存候选；长正文可改用 --content-file <path|->
+# 暂存候选（可选，decisions/constraints 在 complete 时自动暂存）
+# 长正文可改用 --content-file <path|->
+# --signal/--signal-ids 可同时记录 validated/contradicted 等 Run 关系
 maestro knowledge stage spec "规则标题" "规则正文" \
-  --action propose --run <run-id> --session <session-id>
+  --action propose --run <run-id> --session <session-id> \
+  --signal validated --signal-ids spec:S-1,knowhow:K-1
 
-# 在 Run 完成前匹配重复、关联、冲突和 supersession
-maestro knowledge reconcile --run <run-id> --session <session-id>
-maestro knowledge review <session-id>
+# 审查（--refresh 内含 reconcile）
+maestro knowledge review <session-id> --refresh
 
-# 对 review_required candidate 做证据化裁决
-maestro knowledge resolve <candidate-id> --session <session-id> \
-  --as related --target <knowledge-id> --reason "<reason>"
+# 对 review_required candidate 做证据化裁决（内含刷新视图）
+maestro knowledge review <session-id> \
+  --resolve <candidate-id> --as related --target <knowledge-id> --reason "<reason>"
 
 # Run sealed 后显式提升选中的 candidate
 maestro knowledge promote <session-id> --candidate <candidate-id>
+maestro knowledge promote <session-id> --all
 maestro session seal <session-id>
 ```
 
-`review` 默认只读；仅在显示 `missing` 或 `stale` 时使用 `--refresh`。Search/自动注入只是 exposure，不能替代 `record`，也不会触发 promotion。
+`review` 默认只读；`--refresh` 内含 reconcile，仅在显示 `missing` 或 `stale` 时使用。`--resolve` 在审查界面内直接裁决，无需单独命令。Search/自动注入只是 exposure，显式 `load` 自动记录为 consumed，也不会触发 promotion。
 
 <details>
 <summary>条目格式示例</summary>

@@ -157,7 +157,7 @@ test('source lint accepts alias-free Odyssey workflows while enforcing prepare a
   assert.match(lite, /complete top-level `_meta` object/);
   assert.match(lite, /`kind` and `schema` are required together/);
   assert.match(lite, /maestro knowledge stage knowhow/);
-  assert.match(lite, /maestro knowledge record <knowledge-id>/);
+  assert.match(lite, /--signal cited\|validated\|contradicted --signal-ids <knowledge-ids>/);
   assert.match(lite, /maestro knowledge review <session_id>/);
 
   const full = readFileSync(join(repoRoot, 'workflows', 'run-mode.md'), 'utf8');

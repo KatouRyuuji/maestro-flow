@@ -191,7 +191,19 @@ wait_agent({ timeout_ms: 3600000 })   // timed_out and not finished → wait_age
 
 ## Knowledge System
 
-**Gate rule**: Before editing code or making design decisions, run `maestro search` to retrieve historical knowledge (spec rules, knowhow lessons, design decisions) — avoid repeating known pitfalls or violating established conventions. This is knowledge reuse, not code search — code navigation (Grep/Read/explore) can proceed in parallel without waiting for knowledge results. Empty results ≠ exempt: if a hint is returned, execute it and retry; once confirmed no prior knowledge exists, proceed normally and record findings at task end per Record.
+**Knowledge Gate (required)**: Resolve project knowledge before reading, analyzing, planning against, or modifying project files.
+
+| Context | Required opening |
+|---------|------------------|
+| Standalone task | First project-related tool call: `maestro search "<1-3 task-specific keywords>" [--type <type>] --json` |
+| Fresh orchestrated Run | Inspect the injected birth packet and `knowledge_context`, then make the task-specific search the first project-related tool call |
+| Reattached/compacted Run | `maestro run brief <run-id>` may run first; inspect `knowledge_context`, then search/load before project-file access |
+
+This applies to process/ops, code changes, debugging, architecture, review, planning, and config/skill work. `git status`, file-name search, Grep/Read, and `rg '*knowhow*'` do not satisfy the Gate.
+
+When the user says "参考", "参照", `knowhow`, `spec`, or "reference the process", derive the query from the task subject and operation, add the named `--type`, and explicitly load every governing hit before file exploration. Search results, automatic injection, and `knowledge_context` are exposure only; explicit `maestro load` records consumption. `knowledge_context.run.knowledge_ids` lists consumed IDs, not full content: do not repeat load when the full entry is already in context, but reload when reattachment preserved only an ID or summary.
+
+Empty results permit normal discovery only after inspection. If search returns an initialization or recovery hint, execute it and retry first.
 
 **Re-search triggers** (re-query mid-task with new keywords, never repeat old queries): entering a new module/subsystem boundary; same fix failed twice; before architecture/approach decisions.
 
@@ -237,29 +249,26 @@ maestro search "DetailedTopologySVG" --code
 maestro load --type spec --category coding
 ```
 
-### Record
+### Stable Run Knowledge Invariants
 
-| Context | Command |
-|---------|---------|
-| Active Run relation | `maestro knowledge record <knowledge-id> --run <run-id> --signal cited|validated|contradicted` |
-| Active Run candidate | `maestro knowledge stage spec|knowhow "title" "content" --run <run-id> [--category <cat>]` |
-| Outside a Run / explicit direct write | `/maestro-spec "<constraint>"` or `/maestro-knowhow` |
+Runtime birth packets, `maestro run brief`, completion receipts, and the `maestro run check` finish checklist are authoritative for Run-specific IDs, reconciliation state, and next commands. Static instructions own only these stable rules:
 
-Category routing: decisions→`arch`, patterns→`coding`, pitfalls→`debug`/`learning`, rules→`review`, tests→`test`.
-During a Run, accepted decisions and locked constraints belong in `report.md`; completion stages them as candidates and returns exact candidate IDs. Search/injection is exposure only, while explicit load is consumed. Review evidence with `maestro knowledge review <session-id>` and promote selected IDs explicitly.
-Direct `maestro spec add` / `/maestro-knowhow` writes are reserved for explicit knowledge-management work outside routine Run completion.
-`session-mode: run` commands receive a finish checklist (handoff, relation/candidate staging, conflict annotation, verdict) when `maestro run check` is all green — execute every item, no skipping.
+1. Search and automatic injection are exposure; explicit `load` records consumption.
+2. Put accepted decisions and locked constraints in `report.md` frontmatter; completion stages them automatically as pending candidates.
+3. Stage reusable recipes or pitfalls with `maestro knowledge stage spec|knowhow "<title>" "<content>" --run <run-id> [--category <category>]`.
+4. When staging content that cites, validates, or contradicts existing knowledge, add `--signal cited|validated|contradicted --signal-ids <knowledge-ids>`.
+5. Routine Run completion never writes project Spec/Knowhow directly and never promotes candidates.
+6. The finish checklist is soft guidance. Work through it and put intentionally unresolved items in `report.md` concerns. Unresolved reconciliation may be sealed but cannot be promoted.
+7. Review, resolve, promote, supersede, conflict marking, and audit are explicit governance actions. Execute them only when the user requests knowledge governance or a confirmed workflow step requires it.
 
-### Supersession & Conflict (dual-track)
+Outside a Run, direct `/maestro-spec` or `/maestro-knowhow` writes are reserved for explicit knowledge-management work. Category routing: decisions→`arch`, patterns→`coding`, pitfalls→`debug`/`learning`, rules→`review`, tests→`test`.
 
-| Relation | Scenario | Command | Effect |
-|----------|----------|---------|--------|
-| **supersede** | New rule replaces old rule | `maestro spec supersede <old-sid> --by <new-sid>` | Old entry `deprecated`, evolution chain preserved |
-| **conflict** | Both rules are valid | `maestro spec conflict mark <file> <line> --note "<reason>"` | Old entry `contested` (search ×0.5), human adjudicates |
+### Governance Boundary
 
-Confidence levels: `high` → `medium` (default) → `low` (`[LOW CONFIDENCE]`) → `contested` (`[CONTESTED]`).
-Resolution: `/maestro-knowledge audit`
+Use commands supplied by the current `knowledge_context`, completion receipt, and `run check` output; those Runtime surfaces override static examples here.
 
-### Health & Maintenance
-
-`maestro spec health` — lifecycle stats + evolution chain integrity. Low-frequency maintenance (`backfill-sid` for sid backfill, `history <sid>` for evolution chains) — see `maestro spec --help`.
+- `maestro knowledge review <session-id> --refresh` refreshes reconciliation; `--resolve` records human disposition.
+- Promotion requires eligible candidates, fresh receipts, and sealed source Runs; normal completion never implies approval.
+- Session seal may report a pending backlog but never silently promotes or discards candidates.
+- Deprecated/superseded knowledge remains auditable and is excluded from normal search and injection.
+- Low exposure never triggers automatic deletion or pruning.

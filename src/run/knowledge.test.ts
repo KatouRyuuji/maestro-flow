@@ -302,40 +302,37 @@ describe('Run knowledge delta', () => {
 
     const before = summarizeSessionKnowledge(projectRoot, created.session_id);
     const candidate = before.candidates.find(item => item.source_kind === 'decision')!;
-    expect(() => promoteSessionKnowledge(projectRoot, created.session_id, { all: true }))
-      .toThrow(/No corroborated pending candidates/);
 
-    const promoted = promoteSessionKnowledge(projectRoot, created.session_id, {
-      candidateIds: [candidate.candidate_id],
-    });
-    expect(promoted.promoted).toEqual([
-      expect.objectContaining({
-        candidate_id: candidate.candidate_id,
-        target: 'spec',
-        outcome: 'created',
-      }),
-    ]);
+    // --all now promotes observed candidates with a warning instead of throwing
+    const allResult = promoteSessionKnowledge(projectRoot, created.session_id, { all: true });
+    expect(allResult.promoted.length).toBeGreaterThanOrEqual(1);
+    expect(allResult.skipped_observed.length).toBeGreaterThanOrEqual(1);
+
+    // The --all promotion already created the candidate; verify receipt
+    const allPromoted = allResult.promoted.find(item => item.candidate_id === candidate.candidate_id)!;
+    expect(allPromoted).toMatchObject({ target: 'spec', outcome: 'created' });
 
     const after = summarizeSessionKnowledge(projectRoot, created.session_id);
     const recorded = after.candidates.find(item => item.candidate_id === candidate.candidate_id)!;
     expect(recorded).toMatchObject({
       status: 'promoted',
-      promoted_id: promoted.promoted[0].promoted_id,
+      promoted_id: allPromoted.promoted_id,
       promotion_receipt: {
         outcome: 'created',
         content_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
       },
     });
     expect(new SessionStore(projectRoot).readBundle(created.session_id).session.lifecycle.promoted_spec_ids)
-      .toContain(promoted.promoted[0].promoted_id);
+      .toContain(allPromoted.promoted_id);
 
+    // Replay: promoting the same candidate again returns already_promoted
     const replay = promoteSessionKnowledge(projectRoot, created.session_id, {
       candidateIds: [candidate.candidate_id],
     });
     expect(replay.promoted).toEqual([]);
     expect(replay.already_promoted).toEqual([{
       candidate_id: candidate.candidate_id,
-      promoted_id: promoted.promoted[0].promoted_id,
+      promoted_id: allPromoted.promoted_id,
     }]);
   });
 

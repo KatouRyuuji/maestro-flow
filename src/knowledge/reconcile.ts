@@ -834,10 +834,7 @@ export function promoteReconciledSessionKnowledge(
     && candidate.promoted_id
     && (
       requested.has(candidate.candidate_id)
-      || (
-        options.all
-        && (options.includeObserved || candidate.stage === 'corroborated')
-      )
+      || options.all
     )
   );
   if (recovering.length > 0) {

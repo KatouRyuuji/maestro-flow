@@ -40,7 +40,7 @@ const GUIDE_REQUIREMENTS = [
     tokens: [
       'session/1.3', 'command-run/1.3', 'run-response/1.0',
       'brief-result/1.1', 'knowledge_context',
-      'maestro knowledge record', 'maestro knowledge stage', 'maestro knowledge review',
+      'maestro knowledge stage', 'maestro knowledge review',
       'maestro knowledge promote',
       ...REQUIRED_OPERATIONS,
     ],
@@ -190,22 +190,31 @@ const knowledgeLifecycleCli = {
   session: knowledgeCommands?.includes(".command('session')") ?? false,
   promote: knowledgeCommands?.includes(".command('promote')") ?? false,
 };
+const expectedKnowledgeLifecycleCli = {
+  record: false,
+  stage: true,
+  reconcile: true,
+  review: true,
+  resolve: true,
+  session: false,
+  promote: true,
+};
 addCheck(
   'cli.knowledge-lifecycle',
   knowledgeLifecycleCli,
-  { record: true, stage: true, reconcile: true, review: true, resolve: true, session: true, promote: true },
-  Object.values(knowledgeLifecycleCli).every(Boolean),
+  expectedKnowledgeLifecycleCli,
+  JSON.stringify(knowledgeLifecycleCli) === JSON.stringify(expectedKnowledgeLifecycleCli),
 );
 
 const runtime = read('src/run/runtime.ts');
 const runMode = read('workflows/run-mode.md');
 const knowledgeCompletionContract = {
   receipt: runtime?.includes('knowledgeCandidateReceipt(prepared.sessionId, knowledgeDelta)') ?? false,
-  finishRecord: runtime?.includes('maestro knowledge record <knowledge-id>') ?? false,
+  finishSignal: runtime?.includes('--signal cited|validated|contradicted --signal-ids <knowledge-ids>') ?? false,
   finishStage: runtime?.includes('maestro knowledge stage knowhow') ?? false,
   freshnessFence: runtime?.includes('knowledge candidates or project corpus changed after reconciliation') ?? false,
   reconciliationReceipt: runtime?.includes('reconciliation: reconciliationSummary(prepared.knowledgeReconciliation)') ?? false,
-  finishResolve: runtime?.includes('maestro knowledge resolve <candidate-id>') ?? false,
+  finishReviewResolve: runtime?.includes('maestro knowledge review <session-id> --resolve <candidate-id>') ?? false,
   promptReceipt: runMode?.includes('knowledge-candidate-receipt/1.0') ?? false,
   promptReconciliation: runMode?.includes('knowledge-reconciliation/1.0') ?? false,
   promptNoDirectWrite: runMode?.includes('Routine Run completion MUST NOT call `maestro spec add`') ?? false,
@@ -215,11 +224,11 @@ addCheck(
   knowledgeCompletionContract,
   {
     receipt: true,
-    finishRecord: true,
+    finishSignal: true,
     finishStage: true,
     freshnessFence: true,
     reconciliationReceipt: true,
-    finishResolve: true,
+    finishReviewResolve: true,
     promptReceipt: true,
     promptReconciliation: true,
     promptNoDirectWrite: true,

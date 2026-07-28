@@ -239,7 +239,7 @@ Dominant step = the step whose keyword appears first or carries the primary verb
 | Cluster | Trigger | Chain |
 |---------|---------|-------|
 | Learning | New code / unknown module | maestro-learn follow → maestro-learn decompose → maestro-learn consult |
-| Knowledge | Reconcile experience | knowledge record/stage → session done receipt → knowledge session/promote |
+| Knowledge | Review & promote experience | knowledge stage (--signal) → knowledge review --refresh --resolve → knowledge promote |
 | Issue | Defect management | maestro-issue discover → maestro-issue |
 
 ### A_EXECUTE_STEP
