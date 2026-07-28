@@ -451,7 +451,7 @@ CJK 分词为 bigram + trigram 级别，短查询（2 字以下）可能匹配�
 
 ```bash
 # 统一搜索（推荐）
-maestro search <query> [--type <type>] [--category <cat>] [--kind <kind>] [--code] [--kg] [--all] [--no-emb] [--json]
+maestro search <query> [--type <type>] [--category <cat>] [--kind <kind>] [--code] [--kg] [--diversity balanced|off] [--all] [--no-emb] [--json]
 
 # Wiki 系统搜索
 maestro wiki search <query> [--json]
@@ -477,3 +477,5 @@ maestro wiki health
 # 知识健康检查（新鲜度、演化链完整性）
 maestro spec health
 ```
+
+`--kg` 与普通搜索共享 `--type`、`--category`、lifecycle 和 diversity 约束。KG 结果的 `id` 是可交给 `maestro load` 的 canonical ID，`graphId`/`aliases` 保留图遍历和历史兼容身份。

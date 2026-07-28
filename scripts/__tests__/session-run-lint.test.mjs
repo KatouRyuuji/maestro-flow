@@ -158,7 +158,7 @@ test('source lint accepts alias-free Odyssey workflows while enforcing prepare a
   assert.match(lite, /`kind` and `schema` are required together/);
   assert.match(lite, /maestro knowledge stage knowhow/);
   assert.match(lite, /maestro knowledge record <knowledge-id>/);
-  assert.match(lite, /maestro knowledge session <session_id>/);
+  assert.match(lite, /maestro knowledge review <session_id>/);
 
   const full = readFileSync(join(repoRoot, 'workflows', 'run-mode.md'), 'utf8');
   assert.match(full, /complete top-level `_meta` object/);
@@ -175,7 +175,7 @@ test('source lint accepts alias-free Odyssey workflows while enforcing prepare a
   assert.doesNotMatch(full, /same normalized intent/);
 
   const seal = readFileSync(join(repoRoot, '.claude', 'commands', 'maestro-session-seal.md'), 'utf8');
-  assert.match(seal, /maestro knowledge session \{session_id\} --json/);
+  assert.match(seal, /maestro knowledge review \{session_id\} --json/);
   assert.match(seal, /maestro knowledge promote \{session_id\} --candidate/);
   assert.doesNotMatch(seal, /Scan session artifacts|recommend `\/maestro-spec add/);
 

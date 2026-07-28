@@ -217,4 +217,115 @@ Use one SessionStore transaction.
     ).candidates[0].status).toBe('rejected');
     expect(errors).toEqual([]);
   });
+
+  it('reviews evidence, supports --workflow-root, and stages content from a file', async () => {
+    const specsDir = join(projectRoot, '.workflow', 'specs');
+    mkdirSync(specsDir, { recursive: true });
+    writeFileSync(join(specsDir, 'coding-conventions.md'), `---
+category: coding
+---
+
+<spec-entry category="coding" keywords="atomic" date="2026-07-28" sid="S-atomic" title="Atomic rule">
+
+### Atomic rule
+
+Persist coordinated writes atomically.
+
+</spec-entry>
+`, 'utf8');
+    writeFileSync(
+      join(projectRoot, 'candidate.txt'),
+      'Persist coordinated writes atomically.',
+      'utf8',
+    );
+    const created = createRun({
+      projectRoot,
+      command: 'knowledge-cli',
+      sessionId: 'knowledge-review-session',
+      intent: 'review candidate evidence',
+    });
+
+    process.chdir(previousCwd);
+    await run(
+      'stage',
+      'spec',
+      'Atomic rule copy',
+      '--content-file',
+      'candidate.txt',
+      '--run',
+      created.run_id,
+      '--session',
+      created.session_id,
+      '--workflow-root',
+      projectRoot,
+      '--json',
+    );
+    const candidateId = (JSON.parse(logs.at(-1)!) as { candidate_id: string }).candidate_id;
+
+    await run(
+      'review',
+      created.session_id,
+      '--refresh',
+      '--workflow-root',
+      projectRoot,
+      '--json',
+    );
+    expect(JSON.parse(logs.at(-1)!)).toMatchObject({
+      session_id: created.session_id,
+      candidates: [{
+        candidate_id: candidateId,
+        reconciliation: {
+          disposition: 'exact_duplicate',
+          promotion_eligibility: 'suppressed',
+          freshness: 'fresh',
+          matches: [{
+            knowledge_id: 'S-atomic',
+            relation: 'exact_duplicate',
+          }],
+        },
+        review: {
+          freshness: 'fresh',
+          reconcile_commands: [],
+          resolution_commands: [],
+        },
+      }],
+    });
+    expect(errors).toEqual([]);
+  });
+
+  it('rejects restaging identical content with a conflicting action', async () => {
+    const created = createRun({
+      projectRoot,
+      command: 'knowledge-cli',
+      sessionId: 'knowledge-action-session',
+      intent: 'preserve candidate intent',
+    });
+    await run(
+      'stage',
+      'knowhow',
+      'Candidate action',
+      'Keep one semantic candidate identity.',
+      '--action',
+      'propose',
+      '--run',
+      created.run_id,
+      '--session',
+      created.session_id,
+    );
+    await run(
+      'stage',
+      'knowhow',
+      'Candidate action',
+      'Keep one semantic candidate identity.',
+      '--action',
+      'supersede',
+      '--run',
+      created.run_id,
+      '--session',
+      created.session_id,
+    );
+
+    expect(process.exitCode).toBe(1);
+    expect(errors.join('\n')).toContain('instead of restaging');
+  });
 });

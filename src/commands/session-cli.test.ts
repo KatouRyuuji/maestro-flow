@@ -391,7 +391,7 @@ describe('built-bin session run-response/1.0', () => {
     '--expected-activity-revision', String(activityRevision),
   ];
 
-  // 14 sequential real-bin spawns; measured baseline ~21s on Windows (~1.5s each).
+  // 15 sequential real-bin spawns; measured baseline ~23s on Windows (~1.5s each).
   // 45s gives ~2x headroom for slower/CI machines without masking a hang.
   it('emits one envelope for recovery chain and meta exits', () => {
     const store = new SessionStore(root);
@@ -487,9 +487,15 @@ describe('built-bin session run-response/1.0', () => {
     const meta = invokeMachine(metaArgs);
     const metaReplay = invokeMachine(metaArgs);
 
+    store.createSession('seal-machine', 'seal machine');
+    const sealed = invokeMachine([
+      'session', 'seal', 'seal-machine', '--summary', 'complete', '--json',
+    ]);
+
     const all = [
       resolved, resolvedReplay, resumed, resumedReplay, blockedResume,
       inserted, insertedReplay, insertConflict, skipped, skippedReplay, replaced, replacedReplay, meta, metaReplay,
+      sealed,
     ];
     for (const item of all) {
       expect(item.lines).toHaveLength(1);
@@ -511,14 +517,20 @@ describe('built-bin session run-response/1.0', () => {
     expect(replacedReplay.body).toMatchObject({ operation: 'chain-replace', ok: true, replay: { status: 'replayed' } });
     expect(meta.body).toMatchObject({ operation: 'meta-update', ok: true, replay: { status: 'applied' } });
     expect(metaReplay.body).toMatchObject({ operation: 'meta-update', ok: true, replay: { status: 'replayed' } });
+    expect(sealed.body).toMatchObject({
+      operation: 'seal-session',
+      ok: true,
+      result: { session_id: 'seal-machine', status: 'sealed' },
+    });
   }, 45000);
 
-  // 7 sequential real-bin spawns; measured ~4.6s, already grazing the 5s default.
+  // 8 sequential real-bin spawns; measured ~6s, already beyond the 5s default.
   // 20s keeps this off the flake edge with the same per-spawn budget as above.
   it('captures every Commander usage exit in machine mode', () => {
     const cases = [
       { args: ['session', 'resolve', '--json'], operation: 'resolve' },
       { args: ['session', 'resume', '--json'], operation: 'resume' },
+      { args: ['session', 'seal', '--json'], operation: 'seal-session' },
       { args: ['session', 'chain', 'insert', '--json'], operation: 'chain-insert' },
       { args: ['session', 'chain', 'replace', '--json'], operation: 'chain-replace' },
       { args: ['session', 'chain', 'skip', '--json'], operation: 'chain-skip' },

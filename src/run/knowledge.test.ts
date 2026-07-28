@@ -25,6 +25,7 @@ import { SessionStore } from './store.js';
 import {
   promoteReconciledSessionKnowledge,
   readKnowledgeReconciliation,
+  reconciliationPath,
   resolveKnowledgeCandidate,
 } from '../knowledge/reconcile.js';
 
@@ -66,6 +67,20 @@ concerns: []
 next: []
 ---
 Knowledge ledger ready.
+`, 'utf8');
+}
+
+function writeEmptyKnowledgeReport(projectRoot: string, sessionId: string, runId: string): void {
+  const runDir = join(projectRoot, '.workflow', 'sessions', sessionId, 'runs', runId);
+  writeFileSync(join(runDir, 'report.md'), `---
+verdict: ready
+summary: Knowledge candidate ready
+constraints: []
+decisions: []
+concerns: []
+next: []
+---
+Knowledge candidate ready.
 `, 'utf8');
 }
 
@@ -194,7 +209,7 @@ describe('Run knowledge delta', () => {
     expect(completed.knowledge).toMatchObject({
       staged_count: 3,
       staged_candidate_ids: expect.arrayContaining([manual.candidate_id]),
-      review_command: `maestro knowledge session ${created.session_id}`,
+      review_command: `maestro knowledge review ${created.session_id}`,
     });
     const delta = readRunKnowledgeDelta(
       new SessionStore(projectRoot),
@@ -547,5 +562,71 @@ Preserve backward compatibility.
       created.session_id,
       created.run_id,
     ).candidates.find(item => item.candidate_id === staged.candidate_id)?.status).toBe('rejected');
+  });
+
+  it('refreshes only explicitly selected candidate source Runs before promotion', () => {
+    const projectRoot = root();
+    installCommand(projectRoot);
+    const first = createRun({
+      projectRoot,
+      command: 'knowledge-demo',
+      sessionId: 'selected-refresh-session',
+      intent: 'stage first candidate',
+    });
+    writeEmptyKnowledgeReport(projectRoot, first.session_id, first.run_id);
+    const firstCandidate = stageRunKnowledgeCandidate(
+      projectRoot,
+      first.run_id,
+      {
+        target: 'knowhow',
+        title: 'First bounded recipe',
+        content: 'Use the first bounded promotion recipe.',
+        category: 'recipe',
+      },
+      first.session_id,
+    );
+    completeRun(projectRoot, first.run_id, first.session_id);
+
+    const second = createRun({
+      projectRoot,
+      command: 'knowledge-demo',
+      sessionId: first.session_id,
+      intent: 'stage second candidate',
+    });
+    writeEmptyKnowledgeReport(projectRoot, second.session_id, second.run_id);
+    stageRunKnowledgeCandidate(
+      projectRoot,
+      second.run_id,
+      {
+        target: 'knowhow',
+        title: 'Second bounded recipe',
+        content: 'Use the second bounded promotion recipe.',
+        category: 'recipe',
+      },
+      second.session_id,
+    );
+    completeRun(projectRoot, second.run_id, second.session_id);
+
+    const store = new SessionStore(projectRoot);
+    const secondReceiptPath = reconciliationPath(store, second.session_id, second.run_id);
+    const secondReceipt = readKnowledgeReconciliation(
+      store,
+      second.session_id,
+      second.run_id,
+      true,
+    )!;
+    secondReceipt.corpus_fingerprint = '0'.repeat(64);
+    writeFileSync(secondReceiptPath, JSON.stringify(secondReceipt, null, 2) + '\n', 'utf8');
+
+    promoteReconciledSessionKnowledge(projectRoot, first.session_id, {
+      candidateIds: [firstCandidate.candidate_id],
+    });
+
+    expect(readKnowledgeReconciliation(
+      store,
+      second.session_id,
+      second.run_id,
+      true,
+    )!.corpus_fingerprint).toBe('0'.repeat(64));
   });
 });

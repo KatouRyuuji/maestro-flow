@@ -742,13 +742,18 @@ export function isKnowledgeReconciliationFresh(
   runId: string,
   receipt: KnowledgeReconciliation,
   frontmatter: ReportFrontmatter,
+  expectedCorpusFingerprint: string = currentKnowledgeCorpusFingerprint(projectRoot),
 ): boolean {
   const store = new SessionStore(projectRoot);
   const delta = readRunKnowledgeDelta(store, sessionId, runId, true);
   return receipt.session_id === sessionId
     && receipt.run_id === runId
     && receipt.candidate_snapshot_hash === knowledgeCandidateSnapshotHash(delta, frontmatter, runId)
-    && receipt.corpus_fingerprint === corpusFingerprint(loadCorpus(projectRoot));
+    && receipt.corpus_fingerprint === expectedCorpusFingerprint;
+}
+
+export function currentKnowledgeCorpusFingerprint(projectRoot: string): string {
+  return corpusFingerprint(loadCorpus(projectRoot));
 }
 
 export function ensureKnowledgeReconciliation(
@@ -756,6 +761,7 @@ export function ensureKnowledgeReconciliation(
   sessionId: string,
   runId: string,
   frontmatter: ReportFrontmatter,
+  expectedCorpusFingerprint: string = currentKnowledgeCorpusFingerprint(projectRoot),
 ): KnowledgeReconciliation {
   const store = new SessionStore(projectRoot);
   const existing = readKnowledgeReconciliation(store, sessionId, runId, true);
@@ -765,6 +771,7 @@ export function ensureKnowledgeReconciliation(
     runId,
     existing,
     frontmatter,
+    expectedCorpusFingerprint,
   )) return existing;
   return reconcileRunKnowledgeSync(projectRoot, sessionId, runId, frontmatter);
 }
@@ -846,7 +853,16 @@ export function promoteReconciledSessionKnowledge(
         .filter(item => !recoveredIds.has(item.candidate_id)),
     };
   }
-  const runIds = [...new Set(summary.candidates.flatMap(candidate => candidate.run_ids))].sort();
+  const candidatesToRefresh = options.all
+    ? summary.candidates.filter(candidate =>
+        candidate.status === 'pending' || candidate.status === 'promoting'
+      )
+    : summary.candidates.filter(candidate =>
+        requested.has(candidate.candidate_id)
+        && (candidate.status === 'pending' || candidate.status === 'promoting')
+      );
+  const runIds = [...new Set(candidatesToRefresh.flatMap(candidate => candidate.run_ids))].sort();
+  const expectedCorpusFingerprint = currentKnowledgeCorpusFingerprint(projectRoot);
   for (const runId of runIds) {
     const frontmatter = readReportFrontmatter(store.runDir(sessionId, runId));
     const receipt = ensureKnowledgeReconciliation(
@@ -854,6 +870,7 @@ export function promoteReconciledSessionKnowledge(
       sessionId,
       runId,
       frontmatter,
+      expectedCorpusFingerprint,
     );
     persistKnowledgeReconciliation(projectRoot, receipt);
   }
@@ -914,6 +931,7 @@ export function resolveKnowledgeCandidate(
   if (receipts.some(item => !item.receipt)) {
     throw new Error(`Candidate ${candidateId} has a source Run without reconciliation`);
   }
+  const expectedCorpusFingerprint = currentKnowledgeCorpusFingerprint(projectRoot);
   const staleRuns = receipts
     .filter(item => !isKnowledgeReconciliationFresh(
       projectRoot,
@@ -921,6 +939,7 @@ export function resolveKnowledgeCandidate(
       item.runId,
       item.receipt!,
       readReportFrontmatter(store.runDir(sessionId, item.runId)),
+      expectedCorpusFingerprint,
     ))
     .map(item => item.runId);
   if (staleRuns.length > 0) {
@@ -1074,7 +1093,7 @@ export function reconciliationSummary(receipt: KnowledgeReconciliation): {
     conflicts: receipt.counts.conflicts,
     review_required: receipt.counts.review_required,
     suppressed: receipt.counts.suppressed,
-    review_command: `maestro knowledge session ${receipt.session_id}`,
+    review_command: `maestro knowledge review ${receipt.session_id}`,
   };
 }
 

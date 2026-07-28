@@ -104,6 +104,12 @@ describe('KG search usage attribution', () => {
       graph.getConnection().transaction(() =>
         graph.getQueryBuilder().insertNodes([
           node('spec:alpha'),
+          node('code:alpha', {
+            kind: 'function',
+            sourceType: 'codegraph',
+            filePath: 'src/alpha.ts',
+            definition: 'function alpha() {}',
+          }),
           node('knowhow:TIP-20260728-alpha', {
             kind: 'knowhow_entry',
             sourceType: 'knowhow',

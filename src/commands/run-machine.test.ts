@@ -360,7 +360,7 @@ describe('built-bin run-response/1.0', () => {
           pending_candidates: 0,
           promoting_candidates: 0,
           promoted_candidates: 0,
-          review_command: 'maestro knowledge session seal-ok',
+          review_command: 'maestro knowledge review seal-ok',
         },
       },
     });

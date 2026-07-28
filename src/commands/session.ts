@@ -45,7 +45,7 @@ function reportError(error: unknown): void {
 
 type SessionMachineOperation = Extract<
   RunResponse['operation'],
-  'resolve' | 'resume' | 'chain-insert' | 'chain-replace' | 'chain-skip' | 'meta-update'
+  'resolve' | 'resume' | 'seal-session' | 'chain-insert' | 'chain-replace' | 'chain-skip' | 'meta-update'
 >;
 
 function machineSuccess(
@@ -426,12 +426,16 @@ export function registerSessionCommand(program: Command): void {
     .command('seal <session-id>')
     .description('Seal a Session after all Runs and gates are complete')
     .option('--summary <text>', 'human-readable seal summary', '')
+    .option('--json', 'emit one run-response/1.0 envelope on stdout')
     .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
-    .action((sessionId: string, opts: { summary: string; workflowRoot: string }) => {
+    .action((sessionId: string, opts: { summary: string; json?: boolean; workflowRoot: string }) => {
       try {
-        print(sealSession(resolve(opts.workflowRoot), sessionId, opts.summary));
+        const result = sealSession(resolve(opts.workflowRoot), sessionId, opts.summary);
+        if (opts.json) machineSuccess('seal-session', result, sessionId);
+        else print(result);
       } catch (error) {
-        reportError(error);
+        if (opts.json) machineError('seal-session', error, { session: sessionId });
+        else reportError(error);
       }
     });
 

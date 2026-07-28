@@ -733,7 +733,7 @@ finish:
       review_required_candidates: 0,
       conflict_candidates: 0,
       suppressed_candidates: 0,
-      review_command: `maestro knowledge session ${created.session_id}`,
+      review_command: `maestro knowledge review ${created.session_id}`,
     });
     const session = new SessionStore(projectRoot).readBundle(created.session_id).session;
     const state = readStateJson(projectRoot);
@@ -1083,7 +1083,7 @@ gates:
         pending_candidates: 2,
         corroborated_candidates: 0,
         promoting_candidates: 0,
-        review_command: `maestro knowledge session ${planRun.session_id}`,
+        review_command: `maestro knowledge review ${planRun.session_id}`,
       },
       next: {
         command: `maestro run seal-session ${planRun.session_id}`,

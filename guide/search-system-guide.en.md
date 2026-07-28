@@ -450,7 +450,7 @@ If an entry has abnormally high score, it may be due to:
 
 ```bash
 # Unified search (recommended)
-maestro search <query> [--type <type>] [--category <cat>] [--kind <kind>] [--code] [--kg] [--all] [--no-emb] [--json]
+maestro search <query> [--type <type>] [--category <cat>] [--kind <kind>] [--code] [--kg] [--diversity balanced|off] [--all] [--no-emb] [--json]
 
 # Wiki system search
 maestro wiki search <query> [--json]
@@ -476,3 +476,5 @@ maestro wiki health
 # Knowledge health check (freshness, evolution chain integrity)
 maestro spec health
 ```
+
+`--kg` shares the `--type`, `--category`, lifecycle, and diversity constraints of normal search. A KG result exposes a loadable canonical `id`, while `graphId` and `aliases` preserve graph traversal and backward-compatible identities.

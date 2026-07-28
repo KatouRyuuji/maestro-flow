@@ -232,7 +232,7 @@ maestro load --type spec --category coding
 | Outside a Run / explicit direct write | `/maestro-spec "<constraint>"` or `/maestro-knowhow` |
 
 Category routing: decisions→`arch`, patterns→`coding`, pitfalls→`debug`/`learning`, rules→`review`, tests→`test`.
-During a Run, accepted decisions and locked constraints belong in `report.md`; completion stages them as candidates and returns exact candidate IDs. Search/injection is exposure only, while explicit load is consumed. Review with `maestro knowledge session <session-id>` and promote selected IDs explicitly.
+During a Run, accepted decisions and locked constraints belong in `report.md`; completion stages them as candidates and returns exact candidate IDs. Search/injection is exposure only, while explicit load is consumed. Review evidence with `maestro knowledge review <session-id>` and promote selected IDs explicitly.
 Direct `maestro spec add` / `/maestro-knowhow` writes are reserved for explicit knowledge-management work outside routine Run completion.
 `session-mode: run` commands receive a finish checklist (handoff, relation/candidate staging, conflict annotation, verdict) when `maestro run check` is all green — execute every item, no skipping.
 

@@ -2369,7 +2369,7 @@ export function sealSession(projectRoot: string, sessionId: string, summary = ''
         .filter(candidate => candidate?.disposition === 'potential_conflict').length,
       suppressed_candidates: reconciliation
         .filter(candidate => candidate?.promotion_eligibility === 'suppressed').length,
-      review_command: `maestro knowledge session ${sessionId}`,
+      review_command: `maestro knowledge review ${sessionId}`,
     },
   };
 }
@@ -3403,14 +3403,14 @@ function prepareSessionGuidance(
   if (pendingKnowledge.length > 0 || promotingKnowledge.length > 0) {
     reminders.push(
       `Knowledge backlog: ${pendingKnowledge.length} pending, ${promotingKnowledge.length} promoting; `
-      + `review with \`maestro knowledge session ${sessionId}\`.`,
+      + `review with \`maestro knowledge review ${sessionId}\`.`,
     );
   }
   if (reviewRequiredKnowledge > 0 || missingReconciliation > 0) {
     reminders.push(
       `Knowledge reconciliation: ${reviewRequiredKnowledge} require review, `
       + `${conflictKnowledge} potential conflicts, ${missingReconciliation} missing receipts; `
-      + `inspect with \`maestro knowledge session ${sessionId}\`.`,
+      + `inspect with \`maestro knowledge review ${sessionId}\`.`,
     );
   }
 
@@ -3432,7 +3432,7 @@ function prepareSessionGuidance(
       conflict_candidates: conflictKnowledge,
       suppressed_candidates: suppressedKnowledge,
       missing_reconciliation_candidates: missingReconciliation,
-      review_command: `maestro knowledge session ${sessionId}`,
+      review_command: `maestro knowledge review ${sessionId}`,
     },
     reminders,
     next,

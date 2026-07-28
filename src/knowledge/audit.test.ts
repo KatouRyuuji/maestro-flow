@@ -269,11 +269,14 @@ Use bounded semantic neighborhoods.
     );
 
     const report = await auditKnowledge(projectRoot, { scope: 'all' });
-    expect(report.findings).toContainEqual(expect.objectContaining({
+    const finding = report.findings.find(item => item.subtype === 'invalid-knowledge-ledger');
+    expect(finding).toEqual(expect.objectContaining({
       store: 'pipeline',
       priority: 'P1',
       subtype: 'invalid-knowledge-ledger',
       target: created.session_id,
     }));
+    expect(finding!.evidence.length).toBeLessThan(500);
+    expect(finding!.evidence).toContain('schema_version');
   });
 });

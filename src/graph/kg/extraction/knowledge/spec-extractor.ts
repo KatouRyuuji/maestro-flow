@@ -2,8 +2,9 @@
 // 从 .workflow/specs/*.md 提取 spec_entry nodes + constrains edges + derived_from edges
 
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
-import { resolve, join, extname } from 'node:path';
+import { basename, resolve, join, extname } from 'node:path';
 import { makeNodeId } from '../../db/connection.js';
+import { parseSpecEntries as parseCanonicalSpecEntries } from '../../../../tools/spec-entry-parser.js';
 import type {
   UnifiedNode, UnifiedEdge, FileRecord, ExtractionResult,
   SourceType, Language,
@@ -20,6 +21,8 @@ interface ParsedSpecEntry {
   domain?: string;
   priority?: string;
   status?: string;
+  sid?: string;
+  confidence?: string;
 }
 
 export function extractSpec(
@@ -41,9 +44,12 @@ export function extractSpec(
   for (const specFilePath of specFiles) {
     const content = readFileSync(specFilePath, 'utf-8');
     const entries = parseSpecFile(content, specFilePath);
+    const fileStem = slugify(basename(specFilePath, extname(specFilePath)));
 
-    for (const entry of entries) {
-      const nodeId = makeNodeId('spec', specFilePath, String(entry.lineStart));
+    for (let index = 0; index < entries.length; index++) {
+      const entry = entries[index];
+      const wikiId = `spec:project:${fileStem}-${String(index + 1).padStart(3, '0')}`;
+      const nodeId = makeNodeId('spec', 'project', `${fileStem}-${String(index + 1).padStart(3, '0')}`);
 
       nodes.push({
         id: nodeId,
@@ -74,7 +80,11 @@ export function extractSpec(
         priority: entry.priority ?? '',
         status: entry.status ?? 'active',
         body: entry.content,
-        metadata: {},
+        metadata: {
+          wikiId,
+          ...(entry.sid ? { sid: entry.sid } : {}),
+          ...(entry.confidence ? { confidence: entry.confidence } : {}),
+        },
         updatedAt: now,
       });
 
@@ -112,6 +122,34 @@ export function extractSpec(
 // ---------------------------------------------------------------------------
 
 function parseSpecFile(content: string, filePath: string): ParsedSpecEntry[] {
+  const canonical = parseCanonicalSpecEntries(content);
+  if (canonical.entries.length > 0 || canonical.legacy.length > 0) {
+    return [
+      ...canonical.entries.map(entry => ({
+        title: entry.title,
+        content: entry.content,
+        lineStart: entry.lineStart,
+        lineEnd: entry.lineEnd,
+        keywords: entry.keywords,
+        category: entry.category,
+        roles: [],
+        domain: entry.domain,
+        priority: '',
+        status: entry.status,
+        sid: entry.sid,
+        confidence: entry.confidence,
+      })),
+      ...canonical.legacy.map(entry => ({
+        title: entry.title,
+        content: entry.content,
+        lineStart: entry.lineStart,
+        lineEnd: entry.lineStart,
+        keywords: [],
+        category: '',
+        roles: [],
+      })),
+    ];
+  }
   const entries: ParsedSpecEntry[] = [];
   const lines = content.split('\n');
 
@@ -176,6 +214,10 @@ function parseSpecFile(content: string, filePath: string): ParsedSpecEntry[] {
   }
 
   return entries;
+}
+
+function slugify(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
 function parseFrontmatter(fmContent: string): Record<string, unknown> {

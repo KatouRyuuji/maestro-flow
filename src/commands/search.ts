@@ -599,6 +599,7 @@ export interface KgSearchResult {
 
 export interface KgSearchOptions {
   type?: string;
+  codeOnly?: boolean;
   category?: string;
   includeDeprecated?: boolean;
   diversity?: 'balanced' | 'off';
@@ -637,6 +638,7 @@ function canonicalKgId(
     return knowhowFileToWikiId(basename(filePath));
   }
   if (sourceType === 'spec' && filePath) {
+    if (graphId.startsWith('spec:project:')) return graphId;
     const normalizedFile = resolve(filePath).replace(/\\/g, '/').toLowerCase();
     const projectSpecs = resolve(projectRoot, '.workflow', 'specs').replace(/\\/g, '/').toLowerCase();
     if (normalizedFile.startsWith(`${projectSpecs}/`)) {
@@ -721,14 +723,21 @@ export async function runKgSearch(
   try {
     const { MaestroGraph } = await import('../graph/kg/engine.js');
     if (!MaestroGraph.isInitialized(projectRoot)) return { results: [], summary: {} };
-    const sourceTypes = kgSourceTypes(options.type);
+    const sourceTypes = options.codeOnly ? ['codegraph'] as SourceType[] : kgSourceTypes(options.type);
     if (sourceTypes?.length === 0) return { results: [], summary: {} };
     const mg = recordImpressions
       ? await MaestroGraph.open(projectRoot)
       : await MaestroGraph.openReadOnly(projectRoot);
     try {
       const candidateLimit = Math.min(500, Math.max(limit * 4, 40));
-      const output = mg.searchUnified(q, { limit: candidateLimit, sourceTypes });
+      const includeCode = !sourceTypes || sourceTypes.includes('codegraph');
+      const includeKnowledge = !sourceTypes || sourceTypes.some(sourceType => sourceType !== 'codegraph');
+      const output = mg.searchUnified(q, {
+        limit: candidateLimit,
+        sourceTypes,
+        includeCode,
+        includeKnowledge,
+      });
       const candidates: KgSearchResult[] = output.directMatches.map(r => {
         const id = canonicalKgId(r.node.sourceType, r.node.id, r.node.filePath, projectRoot);
         return {
@@ -746,6 +755,8 @@ export async function runKgSearch(
         selectionReason: 'diversity' as const,
       };
       }).filter(result =>
+        (!sourceTypes || sourceTypes.includes(result.sourceType as SourceType))
+        &&
         (!options.category || result.category === options.category)
         && (options.includeDeprecated || result.status !== 'deprecated')
       );
@@ -1104,6 +1115,7 @@ export function registerSearchCommand(program: Command): void {
           resolve('.'),
           {
             type: opts.type,
+            codeOnly: opts.code === true,
             category: opts.category,
             includeDeprecated: opts.includeDeprecated === true,
             diversity: opts.diversity as 'balanced' | 'off',

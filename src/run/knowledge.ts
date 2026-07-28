@@ -215,6 +215,12 @@ function addCandidate(
   const id = knowledgeCandidateId(input.target, input.content);
   const existing = draft.candidates.find(candidate => candidate.candidate_id === id);
   if (existing) {
+    if (existing.action !== input.action && input.source_kind === 'manual') {
+      throw new Error(
+        `Candidate ${id} already exists with action ${existing.action}; `
+        + `cannot restage the same content as ${input.action}`,
+      );
+    }
     existing.occurrences++;
     existing.last_recorded_at = now;
     existing.evidence_refs = [...new Set([...existing.evidence_refs, ...input.evidence_refs])];
@@ -380,6 +386,18 @@ export function stageRunKnowledgeCandidate(
   if (!title || !content) throw new Error('Knowledge candidate title and content are required');
   const store = new SessionStore(projectRoot);
   const located = store.findRun(runId, sessionId);
+  const candidateId = knowledgeCandidateId(input.target, content);
+  const prior = summarizeSessionKnowledge(projectRoot, located.sessionId, {
+    readOnly: true,
+    strict: true,
+  }).candidates.find(candidate => candidate.candidate_id === candidateId);
+  if (prior && prior.action !== (input.action ?? 'propose')) {
+    throw new Error(
+      `Candidate ${candidateId} already exists in Session ${located.sessionId} `
+      + `with action ${prior.action}; resolve or promote it instead of restaging as `
+      + `${input.action ?? 'propose'}`,
+    );
+  }
   const now = nowIso();
   const path = runKnowledgeDeltaPath(store, located.sessionId, runId);
   return store.updateActiveRunSidecar(
@@ -585,7 +603,7 @@ export function buildKnowledgeReconciliationCard(
       promotion: 'explicit_review',
     },
     review: {
-      command: `maestro knowledge session ${sessionId}`,
+      command: `maestro knowledge review ${sessionId}`,
       promote_template: `maestro knowledge promote ${sessionId} --candidate <candidate-id>`,
     },
   };
@@ -600,7 +618,7 @@ export function knowledgeCandidateReceipt(
     schema_version: 'knowledge-candidate-receipt/1.0',
     staged_candidate_ids: candidateIds,
     staged_count: candidateIds.length,
-    review_command: `maestro knowledge session ${sessionId}`,
+    review_command: `maestro knowledge review ${sessionId}`,
     promote_template: `maestro knowledge promote ${sessionId} --candidate <candidate-id>`,
   };
 }

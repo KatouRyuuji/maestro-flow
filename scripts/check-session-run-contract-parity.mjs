@@ -40,7 +40,8 @@ const GUIDE_REQUIREMENTS = [
     tokens: [
       'session/1.3', 'command-run/1.3', 'run-response/1.0',
       'brief-result/1.1', 'knowledge_context',
-      'maestro knowledge record', 'maestro knowledge stage', 'maestro knowledge promote',
+      'maestro knowledge record', 'maestro knowledge stage', 'maestro knowledge review',
+      'maestro knowledge promote',
       ...REQUIRED_OPERATIONS,
     ],
   },
@@ -184,6 +185,7 @@ const knowledgeLifecycleCli = {
   record: knowledgeCommands?.includes(".command('record')") ?? false,
   stage: knowledgeCommands?.includes(".command('stage')") ?? false,
   reconcile: knowledgeCommands?.includes(".command('reconcile')") ?? false,
+  review: knowledgeCommands?.includes(".command('review')") ?? false,
   resolve: knowledgeCommands?.includes(".command('resolve')") ?? false,
   session: knowledgeCommands?.includes(".command('session')") ?? false,
   promote: knowledgeCommands?.includes(".command('promote')") ?? false,
@@ -191,7 +193,7 @@ const knowledgeLifecycleCli = {
 addCheck(
   'cli.knowledge-lifecycle',
   knowledgeLifecycleCli,
-  { record: true, stage: true, reconcile: true, resolve: true, session: true, promote: true },
+  { record: true, stage: true, reconcile: true, review: true, resolve: true, session: true, promote: true },
   Object.values(knowledgeLifecycleCli).every(Boolean),
 );
 

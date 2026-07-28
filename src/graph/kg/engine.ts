@@ -146,12 +146,20 @@ export class MaestroGraph {
 
   // ── Query ─────────────────────────────────────────────────────────
 
-  searchUnified(query: string, options?: { sourceTypes?: SourceType[]; kinds?: string[]; limit?: number }): UnifiedSearchOutput {
+  searchUnified(query: string, options?: {
+    sourceTypes?: SourceType[];
+    kinds?: string[];
+    limit?: number;
+    includeCode?: boolean;
+    includeKnowledge?: boolean;
+  }): UnifiedSearchOutput {
     if (!this.queries) throw new Error('MaestroGraph not open');
     return searchUnifiedImpl(this.queries, query, {
       sourceTypes: options?.sourceTypes,
       kinds: options?.kinds,
       limit: options?.limit ?? 20,
+      includeCode: options?.includeCode,
+      includeKnowledge: options?.includeKnowledge,
     });
   }
 

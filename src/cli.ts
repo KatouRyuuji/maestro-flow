@@ -99,7 +99,7 @@ const runMachineSubcommands = new Set([
   'create', 'new', 'next', 'complete', 'brief', 'recall', 'recall-confirm', 'fork', 'import',
   'check', 'decide', 'seal-session', 'accept-reuse',
 ]);
-const sessionMachineSubcommands = new Set(['create', 'resolve', 'resume', 'chain', 'meta']);
+const sessionMachineSubcommands = new Set(['create', 'resolve', 'resume', 'seal', 'chain', 'meta']);
 const requestedCommandIndex = requestedCommand ? argv.indexOf(requestedCommand) : -1;
 const requestedSubcommand = requestedCommandIndex >= 0 ? argv[requestedCommandIndex + 1] : undefined;
 const runMachineMode = argv.includes('--json') && (
@@ -127,6 +127,7 @@ function inferMachineOperation(command: 'run' | 'session', args: string[]): Mach
     return operations.includes(primary as MachineOperation) ? primary as MachineOperation : 'next';
   }
   if (primary === 'resolve' || primary === 'resume') return primary;
+  if (primary === 'seal') return 'seal-session';
   if (primary === 'create') return 'create';
   if (primary === 'chain') {
     const mutation = tail.slice(primaryIndex + 1).find(token => !token.startsWith('-'));

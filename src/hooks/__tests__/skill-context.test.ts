@@ -157,7 +157,7 @@ describe('evaluateSkillContext', () => {
     assert.ok(ctx.includes('Action: dispatch_next'));
     assert.ok(ctx.includes('Auto: true'));
     assert.ok(ctx.includes('Knowledge backlog: 0 pending'));
-    assert.ok(ctx.includes(`review: maestro knowledge session ${sessionId}`));
+    assert.ok(ctx.includes(`review: maestro knowledge review ${sessionId}`));
   });
 
   it('does not let an unrelated prompt resume a live Session', async () => {

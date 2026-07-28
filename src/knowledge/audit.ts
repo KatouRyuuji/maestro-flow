@@ -85,6 +85,39 @@ export interface KnowledgeAuditResult {
   };
 }
 
+function conciseAuditError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.length <= 500) return message;
+  try {
+    const parsed = JSON.parse(message) as unknown;
+    const issues: Array<{ path: string; message: string }> = [];
+    const visit = (value: unknown): void => {
+      if (issues.length >= 3 || !value || typeof value !== 'object') return;
+      if (Array.isArray(value)) {
+        for (const item of value) visit(item);
+        return;
+      }
+      const record = value as Record<string, unknown>;
+      if (typeof record.message === 'string') {
+        const path = Array.isArray(record.path)
+          ? record.path.map(String).join('.')
+          : '';
+        issues.push({ path, message: record.message });
+      }
+      if (Array.isArray(record.errors)) visit(record.errors);
+    };
+    visit(parsed);
+    if (issues.length > 0) {
+      return issues
+        .map(issue => `${issue.path || '<root>'}: ${issue.message}`)
+        .join('; ');
+    }
+  } catch {
+    // Non-JSON diagnostics fall back to a bounded raw message.
+  }
+  return `${message.slice(0, 497)}...`;
+}
+
 interface ProjectSpec {
   filePath: string;
   fileLabel: string;
@@ -187,7 +220,7 @@ function inspectKnowhow(projectRoot: string): {
         priority: 'P1',
         subtype: 'invalid-frontmatter',
         target: file,
-        evidence: error instanceof Error ? error.message : String(error),
+        evidence: conciseAuditError(error),
         recommended_action: 'review',
       });
     }
@@ -247,7 +280,7 @@ function inspectPipeline(projectRoot: string): {
         priority: 'P1',
         subtype: 'invalid-knowledge-ledger',
         target: session.sessionId,
-        evidence: error instanceof Error ? error.message : String(error),
+        evidence: conciseAuditError(error),
         recommended_action: 'review',
       });
     }

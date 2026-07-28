@@ -719,7 +719,7 @@ export function registerRunCommand(program: Command): void {
 
   run
     .command('check <run-id>')
-    .description('Idempotently scan outputs and evaluate Run gates')
+    .description('Scan outputs, evaluate Run gates, and refresh the knowledge reconciliation receipt')
     .option('--session <id>', 'explicit Session ID')
     .option('--stage <stage>', 'compatibility hint: entry or exit', 'exit')
     .option('--json', 'emit one run-response/1.0 envelope on stdout')

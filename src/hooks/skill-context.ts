@@ -307,7 +307,7 @@ async function buildCanonicalSessionSection(cwd: string, state: WorkflowState, s
       lines.push(
         `Knowledge backlog: ${pending.length} pending | `
         + `${pending.filter(candidate => candidate.stage === 'corroborated').length} corroborated | `
-        + `${promoting.length} promoting | review: maestro knowledge session ${sessionId}`,
+        + `${promoting.length} promoting | review: maestro knowledge review ${sessionId}`,
       );
     } catch {
       // Legacy/partial Session: policy remains visible even when no valid ledger summary exists.

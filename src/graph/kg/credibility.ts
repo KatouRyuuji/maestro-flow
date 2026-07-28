@@ -197,6 +197,7 @@ const WIKI_TYPE_TO_KG_PREFIX: Record<string, string> = {
 };
 
 export function wikiIdToNodeId(wikiId: string): string | null {
+  if (wikiId.startsWith('spec:')) return wikiId;
   const dash = wikiId.indexOf('-');
   if (dash <= 0) return null;
   const type = wikiId.slice(0, dash);

@@ -263,7 +263,7 @@ else {
     '`kind` and `schema` are required together',
     'maestro knowledge record',
     'maestro knowledge stage',
-    'maestro knowledge session',
+    'maestro knowledge review',
   ]) {
     if (!text.includes(token)) errors.push(`workflows/run-mode-lite.md: missing ${token}`);
   }

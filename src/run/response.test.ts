@@ -73,7 +73,7 @@ describe('run-response/1.0', () => {
           promotion: 'explicit_review' as const,
         },
         review: {
-          command: 'maestro knowledge session s',
+          command: 'maestro knowledge review s',
           promote_template: 'maestro knowledge promote s --candidate <candidate-id>',
         },
       },
