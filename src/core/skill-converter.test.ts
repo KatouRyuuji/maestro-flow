@@ -54,6 +54,20 @@ describe('Pi Maestro platform conversion', () => {
     expect(converted).toBe(source);
   });
 
+  it('preserves complete delegate prompts and maps Pi teammate options', () => {
+    const prompt = `PURPOSE: ${'inspect delegated behavior '.repeat(8)}\nMODE: analysis`;
+    const source = `maestro delegate "${prompt}" --mode analysis --rule analysis-analyze-code-patterns --cd src --id delegate-check`;
+
+    const converted = transformContentForPlatform(source, 'pi');
+
+    expect(converted).toContain(`task: "${prompt.replace(/\n/g, '\\n')}"`);
+    expect(converted).toContain('taskType: "analysis"');
+    expect(converted).toContain('prompt: "analysis-analyze-code-patterns"');
+    expect(converted).toContain('cwd: "src"');
+    expect(converted).toContain('name: "delegate-check"');
+    expect(converted).not.toContain('…');
+  });
+
   it('keeps an existing Pi binding idempotent', () => {
     const source = [
       'maestro session create "topic" --platform pi --chain analyze',

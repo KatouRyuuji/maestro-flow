@@ -944,6 +944,128 @@ function rewriteAgentCallSitesPi(body: string): string {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Pi-specific: maestro delegate/explore CLI → teammate() tool rewriting
+// ---------------------------------------------------------------------------
+
+/** Parse `--key value` pairs from a delegate CLI options string. */
+function parseDelegateOptions(optsStr: string): Record<string, string> {
+  const opts: Record<string, string> = {};
+  // Value chars include <> for placeholders like issue-<issueId> and <tool>
+  const re = /--([\w][\w-]*)(?:\s+((?!--)[\w./${}"'\\:@<>-]+(?:\s+(?!--)[\w./${}"'\\:@<>-]+)*))?/g;
+  let m;
+  while ((m = re.exec(optsStr)) !== null) {
+    // Strip trailing quotes/backslashes that leak from Bash string delimiters
+    const val = m[2]?.trim().replace(/["'`\\]+$/, '') ?? 'true';
+    opts[m[1]] = val;
+  }
+  return opts;
+}
+
+/** Map delegate `--mode` to teammate `taskType`. */
+function delegateModeToTaskType(mode: string | undefined): string {
+  if (mode === 'write') return 'development';
+  return 'analysis';
+}
+
+/** Format a `teammate({...})` call from a parsed delegate prompt + options. */
+function formatTeammateCall(prompt: string, opts: Record<string, string>): string {
+  const parts: string[] = ['agent: "delegate"'];
+
+  parts.push(`taskType: "${delegateModeToTaskType(opts['mode'])}"`);
+
+  const cleanPrompt = prompt.trim();
+  if (cleanPrompt && cleanPrompt !== '<PROMPT>') {
+    const escaped = cleanPrompt.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+    parts.push(`task: "${escaped}"`);
+  } else {
+    parts.push('task: "<PROMPT>"');
+  }
+
+  if (opts['rule']) parts.push(`prompt: "${opts['rule']}"`);
+  if (opts['cd']) parts.push(`cwd: "${opts['cd']}"`);
+  if (opts['to']) parts.push(`/* --to ${opts['to']}: set model via model-availability */`);
+  if (opts['resume']) parts.push('/* --resume: no teammate equivalent; re-dispatch or use resident agent */');
+  // --id is CLI session naming; no teammate equivalent needed (use name field if needed)
+  if (opts['id']) parts.push(`name: "${opts['id']}"`);
+
+  return `teammate({ ${parts.join(', ')} })`;
+}
+
+/**
+ * Rewrite `maestro delegate` / `maestro explore` CLI calls → `teammate()` tool calls.
+ *
+ * Handles three tiers:
+ *   1. Full CLI call with quoted prompt: `maestro delegate "..." --to agy --mode analysis`
+ *   2. Prose / table inline without prompt: `` `maestro delegate --mode analysis` ``
+ *   3. `maestro explore "..."` → `teammate({ agent: "explorer" })`
+ *
+ * Also normalises `run_in_background` → `background` and prose mentions.
+ */
+function rewriteDelegateCallsPi(body: string): string {
+  let out = body;
+
+  // Tier 0: escaped-quote delegate calls — Bash("maestro delegate \\\"...\\\" ...")
+  // Must run BEFORE tier 1 because the general regex backtracks incorrectly on \\\" delimiters.
+  out = out.replace(
+    /maestro delegate\s+\\+"([\s\S]*?)\\+"((?:\s+--[\w-]+(?:\s+(?!--)[\S]+)?)*)/g,
+    (_full, prompt, optsStr: string) => {
+      const opts = parseDelegateOptions(optsStr);
+      return formatTeammateCall(prompt, opts);
+    },
+  );
+
+  // Tier 1: maestro delegate "PROMPT" [options] — full CLI call with quoted prompt
+  // Supports single, double, and backtick quotes; prompt may span lines.
+  out = out.replace(
+    /maestro delegate\s+(["'`])([\s\S]*?)\1((?:\s+--[\w-]+(?:\s+(?!--)[\S]+)?)*)/g,
+    (_full, _q, prompt, optsStr: string) => {
+      const opts = parseDelegateOptions(optsStr);
+      return formatTeammateCall(prompt, opts);
+    },
+  );
+
+  // Tier 2: maestro explore "PROMPT" [options]
+  out = out.replace(
+    /maestro explore\s+(["'`])([\s\S]*?)\1((?:\s+--[\w-]+(?:\s+(?!--)[\S]+)?)*)/g,
+    (_full, _q, prompt, _optsStr: string) => {
+      const escaped = prompt.trim().replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+      return `teammate({ agent: "explorer", task: "${escaped}", taskType: "explore" })`;
+    },
+  );
+
+  // Tier 3: prose / table inline — `maestro delegate --mode analysis` (no quoted prompt)
+  // Must run AFTER tier 1 so it only catches residual references.
+  // Value chars include <> for placeholders like issue-<issueId>.
+  out = out.replace(
+    /maestro delegate((?:\s+--[\w-]+(?:\s+[\w./${}"'<>-]+)?)*)/g,
+    (_full, optsStr: string) => {
+      if (!optsStr.trim()) return 'teammate';
+      const opts = parseDelegateOptions(optsStr);
+      const parts: string[] = [`taskType: "${delegateModeToTaskType(opts['mode'])}"`];
+      if (opts['rule']) parts.push(`prompt: "${opts['rule']}"`);
+      if (opts['to']) parts.push(`/* --to ${opts['to']} */`);
+      if (opts['id']) parts.push(`name: "${opts['id']}"`);
+      return `teammate({ ${parts.join(', ')} })`;
+    },
+  );
+
+  // Tier 4: bare `maestro explore` prose reference (no quoted prompt)
+  out = out.replace(/\bmaestro explore\b/g, 'teammate({ agent: "explorer" })');
+
+  // Tier 5: Bash({ command: "maestro delegate ...", run_in_background: true })
+  // → the delegate part is already rewritten by tier 1/3; fix the wrapper.
+  out = out.replace(/\brun_in_background\s*:\s*true/g, 'background: true');
+  out = out.replace(/\brun_in_background\s*:\s*false/g, 'background: false');
+
+  // Tier 6: section headers / prose mentions
+  out = out.replace(/Execute via maestro delegate (\w+)/gi, 'Execute via teammate ($1)');
+  out = out.replace(/via maestro delegate/g, 'via teammate');
+  out = out.replace(/maestro delegate message/g, 'teammate-send');
+
+  return out;
+}
+
 function convertTextPi(
   content: string,
   profile: ConversionProfile,
@@ -957,6 +1079,7 @@ function convertTextPi(
   }
 
   let convertedBody = rewriteAgentCallSitesPi(body);
+  convertedBody = rewriteDelegateCallsPi(convertedBody);
   convertedBody = applyBodyReplacements(convertedBody, profile);
 
   let newFrontmatter: ParsedFrontmatter | null = null;
