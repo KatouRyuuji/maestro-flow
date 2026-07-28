@@ -73,6 +73,19 @@ Session 不区分 static/adaptive，chain 不携带 fixed/dynamic 类型；历�
 
 `/maestro` 与 `/maestro-ralph` 可双向继续同一个 Session。差异只在 initial chain 与 proposal/budget/confidence/escalation/stop policy，不在 Session schema 或 chain 类型。
 
+### 1.6 知识 sidecar 与完成边界
+
+知识沉淀不进入 `session.json` 或 `run.json` 主 authority，而是使用 Run sidecar：
+
+- `knowledge-delta.json`：记录显式消费信号和待审查 candidate；
+- `knowledge-reconciliation.json`：绑定 candidate snapshot、项目知识 corpus 和 matcher revision；
+- `complete`：seal Run 并返回 candidate/reconciliation receipt，不直接写 Spec/Knowhow；
+- `knowledge promote`：在 source Runs sealed 且 receipt fresh 后显式写入项目知识；
+- `session seal`：汇总 backlog 和 review command，不隐式丢弃或提升 candidate。
+
+完整的数据模型、freshness fence、人工裁决和安全剪枝规则见
+[Maestro 知识系统架构](../docs/knowledge-system-architecture.md)。
+
 ---
 
 ## 二、CLI 命令（`src/commands/run.ts` / `src/commands/session.ts`）

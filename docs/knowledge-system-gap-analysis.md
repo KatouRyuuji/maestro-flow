@@ -3,6 +3,8 @@
 > 2026-07-17 · 3 agent 交叉分析（架构设计 / 知识演化 / search 检索链路）+ 主线抽检复核
 > 全部缺口带 file:line 证据；双命中项经多 agent 独立发现，抽检项经主线 grep/运行时复核。
 
+> **历史状态说明（2026-07-28）**：本文是实施前审计快照，不再代表全部当前行为。X2/G-A6/G-A8/G-C11 对应的 canonical identity、共享 Spec parser、Knowhow ID 和 family diversity 已完成收敛；Session/Run 的 candidate ledger、reconciliation freshness、review/resolve/promotion 与安全剪枝已形成新闭环。现行权威设计见 [Maestro 知识系统架构](knowledge-system-architecture.md)。未明确标记为已解决的条目仍需按当前代码复核。
+
 ## 总评
 
 Wiki 检索侧（BM25F + embedding + daemon + time-decay）和 spec 演化模型（sid/supersede/contested/health）设计成熟、实现质量较高。系统性风险集中在四处：

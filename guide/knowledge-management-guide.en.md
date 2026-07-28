@@ -4,6 +4,8 @@ title: "Knowledge Management System"
 
 Maestro knowledge accumulation is divided into two types: **Constraints** and **Accumulation**. Constraints are coding conventions, architectural decisions, and quality rules—defining "what not to do". Accumulation consists of operational steps, design assets, and debugging experiences—recording "how it was done". The former requires mandatory loading, while the latter requires on-demand retrieval.
 
+> The canonical implementation design is [Maestro Knowledge System Architecture](../docs/knowledge-system-architecture.md). This guide focuses on operations; identity, Run ledgers, reconciliation freshness, retrieval diversity, and safe pruning are defined by the architecture document.
+
 <details>
 <summary>Artifact Directory Structure</summary>
 

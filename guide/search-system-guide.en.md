@@ -4,6 +4,8 @@ title: "Search System Guide"
 
 Maestro Search is based on BM25F algorithm, providing unified knowledge search capabilities across multiple data sources including spec, knowhow, issue, and domain.
 
+For retrieval boundaries, canonical identity, and anti-concentration behavior in the full knowledge lifecycle, see [Maestro Knowledge System Architecture](../docs/knowledge-system-architecture.md).
+
 ---
 
 ## Overview

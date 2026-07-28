@@ -4,6 +4,9 @@ title: "搜索系统指南"
 
 Maestro 搜索系统基于 BM25F 算法，提供统一的知识搜索能力，支持 spec、knowhow、issue、domain 等多种数据源。
 
+检索在完整知识闭环中的职责、canonical identity 和防集中策略见
+[Maestro 知识系统架构](../docs/knowledge-system-architecture.md)。
+
 ---
 
 ## 概述

@@ -4,6 +4,8 @@ title: "知识沉淀管理系统"
 
 Maestro 知识沉淀分两种：**约束**和**积累**。约束是编码规范、架构决策、质量规则——规定"不能做什么"。积累是操作步骤、设计资产、调试经验——记录"怎么做过"。前者需要强制加载，后者需要按需检索。
 
+> 系统权威设计见 [Maestro 知识系统架构](../docs/knowledge-system-architecture.md)。本文聚焦日常操作；身份模型、Run ledger、reconciliation freshness、检索多样性和安全剪枝以架构文档为准。
+
 <details>
 <summary>产物目录结构</summary>
 
@@ -45,6 +47,39 @@ Maestro 知识沉淀分两种：**约束**和**积累**。约束是编码规范�
 |---|---|---|---|
 | Spec (`specs/`) | 索引 + 规则 | 短条目，<200 字摘要 | 自动注入（hook） |
 | Knowhow (`knowhow/`) | 详情文档 | 完整步骤、代码示例 | 按需加载（`wiki load`） |
+
+### Session/Run 知识审查闭环
+
+Run 不再把结论直接写入 Spec/Knowhow，而是经过可审查的两阶段流程：
+
+```text
+search/load → record → stage → reconcile → review/resolve
+            → run complete → promote selected → session seal
+```
+
+```bash
+# 记录当前 Run 实际使用的知识
+maestro knowledge record <knowledge-id...> \
+  --signal consumed --run <run-id> --session <session-id>
+
+# 暂存候选；长正文可改用 --content-file <path|->
+maestro knowledge stage spec "规则标题" "规则正文" \
+  --action propose --run <run-id> --session <session-id>
+
+# 在 Run 完成前匹配重复、关联、冲突和 supersession
+maestro knowledge reconcile --run <run-id> --session <session-id>
+maestro knowledge review <session-id>
+
+# 对 review_required candidate 做证据化裁决
+maestro knowledge resolve <candidate-id> --session <session-id> \
+  --as related --target <knowledge-id> --reason "<reason>"
+
+# Run sealed 后显式提升选中的 candidate
+maestro knowledge promote <session-id> --candidate <candidate-id>
+maestro session seal <session-id>
+```
+
+`review` 默认只读；仅在显示 `missing` 或 `stale` 时使用 `--refresh`。Search/自动注入只是 exposure，不能替代 `record`，也不会触发 promotion。
 
 <details>
 <summary>条目格式示例</summary>

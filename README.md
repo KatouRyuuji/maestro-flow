@@ -151,6 +151,7 @@ Odyssey 持续运行直到验收标准达成，中间自适应调整策略，发
 | [MCP 工具](guide/mcp-tools-guide.md) | 9 个 MCP 端点工具参考 |
 | [团队协作](guide/team-lite-guide.md) | 2–8 人 Collab 模式 |
 | [搜索系统](guide/search-system-guide.md) | BM25F 全文搜索与 KG 集成 |
+| [知识系统架构](docs/knowledge-system-architecture.md) | Run ledger、知识协调、检索多样性与安全剪枝 |
 | [学习工具](guide/learn-tools-guide.md) | 复盘、跟读、拆解、探究四件套 |
 | [MaestroGraph 设计](guide/plan-maestrograph.md) | 统一知识图谱引擎架构 |
 | [领域知识设计](guide/plan-domain-knowledge.md) | 语义词汇表与概念关系网络 |
