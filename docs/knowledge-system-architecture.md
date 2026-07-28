@@ -1,6 +1,6 @@
 # Maestro 知识系统架构
 
-> 状态：已实现  
+> 状态：已实现（核心闭环与已审计检索/生命周期缺口已收敛）
 > 更新日期：2026-07-28  
 > 范围：Spec、Knowhow、Maestro Search、MaestroGraph，以及 Session/Run 知识沉淀闭环。
 
@@ -23,12 +23,29 @@
 系统遵循以下不变量：
 
 - Search 和自动注入只代表 **exposure**，不会自动提升可信度或写入 Spec/Knowhow。
-- 显式 `load` 或 `knowledge record` 才能形成 Run 级消费证据。
+- 显式 `load`，或带 `--signal/--signal-ids` 的 `knowledge stage`，才能形成 Run 级消费/验证证据。
 - Run 完成只暂存 candidate，不直接修改项目知识。
 - 任何 semantic duplicate、conflict 或 supersession 都必须先有 reconciliation receipt。
 - 需要判断的关系由人确认；promotion 必须显式执行。
 - Deprecated 知识保留在演进链中，但默认不参与搜索和注入。
 - Prune 默认只生成计划；应用时先备份，再执行 soft deprecate/supersede，不做硬删除。
+
+### 1.1 历史偏差收敛状态
+
+以下条目来自 [知识系统缺口交叉分析报告](knowledge-system-gap-analysis.md)（2026-07-17 审计快照）。
+截至本文更新日，原列入核心架构的偏差均已关闭；保留此表用于追踪修复机制，不能再作为当前缺口清单。
+
+| 缺口 ID | 当前状态 | 收敛机制 |
+|---------|---------|---------|
+| X1 | 已关闭 | `spec-keyword-index.ts` 在建立注入索引时排除 deprecated 条目，并由回归测试锁定 |
+| X3 | 已关闭 | 搜索从 credibility 存储读取 exposure signals，仅用于 relevance-floored exploration slot；缺失或损坏时关闭 exploration |
+| X4 | 已关闭 | `rankNormalize` 仅决定跨源交错顺序；展示 `score` 保留源内真实归一化相关度 |
+| G-C3 | 已关闭 | facet 通过 daemon 协议下推到 WikiIndexer，在 BM25/向量候选截断前应用；旧 daemon 未确认 `filtersApplied` 时回退本地预过滤 |
+| G-B3 | 已关闭 | Knowhow 支持 replay-safe deprecate/supersede 生命周期，audit apply 调用正式生命周期 API |
+| G-A4 | 已关闭 | Spec writer 使用跨进程 O_EXCL lock 和 tmp+rename 原子 read-modify-write |
+
+更早关闭的 X2/G-A6/G-A8/G-C11（canonical identity、共享 Spec parser、Knowhow ID、family diversity）
+记录在 gap analysis 的历史说明中。完整历史缺口与原始证据仍以该报告为准。
 
 ---
 
@@ -90,8 +107,10 @@
 | `graphId` | MaestroGraph 内部稳定节点身份 |
 | `aliases[]` | 兼容旧索引或历史调用方 |
 
-Spec KG extractor 与 WikiIndexer 使用同一 canonical 解析器。项目 Spec 子条目采用
-`spec:project:{file-stem}-{NNN}`；Knowhow ID 统一小写，并保留 KG alias。调用方不得根据绝对路径或行号自行构造知识 ID。
+Spec KG extractor 与 WikiIndexer 使用同一 canonical 解析器（收敛后唯一入口：
+`src/tools/spec-entry-parser.ts`；dashboard 侧副本与 KG extractor 私有解析器已废弃）。
+项目 Spec 子条目采用 `spec:project:{file-stem}-{NNN}`；Knowhow ID 统一小写，并保留
+KG alias。调用方不得根据绝对路径或行号自行构造知识 ID。
 
 ### 3.2 Candidate 身份
 
@@ -114,7 +133,9 @@ Candidate ID 为 `KDC-{16 hex}`，由 `target + NFKC/小写/空白归一化后�
 - 默认：Wiki/知识搜索；
 - `--code`：仅 codegraph；
 - `--kg`：MaestroGraph full-source；
-- `--type`、`--category`：在候选选择前后均执行约束；
+- `--type`、`--category`、`--tag`、`--keyword`、`--workspace`：通过 daemon 协议下推，
+  在 BM25 和向量候选截断前执行约束；CLI 仍保留后过滤作为防御。若正在运行的旧 daemon
+  未返回 `filtersApplied`，客户端自动回退到本地预过滤搜索；
 - `--include-deprecated`：显式请求历史条目；
 - `--diversity balanced|off`：控制多样性选择，默认 `balanced`。
 
@@ -138,6 +159,9 @@ Balanced 模式不是把低相关结果随机插入，而是在相关候选池�
 - 没有计数或计数损坏时自动关闭 exploration，不影响搜索本身；
 - 显式 `--diversity off` 返回纯相关性顺序。
 
+Exposure 读路径只在候选池足够且 balanced 模式启用时按需打开。缺少计数、数据库损坏或
+read-only probe 会关闭 exploration slot，但不会影响基础搜索、MMR 或 family/source caps。
+
 这避免了“越常命中越靠前、越靠前越常命中”的正反馈，同时不牺牲首要结果的相关性。
 
 ---
@@ -156,13 +180,14 @@ Balanced 模式不是把低相关结果随机插入，而是在相关候选池�
 | `validated` | 当前执行提供了支持证据 |
 | `contradicted` | 当前执行发现反例或不一致 |
 
-`search` 和 injection 不自动写 `consumed`。调用方通过下列命令明确归因：
+`search` 和 injection 不自动写 `consumed`。显式 `maestro load` 自动记录 `consumed`
+（`load.ts` 内部调用 `recordActiveRunKnowledgeInputs`）。更强的关系（`cited`、
+`validated`、`contradicted`）通过 `stage` 命令附带记录：
 
 ```bash
-maestro knowledge record <knowledge-id...> \
-  --signal consumed \
-  --run <run-id> \
-  --session <session-id>
+maestro knowledge stage spec "规则标题" "规则正文" \
+  --run <run-id> --session <session-id> \
+  --signal validated --signal-ids spec:S-1,knowhow:K-1
 ```
 
 ### 5.2 Candidate
@@ -188,6 +213,11 @@ pending ── promote transaction ──→ promoting ── commit ──→ p
                                       │
                                       └── interrupted → replay-safe recovery
 ```
+
+**中断恢复检测**：`promoting` 中间态与 promotion receipt 持久化到 Run 目录。
+恢复时，promote 命令检查 receipt 中是否已存在该 candidate 的 `outcome` 记录：
+若存在则跳过写入、直接返回已有结果（幂等重放）；若不存在则从 `promoting` 重新
+执行写事务。检测逻辑不依赖进程内存，仅依赖磁盘 receipt。
 
 ---
 
@@ -232,6 +262,9 @@ fail closed，必须先重新 reconcile。
 
 ```bash
 maestro knowledge review <session-id> [--refresh] [--json]
+maestro knowledge review <session-id> --resolve <candidate-id> \
+  --as duplicate|related|conflict|supersede|unique \
+  [--target <knowledge-id>] --reason "<reason>"
 ```
 
 `review` 是人工审查的唯一聚合界面，展示：
@@ -239,9 +272,26 @@ maestro knowledge review <session-id> [--refresh] [--json]
 - 每个 candidate 的 `missing|stale|fresh`；
 - 最多 3 条多样化 match 及 evidence；
 - disposition、eligibility 和 canonical target；
-- 可复制的 reconcile、resolve、promote 命令。
+- 可复制的 promote 命令。
 
-默认 review 只读。仅在明确使用 `--refresh` 时，才刷新所有 candidate source Runs。
+`--refresh` 内含 reconcile：刷新所有 candidate source Runs 的 reconciliation receipt。
+`--resolve` 内含裁决：在构建视图前执行 `resolveKnowledgeCandidate()`，然后展示
+刷新后的结果。默认 review 只读。
+
+### 6.4 积压治理
+
+6 种 disposition 中 4 种为 `review_required`。在活跃项目中，未裁决 candidate 会随
+Run 数量线性增长。当前系统提供以下治理手段：
+
+- `review` 按 disposition 严重度排序展示（conflict > supersede > extends > related）；
+- `session seal` 报告未处理 backlog 计数，不隐式丢弃；
+- `audit --scope all` 统计 pending observed/corroborated backlog 总量。
+
+**尚未提供但建议的能力**：
+
+- 批量裁决语法（如 `resolve --all-as unique --session <id>`）；
+- observed-only candidate 超过 N 个 Session 未 corroborate 时自动 suppress；
+- 按 corroboration 计数和 candidate 龄期排序的优先级分诊视图。
 
 ---
 
@@ -271,43 +321,56 @@ maestro knowledge promote <session-id> --all
 
 - `--candidate` 可重复，也兼容逗号分隔；
 - 显式 selection 只刷新所选 candidate 的 source Runs；
-- `--all` 默认只处理 corroborated、eligible candidates；
-- observed-only、review-required、suppressed candidates 会被跳过；
+- `--all` 处理所有 eligible pending candidates（observed-only 输出警告但不跳过）；
+- review-required、suppressed candidates 会被跳过；
 - promotion receipt 的 `outcome` 描述写入结果：`created|reaffirmed`；
 - supersession 语义由新旧条目的 `supersedes` / `superseded-by` 和旧条目
   `deprecated` 状态表达，而不是单独的 promotion outcome。
 
 Promotion 使用持久化 receipt 和 `promoting` 中间态，可在中断后安全重放，不重复创建条目。
 
+**并发写隔离**：Spec promotion 和常规 Spec append 使用共享的 lock-guarded atomic update：
+跨进程 O_EXCL lock 覆盖完整 read-modify-write，内容先写入临时文件，再 rename 替换目标。
+并发 writer 因此串行化，不能再以旧内容覆盖其他 Session 已提交的条目；崩溃遗留 lock
+超过 stale 窗口后可回收。
+
 ---
 
 ## 8. Session/Run 协同
 
-完整闭环：
+### 系统管线（自动步骤标注 [auto]）
 
 ```text
 prepare/create
   → brief 注入 knowledge-reconciliation-card
-  → search/load
-  → record inputs
-  → stage candidates
-  → reconcile（完成前）
-  → review/resolve
-  → run check
-  → run complete（seal Run + candidate receipt）
-  → review freshness
-  → promote selected candidates
-  → session seal
+  → [auto] search/load → 自动记录 consumed（load.ts）
+  → [manual] stage candidates（可附带 --signal 记录更强关系）
+  → [auto] run check → 自动 reconcile（runtime.ts）
+  → [auto] run complete → 自动暂存 decisions/constraints + seal Run
+  → [manual] review --refresh → 审查 + 裁决（--resolve）
+  → [manual] promote selected candidates
+  → [manual] session seal
 ```
 
-关键边界：
+### 用户最短路径
+
+```bash
+maestro knowledge review <session-id> --refresh
+maestro knowledge promote <session-id> --all
+maestro session seal <session-id>
+```
+
+关键边界（**硬门禁** = fail closed，阻止继续；**软建议** = 警告但允许继续）：
 
 - `brief` 只注入摘要、策略和下一步命令，不自动加载所有知识正文；
-- `check` 全绿后，finish checklist 要求完成知识记录、reconciliation 和 verdict；
+- `check` 全绿后，finish checklist 要求完成知识记录、reconciliation 和 verdict（**软建议**：
+  checklist 未完成时 `check` 输出警告，但不阻止 `complete`）；
 - `complete` 返回 candidate IDs 与 reconciliation summary，但不执行 promotion；
+- `resolve` 和 `promote` 对 stale/missing reconciliation receipt **fail closed**（**硬门禁**）；
+- `promote` 要求所有 source Runs 已 sealed（**硬门禁**）；
 - `session seal` 可以报告未处理 backlog，不会偷偷丢弃 candidate；
 - `session seal --json` 使用统一的 `run-response/1.0` envelope；
-- promotion 可以发生在 Session seal 前；所有 source Runs 必须已 sealed。
+- promotion 可以发生在 Session seal 前。
 
 ---
 
@@ -333,7 +396,14 @@ Audit 组合检查：
 2. `--apply` 先把受影响文件备份到
    `.workflow/.trash/knowledge-audit-{timestamp}/`，再原子应用 deprecate/supersede。
 
-系统不依据“低命中”直接删除知识。低曝光可能代表长尾价值，而不是无效；冲突和重复必须保留证据与演进关系。
+系统不依据"低命中"直接删除知识。低曝光可能代表长尾价值，而不是无效；冲突和重复必须保留证据与演进关系。
+
+**与 pending candidates 的交互**：audit 的 soft-prune 可能 deprecate 一条知识，而该知识
+同时是某个未 promote candidate 的 reconcile match target。当前系统不阻止这种竞态：
+audit 不检查 pending candidate backlog，candidate 的 freshness fence 也不感知 audit
+操作。若 audit deprecate 了 match target，后续 promote 仍会成功（写入新知识），但
+reconciliation evidence 中引用的 target 已变为 deprecated。`review` 会展示 target 的
+当前状态，人工裁决时应考虑这一点。
 
 ---
 
@@ -343,16 +413,18 @@ Audit 组合检查：
 |---|---|---|
 | 检索 | `maestro search` | 最多写 exposure counter |
 | 读取 | `maestro load` | 可记录显式 consumption |
-| 归因 | `maestro knowledge record` | Run `knowledge-delta.json` |
-| 暂存 | `maestro knowledge stage` | Run candidate |
-| 匹配 | `maestro knowledge reconcile` | Reconciliation receipt |
-| 审查 | `maestro knowledge review` | 默认只读；`--refresh` 重建 receipt |
-| 裁决 | `maestro knowledge resolve` | Confirmed resolution + candidate 状态 |
+| 暂存 + 归因 | `maestro knowledge stage` | Run candidate + 可选 signal（`--signal --signal-ids`） |
+| 审查 + 裁决 | `maestro knowledge review` | 默认只读；`--refresh` 内含 reconcile；`--resolve` 内含裁决 |
 | 提升 | `maestro knowledge promote` | Spec/Knowhow + promotion receipt |
 | 治理 | `maestro knowledge audit` | 默认只读；`--apply` soft prune |
 | 收口 | `maestro session seal` | Session sealed 状态 |
 
 所有 knowledge 子命令支持 `--workflow-root`，便于在隔离项目、脚本和测试中使用。
+
+**隔离保证**：`--workflow-root` 将全部读写限定在指定目录的 `.workflow/` 子树内。
+不同 workflow-root 之间的 candidate、reconciliation receipt 和 promotion receipt
+互不可见、互不引用。跨 workflow-root 的知识共享只能通过 `workspace link` 机制
+（见知识管理指南），不通过 knowledge 子命令。
 
 ---
 
@@ -382,7 +454,19 @@ npm run check:session-run-release-machine
 
 端到端回归用例位于 `src/commands/knowledge.test.ts`，覆盖：
 
-`record → stage → review → resolve → complete → promote → seal → search readback`。
+`stage + signal → review/resolve → complete → promote → seal → search readback`。
+显式 `load → consumed` 的归因由 `src/commands/load.test.ts` 和 Run ledger 测试独立覆盖。
+
+### 11.1 失败模式与降级行为
+
+| 失败场景 | 系统行为 | 恢复方式 |
+|---------|---------|----------|
+| reconcile 中途崩溃（部分 match 已写入） | receipt 文件不完整，缺少 `corpus_fingerprint` 或 `matcher_revision` | 重新执行 `reconcile`；旧的不完整 receipt 被整体覆盖 |
+| promote 事务中断（spec 文件已写、receipt 未持久化） | candidate 停留在 `promoting` 态；spec 文件已包含新条目 | 重新执行 `promote`：检测到 spec 条目已存在则跳过写入，补写 receipt（幂等重放） |
+| knowledge-delta.json 损坏（JSON parse 失败） | `review`/`reconcile` 对该 Run 报告 `missing`，跳过其 candidates | 手动修复或删除损坏文件；不影响其他 Run |
+| corpus fingerprint 计算超时（极大 corpus） | 当前实现为同步全量 hash；无超时保护 | 短期：减少 corpus 规模或排除无关目录。中期：改为增量 hash |
+| 两个 Session 并发 promote 到同一 spec 文件 | 跨进程 lock 串行化完整 read-modify-write；后进入者读取前一提交后的内容 | lock 超时会 fail closed；确认持有进程或等待 stale lock 回收后重试 |
+| freshness fence 误判（corpus 变更与 promote 竞态） | promote 在 fence 检查通过后、写入前 corpus 被第三方修改 | 写入成功但 evidence 可能过时；下次 `review --refresh` 会重建 receipt |
 
 ---
 
@@ -402,3 +486,14 @@ Run observations
 
 创新点不在于增加一个相似度阈值，而在于把“搜索到”“使用过”“认为正确”“允许写入”
 拆成四种不同事实，并用 receipt 和 freshness fence 连接。这样既能自动发现知识关系，又不会让搜索热度、模型判断或单次 Run 越权修改项目规范。
+
+---
+
+## 变更记录
+
+| 日期 | 变更 | 关联 |
+|------|------|------|
+| 2026-07-28 | 初版：完整描述分层数据模型、身份模型、检索多样性、Run ledger、reconciliation、promotion、audit 和命令协作矩阵 | — |
+| 2026-07-28 | 架构审查修复：状态标注改为"已实现（核心闭环）"；增加 §1.1 已知偏差；§3.1 补充解析器收敛路径；§4.1/4.2 标注检索层缺口；§5.2 补充恢复逻辑；新增 §6.4 积压治理；§7 补充并发风险；§8 标注门禁强制性；§9 补充 audit 交互；§10 补充隔离保证；新增 §11.1 失败模式 | 审查 |
+| 2026-07-28 | 流程精简：删除 record/session 子命令；resolve 合并到 review --resolve；reconcile 降级为内部（review --refresh 内含）；stats 标记 deprecated；stage 吸收 record 信号（--signal/--signal-ids）；promote --all 移除 corroboration 硬门槛；§5.1/6.3/7/8/10 同步更新；同步更新 guide/skills/workflows 共 12 个文件 | 精简 |
+| 2026-07-28 | 收敛复核：关闭 X1/X3/X4/G-C3/G-B3/G-A4；facet 下推到 daemon/WikiIndexer 预过滤；Spec writer 使用跨进程原子更新；同步精简后的命令面与回归描述 | 修复 |
