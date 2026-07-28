@@ -619,6 +619,29 @@ export class SessionStore {
     });
   }
 
+  /** Replace one active Run sidecar atomically after validating Run authority. */
+  writeActiveRunSidecar<T>(
+    sessionId: string,
+    runId: string,
+    path: string,
+    value: T,
+    schema: z.ZodType<T>,
+  ): void {
+    const safePath = this.assertWorkflowPath(path);
+    this.withLock(() => {
+      const bundle = this.readBundleUnlocked(sessionId);
+      if (bundle.session.status !== 'running' || bundle.session.active_run_id !== runId) {
+        throw new Error(`Run ${runId} is not the active Run for Session ${sessionId}`);
+      }
+      const run = this.readRunUnlocked(sessionId, runId);
+      if (run.status === 'sealed' || run.status === 'completed') {
+        throw new Error(`Run ${runId} is ${run.status} and cannot mutate Run sidecars`);
+      }
+      schema.parse(value);
+      this.writeBatchUnlocked([{ path: safePath, value, schema }]);
+    });
+  }
+
   findRun(runId: string, sessionId?: string): { sessionId: string; run: CommandRun } {
     if (sessionId) return { sessionId, run: this.readRun(sessionId, runId) };
     if (!existsSync(this.sessionsRoot)) throw new Error(`Run not found: ${runId}`);

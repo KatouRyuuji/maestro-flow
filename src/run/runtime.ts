@@ -28,10 +28,23 @@ import { deriveHandoff, readReportFrontmatter } from './report.js';
 import {
   buildKnowledgeReconciliationCard,
   knowledgeCandidateReceipt,
+  runKnowledgeDeltaPath,
+  runKnowledgeDeltaSchema,
   stageHandoffKnowledgeCandidates,
   summarizeSessionKnowledge,
   type KnowledgeCandidateReceipt,
 } from './knowledge.js';
+import {
+  applyAutomaticKnowledgeSuppression,
+  ensureKnowledgeReconciliation,
+  isKnowledgeReconciliationFresh,
+  readKnowledgeReconciliation,
+  reconcileRunKnowledgeSync,
+  reconciliationForCandidate,
+  reconciliationSummary,
+  writeKnowledgeReconciliation,
+  type KnowledgeReconciliation,
+} from '../knowledge/reconcile.js';
 import {
   gateSchema,
   type ArtifactRegistry,
@@ -227,6 +240,9 @@ export interface SealSessionResult {
     pending_candidates: number;
     promoting_candidates: number;
     promoted_candidates: number;
+    review_required_candidates: number;
+    conflict_candidates: number;
+    suppressed_candidates: number;
     review_command: string;
   };
 }
@@ -256,6 +272,8 @@ export interface CheckRunResult {
    * `finish:` lines. Prompt-layer guidance — never a blocking gate.
    */
   finish?: string[];
+  /** Completion-preflight knowledge classification; promotion review remains separate. */
+  knowledge_reconciliation?: ReturnType<typeof reconciliationSummary>;
 }
 
 export interface CompleteRunResult extends CheckRunResult {
@@ -279,7 +297,9 @@ export interface CompleteRunResult extends CheckRunResult {
     operations: Array<{ op: string; target: string; status: string }>;
   } | null;
   /** Candidate staging receipt; project knowledge still requires explicit review/promotion. */
-  knowledge: KnowledgeCandidateReceipt | null;
+  knowledge: (KnowledgeCandidateReceipt & {
+    reconciliation: ReturnType<typeof reconciliationSummary>;
+  }) | null;
   transition: TransitionMutationReceipt;
 }
 
@@ -331,6 +351,10 @@ export interface PrepareSessionGuidance {
     pending_candidates: number;
     corroborated_candidates: number;
     promoting_candidates: number;
+    review_required_candidates: number;
+    conflict_candidates: number;
+    suppressed_candidates: number;
+    missing_reconciliation_candidates: number;
     review_command: string;
   };
   reminders: string[];
@@ -2026,6 +2050,7 @@ function buildFinishChecklist(projectRoot: string, run: CommandRun, frontmatter:
     lines.push('report.md handoff frontmatter is empty — fill summary (plus concerns/decisions) before completing; the sealed handoff is derived from it.');
   }
   lines.push(`Stage knowledge before sealing: put accepted decisions and locked constraints in report.md frontmatter (completion stages them automatically); reusable recipes/pitfalls → \`maestro knowledge stage knowhow "<title>" "<content>" --run ${run.run_id}\`. Do not write project spec/knowhow directly from routine Run completion.`);
+  lines.push(`Inspect the reconciliation receipt created by this check. Resolve semantic duplicates, conflicts, or supersession candidates with \`maestro knowledge resolve <candidate-id> --session <session-id> --as <duplicate|related|conflict|supersede|unique> --target <knowledge-id> --reason "<reason>"\`. Unresolved items may be sealed but cannot be promoted.`);
   lines.push(`Reconcile reused knowledge by stable ID: \`maestro knowledge record <knowledge-id> --run ${run.run_id} --signal cited|validated|contradicted\`. A search result or automatic injection is exposure only; it is not evidence of use.`);
   lines.push('For contradicted canonical knowledge, record the contradiction before sealing. After candidate review/promotion, replace stale rules with `maestro spec supersede <old-sid> --by <new-sid>`; if both rules remain valid, use `maestro spec conflict mark <file> <line> --note "<reason>"`. Never leave a known-stale entry unmarked.');
   lines.push('Pick the verdict honestly: `done` (clean) or `done-with-concerns` (works but carries caveats — list every caveat in concerns).');
@@ -2115,6 +2140,12 @@ export function checkRun(projectRoot: string, runId: string, sessionId?: string)
   if (located.run.status === 'sealed') {
     const bundle = store.readBundle(located.sessionId);
     validateSealedIntegrity(located.run, bundle.artifacts, scan);
+    const knowledgeReconciliation = readKnowledgeReconciliation(
+      store,
+      located.sessionId,
+      runId,
+      true,
+    );
     return {
       session_id: located.sessionId,
       run_id: runId,
@@ -2126,9 +2157,23 @@ export function checkRun(projectRoot: string, runId: string, sessionId?: string)
       upstream: reuse.upstream,
       reuse_assessments: reuse.assessments,
       next: checkNext(located.sessionId, runId, 'sealed', true),
+      ...(knowledgeReconciliation
+        ? { knowledge_reconciliation: reconciliationSummary(knowledgeReconciliation) }
+        : {}),
     };
   }
 
+  const knowledgeReconciliation = reconcileRunKnowledgeSync(
+    projectRoot,
+    located.sessionId,
+    runId,
+    frontmatter,
+  );
+  if (knowledgeReconciliation.counts.review_required > 0) {
+    scan.warnings.push(
+      `${knowledgeReconciliation.counts.review_required} knowledge candidate(s) require review before promotion`,
+    );
+  }
   return store.update(located.sessionId, (bundle, tx) => {
     const run = tx.readRun(runId);
     const context: EvaluationContext = {
@@ -2144,6 +2189,7 @@ export function checkRun(projectRoot: string, runId: string, sessionId?: string)
     const gates = evaluateRunGates(bundle, run, context);
     if (run.status === 'created') run.status = 'running';
     tx.writeRun(run);
+    writeKnowledgeReconciliation(store, tx, knowledgeReconciliation);
     const clean = gates.blocking.length === 0 && scan.errors.length === 0;
     // Write a .check_clean marker so `session done --check-clean` can skip
     // gate re-evaluation when outputs/ has not been modified since.
@@ -2167,6 +2213,7 @@ export function checkRun(projectRoot: string, runId: string, sessionId?: string)
       upstream: reuse.upstream,
       reuse_assessments: reuse.assessments,
       next: checkNext(located.sessionId, runId, run.status, clean),
+      knowledge_reconciliation: reconciliationSummary(knowledgeReconciliation),
       ...(clean ? { finish: buildFinishChecklist(projectRoot, run, frontmatter) } : {}),
     };
   });
@@ -2298,12 +2345,30 @@ export function sealSession(projectRoot: string, sessionId: string, summary = ''
   if (projected.active_session_id === sessionId) projected.active_session_id = null;
   writeStateJson(projectRoot, projected);
   const knowledge = summarizeSessionKnowledge(projectRoot, sessionId, { readOnly: true });
+  const reconciliation = knowledge.candidates.map(candidate => {
+    const policies = reconciliationForCandidate(
+      projectRoot,
+      sessionId,
+      candidate.run_ids,
+      candidate.candidate_id,
+    );
+    return policies.find(item => item.promotion_eligibility === 'suppressed')
+      ?? policies.find(item => item.promotion_eligibility === 'review_required')
+      ?? policies[0]
+      ?? null;
+  });
   return {
     ...result,
     knowledge: {
       pending_candidates: knowledge.candidates.filter(candidate => candidate.status === 'pending').length,
       promoting_candidates: knowledge.candidates.filter(candidate => candidate.status === 'promoting').length,
       promoted_candidates: knowledge.candidates.filter(candidate => candidate.status === 'promoted').length,
+      review_required_candidates: reconciliation
+        .filter(candidate => candidate?.promotion_eligibility === 'review_required').length,
+      conflict_candidates: reconciliation
+        .filter(candidate => candidate?.disposition === 'potential_conflict').length,
+      suppressed_candidates: reconciliation
+        .filter(candidate => candidate?.promotion_eligibility === 'suppressed').length,
       review_command: `maestro knowledge session ${sessionId}`,
     },
   };
@@ -2548,6 +2613,7 @@ export interface PreparedCompleteInputs {
   files: PreparedCompleteFile[];
   completionInputSnapshot: CompleteInputSnapshot;
   chainProposal: ValidatedChainProposal | null;
+  knowledgeReconciliation: KnowledgeReconciliation;
 }
 
 type CompleteAuthorityResult = Omit<CompleteRunResult, 'transition'>;
@@ -2685,6 +2751,13 @@ export function prepareCompleteInputs(
     ...scan.artifacts.map(item => item.absolutePath),
     ...extraArtifacts.map(item => item.absolutePath),
   ]);
+  const frontmatter = readReportFrontmatter(runDir);
+  const knowledgeReconciliation = ensureKnowledgeReconciliation(
+    projectRoot,
+    located.sessionId,
+    runId,
+    frontmatter,
+  );
   return {
     projectRoot,
     sessionId: located.sessionId,
@@ -2696,12 +2769,13 @@ export function prepareCompleteInputs(
     warning: resolved.warning,
     scan,
     extraArtifacts,
-    frontmatter: readReportFrontmatter(runDir),
+    frontmatter,
     state: projectState(projectRoot),
     options,
     files: [...paths].sort().map(path => ({ path, hash: preparedPathHash(path) })),
     completionInputSnapshot: completeInputSnapshot(runDir, completionPaths),
     chainProposal,
+    knowledgeReconciliation,
   };
 }
 
@@ -2710,6 +2784,18 @@ function revalidatePreparedCompleteInputs(prepared: PreparedCompleteInputs): voi
     if (preparedPathHash(file.path) !== file.hash) {
       throw new TransitionReceiptError('FENCE_CONFLICT', `prepared completion input changed: ${file.path}`);
     }
+  }
+  if (!isKnowledgeReconciliationFresh(
+    prepared.projectRoot,
+    prepared.sessionId,
+    prepared.runId,
+    prepared.knowledgeReconciliation,
+    prepared.frontmatter,
+  )) {
+    throw new TransitionReceiptError(
+      'FENCE_CONFLICT',
+      'knowledge candidates or project corpus changed after reconciliation',
+    );
   }
 }
 
@@ -2779,6 +2865,15 @@ export function applyCompleteRunMutation(
   mergeNotesIntoConcerns(run.handoff, options.notes ?? []);
   mergeDecisionsIntoHandoff(run.handoff, options.decisions ?? []);
   const knowledgeDelta = stageHandoffKnowledgeCandidates(store, tx, prepared.sessionId, run);
+  applyAutomaticKnowledgeSuppression(knowledgeDelta, prepared.knowledgeReconciliation);
+  if (knowledgeDelta) {
+    tx.writeJson(
+      runKnowledgeDeltaPath(store, prepared.sessionId, runId),
+      knowledgeDelta,
+      runKnowledgeDeltaSchema,
+    );
+  }
+  writeKnowledgeReconciliation(store, tx, prepared.knowledgeReconciliation);
   run.status = 'sealed';
   run.sealed_at = localISO();
   draft.session.latest_completed_run_id = runId;
@@ -2809,7 +2904,10 @@ export function applyCompleteRunMutation(
       next_action: completionNextPointer(draft.session, runId),
       chain_transition: chainTransition,
       chain_proposal: chainProposal,
-      knowledge: knowledgeCandidateReceipt(prepared.sessionId, knowledgeDelta),
+      knowledge: {
+        ...knowledgeCandidateReceipt(prepared.sessionId, knowledgeDelta),
+        reconciliation: reconciliationSummary(prepared.knowledgeReconciliation),
+      },
     },
   };
 }
@@ -3218,6 +3316,28 @@ function prepareSessionGuidance(
     .filter(candidate => candidate.status === 'pending');
   const promotingKnowledge = knowledgeSummary.candidates
     .filter(candidate => candidate.status === 'promoting');
+  const reconciliationPolicies = knowledgeSummary.candidates.map(candidate => {
+    const policies = reconciliationForCandidate(
+      projectRoot,
+      sessionId,
+      candidate.run_ids,
+      candidate.candidate_id,
+    );
+    return {
+      missing: policies.length < candidate.run_ids.length,
+      policy: policies.find(item => item.promotion_eligibility === 'suppressed')
+        ?? policies.find(item => item.promotion_eligibility === 'review_required')
+        ?? policies[0]
+        ?? null,
+    };
+  });
+  const reviewRequiredKnowledge = reconciliationPolicies
+    .filter(item => item.policy?.promotion_eligibility === 'review_required').length;
+  const conflictKnowledge = reconciliationPolicies
+    .filter(item => item.policy?.disposition === 'potential_conflict').length;
+  const suppressedKnowledge = reconciliationPolicies
+    .filter(item => item.policy?.promotion_eligibility === 'suppressed').length;
+  const missingReconciliation = reconciliationPolicies.filter(item => item.missing).length;
   const chain = session.orchestration.chain;
   const activeIndex = activeStepIndex(session);
   const nextExecutionIndex = nextPendingIndex(session, true);
@@ -3286,6 +3406,13 @@ function prepareSessionGuidance(
       + `review with \`maestro knowledge session ${sessionId}\`.`,
     );
   }
+  if (reviewRequiredKnowledge > 0 || missingReconciliation > 0) {
+    reminders.push(
+      `Knowledge reconciliation: ${reviewRequiredKnowledge} require review, `
+      + `${conflictKnowledge} potential conflicts, ${missingReconciliation} missing receipts; `
+      + `inspect with \`maestro knowledge session ${sessionId}\`.`,
+    );
+  }
 
   return {
     session_id: session.session_id,
@@ -3301,6 +3428,10 @@ function prepareSessionGuidance(
       corroborated_candidates: pendingKnowledge
         .filter(candidate => candidate.stage === 'corroborated').length,
       promoting_candidates: promotingKnowledge.length,
+      review_required_candidates: reviewRequiredKnowledge,
+      conflict_candidates: conflictKnowledge,
+      suppressed_candidates: suppressedKnowledge,
+      missing_reconciliation_candidates: missingReconciliation,
       review_command: `maestro knowledge session ${sessionId}`,
     },
     reminders,
@@ -3497,7 +3628,30 @@ export function briefRun(
       freshness,
     },
     execution_contract: executionContract,
-    knowledge_context: buildKnowledgeReconciliationCard(projectRoot, context.session_id, runId),
+    knowledge_context: (() => {
+      const card = buildKnowledgeReconciliationCard(projectRoot, context.session_id, runId);
+      const receipt = readKnowledgeReconciliation(store, context.session_id, runId, true);
+      const fresh = receipt
+        ? isKnowledgeReconciliationFresh(
+            projectRoot,
+            context.session_id,
+            runId,
+            receipt,
+            readReportFrontmatter(context.run_dir),
+          )
+        : false;
+      return {
+        ...card,
+        reconciliation: {
+          status: receipt ? (fresh ? 'fresh' : 'stale') : 'missing',
+          duplicates: receipt?.counts.duplicates ?? 0,
+          conflicts: receipt?.counts.conflicts ?? 0,
+          review_required: receipt?.counts.review_required ?? 0,
+          suppressed: receipt?.counts.suppressed ?? 0,
+          command: `maestro knowledge reconcile --run ${runId} --session ${context.session_id}`,
+        },
+      };
+    })(),
     continuity: { prev_handoff: prevHandoff, anchor },
     recovery: { next: briefNext(bundle.session, runId, run.status) },
   });

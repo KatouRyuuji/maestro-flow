@@ -22,6 +22,11 @@ import {
 } from './knowledge.js';
 import { completeRun, createRun, sealSession } from './runtime.js';
 import { SessionStore } from './store.js';
+import {
+  promoteReconciledSessionKnowledge,
+  readKnowledgeReconciliation,
+  resolveKnowledgeCandidate,
+} from '../knowledge/reconcile.js';
 
 const roots: string[] = [];
 
@@ -391,5 +396,156 @@ describe('Run knowledge delta', () => {
     expect(summarizeSessionKnowledge(projectRoot, created.session_id).candidates
       .find(item => item.candidate_id === candidate.candidate_id))
       .toMatchObject({ status: 'promoted', promoted_id: 'S-resumable' });
+  });
+
+  it('requires reconciliation resolution before promoting a confirmed supersession', () => {
+    const projectRoot = root();
+    installCommand(projectRoot);
+    const specsDir = join(projectRoot, '.workflow', 'specs');
+    mkdirSync(specsDir, { recursive: true });
+    const specPath = join(specsDir, 'architecture-constraints.md');
+    writeFileSync(specPath, `---
+category: arch
+---
+
+<spec-entry category="arch" keywords="store" date="2026-07-01" sid="S-old-store" title="Canonical store rule">
+
+### Canonical store rule
+
+Use independent file writes.
+
+</spec-entry>
+`, 'utf8');
+    const created = createRun({
+      projectRoot,
+      command: 'knowledge-demo',
+      sessionId: 'knowledge-session',
+      intent: 'replace stale project knowledge',
+    });
+    writeKnowledgeReport(projectRoot, created.session_id, created.run_id);
+    const staged = stageRunKnowledgeCandidate(
+      projectRoot,
+      created.run_id,
+      {
+        target: 'spec',
+        action: 'supersede',
+        title: 'Canonical store rule',
+        content: 'Use one SessionStore transaction for coordinated writes.',
+        category: 'arch',
+      },
+      created.session_id,
+    );
+    completeRun(projectRoot, created.run_id, created.session_id);
+    sealSession(projectRoot, created.session_id, 'review knowledge evolution');
+
+    const receipt = readKnowledgeReconciliation(
+      new SessionStore(projectRoot),
+      created.session_id,
+      created.run_id,
+      true,
+    )!;
+    expect(receipt.candidates.find(item => item.candidate_id === staged.candidate_id))
+      .toMatchObject({
+        disposition: 'supersede_candidate',
+        promotion_eligibility: 'review_required',
+        canonical_id: 'S-old-store',
+      });
+    expect(() => promoteSessionKnowledge(projectRoot, created.session_id, {
+      candidateIds: [staged.candidate_id],
+    })).toThrow(/resolve it .* first/);
+
+    resolveKnowledgeCandidate(
+      projectRoot,
+      created.session_id,
+      staged.candidate_id,
+      'supersede',
+      {
+        targetId: 'S-old-store',
+        reason: 'The coordinated transaction rule replaces independent writes',
+      },
+    );
+    const store = new SessionStore(projectRoot);
+    const deltaPath = join(store.runDir(created.session_id, created.run_id), 'knowledge-delta.json');
+    const delta = readRunKnowledgeDelta(store, created.session_id, created.run_id);
+    const recovering = delta.candidates.find(item => item.candidate_id === staged.candidate_id)!;
+    recovering.status = 'promoting';
+    recovering.promoted_id = 'S-recovered-store';
+    store.updateJsonFile(deltaPath, runKnowledgeDeltaSchema, delta, draft => {
+      Object.assign(draft, delta);
+      draft.revision++;
+    });
+    writeFileSync(specPath, `
+
+<spec-entry category="arch" keywords="store" date="2026-07-28" sid="S-recovered-store" title="Canonical store rule">
+
+### Canonical store rule
+
+Use one SessionStore transaction for coordinated writes.
+
+</spec-entry>
+`, { flag: 'a' });
+
+    const promoted = promoteReconciledSessionKnowledge(projectRoot, created.session_id, {
+      candidateIds: [staged.candidate_id],
+    });
+    const newId = promoted.promoted[0].promoted_id;
+    const content = readFileSync(specPath, 'utf8');
+    expect(newId).not.toBe('S-old-store');
+    expect(content).toContain(
+      'sid="S-old-store" title="Canonical store rule" status="deprecated"',
+    );
+    expect(content).toContain(`superseded-by="${newId}"`);
+    expect(content).toContain(`sid="${newId}"`);
+    expect(content).toContain('supersedes="S-old-store"');
+    expect(content.match(/sid="S-recovered-store"/g)).toHaveLength(1);
+  });
+
+  it('suppresses exact duplicates during completion and returns the reconciliation receipt', () => {
+    const projectRoot = root();
+    installCommand(projectRoot);
+    const specsDir = join(projectRoot, '.workflow', 'specs');
+    mkdirSync(specsDir, { recursive: true });
+    writeFileSync(join(specsDir, 'architecture-constraints.md'), `---
+category: arch
+---
+
+<spec-entry category="arch" keywords="compatibility" date="2026-07-01" sid="S-compat" title="Compatibility rule">
+
+### Compatibility rule
+
+Preserve backward compatibility.
+
+</spec-entry>
+`, 'utf8');
+    const created = createRun({
+      projectRoot,
+      command: 'knowledge-demo',
+      sessionId: 'knowledge-session',
+      intent: 'suppress duplicate candidate',
+    });
+    writeKnowledgeReport(projectRoot, created.session_id, created.run_id);
+    const staged = stageRunKnowledgeCandidate(
+      projectRoot,
+      created.run_id,
+      {
+        target: 'spec',
+        title: 'Compatibility duplicate',
+        content: 'Preserve backward compatibility.',
+        category: 'arch',
+      },
+      created.session_id,
+    );
+
+    const completed = completeRun(projectRoot, created.run_id, created.session_id);
+    expect(completed.knowledge.reconciliation).toMatchObject({
+      suppressed: expect.any(Number),
+      duplicates: expect.any(Number),
+    });
+    expect(completed.knowledge.reconciliation.suppressed).toBeGreaterThanOrEqual(1);
+    expect(readRunKnowledgeDelta(
+      new SessionStore(projectRoot),
+      created.session_id,
+      created.run_id,
+    ).candidates.find(item => item.candidate_id === staged.candidate_id)?.status).toBe('rejected');
   });
 });

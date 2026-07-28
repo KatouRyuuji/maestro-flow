@@ -450,6 +450,14 @@ export const knowledgeReconciliationCardSchema = z.object({
     command: nonEmptyString,
     promote_template: nonEmptyString,
   }).strict(),
+  reconciliation: z.object({
+    status: z.enum(['missing', 'fresh', 'stale']),
+    duplicates: z.number().int().nonnegative(),
+    conflicts: z.number().int().nonnegative(),
+    review_required: z.number().int().nonnegative(),
+    suppressed: z.number().int().nonnegative(),
+    command: nonEmptyString,
+  }).strict().optional(),
 }).strict();
 
 /**

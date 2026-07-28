@@ -146,6 +146,90 @@ describe('knowledge audit and pruning', () => {
     expect(content).toContain('\r\n');
   });
 
+  it('soft-prunes exact spec duplicates with a deterministic canonical successor', async () => {
+    const projectRoot = root();
+    const dir = join(projectRoot, '.workflow', 'specs');
+    mkdirSync(dir, { recursive: true });
+    const specPath = join(dir, 'coding-conventions.md');
+    writeFileSync(specPath, `---
+category: coding
+---
+
+<spec-entry category="coding" keywords="store" date="2026-07-01" sid="S-a" title="Store rule">
+
+### Store rule
+
+Use one transaction.
+
+</spec-entry>
+
+<spec-entry category="coding" keywords="store" date="2026-07-02" sid="S-b" title="Store rule">
+
+### Store rule
+
+Use one transaction.
+
+</spec-entry>
+`, 'utf8');
+
+    const planned = await auditKnowledge(projectRoot, { scope: 'spec', prune: true });
+    expect(planned.prune_plan).toEqual([
+      expect.objectContaining({
+        store: 'spec',
+        target_id: 'S-b',
+        successor_id: 'S-a',
+        reason: 'exact-duplicate',
+      }),
+    ]);
+    const applied = await auditKnowledge(projectRoot, {
+      scope: 'spec',
+      prune: true,
+      apply: true,
+    });
+    expect(applied.applied.count).toBe(1);
+    expect(readFileSync(specPath, 'utf8')).toContain(
+      'sid="S-b" title="Store rule" status="deprecated" superseded-by="S-a"',
+    );
+  });
+
+  it('soft-prunes exact knowhow duplicates through the lifecycle supersession API', async () => {
+    const projectRoot = root();
+    const dir = join(projectRoot, '.workflow', 'knowhow');
+    mkdirSync(dir, { recursive: true });
+    const body = (title: string) => `---
+title: ${title}
+type: tip
+status: active
+---
+
+Use bounded semantic neighborhoods.
+`;
+    const canonical = join(dir, 'TIP-20260728-a.md');
+    const duplicate = join(dir, 'TIP-20260728-b.md');
+    writeFileSync(canonical, body('Search diversity'), 'utf8');
+    writeFileSync(duplicate, body('Search diversity'), 'utf8');
+
+    const planned = await auditKnowledge(projectRoot, { scope: 'knowhow', prune: true });
+    expect(planned.prune_plan).toEqual([
+      expect.objectContaining({
+        store: 'knowhow',
+        target_id: 'knowhow-tip-20260728-b',
+        successor_id: 'knowhow-tip-20260728-a',
+        reason: 'exact-duplicate',
+      }),
+    ]);
+    const applied = await auditKnowledge(projectRoot, {
+      scope: 'knowhow',
+      prune: true,
+      apply: true,
+    });
+    expect(applied.applied.count).toBe(1);
+    expect(readFileSync(duplicate, 'utf8')).toContain('status: "deprecated"');
+    expect(readFileSync(canonical, 'utf8')).toContain(
+      'supersedes: ["knowhow-tip-20260728-b"]',
+    );
+  });
+
   it('reports corrupt Session authority instead of returning a clean pipeline', async () => {
     const projectRoot = root();
     const sessionDir = join(projectRoot, '.workflow', 'sessions', 'corrupt-session');

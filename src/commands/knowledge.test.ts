@@ -130,4 +130,91 @@ describe('maestro knowledge Run lifecycle CLI', () => {
     expect(process.exitCode).toBe(1);
     expect(errors.join('\n')).toContain('is not the active Run');
   });
+
+  it('reconciles and resolves a candidate through the CLI', async () => {
+    const specsDir = join(projectRoot, '.workflow', 'specs');
+    mkdirSync(specsDir, { recursive: true });
+    writeFileSync(join(specsDir, 'coding-conventions.md'), `---
+category: coding
+---
+
+<spec-entry category="coding" keywords="store" date="2026-07-28" sid="S-store" title="Store rule">
+
+### Store rule
+
+Use one SessionStore transaction.
+
+</spec-entry>
+`, 'utf8');
+    const created = createRun({
+      projectRoot,
+      command: 'knowledge-cli',
+      sessionId: 'knowledge-cli-session',
+      intent: 'reconcile CLI candidate',
+    });
+    await run(
+      'stage',
+      'spec',
+      'Store rule copy',
+      'Use one SessionStore transaction.',
+      '--run',
+      created.run_id,
+      '--session',
+      created.session_id,
+      '--json',
+    );
+    const candidateId = (JSON.parse(logs.at(-1)!) as { candidate_id: string }).candidate_id;
+
+    await run(
+      'reconcile',
+      '--run',
+      created.run_id,
+      '--session',
+      created.session_id,
+      '--json',
+    );
+    expect(JSON.parse(logs.at(-1)!)).toMatchObject({
+      counts: { duplicates: 1, suppressed: 1 },
+      candidates: [{
+        candidate_id: candidateId,
+        disposition: 'exact_duplicate',
+        canonical_id: 'S-store',
+      }],
+    });
+    await run('session', created.session_id, '--json');
+    expect(JSON.parse(logs.at(-1)!)).toMatchObject({
+      candidates: [{
+        candidate_id: candidateId,
+        reconciliation: {
+          disposition: 'exact_duplicate',
+          freshness: 'fresh',
+        },
+      }],
+    });
+
+    await run(
+      'resolve',
+      candidateId,
+      '--session',
+      created.session_id,
+      '--as',
+      'duplicate',
+      '--target',
+      'S-store',
+      '--reason',
+      'Confirmed exact duplicate',
+      '--json',
+    );
+    expect(JSON.parse(logs.at(-1)!)).toMatchObject({
+      candidate_id: candidateId,
+      promotion_eligibility: 'suppressed',
+      canonical_id: 'S-store',
+    });
+    expect(readRunKnowledgeDelta(
+      new SessionStore(projectRoot),
+      created.session_id,
+      created.run_id,
+    ).candidates[0].status).toBe('rejected');
+    expect(errors).toEqual([]);
+  });
 });

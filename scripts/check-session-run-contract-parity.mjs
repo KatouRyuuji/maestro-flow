@@ -183,13 +183,15 @@ const knowledgeCommands = read('src/commands/knowledge.ts');
 const knowledgeLifecycleCli = {
   record: knowledgeCommands?.includes(".command('record')") ?? false,
   stage: knowledgeCommands?.includes(".command('stage')") ?? false,
+  reconcile: knowledgeCommands?.includes(".command('reconcile')") ?? false,
+  resolve: knowledgeCommands?.includes(".command('resolve')") ?? false,
   session: knowledgeCommands?.includes(".command('session')") ?? false,
   promote: knowledgeCommands?.includes(".command('promote')") ?? false,
 };
 addCheck(
   'cli.knowledge-lifecycle',
   knowledgeLifecycleCli,
-  { record: true, stage: true, session: true, promote: true },
+  { record: true, stage: true, reconcile: true, resolve: true, session: true, promote: true },
   Object.values(knowledgeLifecycleCli).every(Boolean),
 );
 
@@ -199,7 +201,11 @@ const knowledgeCompletionContract = {
   receipt: runtime?.includes('knowledgeCandidateReceipt(prepared.sessionId, knowledgeDelta)') ?? false,
   finishRecord: runtime?.includes('maestro knowledge record <knowledge-id>') ?? false,
   finishStage: runtime?.includes('maestro knowledge stage knowhow') ?? false,
+  freshnessFence: runtime?.includes('knowledge candidates or project corpus changed after reconciliation') ?? false,
+  reconciliationReceipt: runtime?.includes('reconciliation: reconciliationSummary(prepared.knowledgeReconciliation)') ?? false,
+  finishResolve: runtime?.includes('maestro knowledge resolve <candidate-id>') ?? false,
   promptReceipt: runMode?.includes('knowledge-candidate-receipt/1.0') ?? false,
+  promptReconciliation: runMode?.includes('knowledge-reconciliation/1.0') ?? false,
   promptNoDirectWrite: runMode?.includes('Routine Run completion MUST NOT call `maestro spec add`') ?? false,
 };
 addCheck(
@@ -209,7 +215,11 @@ addCheck(
     receipt: true,
     finishRecord: true,
     finishStage: true,
+    freshnessFence: true,
+    reconciliationReceipt: true,
+    finishResolve: true,
     promptReceipt: true,
+    promptReconciliation: true,
     promptNoDirectWrite: true,
   },
   Object.values(knowledgeCompletionContract).every(Boolean),

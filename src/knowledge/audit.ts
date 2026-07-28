@@ -19,6 +19,7 @@ import { analyzeSpecHealth, type SpecHealthReport } from '../tools/spec-conflict
 import { parseSpecEntries, type SpecEntryParsed } from '../tools/spec-entry-parser.js';
 import { parseFrontmatter, knowhowFileToWikiId } from '../utils/frontmatter.js';
 import { updateFileAtomic } from '../utils/atomic-write.js';
+import { supersedeKnowhowEntry } from '../tools/knowhow-lifecycle.js';
 
 export type KnowledgeAuditScope = 'spec' | 'knowhow' | 'all';
 
@@ -32,15 +33,25 @@ export interface KnowledgeAuditFinding {
   recommended_action: 'observe' | 'review' | 'deprecate';
 }
 
-export interface KnowledgePruneAction {
+export type KnowledgePruneAction = {
   id: string;
   store: 'spec';
   action: 'deprecate';
   target_id: string;
   target_file: string;
   successor_id: string;
-  reason: 'unsynchronized-supersession';
-}
+  successor_file: string;
+  reason: 'unsynchronized-supersession' | 'exact-duplicate';
+} | {
+  id: string;
+  store: 'knowhow';
+  action: 'supersede';
+  target_id: string;
+  target_file: string;
+  successor_id: string;
+  successor_file: string;
+  reason: 'exact-duplicate';
+};
 
 export interface KnowledgeAuditResult {
   schema_version: 'knowledge-audit/1.0';
@@ -80,6 +91,15 @@ interface ProjectSpec {
   entry: SpecEntryParsed;
 }
 
+interface ProjectKnowhow {
+  id: string;
+  filePath: string;
+  fileLabel: string;
+  title: string;
+  body: string;
+  active: boolean;
+}
+
 function normalized(value: string): string {
   return value.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
 }
@@ -107,17 +127,30 @@ function projectSpecs(projectRoot: string): ProjectSpec[] {
 function inspectKnowhow(projectRoot: string): {
   summary: NonNullable<KnowledgeAuditResult['knowhow']>;
   findings: KnowledgeAuditFinding[];
+  documents: ProjectKnowhow[];
 } {
   const dir = join(projectRoot, '.workflow', 'knowhow');
   const summary = { total: 0, active: 0, deprecated: 0, invalid: 0 };
   const findings: KnowledgeAuditFinding[] = [];
-  if (!existsSync(dir)) return { summary, findings };
+  const documents: ProjectKnowhow[] = [];
+  if (!existsSync(dir)) return { summary, findings, documents };
   for (const file of readdirSync(dir).filter(name => name.endsWith('.md')).sort()) {
     summary.total++;
     try {
-      const { data } = parseFrontmatter(readFileSync(join(dir, file), 'utf8'));
-      if (data.status === 'deprecated' || data.status === 'superseded') summary.deprecated++;
-      else summary.active++;
+      const filePath = join(dir, file);
+      const { data, body } = parseFrontmatter(readFileSync(filePath, 'utf8'));
+      const status = typeof data.status === 'string' ? normalized(data.status) : 'active';
+      const active = status !== 'deprecated' && status !== 'superseded';
+      if (active) summary.active++;
+      else summary.deprecated++;
+      documents.push({
+        id: knowhowFileToWikiId(file),
+        filePath,
+        fileLabel: file,
+        title: typeof data.title === 'string' ? data.title : '',
+        body: body.trim(),
+        active,
+      });
       if (!data.title || !data.type) {
         summary.invalid++;
         findings.push({
@@ -159,7 +192,7 @@ function inspectKnowhow(projectRoot: string): {
       });
     }
   }
-  return { summary, findings };
+  return { summary, findings, documents };
 }
 
 function inspectPipeline(projectRoot: string): {
@@ -279,8 +312,48 @@ function buildSpecFindings(
       target_id: sid,
       target_file: spec.filePath,
       successor_id: successorId,
+      successor_file: bySid.get(successorId)!.filePath,
       reason: 'unsynchronized-supersession',
     });
+  }
+
+  const plannedTargets = new Set(plan.map(action => action.target_id));
+  const duplicateGroups = new Map<string, ProjectSpec[]>();
+  for (const spec of specs) {
+    if (!spec.entry.sid || spec.entry.status === 'deprecated') continue;
+    const key = `${normalized(spec.entry.title)}\0${normalized(spec.entry.content)}`;
+    const group = duplicateGroups.get(key) ?? [];
+    group.push(spec);
+    duplicateGroups.set(key, group);
+  }
+  for (const group of duplicateGroups.values()) {
+    if (group.length < 2) continue;
+    const ordered = group.sort((left, right) => left.entry.sid!.localeCompare(right.entry.sid!));
+    const canonical = ordered[0];
+    for (const duplicate of ordered.slice(1)) {
+      const targetId = duplicate.entry.sid!;
+      if (plannedTargets.has(targetId)) continue;
+      plannedTargets.add(targetId);
+      findings.push({
+        id: stableId('KAU', 'spec-exact-duplicate', targetId, canonical.entry.sid!),
+        store: 'spec',
+        priority: 'P1',
+        subtype: 'exact-duplicate',
+        target: targetId,
+        evidence: `${targetId} duplicates canonical ${canonical.entry.sid!}`,
+        recommended_action: 'deprecate',
+      });
+      plan.push({
+        id: stableId('KPA', 'spec-exact-duplicate', targetId, canonical.entry.sid!),
+        store: 'spec',
+        action: 'deprecate',
+        target_id: targetId,
+        target_file: duplicate.filePath,
+        successor_id: canonical.entry.sid!,
+        successor_file: canonical.filePath,
+        reason: 'exact-duplicate',
+      });
+    }
   }
 
   for (const item of health.danglingSupersedes) {
@@ -330,6 +403,47 @@ function buildSpecFindings(
   return { findings, plan };
 }
 
+function buildKnowhowDuplicateFindings(
+  documents: ProjectKnowhow[],
+): { findings: KnowledgeAuditFinding[]; plan: KnowledgePruneAction[] } {
+  const findings: KnowledgeAuditFinding[] = [];
+  const plan: KnowledgePruneAction[] = [];
+  const groups = new Map<string, ProjectKnowhow[]>();
+  for (const document of documents.filter(item => item.active && item.title && item.body)) {
+    const key = `${normalized(document.title)}\0${normalized(document.body)}`;
+    const group = groups.get(key) ?? [];
+    group.push(document);
+    groups.set(key, group);
+  }
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const ordered = group.sort((left, right) => left.id.localeCompare(right.id));
+    const canonical = ordered[0];
+    for (const duplicate of ordered.slice(1)) {
+      findings.push({
+        id: stableId('KAU', 'knowhow-exact-duplicate', duplicate.id, canonical.id),
+        store: 'knowhow',
+        priority: 'P1',
+        subtype: 'exact-duplicate',
+        target: duplicate.id,
+        evidence: `${duplicate.id} duplicates canonical ${canonical.id}`,
+        recommended_action: 'deprecate',
+      });
+      plan.push({
+        id: stableId('KPA', 'knowhow-exact-duplicate', duplicate.id, canonical.id),
+        store: 'knowhow',
+        action: 'supersede',
+        target_id: duplicate.id,
+        target_file: duplicate.filePath,
+        successor_id: canonical.id,
+        successor_file: canonical.filePath,
+        reason: 'exact-duplicate',
+      });
+    }
+  }
+  return { findings, plan };
+}
+
 function addUsageFinding(usage: KnowledgeUsageStats, findings: KnowledgeAuditFinding[]): void {
   const exposure = usage.impressionConcentration;
   if (exposure.totalEvents > 0 && (exposure.top10Share > 0.75 || exposure.gini > 0.65)) {
@@ -345,7 +459,7 @@ function addUsageFinding(usage: KnowledgeUsageStats, findings: KnowledgeAuditFin
   }
 }
 
-function deprecateSpecAction(action: KnowledgePruneAction): void {
+function deprecateSpecAction(action: Extract<KnowledgePruneAction, { store: 'spec' }>): void {
   let found = false;
   updateFileAtomic(action.target_file, current => {
     if (current === null) throw new Error(`Missing spec file: ${action.target_file}`);
@@ -384,14 +498,28 @@ function applyPrunePlan(
   if (plan.length === 0) return { count: 0, backup_dir: null };
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const backupDir = join(projectRoot, '.workflow', '.trash', `knowledge-audit-${stamp}`);
-  const uniqueFiles = [...new Set(plan.map(action => action.target_file))];
+  const uniqueFiles = [...new Set(plan.flatMap(action => [
+    action.target_file,
+    action.successor_file,
+  ]))];
   for (const file of uniqueFiles) {
     const destination = join(backupDir, relative(projectRoot, file));
     mkdirSync(dirname(destination), { recursive: true });
     copyFileSync(file, destination);
   }
   try {
-    for (const action of plan) deprecateSpecAction(action);
+    for (const action of plan) {
+      if (action.store === 'spec') {
+        deprecateSpecAction(action);
+      } else {
+        const result = supersedeKnowhowEntry(
+          projectRoot,
+          action.target_id,
+          action.successor_id,
+        );
+        if (!result.success) throw new Error(result.error ?? `Failed to supersede ${action.target_id}`);
+      }
+    }
 
     const logDir = join(projectRoot, '.workflow', '.knowledge-audit');
     mkdirSync(logDir, { recursive: true });
@@ -457,6 +585,9 @@ export async function auditKnowledge(
     const inspected = inspectKnowhow(projectRoot);
     knowhow = inspected.summary;
     findings.push(...inspected.findings);
+    const duplicates = buildKnowhowDuplicateFindings(inspected.documents);
+    findings.push(...duplicates.findings);
+    prunePlan.push(...duplicates.plan);
   }
 
   let usage: KnowledgeUsageStats | null = null;

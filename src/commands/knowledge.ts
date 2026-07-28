@@ -7,7 +7,6 @@ import {
   type KnowledgeUsageConcentration,
 } from '../graph/kg/knowledge-usage.js';
 import {
-  promoteSessionKnowledge,
   recordActiveRunKnowledgeInputs,
   recordRunKnowledgeInputs,
   stageRunKnowledgeCandidate,
@@ -16,10 +15,23 @@ import {
 } from '../run/knowledge.js';
 import { auditKnowledge, type KnowledgeAuditScope } from '../knowledge/audit.js';
 import { SessionStore } from '../run/store.js';
+import {
+  persistActiveKnowledgeReconciliation,
+  persistKnowledgeReconciliation,
+  promoteReconciledSessionKnowledge,
+  isKnowledgeReconciliationFresh,
+  readKnowledgeReconciliation,
+  reconcileRunKnowledge,
+  resolveKnowledgeCandidate,
+  type KnowledgeResolutionChoice,
+} from '../knowledge/reconcile.js';
+import { readReportFrontmatter } from '../run/report.js';
 
 const KNOWLEDGE_SOURCE_TYPES = ['spec', 'knowhow', 'issue', 'domain', 'codebase'] as const;
 const KNOWLEDGE_INPUT_SIGNALS = ['consumed', 'cited', 'validated', 'contradicted'] as const;
 const KNOWLEDGE_CANDIDATE_TARGETS = ['spec', 'knowhow'] as const;
+const KNOWLEDGE_CANDIDATE_ACTIONS = ['propose', 'reaffirm', 'supersede', 'contest'] as const;
+const KNOWLEDGE_RESOLUTIONS = ['duplicate', 'related', 'conflict', 'supersede', 'unique'] as const;
 
 function percent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
@@ -151,6 +163,7 @@ export function registerKnowledgeCommand(program: Command): void {
     .argument('<target>', `Candidate target: ${KNOWLEDGE_CANDIDATE_TARGETS.join('|')}`)
     .argument('<title>', 'Candidate title')
     .argument('<content>', 'Candidate content')
+    .option('--action <action>', `Candidate intent: ${KNOWLEDGE_CANDIDATE_ACTIONS.join('|')}`, 'propose')
     .option('--category <category>', 'Spec/knowhow category')
     .option('--evidence <refs>', 'Comma-separated evidence references')
     .option('--run <run-id>', 'Explicit active Run ID')
@@ -162,6 +175,7 @@ export function registerKnowledgeCommand(program: Command): void {
       content: string,
       opts: {
         category?: string;
+        action?: string;
         evidence?: string;
         run?: string;
         session?: string;
@@ -171,6 +185,11 @@ export function registerKnowledgeCommand(program: Command): void {
       try {
         if (!KNOWLEDGE_CANDIDATE_TARGETS.includes(target as 'spec' | 'knowhow')) {
           throw new Error(`target must be one of ${KNOWLEDGE_CANDIDATE_TARGETS.join(', ')}`);
+        }
+        if (!KNOWLEDGE_CANDIDATE_ACTIONS.includes(
+          opts.action as typeof KNOWLEDGE_CANDIDATE_ACTIONS[number],
+        )) {
+          throw new Error(`--action must be one of ${KNOWLEDGE_CANDIDATE_ACTIONS.join(', ')}`);
         }
         if (opts.session && !opts.run) throw new Error('--session requires --run');
         const store = new SessionStore(resolve('.'));
@@ -183,6 +202,7 @@ export function registerKnowledgeCommand(program: Command): void {
           active.runId,
           {
             target: target as 'spec' | 'knowhow',
+            action: opts.action as typeof KNOWLEDGE_CANDIDATE_ACTIONS[number],
             title,
             content,
             category: opts.category,
@@ -197,6 +217,94 @@ export function registerKnowledgeCommand(program: Command): void {
         console.log(
           `Staged ${result.candidate_id} on ${result.session_id}/${result.run_id}; `
           + `review after completion with "maestro knowledge session ${result.session_id}".`,
+        );
+      } catch (error) {
+        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        process.exitCode = 1;
+      }
+    });
+
+  knowledge
+    .command('reconcile')
+    .description('Match Run candidates against existing knowledge before completion or review')
+    .option('--run <run-id>', 'Explicit active or sealed Run ID')
+    .option('--session <session-id>', 'Explicit Session ID (requires --run)')
+    .option('--json', 'Output as JSON')
+    .action(async (opts: { run?: string; session?: string; json?: boolean }) => {
+      try {
+        if (opts.session && !opts.run) throw new Error('--session requires --run');
+        const store = new SessionStore(resolve('.'));
+        const active = opts.run
+          ? { sessionId: store.findRun(opts.run, opts.session).sessionId, runId: opts.run }
+          : store.findUniqueActiveRun();
+        if (!active) throw new Error('No unique active Run found; pass --run and optionally --session');
+        const receipt = await reconcileRunKnowledge(
+          resolve('.'),
+          active.sessionId,
+          active.runId,
+        );
+        if (opts.run) persistKnowledgeReconciliation(resolve('.'), receipt);
+        else persistActiveKnowledgeReconciliation(resolve('.'), receipt);
+        if (opts.json) {
+          console.log(JSON.stringify(receipt, null, 2));
+          return;
+        }
+        console.log(
+          `Reconciled ${receipt.counts.candidates} candidate(s) on `
+          + `${receipt.session_id}/${receipt.run_id}: `
+          + `${receipt.counts.duplicates} duplicate · ${receipt.counts.related} related · `
+          + `${receipt.counts.conflicts} conflict · ${receipt.counts.review_required} review required.`,
+        );
+        for (const candidate of receipt.candidates) {
+          console.log(
+            `  ${candidate.candidate_id} [${candidate.disposition}/`
+            + `${candidate.promotion_eligibility}] → ${candidate.canonical_id ?? 'new knowledge'}`,
+          );
+        }
+      } catch (error) {
+        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        process.exitCode = 1;
+      }
+    });
+
+  knowledge
+    .command('resolve')
+    .description('Confirm duplicate, relation, conflict, supersession, or uniqueness')
+    .argument('<candidate-id>', 'Knowledge candidate ID')
+    .requiredOption('--session <session-id>', 'Session identifier')
+    .requiredOption('--as <resolution>', `Resolution: ${KNOWLEDGE_RESOLUTIONS.join('|')}`)
+    .requiredOption('--reason <reason>', 'Human review reason')
+    .option('--target <knowledge-id>', 'Evidence-backed canonical knowledge ID')
+    .option('--json', 'Output as JSON')
+    .action((
+      candidateId: string,
+      opts: {
+        session: string;
+        as: string;
+        reason: string;
+        target?: string;
+        json?: boolean;
+      },
+    ) => {
+      try {
+        if (!KNOWLEDGE_RESOLUTIONS.includes(opts.as as KnowledgeResolutionChoice)) {
+          throw new Error(`--as must be one of ${KNOWLEDGE_RESOLUTIONS.join(', ')}`);
+        }
+        const result = resolveKnowledgeCandidate(
+          resolve('.'),
+          opts.session,
+          candidateId,
+          opts.as as KnowledgeResolutionChoice,
+          { targetId: opts.target, reason: opts.reason },
+        );
+        if (opts.json) {
+          console.log(JSON.stringify(result, null, 2));
+          return;
+        }
+        console.log(
+          `Resolved ${result.candidate_id} as ${result.disposition}; `
+          + `promotion ${result.promotion_eligibility}; `
+          + `canonical ${result.canonical_id ?? 'new knowledge'}.`,
         );
       } catch (error) {
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
@@ -221,7 +329,7 @@ export function registerKnowledgeCommand(program: Command): void {
           ?.split(',')
           .map(id => id.trim())
           .filter(Boolean);
-        const result = promoteSessionKnowledge(resolve('.'), sessionId, {
+        const result = promoteReconciledSessionKnowledge(resolve('.'), sessionId, {
           candidateIds,
           all: opts.all,
           includeObserved: opts.includeObserved,
@@ -243,6 +351,14 @@ export function registerKnowledgeCommand(program: Command): void {
         if (result.skipped_observed.length > 0) {
           console.log(`Skipped ${result.skipped_observed.length} observed-only candidate(s).`);
         }
+        if (result.skipped_review_required.length > 0) {
+          console.log(
+            `Skipped ${result.skipped_review_required.length} candidate(s) requiring resolution.`,
+          );
+        }
+        if (result.skipped_suppressed.length > 0) {
+          console.log(`Skipped ${result.skipped_suppressed.length} suppressed candidate(s).`);
+        }
       } catch (error) {
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
         process.exitCode = 1;
@@ -256,9 +372,50 @@ export function registerKnowledgeCommand(program: Command): void {
     .option('--json', 'Output as JSON')
     .action((sessionId: string, opts: { json?: boolean }) => {
       try {
-        const summary = summarizeSessionKnowledge(resolve('.'), sessionId);
+        const projectRoot = resolve('.');
+        const summary = summarizeSessionKnowledge(projectRoot, sessionId);
+        const store = new SessionStore(projectRoot);
+        const receiptByRun = new Map(summary.candidates.flatMap(candidate => candidate.run_ids)
+          .filter((runId, index, runIds) => runIds.indexOf(runId) === index)
+          .map(runId => {
+            const receipt = readKnowledgeReconciliation(store, sessionId, runId, true);
+            const fresh = receipt
+              ? isKnowledgeReconciliationFresh(
+                  projectRoot,
+                  sessionId,
+                  runId,
+                  receipt,
+                  readReportFrontmatter(store.runDir(sessionId, runId)),
+                )
+              : false;
+            return [runId, { receipt, fresh }] as const;
+          }));
+        const candidates = summary.candidates.map(candidate => {
+          const reconciliation = candidate.run_ids.flatMap(runId => {
+            const state = receiptByRun.get(runId);
+            const policy = state?.receipt?.candidates
+              .find(item => item.candidate_id === candidate.candidate_id);
+            return policy ? [{ policy, fresh: state!.fresh }] : [];
+          });
+          const selected = reconciliation.find(
+            item => item.policy.promotion_eligibility === 'suppressed',
+          ) ?? reconciliation.find(
+            item => item.policy.promotion_eligibility === 'review_required',
+          ) ?? reconciliation[0]
+            ?? null;
+          return {
+            ...candidate,
+            reconciliation: selected
+              ? {
+                  ...selected.policy,
+                  freshness: reconciliation.every(item => item.fresh) ? 'fresh' : 'stale',
+                }
+              : null,
+          };
+        });
+        const view = { ...summary, candidates };
         if (opts.json) {
-          console.log(JSON.stringify(summary, null, 2));
+          console.log(JSON.stringify(view, null, 2));
           return;
         }
 
@@ -266,7 +423,7 @@ export function registerKnowledgeCommand(program: Command): void {
         console.log(
           `${summary.ledger_count}/${summary.run_count} run ledgers · `
           + `${summary.unique_inputs} unique inputs · `
-          + `${summary.candidates.length} candidates`,
+          + `${candidates.length} candidates`,
         );
         console.log(
           `Signals: ${summary.input_totals.consumed} consumed · `
@@ -274,12 +431,16 @@ export function registerKnowledgeCommand(program: Command): void {
           + `${summary.input_totals.validated} validated · `
           + `${summary.input_totals.contradicted} contradicted`,
         );
-        if (summary.candidates.length > 0) {
+        if (candidates.length > 0) {
           console.log('\nCandidates:');
-          for (const candidate of summary.candidates) {
+          for (const candidate of candidates) {
             console.log(
               `  ${candidate.candidate_id} [${candidate.stage}/${candidate.status}] `
-              + `${candidate.target}:${candidate.category ?? 'uncategorized'} · ${candidate.title}`,
+              + `${candidate.target}:${candidate.category ?? 'uncategorized'} · ${candidate.title}`
+              + (candidate.reconciliation
+                ? ` · ${candidate.reconciliation.disposition}/`
+                  + `${candidate.reconciliation.promotion_eligibility}`
+                : ' · reconciliation missing'),
             );
           }
         }

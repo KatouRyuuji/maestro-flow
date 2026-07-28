@@ -3,12 +3,18 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 
-import type { CommandRun } from './schemas.js';
+import type { CommandRun, ReportFrontmatter } from './schemas.js';
 import { SessionStore, type StoreTransaction } from './store.js';
 import { parseSpecEntries } from '../tools/spec-entry-parser.js';
 import { appendSpecEntry } from '../tools/spec-writer.js';
 import { resolveSpecDir, type SpecCategory } from '../tools/spec-loader.js';
 import { executeAdd } from '../tools/store-knowhow.js';
+import { supersedeEntry } from '../tools/spec-conflict-marker.js';
+import { supersedeKnowhowEntry } from '../tools/knowhow-lifecycle.js';
+import {
+  knowledgeReconciliationSchema,
+  type KnowledgeCandidateReconciliation,
+} from '../knowledge/reconciliation-schema.js';
 
 const nonEmptyString = z.string().min(1);
 
@@ -94,6 +100,8 @@ export interface KnowledgePromotionResult {
     promoted_id: string;
   }>;
   skipped_observed: string[];
+  skipped_review_required: string[];
+  skipped_suppressed: string[];
 }
 
 export interface KnowledgeReconciliationCard {
@@ -119,6 +127,14 @@ export interface KnowledgeReconciliationCard {
   review: {
     command: string;
     promote_template: string;
+  };
+  reconciliation?: {
+    status: 'missing' | 'fresh' | 'stale';
+    duplicates: number;
+    conflicts: number;
+    review_required: number;
+    suppressed: number;
+    command: string;
   };
 }
 
@@ -147,11 +163,11 @@ function createDelta(sessionId: string, runId: string, now: string = nowIso()): 
   };
 }
 
-function deltaPath(store: SessionStore, sessionId: string, runId: string): string {
+export function runKnowledgeDeltaPath(store: SessionStore, sessionId: string, runId: string): string {
   return join(store.runDir(sessionId, runId), 'knowledge-delta.json');
 }
 
-function candidateId(target: KnowledgeCandidate['target'], content: string): string {
+export function knowledgeCandidateId(target: KnowledgeCandidate['target'], content: string): string {
   const normalized = content.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
   const hash = createHash('sha256').update(`${target}\0${normalized}`).digest('hex').slice(0, 16);
   return `KDC-${hash}`;
@@ -196,7 +212,7 @@ function addCandidate(
     & { evidence_refs: string[] },
   now: string,
 ): string {
-  const id = candidateId(input.target, input.content);
+  const id = knowledgeCandidateId(input.target, input.content);
   const existing = draft.candidates.find(candidate => candidate.candidate_id === id);
   if (existing) {
     existing.occurrences++;
@@ -218,13 +234,66 @@ function addCandidate(
   return id;
 }
 
+export interface KnowledgeCandidateDraft {
+  candidate_id: string;
+  target: KnowledgeCandidate['target'];
+  action: KnowledgeCandidate['action'];
+  title: string;
+  content: string;
+  category: string | null;
+  source_kind: KnowledgeCandidate['source_kind'];
+  evidence_refs: string[];
+}
+
+/**
+ * Project accepted report decisions and locked constraints without mutating the
+ * Run ledger. Reconciliation uses this view before completion; the same facts
+ * are persisted by stageHandoffKnowledgeCandidates in the completion transaction.
+ */
+export function reportKnowledgeCandidateDrafts(
+  frontmatter: ReportFrontmatter,
+  runId: string,
+): KnowledgeCandidateDraft[] {
+  const evidence = [`run:${runId}`];
+  const drafts: KnowledgeCandidateDraft[] = [];
+  for (const decision of frontmatter.decisions) {
+    const content = decision.text.trim();
+    if (decision.status !== 'accepted' || !content) continue;
+    drafts.push({
+      candidate_id: knowledgeCandidateId('spec', content),
+      target: 'spec',
+      action: 'propose',
+      title: content.slice(0, 120),
+      content,
+      category: 'arch',
+      source_kind: 'decision',
+      evidence_refs: evidence,
+    });
+  }
+  for (const constraint of frontmatter.constraints) {
+    const content = constraint.text.trim();
+    if (constraint.status !== 'locked' || !content) continue;
+    drafts.push({
+      candidate_id: knowledgeCandidateId('spec', content),
+      target: 'spec',
+      action: 'propose',
+      title: content.slice(0, 120),
+      content,
+      category: 'arch',
+      source_kind: 'constraint',
+      evidence_refs: evidence,
+    });
+  }
+  return drafts;
+}
+
 export function readRunKnowledgeDelta(
   store: SessionStore,
   sessionId: string,
   runId: string,
   readOnly = false,
 ): RunKnowledgeDelta {
-  const path = deltaPath(store, sessionId, runId);
+  const path = runKnowledgeDeltaPath(store, sessionId, runId);
   const fallback = createDelta(sessionId, runId);
   return readOnly
     ? store.readJsonFileReadOnly(path, runKnowledgeDeltaSchema, fallback)
@@ -277,7 +346,7 @@ export function recordRunKnowledgeInputs(
   const store = new SessionStore(projectRoot);
   const located = store.findRun(runId, sessionId);
   const now = nowIso();
-  const path = deltaPath(store, located.sessionId, runId);
+  const path = runKnowledgeDeltaPath(store, located.sessionId, runId);
   return store.updateActiveRunSidecar(
     located.sessionId,
     runId,
@@ -312,7 +381,7 @@ export function stageRunKnowledgeCandidate(
   const store = new SessionStore(projectRoot);
   const located = store.findRun(runId, sessionId);
   const now = nowIso();
-  const path = deltaPath(store, located.sessionId, runId);
+  const path = runKnowledgeDeltaPath(store, located.sessionId, runId);
   return store.updateActiveRunSidecar(
     located.sessionId,
     runId,
@@ -350,7 +419,7 @@ export function stageHandoffKnowledgeCandidates(
   run: CommandRun,
 ): RunKnowledgeDelta | null {
   if (!run.handoff) return null;
-  const path = deltaPath(store, sessionId, run.run_id);
+  const path = runKnowledgeDeltaPath(store, sessionId, run.run_id);
   const draft = readRunKnowledgeDelta(store, sessionId, run.run_id);
   const now = nowIso();
   const evidence = [`run:${run.run_id}`, ...run.handoff.artifact_refs.map(id => `artifact:${id}`)];
@@ -412,7 +481,7 @@ export function summarizeSessionKnowledge(
     }).sort()
     : [];
   const ledgers = runIds
-    .filter(runId => existsSync(deltaPath(store, sessionId, runId)))
+    .filter(runId => existsSync(runKnowledgeDeltaPath(store, sessionId, runId)))
     .map(runId => readRunKnowledgeDelta(store, sessionId, runId, options.readOnly));
 
   const inputTotals: Record<KnowledgeInputSignal, number> = {
@@ -561,7 +630,10 @@ function findExistingSpec(
   if (!existsSync(specsDir)) return null;
   for (const file of readdirSync(specsDir).filter(name => name.endsWith('.md')).sort()) {
     const parsed = parseSpecEntries(readFileSync(join(specsDir, file), 'utf8'));
-    const entry = parsed.entries.find(item => normalizedText(item.title) === normalizedText(title));
+    const entry = parsed.entries.find(item =>
+      normalizedText(item.title) === normalizedText(title)
+      && item.status !== 'deprecated'
+    );
     if (entry) {
       return {
         id: entry.sid ?? `legacy:${file}:${entry.lineStart}`,
@@ -574,22 +646,49 @@ function findExistingSpec(
   return null;
 }
 
+function findSpecById(
+  projectRoot: string,
+  sid: string,
+): { id: string; content: string } | null {
+  const specsDir = resolveSpecDir(projectRoot, 'project');
+  if (!existsSync(specsDir)) return null;
+  for (const file of readdirSync(specsDir).filter(name => name.endsWith('.md')).sort()) {
+    const entry = parseSpecEntries(readFileSync(join(specsDir, file), 'utf8'))
+      .entries.find(item => item.sid === sid);
+    if (entry) return { id: sid, content: specBody(entry.content) };
+  }
+  return null;
+}
+
 function promoteSpecCandidate(
   projectRoot: string,
   sessionId: string,
   candidate: KnowledgeCandidate,
   plannedId: string,
+  supersessionTarget: string | null,
 ): { promoted_id: string; outcome: 'created' | 'reaffirmed' } {
   const content = safeSpecContent(candidate.content);
+  const plannedExisting = findSpecById(projectRoot, plannedId);
+  if (plannedExisting) {
+    if (normalizedText(plannedExisting.content) !== normalizedText(content)) {
+      throw new Error(
+        `Persisted promotion ID ${plannedId} has different content for ${candidate.candidate_id}`,
+      );
+    }
+    return { promoted_id: plannedId, outcome: 'reaffirmed' };
+  }
   const existing = findExistingSpec(projectRoot, candidate.title);
   if (existing) {
-    if (normalizedText(existing.content) !== normalizedText(content)) {
+    if (normalizedText(existing.content) !== normalizedText(content)
+      && existing.id !== supersessionTarget) {
       throw new Error(
         `Candidate ${candidate.candidate_id} conflicts with existing spec title "${candidate.title}"; `
         + 'resolve with spec supersede/conflict before promotion',
       );
     }
-    return { promoted_id: existing.id, outcome: 'reaffirmed' };
+    if (normalizedText(existing.content) === normalizedText(content)) {
+      return { promoted_id: existing.id, outcome: 'reaffirmed' };
+    }
   }
 
   const validCategories: SpecCategory[] = ['coding', 'arch', 'debug', 'test', 'review', 'learning', 'ui'];
@@ -607,6 +706,7 @@ function promoteSpecCandidate(
     undefined,
     `Promoted from ${candidate.evidence_refs.join(', ')}`,
     plannedId,
+    { allowDuplicateTitle: supersessionTarget !== null },
   );
   if (!result.ok || !result.sid) {
     const replay = findExistingSpec(projectRoot, candidate.title);
@@ -646,6 +746,39 @@ function promoteKnowhowCandidate(
   }
 }
 
+function candidateReconciliationPolicies(
+  store: SessionStore,
+  sessionId: string,
+  candidate: SessionKnowledgeSummary['candidates'][number],
+): KnowledgeCandidateReconciliation[] {
+  return candidate.run_ids.flatMap(runId => {
+    const path = join(store.runDir(sessionId, runId), 'knowledge-reconciliation.json');
+    if (!existsSync(path)) return [];
+    const receipt = store.readJsonFileReadOnly(path, knowledgeReconciliationSchema, null);
+    const policy = receipt?.candidates.find(item => item.candidate_id === candidate.candidate_id);
+    return policy ? [policy] : [];
+  });
+}
+
+function blockingCandidatePolicy(
+  policies: KnowledgeCandidateReconciliation[],
+): KnowledgeCandidateReconciliation | null {
+  return policies.find(policy => policy.promotion_eligibility === 'suppressed')
+    ?? policies.find(policy => policy.promotion_eligibility === 'review_required')
+    ?? null;
+}
+
+function confirmedSupersessionTarget(
+  policies: KnowledgeCandidateReconciliation[],
+): string | null {
+  return policies.find(policy =>
+    policy.disposition === 'supersede_candidate'
+    && policy.promotion_eligibility === 'eligible'
+    && policy.resolution?.status === 'confirmed'
+    && policy.canonical_id
+  )?.canonical_id ?? null;
+}
+
 /**
  * Promote selected pending candidates. `--all` remains conservative: observed
  * candidates require an explicit id or includeObserved=true.
@@ -663,9 +796,30 @@ export function promoteSessionKnowledge(
   }
 
   const summary = summarizeSessionKnowledge(projectRoot, sessionId);
+  const store = new SessionStore(projectRoot);
   const requested = new Set(options.candidateIds ?? []);
   const unknown = [...requested].filter(id => !summary.candidates.some(candidate => candidate.candidate_id === id));
   if (unknown.length > 0) throw new Error(`Unknown candidate IDs: ${unknown.join(', ')}`);
+
+  const policyByCandidate = new Map(summary.candidates.map(candidate => [
+    candidate.candidate_id,
+    candidateReconciliationPolicies(store, sessionId, candidate),
+  ]));
+  if (!options.all) {
+    const blocked = summary.candidates
+      .filter(candidate => requested.has(candidate.candidate_id))
+      .map(candidate => ({
+        candidate,
+        policy: blockingCandidatePolicy(policyByCandidate.get(candidate.candidate_id) ?? []),
+      }))
+      .find(item => item.policy);
+    if (blocked?.policy) {
+      throw new Error(
+        `Candidate ${blocked.candidate.candidate_id} promotion is ${blocked.policy.promotion_eligibility} `
+        + `(${blocked.policy.disposition}); resolve it with 'maestro knowledge resolve' first`,
+      );
+    }
+  }
 
   const pending = summary.candidates.filter(candidate =>
     candidate.status === 'pending' || candidate.status === 'promoting'
@@ -680,13 +834,29 @@ export function promoteSessionKnowledge(
         promoted_id: candidate.promoted_id!,
       }))
     : [];
-  const selected = options.all
+  const eligiblePending = options.all
     ? pending.filter(candidate => options.includeObserved || candidate.stage === 'corroborated')
     : pending.filter(candidate => requested.has(candidate.candidate_id));
+  const skippedReviewRequired = options.all
+    ? eligiblePending
+      .filter(candidate => blockingCandidatePolicy(
+        policyByCandidate.get(candidate.candidate_id) ?? [],
+      )?.promotion_eligibility === 'review_required')
+      .map(candidate => candidate.candidate_id)
+    : [];
+  const skippedSuppressed = options.all
+    ? summary.candidates
+      .filter(candidate => candidate.status !== 'promoted')
+      .filter(candidate => blockingCandidatePolicy(
+        policyByCandidate.get(candidate.candidate_id) ?? [],
+      )?.promotion_eligibility === 'suppressed')
+      .map(candidate => candidate.candidate_id)
+    : [];
+  const blockedForAll = new Set([...skippedReviewRequired, ...skippedSuppressed]);
+  const selected = eligiblePending.filter(candidate => !blockedForAll.has(candidate.candidate_id));
   const skippedObserved = options.all && !options.includeObserved
     ? pending.filter(candidate => candidate.stage === 'observed').map(candidate => candidate.candidate_id)
     : [];
-  const store = new SessionStore(projectRoot);
   const unsealedSources = selected.flatMap(candidate =>
     candidate.run_ids
       .filter(runId => store.readRun(sessionId, runId).status !== 'sealed')
@@ -705,6 +875,8 @@ export function promoteSessionKnowledge(
         promoted: [],
         already_promoted: [],
         skipped_observed: [],
+        skipped_review_required: skippedReviewRequired,
+        skipped_suppressed: skippedSuppressed,
       };
     }
     throw new Error(
@@ -718,6 +890,9 @@ export function promoteSessionKnowledge(
   // This also catches two candidates whose truncated titles collide.
   const selectedSpecTitles = new Map<string, KnowledgeCandidate>();
   for (const candidate of selected.filter(item => item.target === 'spec')) {
+    const supersessionTarget = confirmedSupersessionTarget(
+      policyByCandidate.get(candidate.candidate_id) ?? [],
+    );
     const normalizedTitle = normalizedText(candidate.title);
     const prior = selectedSpecTitles.get(normalizedTitle);
     if (prior && normalizedText(safeSpecContent(prior.content)) !== normalizedText(safeSpecContent(candidate.content))) {
@@ -727,7 +902,9 @@ export function promoteSessionKnowledge(
     }
     selectedSpecTitles.set(normalizedTitle, candidate);
     const existing = findExistingSpec(projectRoot, candidate.title);
-    if (existing && normalizedText(existing.content) !== normalizedText(safeSpecContent(candidate.content))) {
+    if (existing
+      && normalizedText(existing.content) !== normalizedText(safeSpecContent(candidate.content))
+      && existing.id !== supersessionTarget) {
       throw new Error(
         `Candidate ${candidate.candidate_id} conflicts with existing spec title "${candidate.title}"; `
         + 'resolve with spec supersede/conflict before promotion',
@@ -739,10 +916,13 @@ export function promoteSessionKnowledge(
     const existing = candidate.target === 'spec'
       ? findExistingSpec(projectRoot, candidate.title)
       : null;
+    const supersessionTarget = confirmedSupersessionTarget(
+      policyByCandidate.get(candidate.candidate_id) ?? [],
+    );
     const promotedId = candidate.promoted_id
-      ?? existing?.id
+      ?? (existing && !supersessionTarget ? existing.id : null)
       ?? (candidate.target === 'spec' ? plannedSpecId(candidate) : plannedKnowhowId(candidate));
-    return { candidate, promotedId };
+    return { candidate, promotedId, supersessionTarget };
   });
 
   // Phase 1: persist deterministic promotion intents before any project write.
@@ -762,15 +942,26 @@ export function promoteSessionKnowledge(
       if (changed) {
         delta.revision++;
         delta.updated_at = intentAt;
-        tx.writeJson(deltaPath(store, sessionId, runId), delta, runKnowledgeDeltaSchema);
+        tx.writeJson(runKnowledgeDeltaPath(store, sessionId, runId), delta, runKnowledgeDeltaSchema);
       }
     }
   });
 
-  const promoted = plan.map(({ candidate, promotedId }) => {
+  const promoted = plan.map(({ candidate, promotedId, supersessionTarget }) => {
     const result = candidate.target === 'spec'
-      ? promoteSpecCandidate(projectRoot, sessionId, candidate, promotedId)
+      ? promoteSpecCandidate(projectRoot, sessionId, candidate, promotedId, supersessionTarget)
       : promoteKnowhowCandidate(projectRoot, candidate, promotedId);
+    if (supersessionTarget) {
+      const superseded = candidate.target === 'spec'
+        ? supersedeEntry(projectRoot, supersessionTarget, result.promoted_id)
+        : supersedeKnowhowEntry(projectRoot, supersessionTarget, result.promoted_id);
+      if (!superseded.success) {
+        throw new Error(
+          `Promoted ${candidate.candidate_id}, but failed to supersede ${supersessionTarget}: `
+          + (superseded.error ?? 'unknown supersession error'),
+        );
+      }
+    }
     return {
       candidate_id: candidate.candidate_id,
       target: candidate.target,
@@ -805,7 +996,7 @@ export function promoteSessionKnowledge(
       if (changed) {
         delta.revision++;
         delta.updated_at = promotedAt;
-        tx.writeJson(deltaPath(store, sessionId, runId), delta, runKnowledgeDeltaSchema);
+        tx.writeJson(runKnowledgeDeltaPath(store, sessionId, runId), delta, runKnowledgeDeltaSchema);
       }
     }
   });
@@ -816,5 +1007,7 @@ export function promoteSessionKnowledge(
     promoted,
     already_promoted: alreadyPromoted,
     skipped_observed: skippedObserved,
+    skipped_review_required: skippedReviewRequired,
+    skipped_suppressed: skippedSuppressed,
   };
 }
