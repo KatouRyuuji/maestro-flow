@@ -34,6 +34,7 @@ Intent-driven knowledge-store management. No fixed grammar — state your intent
 |-----------|----------|------|
 | audit | `audit` / 审计 / 清理 / prune / 检查知识库 | `knowledge-audit` |
 | reconcile | `reconcile` / 匹配 / 去重 / 冲突检测 | `maestro knowledge reconcile [--run <run-id> --session <session-id>]` |
+| review | `review` / 审查 / 证据 / 下一步 | `maestro knowledge review <session-id> [--refresh]` |
 | resolve | `resolve` / 裁决 / 重复 / 冲突 / 替代 | `maestro knowledge resolve <candidate-id> --session <session-id> --as <choice> --reason "<reason>"` |
 | session | `session` / 候选 / backlog / reconciliation | `maestro knowledge session <session-id>` |
 | record | `record` / cited / validated / contradicted / 记录命中关系 | `maestro knowledge record ...` |
@@ -50,7 +51,7 @@ Classify the intent in `$ARGUMENTS` into one operation, then run `maestro run sk
 
 1. Explicit keyword present → use its step or direct CLI lifecycle command (deterministic shortcut).
 2. Otherwise infer from the intent (see the table above), e.g. "审计/清理知识库" → audit, "从工件/session 提取" → harvest, "知识图谱/wiki 健康" → wiki, "注册术语 X" → domain.
-3. `reconcile` / `resolve` / `session` / `record` / `stage` / `promote` map directly to the corresponding `maestro knowledge` CLI. Preserve stable knowledge IDs, Run ID, Session ID, signal, candidate ID, disposition, target, and reason exactly; do not translate these operations into direct spec/knowhow writes.
+3. `reconcile` / `review` / `resolve` / `session` / `record` / `stage` / `promote` map directly to the corresponding `maestro knowledge` CLI. Preserve stable knowledge IDs, graph aliases, Run ID, Session ID, signal, candidate ID, disposition, target, and reason exactly; do not translate these operations into direct spec/knowhow writes.
 4. For wiki, classify the sub-action: `connect`/连接 → `wiki-connect`; `digest`/摘要 → `wiki-digest`; `health`/`search`/`cleanup`/`stats`/健康/检查/_(none)_ → `wiki-manage`.
 5. Ambiguous → display the operation table and ask the user to pick.
 
@@ -58,6 +59,8 @@ Classify the intent in `$ARGUMENTS` into one operation, then run `maestro run sk
 
 - Remaining tokens after classification become the chosen step's own arguments.
 - During an active Run, reusable knowhow is staged here with `maestro knowledge stage knowhow ...`; project knowhow is written only by explicit promotion. Outside a Run, direct `/maestro-knowhow` capture remains available.
+- For long or multiline content, use `maestro knowledge stage <target> "<title>" --content-file <path|->`; do not flatten structured knowledge into a shell argument.
+- Use `maestro knowledge review <session-id>` as the human review surface. It shows fresh/missing/stale receipts, diversified evidence-backed matches, and copyable reconcile/resolve/promote commands. `--refresh` explicitly refreshes every candidate source Run.
 - Reconciliation is mandatory before completion but is not a popularity vote: exact identity, diversified semantic matches, and recorded/KG associations are evaluated separately. Unresolved semantic duplicate/conflict/supersession candidates may be sealed, but promotion must fail closed until `resolve`.
 - `audit --prune --apply` may only perform backed-up soft lifecycle transitions. Never physically delete knowledge or prune solely because it has low usage.
 </dispatch>

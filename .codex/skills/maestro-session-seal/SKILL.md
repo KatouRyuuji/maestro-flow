@@ -62,7 +62,7 @@ Note: maestro-next suggests session-seal when 'Tests green + active session'. Th
 
 ### Step 2: Knowledge Reconciliation
 
-1. Run `maestro knowledge session {session_id} --json`. Treat its Run ledgers, reconciliation policies, and candidate IDs as authoritative; do not rescan outputs to recreate candidates.
+1. Run `maestro knowledge review {session_id} --json`. Treat its Run ledgers, reconciliation policies, diversified matches, and candidate IDs as authoritative; do not rescan outputs to recreate candidates. Use `--refresh` only when the review reports missing or stale source receipts.
 2. Explain signal semantics when relevant: search/injection is exposure only; explicit loads are consumed; `cited`, `validated`, and `contradicted` are explicit Run relations.
 3. Report exact/semantic duplicates, related/extends candidates, potential conflicts, supersession candidates, missing receipts, and promotion eligibility separately. Exact duplicates are suppressed automatically; unresolved `review_required` candidates cannot be promoted.
 4. If `--skip-knowledge`, report the pending/promoting/review-required/suppressed counts and continue. The backlog and reconciliation receipts remain durable after seal.
@@ -77,13 +77,13 @@ Note: maestro-next suggests session-seal when 'Tests green + active session'. Th
    ```
 7. Promote only through the receipt-aware CLI:
    - Corroborated selection → `maestro knowledge promote {session_id} --all`
-   - Explicit selection → `maestro knowledge promote {session_id} --candidate <candidate-id,...>`
+   - Explicit selection → repeat `maestro knowledge promote {session_id} --candidate <candidate-id>` for each selection (comma-separated compatibility remains supported)
    - `-y` may run `--all`, which remains conservative and skips observed-only, review-required, and suppressed candidates. It MUST NOT add `--include-observed` or auto-resolve a candidate without explicit user selection.
 8. For a replacement candidate, confirm `--as supersede` and then promote it; promotion creates the successor and links the evolution chain. For coexisting valid rules, confirm `related` or `conflict` as appropriate. Never direct-write a candidate that was already promoted successfully.
 
 ### Step 3: Seal Session
 
-1. Call `maestro session seal {session_id}`
+1. Call `maestro session seal {session_id}` (`--json` emits the canonical machine envelope)
 2. CLI writes `session.json.lifecycle.sealed_at` and `seal_summary`
 3. CLI updates `state.json.sessions[].status` to `sealed`
 
@@ -117,7 +117,7 @@ Status: DONE
 | Condition | Suggestion |
 |-----------|-----------|
 | Next session activated | step `analyze` (`maestro run prepare --platform codex analyze` + `maestro run create analyze --session {next-slug} --intent "{goal}"`) |
-| Knowledge candidates pending | `maestro knowledge session {session_id}` |
+| Knowledge candidates pending | `maestro knowledge review {session_id}` |
 | Knowledge health review needed | `/maestro-knowledge audit` |
 </completion>
 
@@ -130,13 +130,13 @@ Status: DONE
 | E004 | error | Critical gates failed | Run verify/review to resolve |
 | W001 | warning | No knowledge candidates found | Proceed to seal |
 | W002 | warning | No verify/review run in session — gate check skipped | Consider running verify before seal |
-| W003 | warning | Candidate backlog left pending | Review later with `maestro knowledge session {session_id}` |
+| W003 | warning | Candidate backlog left pending | Review later with `maestro knowledge review {session_id}` |
 | W004 | warning | Reconciliation review remains unresolved | Seal may continue; promotion stays blocked until `maestro knowledge resolve` |
 </error_codes>
 
 <success_criteria>
 - [ ] Target session resolved and verified as ready for seal
-- [ ] Knowledge candidate receipt/backlog loaded via `maestro knowledge session`
+- [ ] Knowledge candidate receipt/backlog and evidence loaded via `maestro knowledge review`
 - [ ] Reconciliation dispositions reviewed; unresolved items were explicitly retained or resolved
 - [ ] User reviewed candidates, or pending backlog was reported and deliberately retained
 - [ ] Selected knowledge promoted only through `maestro knowledge promote`
