@@ -193,6 +193,31 @@ Two spaces for indentation.
     expect(index.has('indent')).toBe(true);
   });
 
+  it('excludes deprecated entries from the keyword injection index', () => {
+    writeSpecFile('coding-conventions.md', `
+<spec-entry category="coding" keywords="active-rule" date="2026-07-28" status="active">
+
+### Active Rule
+
+Current guidance.
+
+</spec-entry>
+
+<spec-entry category="coding" keywords="retired-rule" date="2026-07-27" status="deprecated" superseded-by="S-current">
+
+### Retired Rule
+
+Outdated guidance.
+
+</spec-entry>
+`);
+
+    const index = buildKeywordIndex(testDir);
+    expect(index.has('active-rule')).toBe(true);
+    expect(index.has('retired-rule')).toBe(false);
+    expect([...index.values()].flat().map(entry => entry.title)).not.toContain('Retired Rule');
+  });
+
   it('ignores non-md files', () => {
     writeFileSync(join(testDir, '.workflow', 'specs', 'notes.txt'), 'not a spec');
     writeSpecFile('coding-conventions.md', `
