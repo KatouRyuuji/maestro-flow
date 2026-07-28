@@ -17,6 +17,7 @@ vi.mock('../search/daemon-client.js', () => ({
 import {
   registerSearchCommand,
   runUnifiedSearch,
+  selectDiverseKgResults,
   selectDiverseWikiCandidates,
 } from './search.js';
 
@@ -121,6 +122,20 @@ describe('balanced wiki candidate selection', () => {
     expect(selected[1].selectionReason).toBe('diversity');
   });
 
+  it('keeps one result per document family in balanced mode', () => {
+    const candidates = [
+      { entry: wikiEntry('guide-001', [], { parent: 'guide' }), score: 10 },
+      { entry: wikiEntry('guide-002', [], { parent: 'guide' }), score: 9.9 },
+      { entry: wikiEntry('other', []), score: 9.8 },
+    ];
+    const selected = selectDiverseWikiCandidates(candidates, {
+      limit: 3,
+      applyCaps: false,
+      diversity: 'balanced',
+    });
+    expect(selected.map(item => item.entry.id)).toEqual(['guide-001', 'other']);
+  });
+
   it('reserves one relevance-floored slot for a lower-exposure family', () => {
     const candidates = Array.from({ length: 5 }, (_, index) => ({
       entry: wikiEntry(`candidate-${index + 1}`, [], {
@@ -189,6 +204,45 @@ describe('balanced wiki candidate selection', () => {
     });
     expect(selected).toHaveLength(200);
     expect(performance.now() - started).toBeLessThan(1_000);
+  });
+});
+
+describe('balanced KG candidate selection', () => {
+  it('caps both source concentration and file families before fallback', () => {
+    const candidate = (
+      graphId: string,
+      sourceType: string,
+      filePath: string,
+      score: number,
+    ) => ({
+      id: graphId,
+      graphId,
+      aliases: [],
+      sourceType,
+      kind: sourceType === 'codegraph' ? 'function' : 'knowhow_entry',
+      name: graphId,
+      definition: '',
+      filePath,
+      score,
+      category: 'arch',
+      status: 'active',
+      selectionReason: 'diversity' as const,
+    });
+    const selected = selectDiverseKgResults([
+      candidate('code:a', 'codegraph', 'src/a.ts', 10),
+      candidate('code:b', 'codegraph', 'src/a.ts', 9.9),
+      candidate('code:c', 'codegraph', 'src/c.ts', 9.8),
+      candidate('code:d', 'codegraph', 'src/d.ts', 9.7),
+      candidate('knowhow:a', 'knowhow', '.workflow/knowhow/a.md', 9.6),
+      candidate('spec:a', 'spec', '.workflow/specs/a.md', 9.5),
+    ], 4);
+
+    expect(selected.map(item => item.graphId)).toEqual([
+      'code:a',
+      'code:c',
+      'knowhow:a',
+      'spec:a',
+    ]);
   });
 });
 

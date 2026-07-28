@@ -14,10 +14,12 @@
  */
 
 import type { Command } from 'commander';
-import { resolve } from 'node:path';
+import { basename, extname, resolve } from 'node:path';
 
 import { truncate, extractSnippet, highlightTerms } from '../utils/cli-format.js';
+import { knowhowFileToWikiId } from '../utils/frontmatter.js';
 import { isDeprecatedKnowledgeEntry } from '../utils/knowledge-lifecycle.js';
+import type { SourceType } from '../graph/kg/db/types.js';
 import type { WikiIndexer } from '#maestro-dashboard/wiki/wiki-indexer.js';
 import type { WikiEntry, WikiNodeType } from '#maestro-dashboard/wiki/wiki-types.js';
 import { loadWorkspaceConfig, resolveWorkspaceLinks } from '../config/index.js';
@@ -210,6 +212,12 @@ interface SelectedWikiCandidate extends ScoredWikiCandidate {
 }
 
 function familyKey(entry: WikiEntry): string {
+  if (
+    (entry.ext?.virtualKind === 'session' || entry.ext?.virtualKind === 'session-run')
+    && entry.id.startsWith('session-')
+  ) {
+    return entry.id;
+  }
   return (entry.parent ?? entry.id).replace(/-\d{2,3}$/, '');
 }
 
@@ -230,8 +238,8 @@ function jaccard(left: Set<string>, right: Set<string>): number {
 function buildWikiCandidatePool(
   filtered: ScoredWikiCandidate[],
   applyCaps: boolean,
+  familyCap = 2,
 ): ScoredWikiCandidate[] {
-  const PARENT_CAP = 2;
   const KG_CODE_CAP = 3;
   const seen = new Set<string>();
   const pool: ScoredWikiCandidate[] = [];
@@ -242,7 +250,7 @@ function buildWikiCandidatePool(
     if (seen.has(candidate.entry.id)) continue;
     const parent = familyKey(candidate.entry);
     const parentCount = parentCounts.get(parent) ?? 0;
-    if (parentCount >= PARENT_CAP) continue;
+    if (parentCount >= familyCap) continue;
     if (applyCaps) {
       const category = candidate.entry.category ?? '';
       const cap = CATEGORY_CAPS[category];
@@ -278,11 +286,16 @@ export function selectDiverseWikiCandidates(
     explorationLimit?: number;
   },
 ): SelectedWikiCandidate[] {
-  const pool = buildWikiCandidatePool(filtered, options.applyCaps);
+  const diversity = options.diversity ?? 'balanced';
+  const pool = buildWikiCandidatePool(
+    filtered,
+    options.applyCaps,
+    diversity === 'balanced' ? 1 : 2,
+  );
 
   const limit = Math.max(0, options.limit);
   if (limit === 0 || pool.length === 0) return [];
-  if ((options.diversity ?? 'balanced') === 'off') {
+  if (diversity === 'off') {
     return pool.slice(0, limit).map(candidate => ({
       ...candidate,
       selectionReason: 'relevance',
@@ -567,13 +580,135 @@ function incrementSearchHitsAsync(
 
 /** A KG unified search result from MaestroGraph. */
 export interface KgSearchResult {
+  /** Canonical ID accepted by `maestro load` when one exists. */
   id: string;
+  /** Stable MaestroGraph identity used for graph traversal and usage attribution. */
+  graphId: string;
+  /** Backward-compatible identities accepted as aliases by callers. */
+  aliases: string[];
   sourceType: string;
   kind: string;
   name: string;
   definition: string;
   filePath: string;
   score: number;
+  category: string;
+  status: string;
+  selectionReason: 'relevance' | 'diversity';
+}
+
+export interface KgSearchOptions {
+  type?: string;
+  category?: string;
+  includeDeprecated?: boolean;
+  diversity?: 'balanced' | 'off';
+}
+
+function kgSourceTypes(type: string | undefined): SourceType[] | undefined {
+  switch (type) {
+    case undefined: return undefined;
+    case 'spec': return ['spec'];
+    case 'knowhow': return ['knowhow'];
+    case 'issue': return ['issue'];
+    case 'domain': return ['domain'];
+    case 'project':
+    case 'roadmap':
+    case 'note':
+      return ['codebase'];
+    case 'session':
+    case 'scratch':
+      return [];
+    default:
+      return undefined;
+  }
+}
+
+function slugifyKnowledgeId(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+function canonicalKgId(
+  sourceType: string,
+  graphId: string,
+  filePath: string,
+  projectRoot: string,
+): string {
+  if (sourceType === 'knowhow' && filePath) {
+    return knowhowFileToWikiId(basename(filePath));
+  }
+  if (sourceType === 'spec' && filePath) {
+    const normalizedFile = resolve(filePath).replace(/\\/g, '/').toLowerCase();
+    const projectSpecs = resolve(projectRoot, '.workflow', 'specs').replace(/\\/g, '/').toLowerCase();
+    if (normalizedFile.startsWith(`${projectSpecs}/`)) {
+      return `spec:project:${slugifyKnowledgeId(basename(filePath, extname(filePath)))}`;
+    }
+  }
+  if (sourceType === 'issue' && graphId.startsWith('issue:')) {
+    return `issue-${graphId.slice('issue:'.length)}`;
+  }
+  if (sourceType === 'domain' && graphId.startsWith('domain:')) {
+    return `domain-${graphId.slice('domain:'.length)}`;
+  }
+  return graphId;
+}
+
+function kgFamilyKey(result: KgSearchResult): string {
+  if (result.sourceType === 'spec' || result.sourceType === 'knowhow') {
+    return `${result.sourceType}:${resolve(result.filePath).replace(/\\/g, '/').toLowerCase()}`;
+  }
+  if (result.sourceType === 'codegraph') {
+    return `code:${resolve(result.filePath).replace(/\\/g, '/').toLowerCase()}`;
+  }
+  return result.id;
+}
+
+export function selectDiverseKgResults(
+  candidates: KgSearchResult[],
+  limit: number,
+  diversity: 'balanced' | 'off' = 'balanced',
+): KgSearchResult[] {
+  const boundedLimit = Math.max(0, limit);
+  if (boundedLimit === 0) return [];
+  if (diversity === 'off') {
+    return candidates.slice(0, boundedLimit).map((candidate, index) => ({
+      ...candidate,
+      selectionReason: index === 0 ? 'relevance' : 'diversity',
+    }));
+  }
+
+  const selected: KgSearchResult[] = [];
+  const selectedGraphIds = new Set<string>();
+  const familyCounts = new Map<string, number>();
+  const sourceCounts = new Map<string, number>();
+  const sourceCap = Math.max(1, Math.ceil(boundedLimit / 2));
+  const take = (candidate: KgSearchResult, enforceSourceCap: boolean, familyCap: number): boolean => {
+    if (selectedGraphIds.has(candidate.graphId)) return false;
+    const family = kgFamilyKey(candidate);
+    if ((familyCounts.get(family) ?? 0) >= familyCap) return false;
+    if (enforceSourceCap && (sourceCounts.get(candidate.sourceType) ?? 0) >= sourceCap) return false;
+    selected.push({
+      ...candidate,
+      selectionReason: selected.length === 0 ? 'relevance' : 'diversity',
+    });
+    selectedGraphIds.add(candidate.graphId);
+    familyCounts.set(family, (familyCounts.get(family) ?? 0) + 1);
+    sourceCounts.set(candidate.sourceType, (sourceCounts.get(candidate.sourceType) ?? 0) + 1);
+    return true;
+  };
+
+  for (const candidate of candidates) {
+    take(candidate, true, 1);
+    if (selected.length >= boundedLimit) return selected;
+  }
+  for (const candidate of candidates) {
+    take(candidate, false, 1);
+    if (selected.length >= boundedLimit) return selected;
+  }
+  for (const candidate of candidates) {
+    take(candidate, false, 2);
+    if (selected.length >= boundedLimit) return selected;
+  }
+  return selected;
 }
 
 export async function runKgSearch(
@@ -581,31 +716,51 @@ export async function runKgSearch(
   limit: number,
   recordImpressions: boolean = true,
   projectRoot: string = resolve('.'),
+  options: KgSearchOptions = {},
 ): Promise<{ results: KgSearchResult[]; summary: Record<string, number> }> {
   try {
     const { MaestroGraph } = await import('../graph/kg/engine.js');
     if (!MaestroGraph.isInitialized(projectRoot)) return { results: [], summary: {} };
+    const sourceTypes = kgSourceTypes(options.type);
+    if (sourceTypes?.length === 0) return { results: [], summary: {} };
     const mg = recordImpressions
       ? await MaestroGraph.open(projectRoot)
       : await MaestroGraph.openReadOnly(projectRoot);
     try {
-      const output = mg.searchUnified(q, { limit });
-      const results: KgSearchResult[] = output.directMatches.map(r => ({
-        id: r.node.id,
+      const candidateLimit = Math.min(500, Math.max(limit * 4, 40));
+      const output = mg.searchUnified(q, { limit: candidateLimit, sourceTypes });
+      const candidates: KgSearchResult[] = output.directMatches.map(r => {
+        const id = canonicalKgId(r.node.sourceType, r.node.id, r.node.filePath, projectRoot);
+        return {
+        id,
+        graphId: r.node.id,
+        aliases: id === r.node.id ? [] : [r.node.id],
         sourceType: r.node.sourceType,
         kind: r.node.kind,
         name: r.node.name,
         definition: r.node.definition?.substring(0, 120) || '',
         filePath: r.node.filePath,
         score: r.score,
-      }));
+        category: r.node.category,
+        status: r.node.status,
+        selectionReason: 'diversity' as const,
+      };
+      }).filter(result =>
+        (!options.category || result.category === options.category)
+        && (options.includeDeprecated || result.status !== 'deprecated')
+      );
+      const results = selectDiverseKgResults(
+        candidates,
+        limit,
+        options.diversity ?? 'balanced',
+      );
       if (recordImpressions && results.length > 0) {
         try {
           const { CredibilityStore } = await import('../graph/kg/credibility.js');
           const store = new CredibilityStore(mg.rawDb);
           const knowledgeIds = results
             .filter(result => result.sourceType !== 'codegraph')
-            .map(result => result.id);
+            .map(result => result.graphId);
           const existingIds = [...mg.getQueryBuilder().getNodesByIds(knowledgeIds).keys()];
           mg.getConnection().transaction(() => store.incrementImpressions(existingIds));
         } catch (error) {
@@ -616,7 +771,14 @@ export async function runKgSearch(
           }
         }
       }
-      return { results, summary: output.summary };
+      const summary = {
+        codeSymbols: results.filter(result => result.sourceType === 'codegraph').length,
+        domainTerms: results.filter(result => result.sourceType === 'domain').length,
+        specRules: results.filter(result => result.sourceType === 'spec').length,
+        knowhowDocs: results.filter(result => result.sourceType === 'knowhow').length,
+        total: results.length,
+      };
+      return { results, summary };
     } finally {
       mg.close();
     }
@@ -887,7 +1049,7 @@ export function registerSearchCommand(program: Command): void {
     .option('--workspace <name>', 'Filter results to a specific linked workspace')
     .option('--include-linked-code', 'Include explicitly shared linked CodeGraph results')
     .option('--read-only-probe', 'Run a hermetic no-daemon, no-persistence search probe')
-    .option('--include-deprecated', 'Include superseded/deprecated spec entries (hidden by default)')
+    .option('--include-deprecated', 'Include superseded/deprecated knowledge entries (hidden by default)')
     .option('--diversity <mode>', 'Wiki diversity policy: balanced|off', 'balanced')
     .option('--no-emb', 'Skip embedding, use BM25 only')
     .option('--limit <n>', 'Max results', '20')
@@ -924,6 +1086,10 @@ export function registerSearchCommand(program: Command): void {
         console.error('Error: --keyword is a wiki facet and cannot be combined with --kg');
         process.exit(1);
       }
+      if (opts.workspace && kgMode) {
+        console.error('Error: --workspace is not available in local --kg mode');
+        process.exit(1);
+      }
 
       const skipEmbedding = opts.emb === false;
       const isTTY = process.stdout.isTTY === true;
@@ -935,6 +1101,13 @@ export function registerSearchCommand(program: Command): void {
           q,
           limit,
           opts.readOnlyProbe !== true,
+          resolve('.'),
+          {
+            type: opts.type,
+            category: opts.category,
+            includeDeprecated: opts.includeDeprecated === true,
+            diversity: opts.diversity as 'balanced' | 'off',
+          },
         );
         if (opts.json) {
           console.log(JSON.stringify({ query: q, engine: 'maestrograph', count: kgResults.length, summary, results: kgResults }, null, 2));
@@ -955,7 +1128,7 @@ export function registerSearchCommand(program: Command): void {
           const name = isTTY ? highlightTerms(r.name, qTerms) : r.name;
           const def = r.definition ? `  ${truncate(r.definition, 70)}` : '';
           const scoreTag = `  (${r.score.toFixed(1)})`;
-          console.log(`  [${r.sourceType}:${r.kind}]  ${name}${def}${scoreTag}`);
+          console.log(`  [${r.sourceType}:${r.kind}]  ${r.id}  ${name}${def}${scoreTag}`);
         }
         return;
       }

@@ -12,7 +12,7 @@ import type {
 } from '../graph/kg/db/types.js';
 import { runKgSearch } from './search.js';
 
-function node(id: string): UnifiedNode {
+function node(id: string, overrides: Partial<UnifiedNode> = {}): UnifiedNode {
   return {
     id,
     kind: 'spec_entry' as UnifiedNodeKind,
@@ -44,6 +44,7 @@ function node(id: string): UnifiedNode {
     body: 'Alpha canonical behavior',
     metadata: {},
     updatedAt: Date.now(),
+    ...overrides,
   };
 }
 
@@ -91,6 +92,73 @@ describe('KG search usage attribution', () => {
       } finally {
         failure.mockRestore();
       }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('filters by source type and exposes a loadable canonical knowhow ID', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'maestro-kg-search-filter-'));
+    try {
+      const graph = await MaestroGraph.init(root);
+      graph.getConnection().transaction(() =>
+        graph.getQueryBuilder().insertNodes([
+          node('spec:alpha'),
+          node('knowhow:TIP-20260728-alpha', {
+            kind: 'knowhow_entry',
+            sourceType: 'knowhow',
+            filePath: join(root, '.workflow', 'knowhow', 'TIP-20260728-alpha.md'),
+          }),
+        ])
+      );
+      graph.close();
+
+      const output = await runKgSearch('alpha', 10, false, root, {
+        type: 'knowhow',
+      });
+
+      expect(output.results).toEqual([
+        expect.objectContaining({
+          id: 'knowhow-tip-20260728-alpha',
+          graphId: 'knowhow:TIP-20260728-alpha',
+          aliases: ['knowhow:TIP-20260728-alpha'],
+          sourceType: 'knowhow',
+        }),
+      ]);
+      expect(output.summary).toMatchObject({
+        codeSymbols: 0,
+        specRules: 0,
+        knowhowDocs: 1,
+        total: 1,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('excludes deprecated KG knowledge unless explicitly requested', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'maestro-kg-search-lifecycle-'));
+    try {
+      const graph = await MaestroGraph.init(root);
+      graph.getConnection().transaction(() =>
+        graph.getQueryBuilder().insertNodes([
+          node('knowhow:TIP-20260728-retired-alpha', {
+            kind: 'knowhow_entry',
+            sourceType: 'knowhow',
+            status: 'deprecated',
+            filePath: join(root, '.workflow', 'knowhow', 'TIP-20260728-retired-alpha.md'),
+          }),
+        ])
+      );
+      graph.close();
+
+      expect((await runKgSearch('alpha', 10, false, root, {
+        type: 'knowhow',
+      })).results).toEqual([]);
+      expect((await runKgSearch('alpha', 10, false, root, {
+        type: 'knowhow',
+        includeDeprecated: true,
+      })).results).toHaveLength(1);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
