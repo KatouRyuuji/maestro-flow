@@ -27,6 +27,9 @@ Thumbs.db
 !.workflow/collab/overlays/
 claude-code-skills-guide.md
 
+# Local analysis/research checkouts and reports
+_analysis/
+
 # Dashboard local state
 dashboard/.planning/
 dashboard/.workflow/
