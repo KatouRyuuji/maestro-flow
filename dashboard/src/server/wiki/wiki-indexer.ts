@@ -27,6 +27,7 @@ import type {
   WikiEntry,
   WikiFilters,
   WikiIndex,
+  WikiSearchFilters,
   WikiStatus,
   WikiNodeType,
   WikiScope,
@@ -41,6 +42,7 @@ const SEARCH_PARENT_CAP = 2;
 export interface WikiSearchOptions {
   skipEmbedding?: boolean;
   credibilityFactors?: Map<string, number>;
+  filters?: WikiSearchFilters;
 }
 
 function prefixLinkedEntries(entries: WikiEntry[], idPrefix: string, workspace: string): void {
@@ -96,11 +98,33 @@ export interface WikiEvidenceEvent {
   queryId: null;
 }
 
+function matchesSearchFilters(entry: WikiEntry, filters: WikiSearchFilters): boolean {
+  if (!filters.includeDeprecated
+    && (entry.status === 'deprecated' || entry.ext.status === 'deprecated')) return false;
+  if (filters.type) {
+    if (filters.type === 'session') {
+      if (entry.category !== 'session') return false;
+    } else if (filters.type === 'scratch') {
+      if (entry.category !== 'scratch') return false;
+    } else if (entry.type !== filters.type) return false;
+  }
+  if (filters.category && entry.category !== filters.category) return false;
+  if (filters.tag && !entry.tags.includes(filters.tag.toLowerCase())) return false;
+  if (filters.keyword) {
+    const keyword = filters.keyword.toLowerCase();
+    if (!entry.title.toLowerCase().includes(keyword)
+      && !entry.body.toLowerCase().includes(keyword)) return false;
+  }
+  if (filters.workspace && entry.source.workspace !== filters.workspace) return false;
+  return true;
+}
+
 function finalizeSearchResults(
   index: WikiIndex,
   candidates: readonly { docId: string; score: number }[],
   query: string,
   limit: number,
+  includeDeprecated = false,
 ): Array<{ entry: WikiEntry; score: number }> {
   const resultLimit = Math.max(0, limit);
   if (resultLimit === 0) return [];
@@ -108,7 +132,8 @@ function finalizeSearchResults(
   let eligible: Array<{ entry: WikiEntry; score: number }> = [];
   for (const candidate of candidates) {
     const entry = index.byId[candidate.docId];
-    if (!entry || entry.status === 'deprecated' || entry.ext.status === 'deprecated') continue;
+    if (!entry || (!includeDeprecated
+      && (entry.status === 'deprecated' || entry.ext.status === 'deprecated'))) continue;
     eligible.push({ entry, score: candidate.score });
   }
 
@@ -706,19 +731,27 @@ export class WikiIndexer {
         : this.getEmbeddingIndex(),
     ]);
     const internalLimit = Math.min(500, Math.max(limit * 3, 60));
+    const allowedDocIds = options?.filters
+      ? new Set(index.entries
+          .filter(entry => matchesSearchFilters(entry, options.filters!))
+          .map(entry => entry.id))
+      : undefined;
     const bm25Results = searchBM25Planned(
       bm25,
       query,
       internalLimit,
       options?.credibilityFactors,
+      allowedDocIds,
     );
 
     if (embIdx && embIdx.docIds.length > 0) {
       try {
         const { embedQuery, vectorSearch, vectorSearchZvec, mergeHybrid } = await import('./embedding.js');
         const qVec = await embedQuery(query);
-        let rawVecResults = await vectorSearchZvec(qVec, this.workflowRoot, internalLimit);
-        if (rawVecResults.length === 0) {
+        let rawVecResults = allowedDocIds
+          ? vectorSearch(qVec, embIdx, internalLimit, allowedDocIds)
+          : await vectorSearchZvec(qVec, this.workflowRoot, internalLimit);
+        if (rawVecResults.length === 0 && !allowedDocIds) {
           rawVecResults = vectorSearch(qVec, embIdx, internalLimit);
         }
 
@@ -742,7 +775,13 @@ export class WikiIndexer {
 
         const merged = mergeHybrid(bm25Results, vecResults, internalLimit);
         return {
-          results: finalizeSearchResults(index, merged, query, limit),
+          results: finalizeSearchResults(
+            index,
+            merged,
+            query,
+            limit,
+            options?.filters?.includeDeprecated === true,
+          ),
           embeddingUsed: true,
           embeddingDocs: embIdx.docIds.length,
         };
@@ -754,7 +793,13 @@ export class WikiIndexer {
     }
 
     return {
-      results: finalizeSearchResults(index, bm25Results, query, limit),
+      results: finalizeSearchResults(
+        index,
+        bm25Results,
+        query,
+        limit,
+        options?.filters?.includeDeprecated === true,
+      ),
       embeddingUsed: false,
       embeddingDocs: 0,
     };

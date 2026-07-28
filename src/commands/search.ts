@@ -21,7 +21,11 @@ import { knowhowFileToWikiId } from '../utils/frontmatter.js';
 import { isDeprecatedKnowledgeEntry } from '../utils/knowledge-lifecycle.js';
 import type { SourceType } from '../graph/kg/db/types.js';
 import type { WikiIndexer } from '#maestro-dashboard/wiki/wiki-indexer.js';
-import type { WikiEntry, WikiNodeType } from '#maestro-dashboard/wiki/wiki-types.js';
+import type {
+  WikiEntry,
+  WikiNodeType,
+  WikiSearchFilters,
+} from '#maestro-dashboard/wiki/wiki-types.js';
 import { loadWorkspaceConfig, resolveWorkspaceLinks } from '../config/index.js';
 import { tryDaemonSearch, stopDaemon, spawnDaemon, readDaemonInfo, isDaemonAlive, getDaemonPath } from '../search/daemon-client.js';
 
@@ -380,10 +384,21 @@ export async function runUnifiedSearch(q: string, opts: UnifiedSearchOptions & {
   const limit = Math.min(500, opts.limit > 0 ? Math.trunc(opts.limit) : 20);
   const executionMode = opts.executionMode ?? 'default';
   const readOnlyProbe = executionMode === 'read-only-probe';
-  // Facet filters run after candidate truncation — widen the pool when any
-  // facet is active so narrow queries don't starve to 0 results (G-C3).
-  const hasFacet = Boolean(opts.type || opts.category || opts.tag || opts.keyword || opts.workspace);
-  const candidateLimit = hasFacet ? Math.max(limit * 2, 200) : Math.max(limit * 2, 40);
+  const filters: WikiSearchFilters = {
+    ...(opts.type ? { type: opts.type as WikiSearchFilters['type'] } : {}),
+    ...(opts.category ? { category: opts.category } : {}),
+    ...(opts.tag ? { tag: opts.tag.toLowerCase() } : {}),
+    ...(opts.keyword ? { keyword: opts.keyword } : {}),
+    ...(opts.workspace ? { workspace: opts.workspace } : {}),
+    includeDeprecated: opts.includeDeprecated === true,
+  };
+  const hasFacet = Boolean(
+    opts.type || opts.category || opts.tag || opts.keyword || opts.workspace || opts.includeDeprecated
+  );
+  const searchFilters = hasFacet ? filters : undefined;
+  // Filters are applied inside BM25/vector candidate generation. Keep a
+  // bounded oversample only for family caps and diversity selection.
+  const candidateLimit = Math.max(limit * 2, 40);
 
   // Try daemon first (warm ONNX model, no cold-start penalty)
   const workflowRoot = resolve('.workflow');
@@ -396,12 +411,21 @@ export async function runUnifiedSearch(q: string, opts: UnifiedSearchOptions & {
   }
   const daemonResult = readOnlyProbe
     ? null
-    : await tryDaemonSearch(workflowRoot, q, candidateLimit, opts.skipEmbedding);
+    : await tryDaemonSearch(
+        workflowRoot,
+        q,
+        candidateLimit,
+        opts.skipEmbedding,
+        { filters: searchFilters },
+      );
   let scored: Array<{ entry: WikiEntry; score: number }>;
   let embeddingUsed: boolean;
   let embeddingDocs: number;
 
-  if (!readOnlyProbe && daemonResult?.ok && daemonResult.results) {
+  if (!readOnlyProbe
+    && daemonResult?.ok
+    && daemonResult.results
+    && (!hasFacet || daemonResult.filtersApplied === true)) {
     scored = daemonResult.results;
     embeddingUsed = daemonResult.embeddingUsed ?? false;
     embeddingDocs = daemonResult.embeddingDocs ?? 0;
@@ -413,7 +437,11 @@ export async function runUnifiedSearch(q: string, opts: UnifiedSearchOptions & {
       console.error('Note: search daemon unreachable — falling back to BM25-only (embedding disabled)');
     }
     const indexer = await getIndexer(executionMode);
-    const result = await indexer.searchWithMeta(q, candidateLimit, { skipEmbedding: true });
+    const result = await indexer.searchWithMeta(
+      q,
+      candidateLimit,
+      { skipEmbedding: true, filters: searchFilters },
+    );
     scored = result.results;
     embeddingUsed = result.embeddingUsed;
     embeddingDocs = result.embeddingDocs;

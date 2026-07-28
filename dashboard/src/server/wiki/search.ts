@@ -439,13 +439,14 @@ export function searchBM25(
   query: string,
   limit = 50,
   credibilityFactors?: Map<string, number>,
+  allowedDocIds?: ReadonlySet<string>,
 ): SearchResult[] {
   const terms = tokenize(query);
   if (terms.length === 0 || index.totalDocs === 0) return [];
 
   const weighted = expandQueryTerms(terms, index);
   const fetchLimit = (credibilityFactors && credibilityFactors.size > 0) ? limit * 2 : limit;
-  const results = searchBM25F(index, weighted, fetchLimit);
+  const results = searchBM25F(index, weighted, fetchLimit, allowedDocIds);
 
   if (credibilityFactors && credibilityFactors.size > 0) {
     for (const r of results) {
@@ -458,7 +459,12 @@ export function searchBM25(
   return results.slice(0, limit);
 }
 
-function searchBM25F(index: InvertedIndex, weightedTerms: WeightedTerm[], limit: number): SearchResult[] {
+function searchBM25F(
+  index: InvertedIndex,
+  weightedTerms: WeightedTerm[],
+  limit: number,
+  allowedDocIds?: ReadonlySet<string>,
+): SearchResult[] {
   const fp = index.fieldPostings;
   const fl = index.fieldLengths;
   const afl = index.avgFieldLengths;
@@ -474,6 +480,7 @@ function searchBM25F(index: InvertedIndex, weightedTerms: WeightedTerm[], limit:
     const idf = Math.log(1 + (index.totalDocs - df + 0.5) / (df + 0.5));
 
     for (const { docId, fieldTfs } of postings) {
+      if (allowedDocIds && !allowedDocIds.has(docId)) continue;
       const docFL = fl.get(docId);
       if (!docFL) continue;
 
@@ -509,6 +516,7 @@ function searchBM25FWithCoverage(
   weightedTerms: WeightedTerm[],
   limit: number,
   coverageOpts: CoveragePenaltyOptions,
+  allowedDocIds?: ReadonlySet<string>,
 ): SearchResult[] {
   const fp = index.fieldPostings;
   const fl = index.fieldLengths;
@@ -527,6 +535,7 @@ function searchBM25FWithCoverage(
     const idf = Math.log(1 + (index.totalDocs - df + 0.5) / (df + 0.5));
 
     for (const { docId, fieldTfs } of postings) {
+      if (allowedDocIds && !allowedDocIds.has(docId)) continue;
       const docFL = fl.get(docId);
       if (!docFL) continue;
 
@@ -673,6 +682,7 @@ export function searchBM25Planned(
   query: string,
   limit = 50,
   credibilityFactors?: Map<string, number>,
+  allowedDocIds?: ReadonlySet<string>,
 ): SearchResult[] {
   const terms = tokenize(query);
   if (terms.length === 0 || index.totalDocs === 0) return [];
@@ -693,7 +703,13 @@ export function searchBM25Planned(
   });
 
   const groupResults = taggedGroups.map(g =>
-    searchBM25FWithCoverage(index, g.weightedTerms, internalLimit, coverageOpts),
+    searchBM25FWithCoverage(
+      index,
+      g.weightedTerms,
+      internalLimit,
+      coverageOpts,
+      allowedDocIds,
+    ),
   );
 
   // Hybrid group fusion: 0.3 * rrfNorm + 0.7 * bm25Norm

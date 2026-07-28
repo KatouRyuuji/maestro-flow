@@ -53,6 +53,7 @@ describe('search tag facet', () => {
       ok: true,
       embeddingUsed: false,
       embeddingDocs: 0,
+      filtersApplied: true,
       results: [
         { entry: wikiEntry('diagnosis-run', ['session', 'run', 'diagnosis']), score: 8 },
         { entry: wikiEntry('review-run', ['session', 'run', 'review-findings']), score: 7 },
@@ -253,6 +254,7 @@ describe('search session/run topology exposure', () => {
       ok: true,
       embeddingUsed: false,
       embeddingDocs: 0,
+      filtersApplied: true,
       results: [
         {
           entry: wikiEntry('session-20260712-legacy', ['session', 'sealed'], {

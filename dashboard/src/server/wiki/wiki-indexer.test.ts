@@ -142,6 +142,49 @@ describe('WikiIndexer', () => {
     expect(second.results.map(result => result.entry.id)).toEqual(ids);
   });
 
+  it('applies facets before ranking truncation and can include deprecated entries', async () => {
+    for (let index = 0; index < 70; index++) {
+      await write(
+        `knowhow/TIP-noise-${index}.md`,
+        `---\ntitle: Facet ranking noise ${index}\ntype: tip\ncategory: debug\n---\n` +
+        '# Facet ranking noise\nFacet ranking ranking ranking ranking noise.',
+      );
+    }
+    await write(
+      'specs/architecture-constraints.md',
+      `---\ncategory: arch\n---\n
+<spec-entry category="arch" keywords="facet,atomic" date="2026-07-28" sid="S-facet-target" title="Atomic facet target">
+
+### Atomic facet target
+
+Facet ranking target.
+
+</spec-entry>
+
+<spec-entry category="arch" keywords="facet,legacy" date="2026-07-27" sid="S-facet-legacy" title="Legacy facet target" status="deprecated">
+
+### Legacy facet target
+
+Facet ranking legacy target.
+
+</spec-entry>`,
+    );
+    const indexer = new WikiIndexer({ workflowRoot: tmpRoot });
+
+    const active = await indexer.searchWithMeta('facet ranking', 5, {
+      skipEmbedding: true,
+      filters: { type: 'spec', category: 'arch' },
+    });
+    expect(active.results.map(result => result.entry.title)).toContain('Atomic facet target');
+    expect(active.results.map(result => result.entry.title)).not.toContain('Legacy facet target');
+
+    const historical = await indexer.searchWithMeta('facet ranking legacy', 5, {
+      skipEmbedding: true,
+      filters: { type: 'spec', category: 'arch', includeDeprecated: true },
+    });
+    expect(historical.results.map(result => result.entry.title)).toContain('Legacy facet target');
+  });
+
   it('keeps memory-only search independent from filesystem caches and indexes', async () => {
     await write(
       'specs/memory-only.md',

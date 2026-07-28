@@ -17,6 +17,7 @@ const DEFAULT_DAEMON_TIMEOUT_MS = 5000;
 
 export interface DaemonQueryOptions {
   timeoutMs?: number;
+  filters?: DaemonSearchRequest['filters'];
 }
 
 export function queryDaemon(
@@ -48,7 +49,13 @@ export async function tryDaemonSearch(
   const info = readDaemonInfo(workflowRoot);
   if (!info || !isDaemonAlive(info)) return null;
   try {
-    return await queryDaemon(info.port, { action: 'search', query, limit, skipEmbedding }, opts);
+    return await queryDaemon(info.port, {
+      action: 'search',
+      query,
+      limit,
+      skipEmbedding,
+      filters: opts?.filters,
+    }, opts);
   } catch { return null; }
 }
 

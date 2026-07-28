@@ -702,12 +702,13 @@ export function vectorSearch(
   queryVector: Float32Array,
   index: EmbeddingIndex,
   limit: number,
+  allowedDocIds?: ReadonlySet<string>,
 ): VectorSearchResult[] {
   if (index.dimension && queryVector.length !== index.dimension) {
     console.error(`[embedding] dimension mismatch: query=${queryVector.length} index=${index.dimension} — falling back to BM25-only (rebuild with "maestro embedding rebuild")`);
     return [];
   }
-  return flatCosineSearch(queryVector, index, limit);
+  return flatCosineSearch(queryVector, index, limit, allowedDocIds);
 }
 
 /**
@@ -753,9 +754,12 @@ function flatCosineSearch(
   queryVector: Float32Array,
   index: EmbeddingIndex,
   limit: number,
+  allowedDocIds?: ReadonlySet<string>,
 ): VectorSearchResult[] {
   const scored: VectorSearchResult[] = [];
   for (let i = 0; i < index.docIds.length; i++) {
+    const parentId = index.chunkDocIds?.[i] ?? index.docIds[i];
+    if (allowedDocIds && !allowedDocIds.has(parentId)) continue;
     const sim = cosineSimilarity(queryVector, index.vectors[i]);
     if (sim > 0) scored.push({ docId: index.docIds[i], score: sim });
   }

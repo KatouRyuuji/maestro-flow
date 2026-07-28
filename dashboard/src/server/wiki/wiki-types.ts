@@ -76,6 +76,16 @@ export interface WikiIndex {
   generatedAt: number;
 }
 
+export interface WikiSearchFilters {
+  /** session/scratch are virtual aliases backed by entry.category. */
+  type?: WikiNodeType | 'session' | 'scratch';
+  category?: string;
+  tag?: string;
+  keyword?: string;
+  workspace?: string;
+  includeDeprecated?: boolean;
+}
+
 export interface WikiFilters {
   type?: WikiNodeType;
   tag?: string;

@@ -146,9 +146,11 @@ async function handleRequest(
     const req = JSON.parse(line) as DaemonSearchRequest;
     if (req.action === 'search') {
       const { results, embeddingUsed, embeddingDocs } = await indexer.searchWithMeta(
-        req.query!, req.limit!, { skipEmbedding: req.skipEmbedding },
+        req.query!,
+        req.limit!,
+        { skipEmbedding: req.skipEmbedding, filters: req.filters },
       );
-      resp = { ok: true, results, embeddingUsed, embeddingDocs };
+      resp = { ok: true, results, embeddingUsed, embeddingDocs, filtersApplied: true };
     } else if (req.action === 'invalidate') {
       indexer.invalidate();
       await indexer.rebuild();

@@ -5,7 +5,7 @@
 
 import { join } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
-import type { WikiEntry } from '#maestro-dashboard/wiki/wiki-types.js';
+import type { WikiEntry, WikiSearchFilters } from '#maestro-dashboard/wiki/wiki-types.js';
 
 const DAEMON_FILE = 'search-daemon.json';
 
@@ -20,6 +20,7 @@ export interface DaemonSearchRequest {
   query?: string;
   limit?: number;
   skipEmbedding?: boolean;
+  filters?: WikiSearchFilters;
 }
 
 export interface DaemonSearchResponse {
@@ -27,6 +28,8 @@ export interface DaemonSearchResponse {
   results?: Array<{ entry: WikiEntry; score: number }>;
   embeddingUsed?: boolean;
   embeddingDocs?: number;
+  /** True only when the daemon applied request filters before ranking truncation. */
+  filtersApplied?: boolean;
   error?: string;
 }
 

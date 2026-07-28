@@ -231,6 +231,7 @@ describe('planned Wiki ranking', () => {
       'ranking',
       60,
       factors,
+      undefined,
     );
   });
 
