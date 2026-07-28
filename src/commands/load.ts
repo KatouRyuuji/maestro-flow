@@ -89,7 +89,7 @@ function entryToJson(e: WikiEntry, brief: boolean): Record<string, unknown> {
   };
 }
 
-async function recordLoadedKnowledge(entries: WikiEntry[]): Promise<void> {
+export async function recordLoadedKnowledge(entries: WikiEntry[]): Promise<void> {
   try {
     const { recordKnowledgeConsumptionsDetailed } = await import('../graph/kg/knowledge-usage.js');
     const result = recordKnowledgeConsumptionsDetailed(

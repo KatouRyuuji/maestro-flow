@@ -1,7 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { resolve } from 'node:path';
 
-import { CredibilityStore, wikiIdToNodeId } from './credibility.js';
+import { CredibilityStore, contentHash, wikiIdToNodeId } from './credibility.js';
 import { validateNodeId } from './db/types.js';
 import { MaestroGraph } from './engine.js';
 
@@ -117,11 +117,21 @@ export function recordKnowledgeConsumptionsDetailed(
       refs.map(resolveNodeId).filter((id): id is string => Boolean(id)),
     )];
     if (candidateIds.length === 0) return { recorded: 0, nodeIds: [] };
-    const existingIds = [...graph.getQueryBuilder().getNodesByIds(candidateIds).keys()];
+    const existingNodes = graph.getQueryBuilder().getNodesByIds(candidateIds);
+    const existingIds = [...existingNodes.keys()];
     if (existingIds.length === 0) return { recorded: 0, nodeIds: [] };
 
     const store = new CredibilityStore(graph.rawDb);
-    graph.getConnection().transaction(() => store.incrementConsumptions(existingIds, nowMs));
+    graph.getConnection().transaction(() => {
+      for (const [id, node] of existingNodes) {
+        store.upsert(
+          id,
+          contentHash(`${node.name}\n${node.definition ?? ''}\n${node.body ?? ''}`),
+          nowMs,
+        );
+      }
+      store.incrementConsumptions(existingIds, nowMs);
+    });
     return { recorded: existingIds.length, nodeIds: existingIds };
   } catch {
     return { recorded: 0, nodeIds: [] };
