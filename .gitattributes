@@ -18,3 +18,7 @@ src/search/evaluation/fixtures/*.json text eol=lf
 src/search/evaluation/built-search-adapter-contract.json text eol=lf
 shared/built-search-adapter-contract.mjs text eol=lf
 shared/built-search-adapter-contract.d.mts text eol=lf
+
+# The attestation module embeds an executable bootstrap extracted with exact LF
+# byte delimiters. CRLF conversion makes the certified boundaries unfindable.
+scripts/search-ranking-module-attestation.mjs text eol=lf
