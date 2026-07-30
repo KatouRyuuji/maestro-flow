@@ -34,9 +34,12 @@ const migration: MigrationDef = {
       return { success: false, summary: `Parse error: ${e}`, changes: [] };
     }
 
-    // 2. Guard: already migrated?
-    if (state.version === this.to) {
-      return { success: true, summary: `Already at v${this.to}`, changes: [] };
+    // 2. Guard: already at or past target version?
+    const stateVer = typeof state.version === 'string' ? state.version : '0.0';
+    const [sMaj, sMin] = stateVer.split('.').map(Number);
+    const [tMaj, tMin] = this.to.split('.').map(Number);
+    if (sMaj > tMaj || (sMaj === tMaj && sMin >= tMin)) {
+      return { success: true, summary: `Already at v${stateVer} (>= v${this.to})`, changes: [] };
     }
 
     // 3. Apply changes

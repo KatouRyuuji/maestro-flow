@@ -216,31 +216,53 @@ export const sessionStateV13Schema = sessionStateV12Schema
   })
   .strict();
 
+/**
+ * Passthrough fallback for unknown future session schema versions.
+ * Preserves all fields without validation so older CLI versions can read
+ * session.json written by newer versions without crashing.
+ *
+ * The refinement ensures this fallback ONLY matches truly unknown versions —
+ * known versions with invalid data still fail the union (correct behavior).
+ */
+const KNOWN_SESSION_VERSIONS = new Set(['session/1.0', 'session/1.1', 'session/1.2', 'session/1.3']);
+const sessionStateUnknownSchema = z.object({
+  schema_version: z.string(),
+}).passthrough().refine(
+  (data) => !KNOWN_SESSION_VERSIONS.has(data.schema_version),
+  { message: 'Known session version with invalid data should not match the passthrough fallback' },
+);
+
 export type SessionStateInput = z.infer<typeof sessionStateV1ReadSchema>
   | z.infer<typeof sessionStateV12Schema>
-  | z.infer<typeof sessionStateV13Schema>;
+  | z.infer<typeof sessionStateV13Schema>
+  | z.infer<typeof sessionStateUnknownSchema>;
 
 export function normalizeSessionState(session: SessionStateInput): z.infer<typeof sessionStateV13Schema> {
-  if (session.schema_version === 'session/1.3') return session;
+  if (session.schema_version === 'session/1.3') return session as z.infer<typeof sessionStateV13Schema>;
   if (session.schema_version === 'session/1.2') {
     return sessionStateV13Schema.parse({ ...session, schema_version: 'session/1.3', topic_identity: null });
   }
-  return sessionStateV13Schema.parse({
-    ...session,
-    schema_version: 'session/1.3',
-    intent_identity: null,
-    topic_identity: null,
-    provenance: {
-      source: 'legacy-inferred',
-      forked_from: null,
-      imported_from: [],
-      created_by: 'legacy',
-    },
-    ralph_authority: null,
-  });
+  if (session.schema_version === 'session/1.0' || session.schema_version === 'session/1.1') {
+    return sessionStateV13Schema.parse({
+      ...session,
+      schema_version: 'session/1.3',
+      intent_identity: null,
+      topic_identity: null,
+      provenance: {
+        source: 'legacy-inferred',
+        forked_from: null,
+        imported_from: [],
+        created_by: 'legacy',
+      },
+      ralph_authority: null,
+    });
+  }
+  // Unknown future version — return as-is with best-effort cast.
+  // The write path always produces session/1.3, so this only affects reads.
+  return session as unknown as z.infer<typeof sessionStateV13Schema>;
 }
 
-export const sessionStateReadSchema = z.union([sessionStateV13Schema, sessionStateV12Schema, sessionStateV1ReadSchema]);
+export const sessionStateReadSchema = z.union([sessionStateV13Schema, sessionStateV12Schema, sessionStateV1ReadSchema, sessionStateUnknownSchema]);
 /** Backward-compatible read schema. New writes must use sessionStateV13Schema. */
 export const sessionStateSchema = sessionStateReadSchema.transform(session => normalizeSessionState(session));
 
@@ -465,7 +487,19 @@ export const commandRunV13Schema = commandRunV12Schema
   })
   .strict();
 
-export const commandRunReadSchema = z.union([commandRunV13Schema, commandRunV12Schema, commandRunV11Schema, commandRunV1Schema]);
+/**
+ * Passthrough fallback for unknown future command-run schema versions.
+ * The refinement ensures this fallback ONLY matches truly unknown versions.
+ */
+const KNOWN_RUN_VERSIONS = new Set(['command-run/1.0', 'command-run/1.1', 'command-run/1.2', 'command-run/1.3']);
+const commandRunUnknownSchema = z.object({
+  schema_version: z.string(),
+}).passthrough().refine(
+  (data) => !KNOWN_RUN_VERSIONS.has(data.schema_version),
+  { message: 'Known run version with invalid data should not match the passthrough fallback' },
+);
+
+export const commandRunReadSchema = z.union([commandRunV13Schema, commandRunV12Schema, commandRunV11Schema, commandRunV1Schema, commandRunUnknownSchema]);
 export type CommandRunInput = z.infer<typeof commandRunReadSchema>;
 export type CommandRun = z.infer<typeof commandRunV13Schema>;
 
@@ -473,45 +507,49 @@ export function normalizeCommandRun(
   run: CommandRunInput,
   fallbackPlatform: z.infer<typeof targetPlatformSchema> = 'claude',
 ): CommandRun {
-  if (run.schema_version === 'command-run/1.3') return run;
+  if (run.schema_version === 'command-run/1.3') return run as CommandRun;
   if (run.schema_version === 'command-run/1.2') {
     return commandRunV13Schema.parse({
       ...run,
       schema_version: 'command-run/1.3',
-      input: { ...run.input, reuse_assessments: [] },
+      input: { ...(run as z.infer<typeof commandRunV12Schema>).input, reuse_assessments: [] },
     });
   }
-  const v11 = run.schema_version === 'command-run/1.1' ? run : commandRunV11Schema.parse({
-    ...run,
-    schema_version: 'command-run/1.1',
-    chain_step_id: null,
-    resolved_platform: fallbackPlatform,
-    goal_binding: null,
-    checkpoint_expectation: null,
-    checkpoint: null,
-    retry_fence: null,
-  });
-  const v12 = commandRunV12Schema.parse({
-    ...v11,
-    schema_version: 'command-run/1.2',
-    contract_snapshot: null,
-    guidance_snapshot: null,
-    creation_decision: null,
-    creation_provenance: {
-      schema_version: 'creation-provenance/1.0',
-      provenance: run.schema_version === 'command-run/1.1' ? 'verified-v1' : 'legacy-inferred',
-      source_workspace_id: null,
-      source_session_id: null,
-      source_run_id: null,
-      imported_artifact_hashes: [],
-    },
-    transition: null,
-  });
-  return commandRunV13Schema.parse({
-    ...v12,
-    schema_version: 'command-run/1.3',
-    input: { ...v12.input, reuse_assessments: [] },
-  });
+  if (run.schema_version === 'command-run/1.0' || run.schema_version === 'command-run/1.1') {
+    const v11 = run.schema_version === 'command-run/1.1' ? run : commandRunV11Schema.parse({
+      ...run,
+      schema_version: 'command-run/1.1',
+      chain_step_id: null,
+      resolved_platform: fallbackPlatform,
+      goal_binding: null,
+      checkpoint_expectation: null,
+      checkpoint: null,
+      retry_fence: null,
+    });
+    const v12 = commandRunV12Schema.parse({
+      ...v11,
+      schema_version: 'command-run/1.2',
+      contract_snapshot: null,
+      guidance_snapshot: null,
+      creation_decision: null,
+      creation_provenance: {
+        schema_version: 'creation-provenance/1.0',
+        provenance: run.schema_version === 'command-run/1.1' ? 'verified-v1' : 'legacy-inferred',
+        source_workspace_id: null,
+        source_session_id: null,
+        source_run_id: null,
+        imported_artifact_hashes: [],
+      },
+      transition: null,
+    });
+    return commandRunV13Schema.parse({
+      ...v12,
+      schema_version: 'command-run/1.3',
+      input: { ...v12.input, reuse_assessments: [] },
+    });
+  }
+  // Unknown future version — return as-is with best-effort cast.
+  return run as unknown as CommandRun;
 }
 
 /** Backward-compatible read schema. New writes must use commandRunV13Schema. */

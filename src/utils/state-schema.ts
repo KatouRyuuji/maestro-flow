@@ -64,6 +64,14 @@ export interface MilestoneEntry {
   title: string;
   status: 'pending' | 'active' | 'completed';
   phases: number[];
+  /** v3.1 extension: milestone type discriminator. */
+  type?: 'standard' | 'adhoc';
+  /** v3.1 extension: phase number → slug mapping. */
+  phase_slugs?: Record<number, string>;
+  /** v3.1 extension: reference to the roadmap artifact that defined this milestone. */
+  roadmap_ref?: string | null;
+  /** v3.1 extension: ISO timestamp when the milestone was created. */
+  created_at?: string;
 }
 
 export interface DeferredItem {
@@ -117,7 +125,7 @@ export interface ProjectSessionEntry {
 }
 
 export interface StateJsonV2 {
-  version: '2.0';
+  version: string;
   project_name: string | null;
   status: ProjectStatus;
   current_milestone: string | null;
@@ -136,6 +144,14 @@ export interface StateJsonV2 {
   active_session_id?: string | null;
   /** Canonical Session DAG projection. */
   sessions?: ProjectSessionEntry[];
+  /** v3.1 extension: human-readable schema hint for milestone entries. */
+  _milestone_schema?: string;
+  /** v3.1 extension: derived current phase (kept for backward compat). */
+  current_phase?: number | null;
+  /** v3.1 extension: derived phases summary (kept for backward compat). */
+  phases_summary?: PhasesSummary;
+  /** Catch-all for forward-compatible fields from newer schema versions. */
+  [key: string]: unknown;
 }
 
 export interface PhasesSummary {
@@ -412,6 +428,8 @@ export function migrateV1toV2(raw: V1State, workflowRoot?: string): StateJsonV2 
   }
 
   return {
+    // Preserve any unknown / forward-compatible fields from the raw state
+    ...raw,
     version: '2.0',
     project_name: (raw.project_name as string) ?? null,
     status: normalizeStatus(raw.status),
@@ -435,6 +453,17 @@ export function migrateV1toV2(raw: V1State, workflowRoot?: string): StateJsonV2 
 // ---------------------------------------------------------------------------
 
 /**
+ * Check whether a version string represents a v2+ schema (forward-compatible).
+ * Versions "2.0", "3.0", "3.1", "4.0", etc. are all considered modern.
+ * Only versions below 2.0 (e.g. "1.0", undefined) need migration.
+ */
+function isModernVersion(version: unknown): boolean {
+  if (typeof version !== 'string') return false;
+  const major = parseInt(version.split('.')[0], 10);
+  return !Number.isNaN(major) && major >= 2;
+}
+
+/**
  * Read state.json from a workspace. Auto-migrates v1 to v2 in memory (does not write back).
  * Returns null if file doesn't exist.
  */
@@ -444,7 +473,7 @@ export function readStateJson(workflowRoot: string): StateJsonV2 | null {
 
   try {
     const raw = JSON.parse(readFileSync(statePath, 'utf8'));
-    if (raw.version === '2.0') return raw as StateJsonV2;
+    if (isModernVersion(raw.version)) return raw as StateJsonV2;
     // Auto-migrate v1
     return migrateV1toV2(raw, join(workflowRoot, '.workflow'));
   } catch {
@@ -480,7 +509,7 @@ export function migrateStateFile(workflowRoot: string): StateJsonV2 | null {
     return null;
   }
 
-  if (raw.version === '2.0') return raw as unknown as StateJsonV2;
+  if (isModernVersion(raw.version)) return raw as unknown as StateJsonV2;
 
   const v2 = migrateV1toV2(raw, join(workflowRoot, '.workflow'));
   writeStateJson(workflowRoot, v2);

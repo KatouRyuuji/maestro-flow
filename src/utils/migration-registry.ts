@@ -44,6 +44,34 @@ export interface MigrationPlan {
 }
 
 // ---------------------------------------------------------------------------
+// Version comparison helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse a version string into [major, minor] numbers.
+ * Returns [NaN, NaN] for unparseable input.
+ */
+function parseVersion(v: string): [number, number] {
+  const parts = v.split('.');
+  return [parseInt(parts[0], 10), parseInt(parts[1] ?? '0', 10)];
+}
+
+/**
+ * Check whether `current` version satisfies a migration's `from` requirement.
+ *
+ * A migration registered as from='3.0' applies when the current version is
+ * '3.0', '3.1', '3.2', etc. (same major, minor >= from's minor).
+ * This prevents minor-version differences from silently breaking the chain.
+ */
+function versionSatisfies(current: string, from: string): boolean {
+  if (current === from) return true;
+  const [cMaj, cMin] = parseVersion(current);
+  const [fMaj, fMin] = parseVersion(from);
+  if (Number.isNaN(cMaj) || Number.isNaN(fMaj)) return false;
+  return cMaj === fMaj && cMin >= fMin;
+}
+
+// ---------------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------------
 
@@ -67,7 +95,9 @@ class MigrationRegistry {
     let version = currentVersion;
 
     for (let i = 0; i < 20; i++) { // safety limit
-      const next = this.migrations.find(m => m.from === version);
+      // Forward-compatible match: a migration with from='3.0' also applies
+      // when the current version is '3.1', '3.2', etc. (same major, higher minor).
+      const next = this.migrations.find(m => versionSatisfies(version, m.from));
       if (!next) break;
       chain.push(next);
       version = next.to;

@@ -537,7 +537,7 @@ export class SessionStore {
 
   private readRunUnlocked(sessionId: string, runId: string): CommandRun {
     const raw = this.readValidated(join(this.runDir(sessionId, runId), 'run.json'), commandRunReadSchema);
-    if (raw.schema_version === 'command-run/1.3') return raw;
+    if (raw.schema_version === 'command-run/1.3') return raw as CommandRun;
     const session = this.readValidated(join(this.sessionDir(sessionId), 'session.json'), sessionStateSchema);
     const executorPlatform = targetPlatformSchema.safeParse(session.orchestration.executor?.platform);
     return normalizeCommandRun(raw, executorPlatform.success ? executorPlatform.data : 'claude');

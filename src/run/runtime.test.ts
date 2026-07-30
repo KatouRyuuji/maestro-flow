@@ -443,10 +443,11 @@ gates:
     output.mockRestore();
   });
 
-  it('uses strict protocol schemas', () => {
+  it('uses strict protocol schemas with passthrough fallback for unknown versions', () => {
     const valid = createSessionState('20260713-demo', 'demo');
     expect(sessionStateSchema.parse(valid).schema_version).toBe('session/1.3');
-    expect(() => sessionStateSchema.parse({ ...valid, unexpected: true })).toThrow(/unrecognized/i);
+    // Known version with unknown top-level field → strict rejection
+    expect(() => sessionStateSchema.parse({ ...valid, unexpected: true })).toThrow(/unrecognized|passthrough fallback/i);
     const ralph = structuredClone(valid);
     ralph.ralph_authority = { schema_version: 'ralph-authority/1.0', engine: 'ralph', canonical_complete: true };
     expect(sessionStateSchema.parse(ralph).ralph_authority?.canonical_complete).toBe(true);
@@ -463,7 +464,12 @@ gates:
       max_retries: 2,
       evidence_ref: null,
     }];
-    expect(() => sessionStateSchema.parse(invalidDecision)).toThrow(/pending|passed|escalated/);
+    expect(() => sessionStateSchema.parse(invalidDecision)).toThrow(/pending|passed|escalated|passthrough fallback/);
+    // Unknown future version → passthrough fallback preserves all fields
+    const futureSession = { ...valid, schema_version: 'session/9.0', future_field: 'preserved' };
+    const parsed = sessionStateSchema.parse(futureSession);
+    expect(parsed.schema_version).toBe('session/9.0');
+    expect((parsed as any).future_field).toBe('preserved');
   });
 
   it('allocates stable per-session sequence numbers and creates protected authority files', () => {
@@ -749,7 +755,7 @@ finish:
     const value = JSON.parse(readFileSync(path, 'utf8'));
     value.extra = true;
     writeFileSync(path, JSON.stringify(value, null, 2));
-    expect(() => new SessionStore(projectRoot).readBundle(created.session_id)).toThrow(/unrecognized/i);
+    expect(() => new SessionStore(projectRoot).readBundle(created.session_id)).toThrow(/unrecognized|passthrough fallback/i);
   });
 
   it('brief exposes consumed upstream, the previous handoff, and the session anchor', () => {
@@ -1171,5 +1177,126 @@ gates:
       expect.objectContaining({ decision: 'REVIEW', reason_codes: expect.arrayContaining(['QUALITY_MEDIUM']) }),
     ]);
     expect(brief.continuity.prev_handoff?.concerns).toContain('watch the migration order');
+  });
+
+  // -----------------------------------------------------------------------
+  // v3.1 forward-compatibility: state.json must not be silently downgraded
+  // -----------------------------------------------------------------------
+
+  it('readStateJson preserves v3.1 fields without downgrade', () => {
+    const projectRoot = root();
+    mkdirSync(join(projectRoot, '.workflow'), { recursive: true });
+    const v31 = {
+      version: '3.1',
+      project_name: 'fwd-compat',
+      status: 'active',
+      current_milestone: null,
+      current_task_id: null,
+      milestones: [{
+        id: 'M1', name: 'alpha', title: 'Alpha', status: 'active', phases: [1, 2],
+        type: 'standard', phase_slugs: { 1: 'setup', 2: 'build' },
+        roadmap_ref: 'roadmap-001', created_at: '2026-07-01T00:00:00+08:00',
+      }],
+      artifacts: [],
+      accumulated_context: { key_decisions: [], blockers: [], deferred: [] },
+      transition_history: [],
+      milestone_history: [],
+      last_updated: '2026-07-20T00:00:00+08:00',
+      _milestone_schema: '{ id, name, type, status, phases[], phase_slugs{}, roadmap_ref, created_at }',
+      current_phase: 1,
+      phases_summary: { total: 2, completed: 0, in_progress: 1, pending: 1 },
+    };
+    writeFileSync(join(projectRoot, '.workflow', 'state.json'), JSON.stringify(v31, null, 2), 'utf8');
+
+    const state = readStateJson(projectRoot);
+    expect(state).not.toBeNull();
+    expect(state!.version).toBe('3.1');
+    expect(state!._milestone_schema).toBe(v31._milestone_schema);
+    expect(state!.current_phase).toBe(1);
+    expect(state!.phases_summary).toEqual(v31.phases_summary);
+    expect(state!.milestones[0].type).toBe('standard');
+    expect(state!.milestones[0].phase_slugs).toEqual({ 1: 'setup', 2: 'build' });
+    expect(state!.milestones[0].roadmap_ref).toBe('roadmap-001');
+    expect(state!.milestones[0].created_at).toBe('2026-07-01T00:00:00+08:00');
+  });
+
+  it('writeStateJson round-trips v3.1 state without losing extension fields', () => {
+    const projectRoot = root();
+    mkdirSync(join(projectRoot, '.workflow'), { recursive: true });
+    const v31 = {
+      version: '3.1',
+      project_name: 'round-trip',
+      status: 'active',
+      current_milestone: null,
+      current_task_id: null,
+      milestones: [],
+      artifacts: [],
+      accumulated_context: { key_decisions: [], blockers: [], deferred: [] },
+      transition_history: [],
+      milestone_history: [],
+      last_updated: '2026-07-20T00:00:00+08:00',
+      _milestone_schema: 'hint-string',
+      current_phase: null,
+      phases_summary: { total: 0, completed: 0, in_progress: 0, pending: 0 },
+    };
+    // Write v3.1 directly, then read + write through the API
+    writeFileSync(join(projectRoot, '.workflow', 'state.json'), JSON.stringify(v31, null, 2), 'utf8');
+    const state = readStateJson(projectRoot)!;
+    writeStateJson(projectRoot, state);
+
+    // Re-read from disk
+    const onDisk = JSON.parse(readFileSync(join(projectRoot, '.workflow', 'state.json'), 'utf8'));
+    expect(onDisk.version).toBe('3.1');
+    expect(onDisk._milestone_schema).toBe('hint-string');
+    expect(onDisk.phases_summary).toEqual(v31.phases_summary);
+  });
+
+  it('migrateV1toV2 preserves unknown fields from legacy state', () => {
+    const v1 = {
+      version: '1.0',
+      project_name: 'legacy',
+      status: 'active',
+      current_phase: 3,
+      phases_summary: { total: 5, completed: 2, in_progress: 1, pending: 2 },
+      custom_extension: 'must-survive',
+    };
+    const v2 = migrateV1toV2(v1 as any);
+    expect(v2.version).toBe('2.0');
+    // Unknown fields from v1 should be preserved
+    expect((v2 as any).custom_extension).toBe('must-survive');
+    // Legacy fields should also survive (not silently dropped)
+    expect((v2 as any).current_phase).toBe(3);
+    expect((v2 as any).phases_summary).toEqual(v1.phases_summary);
+  });
+
+  it('createRun on v3.1 workspace does not downgrade state.json', () => {
+    const projectRoot = root();
+    mkdirSync(join(projectRoot, '.workflow'), { recursive: true });
+    const v31 = {
+      version: '3.1',
+      project_name: 'no-downgrade',
+      status: 'active',
+      current_milestone: null,
+      current_task_id: null,
+      milestones: [],
+      artifacts: [],
+      accumulated_context: { key_decisions: [], blockers: [], deferred: [] },
+      transition_history: [],
+      milestone_history: [],
+      last_updated: '2026-07-20T00:00:00+08:00',
+      _milestone_schema: 'schema-hint',
+      phases_summary: { total: 0, completed: 0, in_progress: 0, pending: 0 },
+    };
+    writeFileSync(join(projectRoot, '.workflow', 'state.json'), JSON.stringify(v31, null, 2), 'utf8');
+    commandFile(projectRoot, 'empty', `produces: []
+gates:
+  entry: []
+  exit: []`);
+
+    createRun({ projectRoot, command: 'empty', intent: 'v3.1 compat' });
+
+    const onDisk = JSON.parse(readFileSync(join(projectRoot, '.workflow', 'state.json'), 'utf8'));
+    expect(onDisk.version).toBe('3.1');
+    expect(onDisk._milestone_schema).toBe('schema-hint');
   });
 });

@@ -95,7 +95,9 @@ describe('command Run schema compatibility', () => {
     oldShape.schema_version = 'command-run/1.2';
     delete (oldShape.input as Record<string, unknown>).reuse_assessments;
     expect(commandRunV12Schema.parse(oldShape).schema_version).toBe('command-run/1.2');
-    expect(() => commandRunReadSchema.parse({ ...legacyRun(), schema_version: 'command-run/9.0' })).toThrow();
+    // Unknown future versions are accepted via passthrough fallback
+    const unknownRun = commandRunReadSchema.parse({ ...legacyRun(), schema_version: 'command-run/9.0' });
+    expect(unknownRun.schema_version).toBe('command-run/9.0');
   });
 
   it('accepts an observational Goal binding with a nullable external ID', () => {
@@ -132,6 +134,8 @@ describe('Session schema compatibility', () => {
       topic_identity: null,
       provenance: { source: 'legacy-inferred' },
     });
-    expect(() => sessionStateSchema.parse({ ...current, schema_version: 'session/9.0' })).toThrow();
+    // Unknown future versions are accepted via passthrough fallback
+    const unknownSession = sessionStateSchema.parse({ ...current, schema_version: 'session/9.0' });
+    expect(unknownSession.schema_version).toBe('session/9.0');
   });
 });

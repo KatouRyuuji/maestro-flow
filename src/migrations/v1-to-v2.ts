@@ -37,8 +37,10 @@ const migration: MigrationDef = {
       return { success: false, summary: `Failed to parse state.json: ${e}`, changes: [] };
     }
 
-    if (raw.version === '2.0') {
-      return { success: true, summary: 'Already at v2.0', changes: [] };
+    // Forward-compatible: any version >= 2.0 is already modern
+    const major = typeof raw.version === 'string' ? parseInt(raw.version.split('.')[0], 10) : NaN;
+    if (!Number.isNaN(major) && major >= 2) {
+      return { success: true, summary: `Already at v${raw.version} (>= 2.0)`, changes: [] };
     }
 
     const changes: string[] = [];
