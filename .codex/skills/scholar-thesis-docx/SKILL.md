@@ -8,7 +8,7 @@ description: Create, revise, and format thesis or dissertation Word documents
   evidence-based Mermaid figures and LaTeX-formatted code listings for a thesis
   document.
 session-mode: none
-version: 0.5.58
+version: 0.5.59
 ---
 
 # Thesis DOCX

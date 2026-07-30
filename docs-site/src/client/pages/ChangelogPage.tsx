@@ -17,6 +17,16 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    version: '0.5.59',
+    date: '2026-07',
+    changes: [
+      { type: 'refactor', text_en: 'Migrate dashboard and docs-site client routing from react-router-dom to wouter via a local alias shim, dropping a heavy dependency without changing call sites', text_zh: '将 dashboard 与 docs-site 客户端路由从 react-router-dom 迁移到 wouter，通过本地别名 shim 实现，移除重型依赖且无需改动调用点' },
+      { type: 'feat', text_en: 'Add dashboard resizable panels, context menu, and KaTeX math rendering in markdown', text_zh: 'dashboard 新增可调节面板、右键菜单与 Markdown 中的 KaTeX 数学公式渲染' },
+      { type: 'fix', text_en: 'Use forward-compatible schema version handling to prevent silent state.json downgrade', text_zh: '采用向前兼容的 schema 版本处理，防止 state.json 被静默降级' },
+      { type: 'chore', text_en: 'Upgrade @hono/node-server to 2.x and @modelcontextprotocol/sdk to 1.30, plus hono, vite, mermaid, ws, and tsx', text_zh: '升级 @hono/node-server 至 2.x、@modelcontextprotocol/sdk 至 1.30，并更新 hono、vite、mermaid、ws、tsx' },
+    ],
+  },
+  {
     version: '0.5.58',
     date: '2026-07',
     changes: [

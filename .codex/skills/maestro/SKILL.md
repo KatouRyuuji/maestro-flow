@@ -24,7 +24,7 @@ contract:
   discovery: self-described
   consumes: []
   produces: []
-version: 0.5.58
+version: 0.5.59
 ---
 
 <required_reading>

@@ -22,7 +22,7 @@ allowed-tools:
   - spawn_agents_on_csv
   - wait_agent
 session-mode: none
-version: 0.5.58
+version: 0.5.59
 ---
 
 # Team Skill Designer
