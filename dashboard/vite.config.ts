@@ -12,6 +12,7 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
+      'react-router-dom': resolve(__dirname, 'src/client/router.tsx'),
       '@': resolve(__dirname, 'src'),
     },
   },
@@ -21,7 +22,7 @@ export default defineConfig({
       'react',
       'react-dom/client',
       'react/jsx-runtime',
-      'react-router-dom',
+      'wouter',
       'zustand',
       'react-markdown',
       'remark-gfm',
@@ -39,7 +40,7 @@ export default defineConfig({
       'react-virtuoso',
     ],
   },
-  // appType 'spa' (default) provides history API fallback for React Router.
+  // SPA fallback supports direct navigation to client-side routes.
   // Proxy rules are matched first, so /api, /events and /ws bypass the fallback.
   appType: 'spa',
   server: {

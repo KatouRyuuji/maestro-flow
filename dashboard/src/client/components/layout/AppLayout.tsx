@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Outlet, useLocation } from 'react-router-dom';
+import { type ReactNode, useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { TopBar } from '@/client/components/layout/TopBar.js';
 import { DockRail } from '@/client/components/layout/DockRail.js';
 import { MainContent } from '@/client/components/layout/MainContent.js';
@@ -21,7 +21,7 @@ import type { BoardState } from '@/shared/types.js';
 // AppLayout — shared layout with TopBar + Sidebar + routed content (Outlet)
 // ---------------------------------------------------------------------------
 
-export function AppLayout() {
+export function AppLayout({ children }: { children: ReactNode }) {
   const { t } = useI18n();
   const connected = useBoardStore((s) => s.connected);
   const [fetchError, setFetchError] = useState(false);
@@ -162,7 +162,7 @@ export function AppLayout() {
       <div className="flex flex-1 overflow-hidden relative">
         <DockRail isPinned={isPinned} onTogglePin={togglePin} />
         <MainContent>
-          <Outlet />
+          {children}
           {showOrchestrator && <OrchestratorStatusBar />}
         </MainContent>
       </div>

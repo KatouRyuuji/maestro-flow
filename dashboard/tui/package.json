@@ -12,14 +12,17 @@
   "dependencies": {
     "@inkjs/ui": "^2.0.0",
     "ink": "^6.0.0",
-    "react": "^19.0.0",
     "marked": "^15.0.0",
-    "ws": "^8.19.0"
+    "react": "^19.0.0",
+    "ws": "^8.21.1"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",
     "@types/ws": "^8.18.1",
     "tsup": "^8.4.0",
     "typescript": "^5.7.0"
+  },
+  "overrides": {
+    "esbuild": "0.28.1"
   }
 }

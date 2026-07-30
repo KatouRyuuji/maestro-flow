@@ -67,7 +67,7 @@ describe('issue-mcp-server', () => {
 
   describe('get_issue handler', () => {
     it('returns issue data when found', async () => {
-      createIssueMcpServer(tempDir);
+      await createIssueMcpServer(tempDir);
       const handler = capturedTools.get('get_issue')!;
 
       const issue = makeIssue({ id: 'ISS-get-1', title: 'Get Test' });
@@ -81,7 +81,7 @@ describe('issue-mcp-server', () => {
     });
 
     it('returns error when issue not found', async () => {
-      createIssueMcpServer(tempDir);
+      await createIssueMcpServer(tempDir);
       const handler = capturedTools.get('get_issue')!;
 
       await writeIssuesJsonl(jsonlPath, []);
@@ -93,7 +93,7 @@ describe('issue-mcp-server', () => {
     });
 
     it('returns error when JSONL file is empty', async () => {
-      createIssueMcpServer(tempDir);
+      await createIssueMcpServer(tempDir);
       const handler = capturedTools.get('get_issue')!;
 
       const result = await handler({ issue_id: 'ISS-1' });
@@ -103,7 +103,7 @@ describe('issue-mcp-server', () => {
 
   describe('list_issues handler', () => {
     it('returns all issues when no filters', async () => {
-      createIssueMcpServer(tempDir);
+      await createIssueMcpServer(tempDir);
       const handler = capturedTools.get('list_issues')!;
 
       const issues = [
@@ -122,7 +122,7 @@ describe('issue-mcp-server', () => {
     });
 
     it('filters by status', async () => {
-      createIssueMcpServer(tempDir);
+      await createIssueMcpServer(tempDir);
       const handler = capturedTools.get('list_issues')!;
 
       const issues = [
@@ -139,7 +139,7 @@ describe('issue-mcp-server', () => {
     });
 
     it('filters by type', async () => {
-      createIssueMcpServer(tempDir);
+      await createIssueMcpServer(tempDir);
       const handler = capturedTools.get('list_issues')!;
 
       const issues = [
@@ -155,7 +155,7 @@ describe('issue-mcp-server', () => {
     });
 
     it('filters by both status and type', async () => {
-      createIssueMcpServer(tempDir);
+      await createIssueMcpServer(tempDir);
       const handler = capturedTools.get('list_issues')!;
 
       const issues = [
@@ -172,7 +172,7 @@ describe('issue-mcp-server', () => {
     });
 
     it('includes analysis and solution presence flags', async () => {
-      createIssueMcpServer(tempDir);
+      await createIssueMcpServer(tempDir);
       const handler = capturedTools.get('list_issues')!;
 
       const issue = makeIssue({
@@ -201,7 +201,7 @@ describe('issue-mcp-server', () => {
     });
 
     it('includes execution status when present', async () => {
-      createIssueMcpServer(tempDir);
+      await createIssueMcpServer(tempDir);
       const handler = capturedTools.get('list_issues')!;
 
       const issue = makeIssue({
@@ -216,7 +216,7 @@ describe('issue-mcp-server', () => {
     });
 
     it('returns empty array when no issues exist', async () => {
-      createIssueMcpServer(tempDir);
+      await createIssueMcpServer(tempDir);
       const handler = capturedTools.get('list_issues')!;
 
       const result = await handler({});
@@ -227,7 +227,7 @@ describe('issue-mcp-server', () => {
 
   describe('update_issue handler', () => {
     it('updates description field', async () => {
-      createIssueMcpServer(tempDir);
+      await createIssueMcpServer(tempDir);
       const handler = capturedTools.get('update_issue')!;
 
       await writeIssuesJsonl(jsonlPath, [makeIssue({ id: 'ISS-upd-1', description: 'original' })]);
@@ -243,7 +243,7 @@ describe('issue-mcp-server', () => {
     });
 
     it('sets analysis fields with timestamps', async () => {
-      createIssueMcpServer(tempDir);
+      await createIssueMcpServer(tempDir);
       const handler = capturedTools.get('update_issue')!;
 
       await writeIssuesJsonl(jsonlPath, [makeIssue({ id: 'ISS-ana-1' })]);
@@ -267,7 +267,7 @@ describe('issue-mcp-server', () => {
     });
 
     it('sets solution fields with timestamps', async () => {
-      createIssueMcpServer(tempDir);
+      await createIssueMcpServer(tempDir);
       const handler = capturedTools.get('update_issue')!;
 
       await writeIssuesJsonl(jsonlPath, [makeIssue({ id: 'ISS-sol-1' })]);
@@ -290,7 +290,7 @@ describe('issue-mcp-server', () => {
     });
 
     it('returns error when issue not found', async () => {
-      createIssueMcpServer(tempDir);
+      await createIssueMcpServer(tempDir);
       const handler = capturedTools.get('update_issue')!;
 
       await writeIssuesJsonl(jsonlPath, []);
@@ -302,7 +302,7 @@ describe('issue-mcp-server', () => {
     });
 
     it('updates multiple fields at once', async () => {
-      createIssueMcpServer(tempDir);
+      await createIssueMcpServer(tempDir);
       const handler = capturedTools.get('update_issue')!;
 
       await writeIssuesJsonl(jsonlPath, [makeIssue({ id: 'ISS-multi' })]);
@@ -329,7 +329,7 @@ describe('issue-mcp-server', () => {
     });
 
     it('preserves other issues when updating one', async () => {
-      createIssueMcpServer(tempDir);
+      await createIssueMcpServer(tempDir);
       const handler = capturedTools.get('update_issue')!;
 
       await writeIssuesJsonl(jsonlPath, [
