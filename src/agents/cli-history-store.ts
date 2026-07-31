@@ -71,6 +71,19 @@ const RESUME_CONTEXT_WARN_CHARS = 32_000;
 const RESUME_ENTRY_MAX_CHARS = 4_096;
 const SNAPSHOT_OUTPUT_PREVIEW_CHARS = 240;
 
+export const CLI_EXEC_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
+const WINDOWS_RESERVED_BASENAME_RE = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
+
+export function isValidCliExecId(execId: string): boolean {
+  return CLI_EXEC_ID_RE.test(execId) && !WINDOWS_RESERVED_BASENAME_RE.test(execId);
+}
+
+export function assertValidCliExecId(execId: string): void {
+  if (!isValidCliExecId(execId)) {
+    throw new Error(`Invalid execution ID: "${execId}". Use 1-64 alphanumeric, underscore, or hyphen characters.`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // CliHistoryStore
 // ---------------------------------------------------------------------------
@@ -81,10 +94,12 @@ export class CliHistoryStore {
   }
 
   private jsonlPath(execId: string): string {
+    assertValidCliExecId(execId);
     return join(this.dir, `${execId}.jsonl`);
   }
 
   private metaPath(execId: string): string {
+    assertValidCliExecId(execId);
     return join(this.dir, `${execId}.meta.json`);
   }
 

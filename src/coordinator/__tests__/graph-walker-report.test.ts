@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { GraphWalker } from '../graph-walker.js';
+import { resolveCoordinatorReportPath } from '../report-path.js';
 import { DefaultExprEvaluator } from '../expr-evaluator.js';
 import { DefaultOutputParser } from '../output-parser.js';
 import type {
@@ -132,7 +133,7 @@ function makeState(sessionId: string, graphId: string, entry: string): WalkerSta
 }
 
 function reportPath(sessionDir: string, sessionId: string, nodeId: string): string {
-  return join(sessionDir, sessionId, 'reports', `${nodeId}.json`);
+  return resolveCoordinatorReportPath(sessionDir, sessionId, nodeId);
 }
 
 function writeReport(
@@ -196,6 +197,26 @@ describe('GraphWalker — report file first', () => {
     assert.strictEqual(ctxResult.verification_status, 'passed');
     assert.strictEqual(ctxResult.summary, 'via report tool');
     assert.deepStrictEqual(ctxResult.artifacts, ['out.json']);
+  });
+
+  it('loads reports for node IDs that are unsafe as filenames', async () => {
+    const nodeId = 'phase:设计/review';
+    const graph = makeGraph('g', {
+      [nodeId]: { type: 'command', cmd: 'execute', next: 'done' },
+      done: { type: 'terminal', status: 'success' },
+    }, nodeId);
+    const state = makeState('sid-unsafe', 'g', nodeId);
+    const executor = createExecutor({
+      sessionDir,
+      onExecute: (_req, dir) => {
+        writeReport(dir, 'sid-unsafe', nodeId, { status: 'SUCCESS', summary: 'portable path' });
+      },
+    });
+
+    const result = await makeWalker(executor, { g: graph }, sessionDir).walkGraph(state, graph);
+
+    assert.strictEqual(result.status, 'completed');
+    assert.strictEqual((result.context.result as Record<string, unknown>).summary, 'portable path');
   });
 
   it('honors FAILURE in report file even when stdout contains SUCCESS block', async () => {

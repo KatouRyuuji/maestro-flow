@@ -10,6 +10,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { GraphLoader } from '../coordinator/graph-loader.js';
+import { resolveCoordinatorReportPath } from '../coordinator/report-path.js';
 import { GraphWalker } from '../coordinator/graph-walker.js';
 import { IntentRouter } from '../coordinator/intent-router.js';
 import { DefaultPromptAssembler } from '../coordinator/prompt-assembler.js';
@@ -61,7 +62,7 @@ function resolvePaths(workflowRoot: string) {
 // (writer) and GraphWalker (reader). Kept in one place so the path contract
 // can't drift between producer and consumer.
 export function resolveReportPath(sessionDir: string, sessionId: string, nodeId: string): string {
-  return join(sessionDir, sessionId, 'reports', `${nodeId}.json`);
+  return resolveCoordinatorReportPath(sessionDir, sessionId, nodeId);
 }
 
 function createSpawnFn(): SpawnFn {

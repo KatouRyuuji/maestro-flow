@@ -88,6 +88,20 @@ describe('maestro coordinate report', () => {
     assert.ok(typeof payload.reported_at === 'string');
   });
 
+  it('writes unsafe node IDs through a portable internal filename', async () => {
+    const nodeId = 'phase:设计/review';
+    const code = await runReport(
+      ['--session', 'sess-unsafe', '--node', nodeId, '--status', 'SUCCESS'],
+      workflowRoot,
+    );
+    assert.strictEqual(code, 0);
+
+    const path = resolveReportPath(sessionDirOf(workflowRoot), 'sess-unsafe', nodeId);
+    assert.ok(existsSync(path));
+    assert.ok(!path.endsWith(`${nodeId}.json`));
+    assert.strictEqual(JSON.parse(readFileSync(path, 'utf-8')).status, 'SUCCESS');
+  });
+
   it('collects repeatable --artifact flags into an array', async () => {
     const code = await runReport(
       [

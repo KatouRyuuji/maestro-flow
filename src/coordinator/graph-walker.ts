@@ -3,6 +3,7 @@
 import { writeFileSync, readFileSync, mkdirSync, readdirSync, existsSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { resolveCoordinatorReportPath } from './report-path.js';
 import type {
   ChainGraph, CommandNode, DecisionNode, EvalNode, ForkNode,
   GateNode, JoinNode, TerminalNode, WalkerState, WalkerContext,
@@ -954,7 +955,7 @@ export class GraphWalker {
 
   private reportPathFor(sessionId: string, nodeId: string): string | null {
     if (!this.sessionDir) return null;
-    return join(this.sessionDir, sessionId, 'reports', `${nodeId}.json`);
+    return resolveCoordinatorReportPath(this.sessionDir, sessionId, nodeId);
   }
 
   private clearNodeReport(sessionId: string, nodeId: string): void {

@@ -45,8 +45,8 @@ text output alone is not read.
 
 \`\`\`
 maestro coordinate report \\
-  --session {{SESSION_ID}} \\
-  --node {{NODE_ID}} \\
+  --session {{SESSION_ID_ARG}} \\
+  --node {{NODE_ID_ARG}} \\
   --status <SUCCESS|FAILURE> \\
   [--verification <passed|failed|pending>] \\
   [--review <PASS|WARN|BLOCK>] \\
@@ -72,6 +72,10 @@ SUMMARY: <one-line what was accomplished>
 \`\`\`
 `;
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
 export class DefaultPromptAssembler implements PromptAssembler {
   constructor(
     private readonly workflowRoot: string,
@@ -93,7 +97,9 @@ export class DefaultPromptAssembler implements PromptAssembler {
       GRAPH_NAME: graph.name,
       GRAPH_ID: graph.id,
       NODE_ID: req.node_id,
+      NODE_ID_ARG: shellQuote(req.node_id),
       SESSION_ID: req.session_id,
+      SESSION_ID_ARG: shellQuote(req.session_id),
       PREVIOUS_CONTEXT: previousContext,
       STATE_SNAPSHOT: stateSnapshot,
       AUTO_DIRECTIVE: autoDirective,

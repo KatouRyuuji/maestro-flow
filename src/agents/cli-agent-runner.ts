@@ -10,7 +10,7 @@ import { spawn } from 'node:child_process';
 import { readFileSync, appendFileSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { DashboardBridge } from './dashboard-bridge.js';
-import { CliHistoryStore, type EntryLike } from './cli-history-store.js';
+import { CliHistoryStore, assertValidCliExecId, type EntryLike } from './cli-history-store.js';
 import { loadTemplate, loadProtocol } from '../config/template-discovery.js';
 import { loadSpecs, type SpecCategory } from '../tools/spec-loader.js';
 import { NOTIFY_PREFIX } from '../hooks/constants.js';
@@ -531,6 +531,7 @@ export class CliAgentRunner {
 
     // Generate or use provided execution ID
     const execId = options.execId ?? generateCliExecId(options.tool);
+    assertValidCliExecId(execId);
     process.stderr.write(`[MAESTRO_EXEC_ID=${execId}]\n`);
 
     // History store for persistence and resume

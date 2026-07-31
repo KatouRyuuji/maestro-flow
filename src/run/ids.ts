@@ -8,9 +8,15 @@ export function validateSessionId(value: string): void {
   }
 }
 
-/** Reject path separators and dot segments at the storage boundary. */
+const WINDOWS_RESERVED_BASENAME_RE = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
+
+/** Reject non-portable filesystem path segments at the storage boundary. */
 export function assertSafePathSegment(value: string, label: string): void {
-  if (!value || value === '.' || value === '..' || /[\\/\0]/.test(value)) {
+  const hasWindowsReservedChars = /[<>:"|?*\x00-\x1f]/.test(value);
+  const hasWindowsInvalidSuffix = /[. ]$/.test(value);
+  if (!value || value === '.' || value === '..' || /[\\/]/.test(value)
+    || hasWindowsReservedChars || hasWindowsInvalidSuffix
+    || WINDOWS_RESERVED_BASENAME_RE.test(value)) {
     throw new Error(`Invalid ${label}: "${value}"`);
   }
 }

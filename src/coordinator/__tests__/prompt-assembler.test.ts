@@ -49,6 +49,7 @@ function makeRequest(overrides?: Partial<AssembleRequest>): AssembleRequest {
   return {
     node: makeNode(),
     node_id: 'test-node',
+    session_id: 'test-session',
     context: makeCtx(),
     graph: { id: 'test-graph', name: 'Test Graph' },
     command_index: 1,
@@ -404,6 +405,16 @@ describe('Full assemble (end-to-end)', () => {
 
     // Intent
     assert.ok(result.includes('Build auth module'));
+  });
+
+  it('quotes report identifiers in the generated shell command', async () => {
+    const result = await assembler.assemble(makeRequest({
+      node_id: "phase:owner's review",
+      session_id: 'session with spaces',
+    }));
+
+    assert.ok(result.includes("--session 'session with spaces'"));
+    assert.ok(result.includes("--node 'phase:owner'\\''s review'"));
   });
 
   it('produces minimal prompt with no context', async () => {

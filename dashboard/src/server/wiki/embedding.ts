@@ -697,6 +697,11 @@ export async function embedQuery(query: string): Promise<Float32Array> {
 // ---------------------------------------------------------------------------
 
 const ZVEC_DIR = 'embedding.zvec';
+const ZVEC_ID_ENCODING = 'sha256';
+
+function toZvecId(docId: string): string {
+  return createHash('sha256').update(docId).digest('hex');
+}
 
 export function vectorSearch(
   queryVector: Float32Array,
@@ -738,10 +743,16 @@ export async function vectorSearchZvec(
         topk: limit,
         outputFields: ['docId'],
       });
-      return docs.map(d => ({
-        docId: (d.fields.docId as string) ?? d.id,
-        score: 1 - d.score,
-      }));
+      return docs.map(d => {
+        const docId = d.fields.docId;
+        if (typeof docId !== 'string' || docId.length === 0) {
+          throw new Error(`zvec query result ${d.id} is missing its original docId`);
+        }
+        return {
+          docId,
+          score: 1 - d.score,
+        };
+      });
     } finally {
       collection.closeSync();
     }
@@ -891,7 +902,7 @@ async function _saveZvecIndexInner(zvec: ZvecModule, index: EmbeddingIndex, dir:
       const end = Math.min(i + BATCH_SIZE, index.docIds.length);
       for (let j = i; j < end; j++) {
         batch.push({
-          id: index.docIds[j],
+          id: toZvecId(index.docIds[j]),
           vectors: { embedding: index.vectors[j] },
           fields: { docId: index.docIds[j] },
         });
@@ -911,6 +922,7 @@ async function _saveZvecIndexInner(zvec: ZvecModule, index: EmbeddingIndex, dir:
       contentHashes: index.contentHashes,
       chunkDocIds: index.chunkDocIds,
       docIds: index.docIds,
+      zvecIdEncoding: ZVEC_ID_ENCODING,
     };
     writeFileSync(join(dir, ZVEC_DIR + '.meta.json'), JSON.stringify(metaSidecar));
   } finally {
@@ -984,6 +996,7 @@ function loadFromZvecMeta(metaPath: string, _collectionPath: string): EmbeddingI
     contentHashes?: string[];
     chunkDocIds?: string[];
     docIds: string[];
+    zvecIdEncoding?: typeof ZVEC_ID_ENCODING;
   };
 
   // Use cached zvec module if available, otherwise try sync require
@@ -1003,18 +1016,21 @@ function loadFromZvecMeta(metaPath: string, _collectionPath: string): EmbeddingI
     // Fetch vectors in batches by ID
     const BATCH_SIZE = 500;
     for (let i = 0; i < meta.docIds.length; i += BATCH_SIZE) {
-      const batchIds = meta.docIds.slice(i, Math.min(i + BATCH_SIZE, meta.docIds.length));
-      const fetched = collection.fetchSync({ ids: batchIds, includeVector: true, outputFields: [] });
+      const docIds = meta.docIds.slice(i, Math.min(i + BATCH_SIZE, meta.docIds.length));
+      const zvecIds = meta.zvecIdEncoding === ZVEC_ID_ENCODING
+        ? docIds.map(toZvecId)
+        : docIds;
+      const fetched = collection.fetchSync({ ids: zvecIds, includeVector: true, outputFields: [] });
       const fetchedMap = Array.isArray(fetched)
         ? Object.fromEntries(fetched.map((d: any) => [d.id, d]))
         : fetched;
-      for (let j = 0; j < batchIds.length; j++) {
-        const doc = fetchedMap[batchIds[j]];
+      for (let j = 0; j < zvecIds.length; j++) {
+        const doc = fetchedMap[zvecIds[j]];
         if (doc?.vectors?.embedding) {
           const v = doc.vectors.embedding;
           vectors[i + j] = v instanceof Float32Array ? v : new Float32Array(v as number[]);
         } else {
-          vectors[i + j] = new Float32Array(meta.dimension);
+          throw new Error(`zvec collection is missing document ${zvecIds[j]}`);
         }
       }
     }

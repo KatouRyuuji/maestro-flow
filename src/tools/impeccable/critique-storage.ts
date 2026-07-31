@@ -7,6 +7,13 @@ import path from 'node:path';
 import { getCritiqueDir } from './paths.js';
 
 const SLUG_MAX = 50;
+const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,48}[a-z0-9])?$/;
+
+export function assertValidCritiqueSlug(slug: string): void {
+  if (!SLUG_RE.test(slug)) {
+    throw new Error(`Invalid critique slug: "${slug}". Use 1-${SLUG_MAX} lowercase alphanumeric or hyphen characters.`);
+  }
+}
 
 export function slugFromTarget(resolved: string | null | undefined, { cwd = process.cwd() }: { cwd?: string } = {}): string | null {
   if (!resolved || typeof resolved !== 'string') return null;
@@ -59,7 +66,7 @@ export interface WriteSnapshotOptions {
 
 export function writeSnapshot(opts: WriteSnapshotOptions): string {
   const { slug, meta = {}, body, cwd = process.cwd(), now = new Date() } = opts;
-  if (!slug) throw new Error('writeSnapshot requires a slug');
+  assertValidCritiqueSlug(slug);
   const dir = getCritiqueDir(cwd);
   fs.mkdirSync(dir, { recursive: true });
   const timestamp = nowFilenameStamp(now);
@@ -101,6 +108,7 @@ function parseFrontmatter(text: string): Record<string, string | number> {
 }
 
 function listSnapshotsForSlug(slug: string, cwd: string): string[] {
+  assertValidCritiqueSlug(slug);
   const dir = getCritiqueDir(cwd);
   if (!fs.existsSync(dir)) return [];
   const suffix = `__${slug}.md`;
