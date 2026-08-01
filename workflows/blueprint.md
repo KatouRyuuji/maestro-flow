@@ -220,20 +220,16 @@ Query the isolated architecture knowledge base for template scaffolding:
 
 ```bash
 # Match system type to architecture templates (inject as ADR seed)
-maestro arch-kb match "{product_brief one-liner + key constraints}" --json
+maestro arch-kb search "{product_brief one-liner + key constraints}" --type template --json
 
-# Get review checklist for architecture quality gate
-maestro arch-kb checklist consistency,resilience,scale,security --json
-
-# Technology selection guidance (if stack not yet decided)
-maestro arch-kb tech-select database
-maestro arch-kb tech-select api
+# View matched template sections as seed context
+maestro arch-kb show <template-id> --section "关键架构决策与权衡"
+maestro arch-kb show <template-id> --section "架构全景图"
 ```
 
-- If `arch-kb match` returns ≥1 template with score > 0: inject matched template's **§8 决策与权衡** and **§4 架构全景图** as seed context into Step 6.1 CLI prompt
+- If search returns ≥1 template: inject matched template's **§8 决策与权衡** and **§4 架构全景图** as seed context into Step 6.1 CLI prompt
 - If no match: proceed without template (current behavior)
 - arch-kb is isolated from `maestro search` — only triggered by this explicit call
-- `arch-kb checklist` output feeds into Step 6.2 review criteria
 
 **Step 6.1: Architecture Analysis via CLI (role: review)** — MANDATORY, NOT SUBSTITUTABLE
 - System architecture style with justification

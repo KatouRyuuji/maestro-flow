@@ -71,18 +71,16 @@ Store as `upstream_material` (in-memory).
 Query the isolated architecture knowledge base for grilling dimension seeds:
 
 ```bash
-# Get review checklist as Socratic grilling dimensions
-maestro arch-kb checklist --all --json
+# Match system type for domain-specific concerns (template-only)
+maestro arch-kb search "{topic keywords}" --type template --json --limit 3
 
-# Match system type for domain-specific concerns
-maestro arch-kb match "{topic keywords}" --json --limit 3
+# View matched template's decision sections as grilling angles
+maestro arch-kb show <template-id> --section "关键架构决策与权衡"
 ```
 
-- Inject checklist items as **additional branch-walking dimensions** in Step 4
-- Each checklist item becomes a potential Socratic question seed (e.g., "幂等: 写操作重复执行会怎样?")
-- If `arch-kb match` returns templates: inject template **§8 决策与权衡** as domain-specific grilling angles
+- If search returns templates: inject template **§8 决策与权衡** as domain-specific grilling angles
 - arch-kb is isolated from `maestro search` — only triggered by this explicit call
-- Skip if `--depth shallow` (too lightweight for checklist injection)
+- Skip if `--depth shallow` (too lightweight for template injection)
 
 ### 2.4: Codebase Scan
 

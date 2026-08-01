@@ -251,19 +251,14 @@ Seven sub-phases producing guidance-specification.md:
 Query the isolated architecture knowledge base to seed the system-architect role:
 
 ```bash
-# Get thinking framework for structured analysis
-maestro arch-kb framework --json
+# Match system type to architecture templates (thinking skeleton source)
+maestro arch-kb search "{guidance-specification one-liner}" --type template --json --limit 3
 
-# Match system type to architecture templates
-maestro arch-kb match "{guidance-specification one-liner}" --json --limit 3
-
-# Get relevant patterns for key concerns
-maestro arch-kb patterns "{top 2-3 quality attributes from guidance}" --json --limit 3
+# View matched template decision sections as reference architecture
+maestro arch-kb show <template-id> --section "关键架构决策与权衡"
 ```
 
-- Inject `arch-kb framework` output as **thinking skeleton** into system-architect role prompt (需求→约束→质量属性→候选→取舍→决策)
-- If `arch-kb match` returns templates: inject matched template sections as **reference architecture** context for system-architect
-- If `arch-kb patterns` returns results: inject as **pattern candidates** for system-architect to evaluate
+- If search returns templates: inject matched template sections as **reference architecture** context for system-architect
 - arch-kb is isolated from `maestro search` — only triggered by this explicit call
 - Store as `arch_kb_context` (in-memory), passed to Step 4 system-architect agent prompt
 
