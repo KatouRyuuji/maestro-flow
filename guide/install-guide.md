@@ -60,7 +60,6 @@ maestro install
 | `qoder` | Qoder / Qoder CN | 技能、Agent → 复制到 `.qoder/` |
 | `codebuddy` | CodeBuddy | 技能、Agent → 复制到 `.codebuddy/` |
 | `droid` | Droid | 技能、Agent → 复制到 `.factory/` |
-| `pi` | Pi Agent | 技能、Agent → 复制到 `.pi/` |
 | `trae` | Trae / Trae CN | 技能、Agent → 复制到 `.trae/` |
 | `roo` | Roo Code | 技能、Agent → 复制到 `.roo/` |
 | `aider-desk` | AiderDesk | 技能、Agent → 复制到 `.aider-desk/` |
@@ -116,6 +115,13 @@ maestro install
 | `promptscript` | PromptScript | 技能、Agent → 复制到 `.promptscript/` |
 | `adal` | AdaL | 技能、Agent → 复制到 `.adal/` |
 | `agents-standard` | Open Standard | `.agents/` 开放规范格式（多平台通用） |
+
+> **Pi Agent 提示**：Maestro 不再直接安装 Pi 平台（不再向 `~/.pi/` 复制技能/Agent）。
+> 请在 Pi 中安装官方 Maestro Flow 插件以接入 Pi 平台：
+>
+> ```bash
+> pi install https://github.com/catlog22/pi-maestro-flow
+> ```
 
 ---
 

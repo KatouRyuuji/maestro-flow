@@ -84,6 +84,9 @@ export interface LocaleStrings {
     hubDetailAgyHooks: string;
     hubDetailExtraMcp: string;
 
+    // Pi Agent — not installed by maestro; install the pi Maestro Flow plugin
+    piPluginReminder: string;
+
     // Hooks granular
     hooksIndividual: string;
     hooksCustomStatus: string;

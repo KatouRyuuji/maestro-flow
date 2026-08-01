@@ -110,7 +110,7 @@ export function useInstallFlowState(opts: UseInstallFlowStateOptions) {
   const ALL_PLATFORMS: Platform[] = [
     'claude', 'codex', 'agy', 'agents-standard',
     'cursor', 'opencode', 'kiro', 'kilo', 'copilot',
-    'devin', 'qoder', 'codebuddy', 'droid', 'pi',
+    'devin', 'qoder', 'codebuddy', 'droid',
     'trae', 'roo',
     'aider-desk', 'amp', 'antigravity', 'antigravity-cli', 'astrbot',
     'autohand-code', 'augment', 'bob', 'cline', 'codearts-agent',
@@ -142,7 +142,7 @@ export function useInstallFlowState(opts: UseInstallFlowStateOptions) {
     const extraPlatDirs: [string, string][] = [
       ['cursor', '.cursor'], ['opencode', '.opencode'], ['kiro', '.kiro'],
       ['kilo', '.kilocode'], ['copilot', '.github'], ['devin', '.devin'],
-      ['qoder', '.qoder'], ['codebuddy', '.codebuddy'], ['droid', '.factory'], ['pi', '.pi'],
+      ['qoder', '.qoder'], ['codebuddy', '.codebuddy'], ['droid', '.factory'],
       ['trae', '.trae'], ['roo', '.roo'],
       ['aider-desk', '.aider-desk'], ['amp', '.amp'], ['antigravity', '.antigravity'],
       ['antigravity-cli', '.antigravity-cli'], ['astrbot', '.astrbot'], ['autohand-code', '.autohand'],
@@ -478,8 +478,11 @@ export function useInstallFlowState(opts: UseInstallFlowStateOptions) {
   const agyAllHooks = useMemo(() => getAllHookNames('agy'), []);
 
   // --- Addon defs for hub display ---
+  // `commands-entry` is excluded: the dedicated Entry Commands hub group (with
+  // step multi-select) is the canonical menu entry, so the legacy addon row
+  // "Entry Commands (run steps)" is not shown here to avoid duplication.
   const addonDefs = useMemo(() =>
-    COMPONENT_DEFS.filter(d => ADDON_IDS.has(d.id)).map(d => ({
+    COMPONENT_DEFS.filter(d => ADDON_IDS.has(d.id) && d.id !== 'commands-entry').map(d => ({
       id: d.id, label: d.label, description: d.description,
       platform: d.platform ?? 'shared',
     })),

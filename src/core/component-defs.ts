@@ -580,7 +580,6 @@ export const EXTRA_PLATFORMS: PlatformRegistryEntry[] = [
   { id: 'qoder',           label: 'Qoder / Qoder CN',   description: 'Qoder CLI / Agent',        configDir: '.qoder' },
   { id: 'codebuddy',       label: 'CodeBuddy',          description: 'CodeBuddy IDE',            configDir: '.codebuddy' },
   { id: 'droid',           label: 'Droid',              description: 'Factory Droid',            configDir: '.factory' },
-  { id: 'pi',              label: 'Pi Agent',           description: 'Pi Agent CLI',             configDir: '.pi' },
   { id: 'trae',            label: 'Trae / Trae CN',     description: 'Trae AI IDE',              configDir: '.trae' },
   { id: 'roo',             label: 'Roo Code',           description: 'Roo Code IDE',             configDir: '.roo' },
   { id: 'aider-desk',      label: 'AiderDesk',          description: 'AiderDesk Agent',          configDir: '.aider-desk' },
@@ -695,10 +694,6 @@ function makeExtraPlatformDefs(entry: PlatformRegistryEntry): ComponentDef[] {
           const { buildEveSkills } = require('./skill-converter.js');
           return buildEveSkills(claudeDir, targetDir);
         }
-        if (id === 'pi') {
-          const { buildPiSkills } = require('./skill-converter.js');
-          return buildPiSkills(claudeDir, targetDir);
-        }
         const { buildAgentsStandardSkills } = require('./skill-converter.js');
         return buildAgentsStandardSkills(claudeDir, targetDir);
       },
@@ -719,10 +714,6 @@ function makeExtraPlatformDefs(entry: PlatformRegistryEntry): ComponentDef[] {
         if (id === 'eve') {
           const { buildEveAgents } = require('./skill-converter.js');
           return buildEveAgents(claudeDir, targetDir);
-        }
-        if (id === 'pi') {
-          const { buildPiAgents } = require('./skill-converter.js');
-          return buildPiAgents(claudeDir, targetDir);
         }
         const { buildAgentsStandardAgents } = require('./skill-converter.js');
         return buildAgentsStandardAgents(claudeDir, targetDir);

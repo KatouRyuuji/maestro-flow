@@ -291,7 +291,6 @@ const PLATFORM_DEFS = [
   { id: 'qoder',           label: 'Qoder / Qoder CN',   desc: 'Skills, agents → .qoder/' },
   { id: 'codebuddy',       label: 'CodeBuddy',          desc: 'Skills, agents → .codebuddy/' },
   { id: 'droid',           label: 'Droid',              desc: 'Skills, agents → .factory/' },
-  { id: 'pi',              label: 'Pi Agent',           desc: 'Skills, agents → .pi/' },
   { id: 'trae',            label: 'Trae / Trae CN',     desc: 'Skills, agents → .trae/' },
   { id: 'roo',             label: 'Roo Code',           desc: 'Skills, agents → .roo/' },
   { id: 'aider-desk',      label: 'AiderDesk',          desc: 'Skills, agents → .aider-desk/' },
@@ -511,6 +510,12 @@ function PlatformSelector({
           <Text dimColor>]</Text>
         </Box>
         <Text dimColor>(Use Left/Right or h/l to page)</Text>
+      </Box>
+
+      {/* Pi Agent — installed via the pi Maestro Flow plugin, not by maestro */}
+      <Box marginTop={1}>
+        <Text color={C.warning}>⚠ </Text>
+        <Text color={C.warning} wrap="wrap">{t.install.piPluginReminder}</Text>
       </Box>
 
       <KeyHints hints={`[Space/1-9] Toggle  [Up/Down] Navigate  [Left/Right] Page  [g/p] Scope  [Enter] Next  [Esc] Exit`} />

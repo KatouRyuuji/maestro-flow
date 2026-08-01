@@ -33,6 +33,13 @@ maestro install
 4. **Copy files** — copy to target location per component definition
 5. **Generate manifest** — record installed components for incremental updates
 
+> **Pi Agent note**: Maestro no longer installs the Pi platform directly (it does not copy
+> skills/agents into `~/.pi/`). To integrate with Pi, install the official Maestro Flow pi plugin:
+>
+> ```bash
+> pi install https://github.com/catlog22/pi-maestro-flow
+> ```
+
 ---
 
 ## Component Groups

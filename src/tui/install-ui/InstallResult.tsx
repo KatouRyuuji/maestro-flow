@@ -1,5 +1,8 @@
 import React from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 import type { InstallFlowResult } from './InstallExecution.js';
 import { t } from '../../i18n/index.js';
 import { C, BORDER } from '../shared/index.js';
@@ -107,6 +110,13 @@ export function InstallResult({ result }: InstallResultProps) {
           </Text>
           <Text color={C.primary}>maestro install fonts</Text>
           <Text dimColor> for platform-specific setup.</Text>
+        </Box>
+      )}
+
+      {existsSync(join(homedir(), '.pi')) && (
+        <Box flexDirection="column" {...BORDER.warning} paddingX={1} marginTop={1}>
+          <Text bold color={C.warning}>Pi Agent</Text>
+          <Text color={C.warning} wrap="wrap">{t.install.piPluginReminder}</Text>
         </Box>
       )}
 
