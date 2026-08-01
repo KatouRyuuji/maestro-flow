@@ -751,7 +751,7 @@
     },
     {
       "command": "maestro arch-kb",
-      "description": "架构知识库查询（隔离，关键词触发）：match/checklist/patterns/framework/show/search",
+      "description": "架构知识库查询（隔离，关键词触发）：search/show/list",
       "category": "knowledge"
     },
     {

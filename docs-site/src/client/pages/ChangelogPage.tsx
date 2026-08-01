@@ -17,6 +17,15 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    version: '0.5.60',
+    date: '2026-08',
+    changes: [
+      { type: 'feat', text_en: 'Remove the Pi platform from the Maestro installer and direct users to the official pi-maestro-flow plugin, with TUI and install-guide reminders', text_zh: '从 Maestro 安装器移除 Pi 平台，引导用户安装官方 pi-maestro-flow 插件，并在 TUI 与安装指南中给出提示' },
+      { type: 'refactor', text_en: 'Reduce the arch-kb command surface to search/show/list, retiring the match, checklist, patterns, framework, and tech-select subcommands', text_zh: '精简 arch-kb 命令面为 search/show/list，移除 match、checklist、patterns、framework、tech-select 五个子命令' },
+      { type: 'fix', text_en: 'Harden storage identifier boundaries across embedding, CLI history, coordinator report paths, run IDs, and critique storage', text_zh: '加固存储标识符边界，覆盖 embedding、CLI 历史、协调器报告路径、run ID 与 critique 存储' },
+    ],
+  },
+  {
     version: '0.5.59',
     date: '2026-07',
     changes: [
