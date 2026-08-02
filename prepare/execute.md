@@ -44,6 +44,7 @@ Degradation seal: `maestro session done <run_id> --verdict needs-retry` with rep
 ## Input Interpretation
 
 - When `current-plan` is present: its path is injected by create — work only from this plan. Do not step outside the waves and task scope declared in the plan to add ad-hoc work.
+- A `plan/1.0` artifact with `source_format: pi-markdown` is the approved external-Plan variant: treat `markdown` as the complete authoritative plan body. Derive the execution task order, dependencies, boundaries, risks, and acceptance checks explicitly from that Markdown before dispatch; do not require structured `task_ids` or `wave_ids`, and do not invent work absent from the Markdown.
 - When `current-plan` is absent: follow the Degradation Routing table above. Do NOT proceed to Step 1+ without a plan.
 - How is the execution method decided? `--method` specifies explicitly (agent / cli / auto), or auto-routes by domain (frontend / backend / general each go to their own executor). When the user names a tool, use `--executor` — don't guess.
 - `--task TASK-ID` runs only a single task; without args, execute the full DAG/waves. Already-completed tasks resume from checkpoint and are not re-executed.
@@ -51,7 +52,7 @@ Degradation seal: `maestro session done <run_id> --verdict needs-retry` with rep
 
 ## Required Context
 
-- With `current-plan`: read waves, dependency graph, collision report, and each task's convergence.criteria as the basis for execution and self-check.
+- With `current-plan`: for a structured Maestro Plan, read waves, dependency graph, collision report, and each task's convergence.criteria. For `source_format: pi-markdown`, use the derived task/dependency view from the authoritative `markdown` body and preserve every stated acceptance check as convergence criteria.
 - With `session-priors` (injected by upstream): its spec / doc-index / wiki hits are already resolved from a prior run — reuse them as the coding-convention context instead of repeating the load/search. Absent priors, collect fresh below.
 - Project specs (coding category): unless `session-priors` already carries the coding specs, `maestro load --type spec --category coding` is **mandatory and cannot be replaced by manual Read/Grep** — pass it to each executor as coding conventions.
 - UI specs (conditional load): when a task involves frontend/UI (component/page/style/layout/CSS/HTML keywords, or focus_paths falling in a UI directory), append `--category ui`.

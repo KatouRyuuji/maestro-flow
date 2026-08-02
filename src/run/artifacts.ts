@@ -10,7 +10,7 @@ import {
   readdirSync,
   realpathSync,
 } from 'node:fs';
-import { basename, dirname, extname, join, relative } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import YAML from 'yaml';
 import { artifactMetaSchema, type ArtifactMeta, type Artifact } from './schemas.js';
 import type { CommandContract } from './contract.js';
@@ -36,6 +36,13 @@ export interface ArtifactScanResult {
 
 export interface ArtifactScanHooks {
   afterFileInspection?: (path: string) => void;
+}
+
+export interface VerifiedContainedFile {
+  data: Buffer;
+  canonicalPath: string;
+  contentHash: string;
+  size: number;
 }
 
 type FileStat = NonNullable<ReturnType<typeof lstatSync>>;
@@ -185,6 +192,38 @@ function stableDirectoryEntries(
 
 function hashBuffer(data: Buffer): { hash: string; size: number } {
   return { hash: createHash('sha256').update(data).digest('hex'), size: data.byteLength };
+}
+
+/**
+ * Read one regular file through the same descriptor and containment fences used
+ * by artifact scanning. Relative inputs are resolved from `root`; absolute
+ * inputs are accepted only when their canonical path remains inside `root`.
+ */
+export function readVerifiedContainedFile(
+  root: string,
+  inputPath: string,
+  hooks?: ArtifactScanHooks,
+): VerifiedContainedFile {
+  let canonicalRoot: string;
+  let candidate: string;
+  let canonicalParent: string;
+  try {
+    canonicalRoot = realpathSync(resolve(root));
+    candidate = resolve(isAbsolute(inputPath) ? inputPath : join(root, inputPath));
+    canonicalParent = realpathSync(dirname(candidate));
+  } catch (error) {
+    throw unsafePath(inputPath, (error as NodeJS.ErrnoException).code ?? (error as Error).message);
+  }
+  const rootStat = lstatSync(canonicalRoot);
+  if (!rootStat.isDirectory()) throw unsafePath(root, 'containment root is not a directory');
+  const verified = readVerifiedFile(candidate, canonicalParent, canonicalRoot, undefined, hooks);
+  const hashed = hashBuffer(verified.data);
+  return {
+    data: verified.data,
+    canonicalPath: realpathSync(candidate),
+    contentHash: hashed.hash,
+    size: hashed.size,
+  };
 }
 
 function hashVerifiedDirectory(

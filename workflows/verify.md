@@ -41,7 +41,21 @@ constraint_violations[] merged into the final verification.json
 
 ### Establish must-haves
 
-Priority: `current-plan`'s success_criteria (primary contract, each is a testable truth) > each task's convergence.criteria > 3-7 observable behaviors derived from the session goal.
+Normalize the verification contract before deriving must-haves:
+
+```
+IF current-plan.source_format == "pi-markdown":
+  authoritativeBody = current-plan.markdown
+  criteria = every explicit acceptance, verification, success, boundary, and risk statement
+  add task-local checks derived from ordered/checklist implementation items
+  if no explicit acceptance section exists, derive 3-7 observable truths from the complete Markdown goal without adding scope
+  normalizedContract = { criteria, source:"pi-markdown" }
+ELSE:
+  normalizedContract.criteria = current-plan.success_criteria
+    followed by each structured task's convergence.criteria
+```
+
+For `pi-markdown`, the Markdown remains authoritative: the normalized criteria list is an in-memory verification projection, must preserve every prose criterion, and must not require absent `task_ids`, `wave_ids`, or structured task files. Use `normalizedContract.criteria` as the primary contract; only fall back to 3-7 observable behaviors from the Session goal when it is empty.
 
 Split each must-have into three layers:
 

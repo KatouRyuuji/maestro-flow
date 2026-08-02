@@ -392,7 +392,7 @@ Canonical paused recovery 是两段式状态转换：`maestro session resolve` �
 
 所有 receipt-backed mutation 都先校验 revision/lease fence，再把 request/outcome 写入 `session.json.requests[]`；Run 只保存必要的 transition pointer。`resolve`、`resume`、`decide`、`chain-insert`、`chain-replace`、`chain-skip`、`meta-update` 的 machine success 从 receipt 投影 applied/replayed `transition_id` 和 `request_id`。
 
-显式 `--json` 的完整 `run-response/1.0` operation matrix 为：`create`、`next`、`complete`、`brief`、`recall`、`fork`、`import`、`check`、`decide`、`seal-session`、`resolve`、`resume`、`chain-insert`、`chain-replace`、`chain-skip`、`meta-update`、`accept-reuse`。每次 machine invocation 只向 stdout 写一行 envelope，stderr 为空，process status 等于 envelope `exit_code`；Commander usage 同样返回 `COMMANDER_USAGE` envelope。`accept-reuse` 必须提供 actor、reason 和至少一个 evidence；`seal-session` 非 receipt-backed，成功时 `replay: null`。
+显式 `--json` 的完整 `run-response/1.0` operation matrix 为：`create`、`next`、`complete`、`brief`、`recall`、`fork`、`import`、`check`、`decide`、`seal-session`、`resolve`、`resume`、`chain-insert`、`chain-replace`、`chain-skip`、`meta-update`、`accept-reuse`、`plan-publish`。每次 machine invocation 只向 stdout 写一行 envelope，stderr 为空，process status 等于 envelope `exit_code`；Commander usage 同样返回 `COMMANDER_USAGE` envelope。`accept-reuse` 必须提供 actor、reason 和至少一个 evidence；`plan-publish` 将 immutable approved Markdown 封存为 `plan/1.0` `current-plan`，并通过真实 producer Run 与 transition receipt 保留 provenance；`seal-session` 非 receipt-backed，成功时 `replay: null`。
 
 ### 7.2 md 产物统一命名
 

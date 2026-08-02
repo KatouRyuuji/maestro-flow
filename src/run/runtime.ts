@@ -171,6 +171,8 @@ export interface CreateRunOptions {
   expectedIdentityRevision?: number;
   /** Lease claim validated and persisted with the chain binding. */
   leaseClaim?: LeaseClaim;
+  /** Require a running Session and atomically fence an ad-hoc Run allocation. */
+  requireRunningSession?: boolean;
   /** Explicit exact identity supplied by recall/fork/import consumers. */
   intentIdentity?: IntentIdentity;
   /** Session lineage for a newly allocated Session. */
@@ -431,6 +433,8 @@ export interface CompleteRunOptions {
   applyChainProposal?: boolean;
   /** Audited retry/revision/lease authority for completion. */
   transition?: Partial<TransitionMutationOptions>;
+  /** Require this Run to remain the active Run of a running Session until sealing. */
+  requireRunningSession?: boolean;
 }
 
 /** Chain-advancement instruction carried by `run complete --verdict`. */
@@ -1783,6 +1787,27 @@ export function createRun(options: CreateRunOptions): CreateRunResult {
   }
 
   return store.update(sessionId, (bundle, tx) => {
+    if (options.requireRunningSession) {
+      if (bundle.session.status !== 'running') {
+        throw new Error(`Session ${sessionId} is ${bundle.session.status}; publishing requires running status`);
+      }
+      if (options.expectedIdentityRevision !== undefined
+        && bundle.session.identity_revision !== options.expectedIdentityRevision) {
+        throw new TransitionReceiptError(
+          'FENCE_CONFLICT',
+          `stale identity revision: expected ${options.expectedIdentityRevision}, current ${bundle.session.identity_revision}`,
+        );
+      }
+      if (options.expectedActivityRevision !== undefined
+        && bundle.session.activity_revision !== options.expectedActivityRevision) {
+        throw new TransitionReceiptError(
+          'FENCE_CONFLICT',
+          `stale activity revision: expected ${options.expectedActivityRevision}, current ${bundle.session.activity_revision}`,
+        );
+      }
+      const conflict = checkLease(bundle.session.orchestration.lease, options.leaseClaim ?? {});
+      if (conflict) throw new Error(conflict);
+    }
     if (bundle.session.active_run_id) {
       throw new Error(
         `Session ${sessionId} already has active Run ${bundle.session.active_run_id}; `
@@ -2807,6 +2832,16 @@ export function applyCompleteRunMutation(
 ): { result: CompleteAuthorityResult; run: CommandRun } {
   const { store, runId, projectRoot, scan, frontmatter, options } = prepared;
   const run = tx.readRun(runId);
+  if (options.requireRunningSession) {
+    if (draft.session.status !== 'running') {
+      throw new Error(`Session ${prepared.sessionId} is ${draft.session.status}; publishing requires running status`);
+    }
+    if (draft.session.active_run_id !== runId) {
+      throw new Error(
+        `Session ${prepared.sessionId} active Run is ${draft.session.active_run_id ?? '<none>'}; expected ${runId}`,
+      );
+    }
+  }
   if (run.status === 'sealed') throw new Error(`Run ${runId} is sealed and immutable`);
   const reuse = revalidateRunReuse(projectRoot, store, draft, run);
   scan.errors.push(...reuse.blockers.filter(blocker => !scan.errors.includes(blocker)));
@@ -2939,6 +2974,7 @@ export function completeRun(
       summary_fallback: options.summaryFallback ?? null,
       decisions: options.decisions ?? [],
       chain_verdict: options.chainVerdict ?? null,
+      require_running_session: options.requireRunningSession ?? false,
       chain_proposal: preparedInputs.chainProposal
         ? {
             path: preparedInputs.chainProposal.path,

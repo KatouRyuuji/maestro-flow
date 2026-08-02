@@ -157,12 +157,56 @@ async function main() {
     assert.equal(usage.ok, false);
     assert.equal(usage.error?.code, 'COMMANDER_USAGE');
 
+    const planSource = join(projectRoot, 'approved-plan.md');
+    writeFileSync(planSource, '# Release approved Plan\n\nExecute and verify.\n', 'utf8');
+    const planPublishArgs = [
+      'plan', 'publish', planSource,
+      '--source-root', projectRoot,
+      '--handoff-key', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      '--source-pi-session', 'release-pi-session',
+      '--plan-revision', '1',
+      '--approved-at', '2026-08-02T12:00:00.000Z',
+      '--json',
+      '--workflow-root', projectRoot,
+    ];
+    const planAppliedResult = invoke(planPublishArgs);
+    assert.equal(planAppliedResult.status, 0, `plan-publish applied exit: ${planAppliedResult.stderr}`);
+    const planApplied = parseEnvelope(planAppliedResult, 'plan-publish applied');
+    assert.equal(planApplied.operation, 'plan-publish');
+    assert.equal(planApplied.ok, true);
+    assert.equal(planApplied.replay?.status, 'applied');
+
+    const planReplayResult = invoke(planPublishArgs);
+    assert.equal(planReplayResult.status, 0, `plan-publish replay exit: ${planReplayResult.stderr}`);
+    const planReplay = parseEnvelope(planReplayResult, 'plan-publish replay');
+    assert.equal(planReplay.operation, 'plan-publish');
+    assert.equal(planReplay.ok, true);
+    assert.equal(planReplay.replay?.status, 'replayed');
+    assert.equal(planReplay.replay?.transition_id, planApplied.replay?.transition_id);
+
+    writeFileSync(planSource, '# Changed after approval\n', 'utf8');
+    const planDriftResult = invoke(planPublishArgs);
+    assert.equal(planDriftResult.status, 1, `plan-publish source drift exit: ${planDriftResult.stderr}`);
+    const planDrift = parseEnvelope(planDriftResult, 'plan-publish source drift');
+    assert.equal(planDrift.operation, 'plan-publish');
+    assert.equal(planDrift.ok, false);
+    assert.equal(planDrift.error?.code, 'FENCE_CONFLICT');
+
+    const planUsageResult = invoke([
+      'plan', 'publish', planSource, '--json', '--workflow-root', projectRoot,
+    ]);
+    assert.equal(planUsageResult.status, 2, `plan-publish usage exit: ${planUsageResult.stderr}`);
+    const planUsage = parseEnvelope(planUsageResult, 'plan-publish usage');
+    assert.equal(planUsage.operation, 'plan-publish');
+    assert.equal(planUsage.ok, false);
+    assert.equal(planUsage.error?.code, 'COMMANDER_USAGE');
+
     const mutations = invoke(['run', 'mutations', '--json', '--workflow-root', projectRoot]);
     assert.equal(mutations.status, 1, 'mutations --json must be rejected');
     assert.equal(mutations.stdout, '', 'mutations --json stdout must stay empty');
     assert.match(mutations.stderr, /^error: unknown option '--json'\r?\n$/);
 
-    console.log('session-run release machine parity passed: accept-reuse applied/replayed/usage and mutations rejection');
+    console.log('session-run release machine parity passed: accept-reuse and plan-publish applied/replayed/usage, plan-publish source drift, and mutations rejection');
   } finally {
     rmSync(projectRoot, { recursive: true, force: true });
   }

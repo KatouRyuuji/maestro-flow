@@ -727,6 +727,7 @@ export const runErrorCodeSchema = z.enum([
 export const runOperationSchema = z.enum([
   'create', 'next', 'complete', 'brief', 'recall', 'resolve', 'resume', 'fork', 'import',
   'check', 'decide', 'seal-session', 'chain-insert', 'chain-replace', 'chain-skip', 'meta-update', 'accept-reuse',
+  'plan-publish',
 ]);
 const responseCommonSchema = z.object({
   schema_version: z.literal('run-response/1.0'),
@@ -741,6 +742,7 @@ const responseCommonSchema = z.object({
 const nonBriefRunOperationSchema = z.enum([
   'create', 'next', 'complete', 'recall', 'resolve', 'resume', 'fork', 'import',
   'check', 'decide', 'seal-session', 'chain-insert', 'chain-replace', 'chain-skip', 'meta-update', 'accept-reuse',
+  'plan-publish',
 ]);
 
 export const runResponseSuccessSchema = z.union([

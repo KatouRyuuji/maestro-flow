@@ -238,7 +238,7 @@ export interface SessionStoreOptions {
 
 const RETRYABLE_WINDOWS_LOCK_ERRORS = new Set(['EPERM', 'EACCES', 'EBUSY']);
 
-class SessionStoreLock {
+export class SessionStoreLock {
   private readonly path: string;
   private readonly now: () => number;
   private readonly wait: (milliseconds: number) => void;

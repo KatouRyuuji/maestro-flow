@@ -55,7 +55,7 @@ Table of invalid reasons: a one-line change most easily buries an insidious bug;
 
 ## Required Context
 
-- `current-plan`: success_criteria is the primary contract (each is a testable truth), convergence.criteria is the per-task basis — verify both item by item.
+- `current-plan`: for a structured Maestro Plan, success_criteria is the primary contract and convergence.criteria is the per-task basis. For `source_format: pi-markdown`, the `markdown` body is the complete authoritative contract: enumerate every stated acceptance check, boundary, and risk as explicit verification items before testing. Never require absent `task_ids`/`wave_ids` and never silently omit prose criteria.
 - `current-execution` + change-manifest: take the implementation scope and changed-files list as the target surface for verification scanning.
 - Review specs (review category): `maestro load --type spec --category review` as quality standards; when it contains tech-stack constraints, do a constraint-compliance pre-check first.
 - UAT human findings (if any): merge into gaps, marked `human_verified_failure`.

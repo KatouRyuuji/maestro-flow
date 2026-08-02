@@ -53,7 +53,7 @@ ELSE:
 
 **Degradation seal protocol**: the run is sealed as `needs-retry` (not `done`) to preserve the audit trail without faking completion. report.md MUST note: (1) why degradation was triggered, (2) which upstream was available, (3) the target command. The `next` field in report frontmatter points to the degradation target.
 
-**Never proceed to Step 1+ without a plan.** The wave/DAG execution machinery below requires plan structure that only `current-plan` provides.
+**Never proceed to Step 1+ without a plan.** The execution machinery below requires a normalized in-memory execution model. A structured Maestro plan supplies it directly; a `plan/1.0` artifact with `source_format: pi-markdown` must first be normalized from its authoritative Markdown as specified in Step 2.
 
 ---
 
@@ -83,15 +83,34 @@ Store `executionMethod`, `domainRouting`, `codeReviewTool`, `verificationTool`.
 
 Read the plan from the `current-plan` path injected by create.
 
+Normalize it before any checkpoint or wave logic:
+
 ```
-executionMethod = Step 1 choice || --method || plan default || "auto"
+IF plan.source_format == "pi-markdown":
+  authoritativeBody = plan.markdown
+  derive objective from the title/goal
+  derive tasks from explicit ordered items, checklists, scoped headings, and implementation steps
+  preserve explicit dependencies; otherwise keep the declared order
+  derive convergence criteria from acceptance/verification/success sections and task-local checks
+  if no task split is explicit, create one task covering the complete Markdown body
+  topologically group non-conflicting tasks into in-memory waves
+  normalizedPlan = { objective, tasks, waves, constraints, acceptance_criteria, source:"pi-markdown" }
+  # The artifact has no persisted task status. Resume only from this Run's execution/checkpoint artifacts.
+ELSE:
+  normalizedPlan = the structured Maestro plan
+```
+
+The derived model is an execution projection only. Do not write it back over `current-plan`, drop prose requirements, invent extra scope, or require absent `task_ids`/`wave_ids`.
+
+```
+executionMethod = Step 1 choice || --method || normalizedPlan default || "auto"
 defaultExecutor = --executor || first enabled tool
 domainRouting   = Step 1 || build from delegate-config domain tags (frontend/backend match tag, default "agent")
 ```
 
-**Checkpoint resume**: scan each task's status, collect completed tasks; if any exist record resume state and jump to the first wave containing an incomplete task.
+**Checkpoint resume**: for a structured plan, scan persisted task statuses. For `pi-markdown`, scan `current-execution` and this Run's checkpoint/task summaries keyed by the derived task IDs. Collect completed tasks and resume at the first wave containing an incomplete task.
 
-**Build wave queue**: build the execution queue from the plan's waves, keeping only waves that contain incomplete tasks.
+**Build wave queue**: build from `normalizedPlan.waves`, keeping only waves that contain incomplete tasks. Every later reference to `task`, `wave`, convergence criteria, or plan scope uses `normalizedPlan`.
 
 ---
 

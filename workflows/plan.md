@@ -163,6 +163,8 @@ Only check `task.files[]` (write targets); `read_first[]` (read-only references)
 }
 ```
 
+`plan/1.0` also admits the canonical external-approval variant produced by `maestro plan publish`: `{ source_format: "pi-markdown", handoff_key, source_checksum, source_pi_session, revision, approved_at, markdown }` plus the standard `_meta`. In that variant `markdown` is the complete authoritative Plan; downstream `execute` and `verify` must use their explicit `pi-markdown` interpretation branch and must not assume `task_ids` or `wave_ids` exist.
+
 **outputs/tasks/TASK-NNN.json** (multiple files of the same kind, needs `_meta` override):
 ```json
 {

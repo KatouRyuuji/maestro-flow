@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 const REQUIRED_OPERATIONS = [
   'create', 'next', 'complete', 'brief', 'recall', 'resolve', 'resume', 'fork', 'import',
   'check', 'decide', 'seal-session', 'chain-insert', 'chain-replace', 'chain-skip', 'meta-update', 'accept-reuse',
+  'plan-publish',
 ];
 
 const RELEASE_MACHINE_COMMAND = 'node scripts/check-session-run-release-machine.mjs';
@@ -252,10 +253,28 @@ addCheck(
   Object.values(acceptReuseMachineHandler).every(Boolean),
 );
 
+const planCommands = read('src/commands/plan.ts');
+const planPublishMachineHandler = {
+  command: planCommands?.includes(".command('publish <path>')") ?? false,
+  json: planCommands?.includes(".option('--json'") ?? false,
+  business: planCommands?.includes('const result = publishPlan({') ?? false,
+  success: planCommands?.includes("operation: 'plan-publish'")
+    && planCommands.includes('createRunResponseSuccess({'),
+  error: planCommands?.includes('createRunResponseError({') ?? false,
+};
+addCheck(
+  'cli.plan-publish.machine-handler',
+  planPublishMachineHandler,
+  { command: true, json: true, business: true, success: true, error: true },
+  Object.values(planPublishMachineHandler).every(Boolean),
+);
+
 const releaseMachine = read('scripts/check-session-run-release-machine.mjs');
 const releaseMachineCoverage = {
   childProcess: releaseMachine?.includes('spawnSync') ?? false,
   acceptReuse: releaseMachine?.includes("'accept-reuse'") ?? false,
+  planPublish: releaseMachine?.includes("'plan', 'publish'") ?? false,
+  sourceDrift: releaseMachine?.includes("assert.equal(planDrift.error?.code, 'FENCE_CONFLICT')") ?? false,
   mutations: releaseMachine?.includes("'mutations'") ?? false,
   commanderUsage: releaseMachine?.includes("'COMMANDER_USAGE'") ?? false,
   applied: releaseMachine?.includes("'applied'") ?? false,
@@ -264,7 +283,7 @@ const releaseMachineCoverage = {
 addCheck(
   'release-machine.coverage',
   releaseMachineCoverage,
-  { childProcess: true, acceptReuse: true, mutations: true, commanderUsage: true, applied: true, replayed: true },
+  { childProcess: true, acceptReuse: true, planPublish: true, sourceDrift: true, mutations: true, commanderUsage: true, applied: true, replayed: true },
   Object.values(releaseMachineCoverage).every(Boolean),
 );
 

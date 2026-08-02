@@ -30,6 +30,7 @@ program
 const commandLoaders: Record<string, () => Promise<(p: Command) => void>> = {
   serve:      async () => (await import('./commands/serve.js')).registerServeCommand,
   run:        async () => (await import('./commands/run.js')).registerRunCommand,
+  plan:       async () => (await import('./commands/plan.js')).registerPlanCommand,
   session:    async () => (await import('./commands/session.js')).registerSessionCommand,
   skills:     async () => (await import('./commands/skills.js')).registerSkillsCommand,
   ext:        async () => (await import('./commands/ext.js')).registerExtCommand,
@@ -99,24 +100,27 @@ const runMachineSubcommands = new Set([
   'create', 'new', 'next', 'complete', 'brief', 'recall', 'recall-confirm', 'fork', 'import',
   'check', 'decide', 'seal-session', 'accept-reuse',
 ]);
+const planMachineSubcommands = new Set(['publish']);
 const sessionMachineSubcommands = new Set(['create', 'resolve', 'resume', 'seal', 'chain', 'meta']);
 const requestedCommandIndex = requestedCommand ? argv.indexOf(requestedCommand) : -1;
 const requestedSubcommand = requestedCommandIndex >= 0 ? argv[requestedCommandIndex + 1] : undefined;
 const runMachineMode = argv.includes('--json') && (
   (requestedCommand === 'run' && runMachineSubcommands.has(requestedSubcommand ?? ''))
+  || (requestedCommand === 'plan' && planMachineSubcommands.has(requestedSubcommand ?? ''))
   || (requestedCommand === 'session' && sessionMachineSubcommands.has(requestedSubcommand ?? ''))
 );
 
 type MachineOperation =
   | 'create' | 'next' | 'complete' | 'brief' | 'recall' | 'resolve' | 'resume' | 'fork' | 'import'
   | 'check' | 'decide' | 'seal-session' | 'chain-insert' | 'chain-replace' | 'chain-skip' | 'meta-update'
-  | 'accept-reuse';
+  | 'accept-reuse' | 'plan-publish';
 
-function inferMachineOperation(command: 'run' | 'session', args: string[]): MachineOperation {
+function inferMachineOperation(command: 'run' | 'session' | 'plan', args: string[]): MachineOperation {
   const commandIndex = args.indexOf(command);
   const tail = args.slice(commandIndex + 1);
   const primaryIndex = tail.findIndex(token => !token.startsWith('-'));
   const primary = primaryIndex >= 0 ? tail[primaryIndex] : null;
+  if (command === 'plan') return 'plan-publish';
   if (command === 'run') {
     if (primary === 'new') return 'create';
     if (primary === 'recall-confirm') return 'recall';
@@ -179,7 +183,7 @@ try {
   await program.parseAsync();
 } catch (error) {
   if (!runMachineMode || !(error instanceof CommanderError)) throw error;
-  const operation = inferMachineOperation(requestedCommand as 'run' | 'session', argv);
+  const operation = inferMachineOperation(requestedCommand as 'run' | 'session' | 'plan', argv);
   const { createRunResponseError, emitRunResponse } = await import('./run/response.js');
   emitRunResponse(createRunResponseError({
     operation,

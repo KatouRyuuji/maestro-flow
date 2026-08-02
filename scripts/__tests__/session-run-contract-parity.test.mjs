@@ -11,6 +11,8 @@ const fixtureFiles = [
   'src/run/schemas.ts',
   'src/run/protocol-schemas.ts',
   'src/commands/run.ts',
+  'src/commands/plan.ts',
+  'src/cli.ts',
   'scripts/check-session-run-release-machine.mjs',
   'dashboard/src/server/wiki/virtual-wiki-adapters.ts',
   'dashboard/src/server/wiki/wiki-indexer.ts',
@@ -61,6 +63,7 @@ describe('Session Run contract parity release gate', () => {
     expect(result.stdout).toContain('PASS cache.search.version');
     expect(result.stdout).toContain('PASS response.operations.complete');
     expect(result.stdout).toContain('PASS cli.accept-reuse.machine-handler');
+    expect(result.stdout).toContain('PASS cli.plan-publish.machine-handler');
     expect(result.stdout).toContain('PASS release-machine.coverage');
     expect(result.stdout).toContain('PASS docs.search.zh');
     expect(result.stdout).toContain('PASS package.prepublish.order');
@@ -121,12 +124,21 @@ describe('Session Run contract parity release gate', () => {
         },
       },
       {
+        dimension: 'plan-publish-handler',
+        id: 'cli.plan-publish.machine-handler',
+        mutate(root) {
+          replaceOnce(root, 'src/commands/plan.ts',
+            'const result = publishPlan({',
+            'const result = disabledPublishPlan({');
+        },
+      },
+      {
         dimension: 'release-machine-coverage',
         id: 'release-machine.coverage',
         mutate(root) {
           replaceOnce(root, 'scripts/check-session-run-release-machine.mjs',
-            "assert.equal(replay.replay?.status, 'replayed');",
-            "assert.equal(replay.replay?.status, 'disabled-replay');");
+            "assert.equal(planDrift.error?.code, 'FENCE_CONFLICT');",
+            "assert.equal(planDrift.error?.code, 'REQUEST_CONFLICT');");
         },
       },
       {
@@ -157,8 +169,8 @@ describe('Session Run contract parity release gate', () => {
         id: 'package.prepublish.order',
         mutate(root) {
           replaceOnce(root, 'package.json',
-            'npm run build && npm run check:session-run-release-machine && npm run build:mirrors',
-            'npm run build && npm run build:mirrors && npm run check:session-run-release-machine');
+            'npm run build && npm run check:search-ranking-release-machine:built && npm run check:session-run-release-machine && npm run build:mirrors',
+            'npm run build && npm run check:search-ranking-release-machine:built && npm run build:mirrors && npm run check:session-run-release-machine');
         },
       },
     ];
@@ -170,5 +182,5 @@ describe('Session Run contract parity release gate', () => {
       expect(result.status, `${testCase.dimension}: ${result.stdout}\n${result.stderr}`).not.toBe(0);
       expect(result.stdout, testCase.dimension).toContain(`FAIL ${testCase.id}`);
     }
-  });
+  }, 30_000);
 });
