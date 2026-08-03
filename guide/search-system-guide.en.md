@@ -239,7 +239,7 @@ Search hits asynchronously update node `search_hits` counts (via `CredibilitySto
 - **Trigger condition**: After Write or Edit tool calls
 - **Scope**: Only active in workspace (`requiresWorkspace: true`)
 - **Behavior**: Automatically rebuilds WikiIndexer index, ensuring search results reflect latest file content
-- **Persisted version**: `search-cache.json` currently uses **cache v3** (`version: 3`); legacy cache generations are rejected and atomically rebuilt through the existing cache path
+- **Persisted version**: `search-cache.json` currently uses **cache v5** (`version: 5`); legacy cache generations are rejected and atomically rebuilt through the existing cache path
 
 This hook is enabled by default in the standard hook collection, no manual configuration needed. When modifying spec/knowhow files under `.workflow/` via Write|Edit, the search index automatically updates.
 

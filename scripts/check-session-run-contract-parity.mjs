@@ -15,12 +15,12 @@ const GUIDE_REQUIREMENTS = [
   {
     id: 'docs.search.zh',
     path: 'guide/search-system-guide.md',
-    tokens: ['`session/1.3` + `command-run/1.3`', '1.0-1.3', 'cache v3', 'version: 3', 'fail closed'],
+    tokens: ['`session/1.3` + `command-run/1.3`', '1.0-1.3', 'cache v5', 'version: 5', 'fail closed'],
   },
   {
     id: 'docs.search.en',
     path: 'guide/search-system-guide.en.md',
-    tokens: ['`session/1.3` + `command-run/1.3`', '1.0-1.3', 'cache v3', 'version: 3', 'fail closed'],
+    tokens: ['`session/1.3` + `command-run/1.3`', '1.0-1.3', 'cache v5', 'version: 5', 'fail closed'],
   },
   {
     id: 'docs.architecture',
@@ -142,7 +142,7 @@ addCheck(
 
 const wikiIndexer = read('dashboard/src/server/wiki/wiki-indexer.ts');
 const cacheVersion = Number(wikiIndexer?.match(/const\s+SEARCH_CACHE_VERSION\s*=\s*(\d+)\s*;/)?.[1] ?? Number.NaN);
-addCheck('cache.search.version', Number.isNaN(cacheVersion) ? null : cacheVersion, 3, cacheVersion === 3);
+addCheck('cache.search.version', Number.isNaN(cacheVersion) ? null : cacheVersion, 5, cacheVersion === 5);
 
 const protocolSchemas = read('src/run/protocol-schemas.ts');
 const operations = enumLiterals(protocolSchemas, 'export const runOperationSchema', 'const responseCommonSchema');

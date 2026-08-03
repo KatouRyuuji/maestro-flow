@@ -239,7 +239,7 @@ Claude Code 和 Codex 的 JSONL 会话转写被解析为轻量 note 条目（cat
 - **触发条件**：Write 或 Edit 工具调用后
 - **作用范围**：仅在工作区启用（`requiresWorkspace: true`）
 - **行为**：自动重建 WikiIndexer 索引，确保搜索结果反映最新文件内容
-- **持久化版本**：`search-cache.json` 当前为 **cache v3**（`version: 3`）；legacy cache generations 均拒绝复用并通过既有原子路径重建
+- **持久化版本**：`search-cache.json` 当前为 **cache v5**（`version: 5`）；legacy cache generations 均拒绝复用并通过既有原子路径重建
 
 该 hook 在标准 hook 集合中默认启用，无需手动配置。当通过 Write|Edit 修改 `.workflow/` 下的 spec/knowhow 等文件时，搜索索引会自动更新。
 
