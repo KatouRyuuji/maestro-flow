@@ -79,4 +79,37 @@ describe('MaestroGraph Wiki projection', () => {
     expect(index.entries.some(entry => entry.title === 'Canonical Node')).toBe(true);
     expect(index.entries.some(entry => entry.title === 'Legacy Only')).toBe(false);
   });
+
+  it('preserves full node body for spec/knowhow kg nodes and keeps codegraph stubs empty', async () => {
+    const workflowRoot = mkdtempSync(join(tmpdir(), 'maestro-wiki-body-'));
+    roots.push(workflowRoot);
+    mkdirSync(join(workflowRoot, 'kg'), { recursive: true });
+
+    const db = new DatabaseSync(join(workflowRoot, 'kg', 'maestro.db'));
+    db.exec(`
+      CREATE TABLE nodes (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        name TEXT NOT NULL,
+        file_path TEXT,
+        source_type TEXT NOT NULL,
+        definition TEXT,
+        body TEXT,
+        category TEXT,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE edges (source TEXT NOT NULL, target TEXT NOT NULL, kind TEXT NOT NULL);
+      INSERT INTO nodes VALUES ('knowhow:recipe', 'recipe', 'Full Text Recipe', NULL, 'knowhow', 'def', 'FULL BODY CONTENT — the complete text must survive projection', NULL, 1);
+      INSERT INTO nodes VALUES ('code:stub', 'function', 'NoBody', '/src/a.ts', 'codegraph', NULL, NULL, NULL, 1);
+    `);
+    db.close();
+
+    const index = await new WikiIndexer({ workflowRoot }).get();
+    const full = index.entries.find(entry => entry.title === 'Full Text Recipe')!;
+    expect(full.body).toBe('FULL BODY CONTENT — the complete text must survive projection');
+    expect(full.summary).toBe('def'); // summary still prefers definition over body
+    const stub = index.entries.find(entry => entry.title === 'NoBody')!;
+    expect(stub.body).toBe('');
+    expect(stub.ext.filePath).toBe('/src/a.ts');
+  });
 });

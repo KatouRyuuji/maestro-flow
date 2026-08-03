@@ -1091,7 +1091,7 @@ describe('virtual adapters: run-mode sessions', () => {
     expect(run.ext.gateSummary).toEqual({ total: 1, waived: 1, failed: 0, blocked: 0 });
 
     await new Promise(resolve => setTimeout(resolve, 25));
-    expect(JSON.parse(await readFile(join(tmpRoot, 'search-cache.json'), 'utf-8')).version).toBe(3);
+    expect(JSON.parse(await readFile(join(tmpRoot, 'search-cache.json'), 'utf-8')).version).toBe(5);
   });
 
   it('indexes session and command-run schemas 1.0 through 1.3', async () => {
@@ -1176,7 +1176,7 @@ describe('virtual adapters: run-mode sessions', () => {
     expect(run.related).toContain(`session-${fixture.sessionId}`);
   });
 
-  it('invalidates v2 search cache and persists v3', async () => {
+  it('invalidates v2 search cache and persists v5', async () => {
     await write('specs/cache-v3.md', '---\ntitle: Cache v3\n---\n# Cache v3\nProjection cache sentinel.');
     await write('search-cache.json', JSON.stringify({
       version: 2, generatedAt: 1, mtimeSnapshot: [], entries: [],
@@ -1187,7 +1187,7 @@ describe('virtual adapters: run-mode sessions', () => {
     await expect.poll(async () => {
       try { return JSON.parse(await readFile(join(tmpRoot, 'search-cache.json'), 'utf-8')).version; }
       catch { return null; }
-    }).toBe(3);
+    }).toBe(5);
   });
 
   it('indexes v1.1 sealed Runs with structured handoff, kinds, provenance, aref edges, and waivers', async () => {

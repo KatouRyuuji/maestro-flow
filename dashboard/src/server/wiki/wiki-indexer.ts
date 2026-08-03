@@ -36,7 +36,8 @@ import type {
 } from './wiki-types.js';
 import { recallSnapshotSchema, type RecallSnapshot } from './wiki-types.js';
 
-const SEARCH_CACHE_VERSION = 3;
+// v5: issue/codebase/legacy-kg wiki entries carry composed full bodies.
+const SEARCH_CACHE_VERSION = 5;
 const SEARCH_PARENT_CAP = 2;
 
 export interface WikiSearchOptions {

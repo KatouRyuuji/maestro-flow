@@ -15,6 +15,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { truncate, extractSnippet } from '../utils/cli-format.js';
+import { findEntry } from './load.js';
 import type { WikiIndexer } from '#maestro-dashboard/wiki/wiki-indexer.js';
 import type { WikiWriter } from '#maestro-dashboard/wiki/writer.js';
 import type { WikiEntry, WikiFilters, WikiNodeType } from '#maestro-dashboard/wiki/wiki-types.js';
@@ -183,13 +184,16 @@ export function registerWikiCommand(program: Command): void {
           console.log('\n---');
           console.log(entry.body);
         }
+        const fullTextLive = typeof entry.ext?.filePath === 'string' && entry.ext.filePath.length > 0 && !entry.body
+          ? entry.ext.filePath : null;
+        if (fullTextLive) console.log(`\n→ 全文: ${fullTextLive}`);
         return;
       }
 
       // Offline mode
       const { indexer } = await getOfflineClients();
       const index = await indexer.get();
-      const entry = index.byId[id];
+      const entry = findEntry(index, id);
       if (!entry) {
         console.error('Entry not found');
         process.exit(1);
@@ -207,6 +211,9 @@ export function registerWikiCommand(program: Command): void {
         console.log('\n---');
         console.log(entry.body);
       }
+      const fullText = typeof entry.ext?.filePath === 'string' && entry.ext.filePath.length > 0 && !entry.body
+        ? entry.ext.filePath : null;
+      if (fullText) console.log(`\n→ 全文: ${fullText}`);
     });
 
   // ── load ──────────────────────────────────────────────────────────────
@@ -219,10 +226,10 @@ export function registerWikiCommand(program: Command): void {
       const index = await indexer.get();
 
       const entries = ids
-        .map(id => index.byId[id])
-        .filter((e): e is WikiEntry => Boolean(e));
+        .map(id => findEntry(index, id))
+        .filter((e): e is WikiEntry => e !== null);
 
-      const missing = ids.filter(id => !index.byId[id]);
+      const missing = ids.filter(id => !findEntry(index, id));
       if (missing.length > 0) {
         console.error(`Not found: ${missing.join(', ')}`);
       }
@@ -262,7 +269,9 @@ export function registerWikiCommand(program: Command): void {
       const sections = entries.map(e => {
         const codePaths = Array.isArray(e.ext.codePaths)
           ? `\n\n[codePaths: ${(e.ext.codePaths as string[]).join(', ')}]` : '';
-        return `## [${e.type}] ${e.title}\n\n${e.body || e.summary}${codePaths}`;
+        const filePath = typeof e.ext?.filePath === 'string' && e.ext.filePath.length > 0 && !e.body
+          ? `\n\n→ 全文: ${e.ext.filePath}` : '';
+        return `## [${e.type}] ${e.title}\n\n${e.body || e.summary}${codePaths}${filePath}`;
       });
       console.log(`# Wiki Documents (${entries.length} loaded)\n\n---\n\n${sections.join('\n\n---\n\n')}`);
     });
