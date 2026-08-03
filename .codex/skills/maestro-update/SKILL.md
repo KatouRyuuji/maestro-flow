@@ -12,7 +12,7 @@ allowed-tools:
   - Write
   - request_user_input
 session-mode: none
-version: 0.5.60
+version: 0.5.61
 ---
 
 <purpose>
