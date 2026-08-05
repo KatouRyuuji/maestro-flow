@@ -60,12 +60,77 @@ describe('Pi Maestro platform conversion', () => {
 
     const converted = transformContentForPlatform(source, 'pi');
 
-    expect(converted).toContain(`task: "${prompt.replace(/\n/g, '\\n')}"`);
+    expect(converted).toContain(`prompt: "${prompt.replace(/\n/g, '\\n')}"`);
+    expect(converted).toContain('agent: "general"');
     expect(converted).toContain('taskType: "analysis"');
-    expect(converted).toContain('prompt: "analysis-analyze-code-patterns"');
+    expect(converted).toContain('tasks: [{ name: "delegate-check", prompt:');
     expect(converted).toContain('cwd: "src"');
-    expect(converted).toContain('name: "delegate-check"');
+    expect(converted).toContain('/* --rule analysis-analyze-code-patterns');
     expect(converted).not.toContain('…');
+    expect(converted).not.toContain('agent: "delegate"');
+    expect(converted).not.toContain('task: "');
+  });
+
+  it('rewrites multiline subagent_type calls and preserves escaped template prompts', () => {
+    const source = [
+      'const result = await Agent({',
+      "  subagent_type: 'universal-executor',",
+      '  run_in_background: phaseConfig.background || false,',
+      '  prompt: \\`',
+      '[PHASE] \\${phaseId}',
+      '\\`',
+      '});',
+    ].join('\n');
+
+    const converted = transformContentForPlatform(source, 'pi');
+
+    expect(converted).toContain('const result = await teammate({ agent: "general"');
+    expect(converted).toContain('tasks: [{ prompt: \\`\n[PHASE] \\${phaseId}\n\\` }]');
+    expect(converted).toContain('background: phaseConfig.background || false');
+    expect(converted).not.toContain('subagent_type');
+    expect(converted).not.toContain('run_in_background');
+  });
+
+  it('normalizes direct legacy teammate task fields', () => {
+    const source = 'teammate({ agent: "delegate", taskType: "analysis", task: "PURPOSE: inspect", prompt: "analysis-rule", name: "job-1" })';
+
+    const converted = transformContentForPlatform(source, 'pi');
+
+    expect(converted).toContain('agent: "general"');
+    expect(converted).toContain('tasks: [{ name: "job-1", prompt: "PURPOSE: inspect" }]');
+    expect(converted).toContain('/* --rule "analysis-rule" */');
+    expect(converted).not.toContain('agent: "delegate"');
+    expect(converted).not.toContain('task: "');
+  });
+
+  it('adds observe and the wait contract when a skill allows teammate', () => {
+    const source = `---
+name: teammate-skill
+allowed-tools: Read Agent
+---
+
+Agent({ subagent_type: 'general-purpose', prompt: 'Inspect' })`;
+
+    const converted = transformContentForPlatform(source, 'pi');
+
+    expect(converted).toContain('teammate');
+    expect(converted).toContain('observe');
+    expect(converted).toContain('<teammate_contract>');
+    expect(converted).toContain('action: "wait"');
+    expect(converted).not.toContain('subagent_type');
+  });
+
+  it('rewrites legacy callback prose to teammate completion semantics', () => {
+    const source = `teammate runs in background, wait for hook callback before proceeding
+Worker callback -> handleCallback
+SendMessage callback
+On callback: consume result`;
+
+    const converted = transformContentForPlatform(source, 'pi');
+
+    expect(converted).toContain('teammate-complete notification');
+    expect(converted).toContain('observe exactly once with action="wait"');
+    expect(converted).not.toMatch(/hook callback|SendMessage callback|Worker callback|On callback/);
   });
 
   it('keeps an existing Pi binding idempotent', () => {
