@@ -15,8 +15,6 @@ Maestro 提供 35+ 个终端命令，通过 `maestro <command>` 直接调用。�
 | `install` | -- | 安装 Maestro 资源（交互式） |
 | `uninstall` | -- | 卸载已安装资源 |
 | `update` | -- | 检查/安装最新版本 |
-| `view` | -- | ~~启动 Dashboard 看板~~ (已废弃) |
-| `stop` | -- | ~~停止 Dashboard 服务~~ (已废弃) |
 | `delegate` | -- | 委派任务给 AI 智能体 |
 | `explore` | -- | 轻量并行代码搜索（API 端点驱动） |
 | `load` | -- | 统一知识加载（spec/knowhow/session/domain 等） |
@@ -100,14 +98,15 @@ maestro update --check         # 仅检查
 
 ---
 
-## Dashboard (已废弃)
+## Dashboard（已退役）
 
-> **⚠️ 废弃通知**: Dashboard 前端已在 v0.5.36 移除。`maestro view` 和 `maestro stop` 命令仅保留为向后兼容占位符，调用时会显示废弃警告并退出。
->
-> 如需查看工作流状态，请使用：
-> - `maestro collab status` — 查看团队协作状态
-> - `maestro delegate status <id>` — 查看委派任务状态
-> - `maestro ralph status` — 查看 Ralph 会话状态
+Dashboard UI 不再发布，`maestro view` 和 `maestro stop` 已从命令帮助中隐藏。为兼容旧脚本，这两个命令仍可解析旧参数，但只显示退役提示，不会启动或终止进程。
+
+查看当前工作流状态请使用：
+
+- `maestro run brief` — 查看当前 Run 的恢复信息
+- `maestro run check` — 检查当前 Run 的门禁与完成指引
+- `maestro session status` — 查看 canonical Session/Run 状态
 
 ---
 
@@ -157,6 +156,7 @@ Run 知识生命周期与项目知识维护：
 maestro knowledge stage knowhow "事务写入配方" "统一通过 SessionStore transaction 写入" --run <run-id> --category recipe
 maestro knowledge stage knowhow "长文配方" --content-file recipe.md --run <run-id>
 maestro knowledge stage spec "规则" "内容" --run <run-id> --signal validated --signal-ids spec:S-1
+maestro knowledge record spec:S-1 knowhow:K-9 --signal consumed --source search --run <run-id>
 maestro knowledge review <session-id> [--refresh]
 maestro knowledge review <session-id> --resolve KDC-... --as related --target <knowledge-id> --reason "确认关联"
 maestro knowledge promote <session-id> --candidate KDC-...

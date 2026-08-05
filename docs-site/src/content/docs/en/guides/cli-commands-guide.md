@@ -19,8 +19,6 @@ Maestro provides 35+ terminal commands, invoked directly via `maestro <command>`
 | `uninstall` | -- | Remove installed assets |
 | `update` | -- | Check/install the latest version |
 | `plugin` | -- | Register/remove maestro as a native plugin for Claude Code / Codex |
-| `view` | -- | Launch the Dashboard kanban board |
-| `stop` | -- | Stop the Dashboard server |
 | `session` | -- | **Session orchestration (human entry)**: chain creation, chain stepping, Run management, decisions, visualization |
 | `run` | -- | Run lifecycle management (brief/check/create/complete…); `run start` is a compatibility alias |
 | `skills` | -- | List active commands, Skills, and resolvable Run steps |
@@ -115,38 +113,15 @@ maestro plugin status          # 查看注册状态
 
 ---
 
-## Dashboard
+## Dashboard (Retired)
 
-<details>
-<summary>maestro view / stop</summary>
+The Dashboard UI is no longer published, and `maestro view` and `maestro stop` are hidden from command help. For compatibility with existing scripts, both commands still accept their legacy options, but only print a retirement notice and never start or terminate a process.
 
-**view** -- Launch the Dashboard kanban board (browser or TUI):
+Use these commands to inspect the current workflow:
 
-```bash
-maestro view                   # 启动（自动打开浏览器）
-maestro view --tui             # 终端 UI 模式
-maestro view --dev             # Vite 开发模式
-maestro view --port 8080       # 指定端口
-```
-
-| Option | Default | Description |
-|------|--------|------|
-| `--port`, `-p` | `3001` | Server port |
-| `--host` | `127.0.0.1` | Bind host |
-| `--path <dir>` | CWD | Workspace root |
-| `--no-browser` | -- | Don't auto-open the browser |
-| `--tui` | -- | Terminal UI mode |
-| `--dev` | -- | Vite dev server mode |
-
-**stop** -- Stop the Dashboard (graceful -> port lookup -> force kill):
-
-```bash
-maestro stop                   # 优雅停止
-maestro stop --force           # 强制终止
-maestro stop --port 8080       # 指定端口
-```
-
-</details>
+- `maestro run brief` — show the current Run resume packet
+- `maestro run check` — evaluate the current Run gates and completion guidance
+- `maestro session status` — show canonical Session/Run status
 
 ---
 

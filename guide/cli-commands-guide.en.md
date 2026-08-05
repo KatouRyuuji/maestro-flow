@@ -17,8 +17,6 @@ Maestro provides 21 terminal commands invoked via `maestro <command>`. Covers in
 | `install` | -- | Install Maestro assets (interactive) |
 | `uninstall` | -- | Remove installed assets |
 | `update` | -- | Check/install latest version |
-| `view` | -- | Launch Dashboard kanban board |
-| `stop` | -- | Stop Dashboard server |
 | `delegate` | -- | Delegate task to AI agent |
 | `coordinate` | `coord` | Graph workflow coordinator |
 | `cli` | -- | Run CLI agent tools |
@@ -88,38 +86,15 @@ maestro update --check         # Check only
 
 ---
 
-## Dashboard
+## Dashboard (Retired)
 
-<details>
-<summary>maestro view / stop</summary>
+The Dashboard UI is no longer published, and `maestro view` and `maestro stop` are hidden from command help. For compatibility with existing scripts, both commands still accept their legacy options, but only print a retirement notice and never start or terminate a process.
 
-**view** -- Launch the Dashboard kanban board (browser or TUI):
+Use these commands to inspect the current workflow:
 
-```bash
-maestro view                   # Launch (auto-open browser)
-maestro view --tui             # Terminal UI mode
-maestro view --dev             # Vite dev mode
-maestro view --port 8080       # Custom port
-```
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--port`, `-p` | `3001` | Server port |
-| `--host` | `127.0.0.1` | Bind host |
-| `--path <dir>` | CWD | Workspace root |
-| `--no-browser` | -- | Don't auto-open browser |
-| `--tui` | -- | Terminal UI mode |
-| `--dev` | -- | Vite dev server mode |
-
-**stop** -- Stop Dashboard (graceful -> port lookup -> force kill):
-
-```bash
-maestro stop                   # Graceful stop
-maestro stop --force           # Force kill
-maestro stop --port 8080       # Custom port
-```
-
-</details>
+- `maestro run brief` — show the current Run resume packet
+- `maestro run check` — evaluate the current Run gates and completion guidance
+- `maestro session status` — show canonical Session/Run status
 
 ---
 

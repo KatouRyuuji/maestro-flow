@@ -279,15 +279,15 @@ cd /project
 
 ---
 
-## 13. Dashboard 看板
+## 13. 工作流状态
 
 ```bash
-maestro view              # 浏览器看板
-maestro view --tui        # 终端 UI
-maestro stop              # 停止服务
+maestro run brief          # 当前 Run 的恢复信息
+maestro run check          # 当前 Run 的门禁与完成指引
+maestro session status     # canonical Session/Run 状态
 ```
 
-展示 Phase 进度、Issue 状态（Backlog → In Progress → Review → Done），支持批量执行和 Agent 选择。
+Dashboard UI 已退役；工作流状态统一通过 Session/Run 命令查看。
 
 ---
 
@@ -301,7 +301,7 @@ maestro stop              # 停止服务
 | `maestro overlay list` | Overlay 管理 |
 | `maestro hooks status` | Hook 状态 |
 | `maestro spec load --category coding` | 加载规范 |
-| `maestro view` | Dashboard 看板 |
+| `maestro session status` | canonical Session/Run 状态 |
 | `maestro launcher -w my-project` | Claude Code 启动器 |
 | `maestro knowhow search "auth"` | 搜索持久记忆 |
 

@@ -301,15 +301,15 @@ cd /project
 
 ---
 
-## 13. Dashboard
+## 13. Workflow Status
 
 ```bash
-maestro view              # Browser kanban board
-maestro view --tui        # Terminal UI
-maestro stop              # Stop the server
+maestro run brief          # Current Run resume packet
+maestro run check          # Current Run gates and completion guidance
+maestro session status     # Canonical Session/Run status
 ```
 
-Displays Phase progress and Issue status (Backlog → In Progress → Review → Done), and supports batch execution and Agent selection.
+The Dashboard UI is retired; inspect workflow state through the Session/Run commands.
 
 ---
 
@@ -358,7 +358,6 @@ Once installed, hooks keep the graph fresh and provide context automatically (`k
 | `maestro hooks status` | Hook status |
 | `maestro spec load --category coding` | Load specs |
 | `maestro kg search "symbol"` | Code graph search |
-| `maestro view` | Dashboard |
 | `maestro launcher -w my-project` | Claude Code launcher |
 
 ---

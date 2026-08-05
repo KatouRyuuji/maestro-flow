@@ -19,8 +19,6 @@ Maestro 提供 35+ 个终端命令，通过 `maestro <command>` 直接调用。�
 | `uninstall` | -- | 卸载已安装资源 |
 | `update` | -- | 检查/安装最新版本 |
 | `plugin` | -- | 注册/移除 maestro 为 Claude Code / Codex 原生插件 |
-| `view` | -- | 启动 Dashboard 看板 |
-| `stop` | -- | 停止 Dashboard 服务 |
 | `session` | -- | **Session 编排（人类入口）**：建链、链步进、Run 管理、决策、可视化 |
 | `run` | -- | Run 生命周期管理（brief/check/create/complete…），`run start` 为兼容别名 |
 | `skills` | -- | 列出有效命令、Skill 与可解析的 Run 步骤 |
@@ -115,38 +113,15 @@ maestro plugin status          # 查看注册状态
 
 ---
 
-## Dashboard
+## Dashboard（已退役）
 
-<details>
-<summary>maestro view / stop</summary>
+Dashboard UI 不再发布，`maestro view` 和 `maestro stop` 已从命令帮助中隐藏。为兼容旧脚本，这两个命令仍可解析旧参数，但只显示退役提示，不会启动或终止进程。
 
-**view** -- 启动 Dashboard 看板（浏览器或 TUI）：
+查看当前工作流状态请使用：
 
-```bash
-maestro view                   # 启动（自动打开浏览器）
-maestro view --tui             # 终端 UI 模式
-maestro view --dev             # Vite 开发模式
-maestro view --port 8080       # 指定端口
-```
-
-| 选项 | 默认值 | 说明 |
-|------|--------|------|
-| `--port`, `-p` | `3001` | 服务端口 |
-| `--host` | `127.0.0.1` | 绑定主机 |
-| `--path <dir>` | CWD | 工作区根目录 |
-| `--no-browser` | -- | 不自动打开浏览器 |
-| `--tui` | -- | 终端 UI 模式 |
-| `--dev` | -- | Vite 开发服务器模式 |
-
-**stop** -- 停止 Dashboard（graceful -> 端口查找 -> force kill）：
-
-```bash
-maestro stop                   # 优雅停止
-maestro stop --force           # 强制终止
-maestro stop --port 8080       # 指定端口
-```
-
-</details>
+- `maestro run brief` — 查看当前 Run 的恢复信息
+- `maestro run check` — 检查当前 Run 的门禁与完成指引
+- `maestro session status` — 查看 canonical Session/Run 状态
 
 ---
 
