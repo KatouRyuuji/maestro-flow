@@ -40,9 +40,7 @@
     ".agy/skills",
     ".agents/agents",
     ".agents/skills",
-    "dashboard/dist",
     "dashboard/dist-server",
-    "dashboard/tui/dist",
     "dashboard/package.json"
   ],
   "scripts": {
