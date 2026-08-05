@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { paths } from '../config/paths.js';
 import { COMPONENT_DEFS } from './component-defs.js';
@@ -79,14 +79,38 @@ export function installRefFiles(
   return { sourceDir, targetDir, filesInstalled: copied.files, dirsCreated: copied.dirs, installedFiles: copied.installedFiles };
 }
 
+function validateArchKbSource(sourceDir: string): void {
+  if (!existsSync(sourceDir) || !statSync(sourceDir).isDirectory()) {
+    throw new Error(`Maestro arch-kb directory not found: ${sourceDir}`);
+  }
+
+  const indexPath = join(sourceDir, 'index.json');
+  if (!existsSync(indexPath)) throw new Error(`Maestro arch-kb index not found: ${indexPath}`);
+
+  let parsed: { entries?: Array<{ path?: unknown }> };
+  try {
+    parsed = JSON.parse(readFileSync(indexPath, 'utf8')) as { entries?: Array<{ path?: unknown }> };
+  } catch (error) {
+    throw new Error(`Maestro arch-kb index is invalid: ${indexPath}`, { cause: error });
+  }
+  if (!Array.isArray(parsed.entries) || parsed.entries.length === 0) {
+    throw new Error(`Maestro arch-kb index has no entries: ${indexPath}`);
+  }
+
+  const missing = parsed.entries
+    .filter((entry) => typeof entry.path !== 'string' || !existsSync(join(sourceDir, entry.path)))
+    .map((entry) => typeof entry.path === 'string' ? entry.path : '<invalid path>');
+  if (missing.length > 0) {
+    throw new Error(`Maestro arch-kb source files are missing (${missing.length}): ${missing.slice(0, 3).join(', ')}`);
+  }
+}
+
 export function installArchKb(
   packageRoot: string,
   targetDir = paths.archKb,
 ): WorkflowsInstallResult {
   const sourceDir = join(packageRoot, 'resources', 'arch-kb');
-  if (!existsSync(sourceDir) || !statSync(sourceDir).isDirectory()) {
-    return { sourceDir, targetDir, filesInstalled: 0, dirsCreated: 0, installedFiles: [] };
-  }
+  validateArchKbSource(sourceDir);
   const copied = copyDirectory(sourceDir, targetDir);
   return { sourceDir, targetDir, filesInstalled: copied.files, dirsCreated: copied.dirs, installedFiles: copied.installedFiles };
 }

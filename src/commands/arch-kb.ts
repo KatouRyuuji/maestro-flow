@@ -12,7 +12,7 @@
 
 import type { Command } from 'commander';
 import { readFileSync, existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { paths } from '../config/paths.js';
 
@@ -42,19 +42,21 @@ interface ArchKbIndex {
 
 let _cachedIndex: ArchKbIndex | null = null;
 
+function bundledResourceDirs(): string[] {
+  const moduleDir = dirname(fileURLToPath(import.meta.url));
+  return [
+    resolve(moduleDir, '../../../resources/arch-kb'), // compiled: dist/src/commands
+    resolve(moduleDir, '../../resources/arch-kb'),  // source: src/commands
+  ];
+}
+
 function resolveIndexDir(): string {
-  // 1. ~/.maestro/arch-kb (install 后的标准位置)
-  if (existsSync(join(paths.archKb, 'index.json'))) return paths.archKb;
-  // 2. 包内 resources/ (发布模式 fallback)
-  const pkgResources = resolve(fileURLToPath(import.meta.url), '../../../resources/arch-kb');
-  if (existsSync(join(pkgResources, 'index.json'))) return pkgResources;
-  // 3. 项目根 resources/ (开发模式)
-  const projectResources = resolve(process.cwd(), 'resources/arch-kb');
-  if (existsSync(join(projectResources, 'index.json'))) return projectResources;
-  // 4. dist 相对路径
-  const distResources = resolve(fileURLToPath(import.meta.url), '../../../../resources/arch-kb');
-  if (existsSync(join(distResources, 'index.json'))) return distResources;
-  return pkgResources; // fallback
+  const candidates = [
+    paths.archKb,
+    ...bundledResourceDirs(),
+    resolve(process.cwd(), 'resources/arch-kb'),
+  ];
+  return candidates.find((dir) => existsSync(join(dir, 'index.json'))) ?? bundledResourceDirs()[0];
 }
 
 function loadIndex(): ArchKbIndex {
@@ -70,15 +72,13 @@ function loadIndex(): ArchKbIndex {
 }
 
 function resolveContentPath(relativePath: string): string | null {
-  // 尝试从 _analysis/awesome-architecture/ 读取原始内容
   const candidates = [
-    resolve(process.cwd(), '_analysis/awesome-architecture', relativePath),
     resolve(resolveIndexDir(), relativePath),
+    ...bundledResourceDirs().map((dir) => resolve(dir, relativePath)),
+    resolve(process.cwd(), 'resources/arch-kb', relativePath),
+    resolve(process.cwd(), '_analysis/awesome-architecture', relativePath),
   ];
-  for (const p of candidates) {
-    if (existsSync(p)) return p;
-  }
-  return null;
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
 
 // ─── Search Engine (BM25-lite) ────────────────────────────────────────
@@ -233,7 +233,8 @@ export function registerArchKbCommand(program: Command): void {
       const contentPath = resolveContentPath(entry.path);
       if (!contentPath) {
         console.log(formatEntry(entry, true));
-        console.log('\n  ⚠ Source file not found. Index metadata shown above.');
+        console.error('\n  ⚠ Source file not found. Index metadata shown above.');
+        process.exitCode = 1;
         return;
       }
 

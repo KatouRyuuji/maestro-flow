@@ -2,18 +2,47 @@
 /**
  * build-arch-kb-index.mjs
  * 
- * 预构建脚本：扫描 _analysis/awesome-architecture/ 生成静态索引
- * 输出: resources/arch-kb/index.json (随包发布，运行时只读)
+ * 预构建脚本：扫描 _analysis/awesome-architecture/（存在时）并同步可发布正文，
+ * 否则从已固化的 resources/arch-kb/ 重建索引。
+ * 输出: resources/arch-kb/index.json + templates/ + tutorial/ + cases/ + LICENSE
  * 
  * 运行: node scripts/build-arch-kb-index.mjs
- * 时机: 发布前执行一次，产物提交到仓库
+ * 时机: 发布前执行；固化产物提交到仓库并随包发布
  */
 
-import { readFileSync, readdirSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { join, relative, basename } from 'node:path';
+import {
+  copyFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { basename, join } from 'node:path';
 
-const SOURCE_DIR = join(import.meta.dirname, '..', '_analysis', 'awesome-architecture');
+const UPSTREAM_DIR = join(import.meta.dirname, '..', '_analysis', 'awesome-architecture');
 const OUTPUT_DIR = join(import.meta.dirname, '..', 'resources', 'arch-kb');
+const CONTENT_DIRS = ['templates', 'tutorial', 'cases'];
+const SOURCE_DIR = existsSync(UPSTREAM_DIR) ? UPSTREAM_DIR : OUTPUT_DIR;
+
+function syncBundledContent() {
+  if (SOURCE_DIR === OUTPUT_DIR) return;
+
+  mkdirSync(OUTPUT_DIR, { recursive: true });
+  for (const name of CONTENT_DIRS) {
+    const source = join(SOURCE_DIR, name);
+    if (!existsSync(source)) throw new Error(`arch-kb source directory not found: ${source}`);
+    const target = join(OUTPUT_DIR, name);
+    rmSync(target, { recursive: true, force: true });
+    cpSync(source, target, { recursive: true });
+  }
+
+  const license = join(SOURCE_DIR, 'LICENSE');
+  if (!existsSync(license)) throw new Error(`arch-kb license not found: ${license}`);
+  copyFileSync(license, join(OUTPUT_DIR, 'LICENSE'));
+}
 
 // ─── 模板关键词映射 (用于 match 命令的系统类型匹配) ───────────────────
 const TEMPLATE_KEYWORDS = {
@@ -222,8 +251,18 @@ function extractCaseKeywords(content) {
 // ─── 执行 ─────────────────────────────────────────────────────────────
 
 mkdirSync(OUTPUT_DIR, { recursive: true });
+syncBundledContent();
 
 const entries = buildIndex();
+if (entries.length === 0) {
+  throw new Error(`arch-kb contains no indexable entries: ${SOURCE_DIR}`);
+}
+for (const entry of entries) {
+  const bundledPath = join(OUTPUT_DIR, entry.path);
+  if (!existsSync(bundledPath)) {
+    throw new Error(`arch-kb bundled source file not found: ${bundledPath}`);
+  }
+}
 
 const index = {
   version: 1,

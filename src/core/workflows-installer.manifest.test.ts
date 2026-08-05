@@ -15,6 +15,12 @@ beforeAll(async () => {
     mkdirSync(join(packageRoot, dir), { recursive: true });
     writeFileSync(join(packageRoot, dir, `${dir}.md`), dir);
   }
+  const archKbDir = join(packageRoot, 'resources', 'arch-kb');
+  mkdirSync(join(archKbDir, 'templates', 'web-app'), { recursive: true });
+  writeFileSync(join(archKbDir, 'index.json'), JSON.stringify({
+    entries: [{ path: 'templates/web-app/README.md' }],
+  }));
+  writeFileSync(join(archKbDir, 'templates', 'web-app', 'README.md'), '# Web app');
   vi.resetModules();
   installer = await import('./workflows-installer.js');
   manifestApi = await import('./manifest.js');
@@ -41,13 +47,14 @@ describe('installAllStepContent manifest integration', () => {
 
     const current = manifestApi.findManifest('global', testHome);
     expect(current?.selectedComponentIds).toEqual(
-      expect.arrayContaining(['commands', 'workflows', 'prepare', 'ref']),
+      expect.arrayContaining(['commands', 'workflows', 'prepare', 'ref', 'arch-kb']),
     );
     expect(current?.entries.map((entry) => entry.path)).toEqual(
       expect.arrayContaining([
         join(testHome, 'workflows', 'workflows.md'),
         join(testHome, 'prepare', 'prepare.md'),
         join(testHome, 'ref', 'ref.md'),
+        join(testHome, 'arch-kb', 'index.json'),
       ]),
     );
     expect(current?.entries.some((entry) => entry.path === targetOnly)).toBe(false);

@@ -111,13 +111,14 @@ function registerMcpSubcommand(install: Command): void {
 function registerWorkflowsSubcommand(install: Command): void {
   install
     .command('workflows')
-    .description('Install step content (workflows, prepare, ref) to ~/.maestro (non-interactive)')
+    .description('Install step content (workflows, prepare, ref, arch-kb) to ~/.maestro (non-interactive)')
     .action(() => {
       const pkgRoot = getPackageRoot();
-      const { workflows, prepare, ref } = installAllStepContent(pkgRoot);
+      const { workflows, prepare, ref, archKb } = installAllStepContent(pkgRoot);
       console.error(`  ✓ workflows: ${workflows.filesInstalled} files → ${workflows.targetDir}`);
       console.error(`  ✓ prepare: ${prepare.filesInstalled} files → ${prepare.targetDir}`);
       console.error(`  ✓ ref: ${ref.filesInstalled} files → ${ref.targetDir}`);
+      console.error(`  ✓ arch-kb: ${archKb.filesInstalled} files → ${archKb.targetDir}`);
     });
 }
 

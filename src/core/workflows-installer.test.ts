@@ -2,7 +2,12 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { installWorkflowsOnly, installPrepareFiles, installRefFiles } from './workflows-installer.js';
+import {
+  installArchKb,
+  installPrepareFiles,
+  installRefFiles,
+  installWorkflowsOnly,
+} from './workflows-installer.js';
 
 describe('installWorkflowsOnly', () => {
   it('copies only workflows and preserves unrelated target files', () => {
@@ -26,6 +31,35 @@ describe('installWorkflowsOnly', () => {
   it('fails clearly when the package has no workflows directory', () => {
     const root = mkdtempSync(join(tmpdir(), 'maestro-workflows-only-'));
     expect(() => installWorkflowsOnly(root, join(root, 'target'))).toThrow(/workflows directory not found/);
+  });
+});
+
+describe('installArchKb', () => {
+  it('copies index and nested source markdown', () => {
+    const root = mkdtempSync(join(tmpdir(), 'maestro-arch-kb-'));
+    const source = join(root, 'package');
+    const target = join(root, '.maestro', 'arch-kb');
+    mkdirSync(join(source, 'resources', 'arch-kb', 'templates', 'web-app'), { recursive: true });
+    const index = JSON.stringify({ entries: [{ path: 'templates/web-app/README.md' }] });
+    writeFileSync(join(source, 'resources', 'arch-kb', 'index.json'), index);
+    writeFileSync(join(source, 'resources', 'arch-kb', 'templates', 'web-app', 'README.md'), '# Web app');
+
+    const result = installArchKb(source, target);
+
+    expect(result.filesInstalled).toBe(2);
+    expect(readFileSync(join(target, 'index.json'), 'utf8')).toBe(index);
+    expect(readFileSync(join(target, 'templates', 'web-app', 'README.md'), 'utf8')).toBe('# Web app');
+  });
+
+  it('rejects an index whose source markdown is missing', () => {
+    const root = mkdtempSync(join(tmpdir(), 'maestro-arch-kb-'));
+    const sourceDir = join(root, 'resources', 'arch-kb');
+    mkdirSync(sourceDir, { recursive: true });
+    writeFileSync(join(sourceDir, 'index.json'), JSON.stringify({
+      entries: [{ path: 'templates/missing/README.md' }],
+    }));
+
+    expect(() => installArchKb(root, join(root, 'target'))).toThrow(/source files are missing/);
   });
 });
 
