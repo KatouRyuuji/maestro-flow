@@ -443,6 +443,7 @@ export const knowledgeReconciliationCardSchema = z.object({
   policy: z.object({
     search_and_injection: z.literal('exposure_only'),
     explicit_load: z.literal('consumed'),
+    record: z.literal('explicit_attribution'),
     completion: z.literal('stage_candidates'),
     promotion: z.literal('explicit_review'),
   }).strict(),

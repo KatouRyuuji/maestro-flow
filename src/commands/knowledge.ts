@@ -2,11 +2,6 @@ import type { Command } from 'commander';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { MaestroGraph } from '../graph/kg/engine.js';
-import {
-  buildKnowledgeUsageStats,
-  type KnowledgeUsageConcentration,
-} from '../graph/kg/knowledge-usage.js';
 import {
   recordRunKnowledgeInputs,
   stageRunKnowledgeCandidate,
@@ -31,22 +26,15 @@ import type {
 } from '../knowledge/reconciliation-schema.js';
 import { readReportFrontmatter } from '../run/report.js';
 
-const KNOWLEDGE_SOURCE_TYPES = ['spec', 'knowhow', 'issue', 'domain', 'codebase'] as const;
 const KNOWLEDGE_INPUT_SIGNALS = ['consumed', 'cited', 'validated', 'contradicted'] as const;
 const KNOWLEDGE_CANDIDATE_TARGETS = ['spec', 'knowhow'] as const;
 const KNOWLEDGE_CANDIDATE_ACTIONS = ['propose', 'reaffirm', 'supersede', 'contest'] as const;
 const KNOWLEDGE_RESOLUTIONS = ['duplicate', 'related', 'conflict', 'supersede', 'unique'] as const;
+/** Attribution sources exposed for explicit recording (injection stays automatic-only). */
+const KNOWLEDGE_INPUT_SOURCES = ['search', 'load', 'manual'] as const;
 
 function percent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
-}
-
-function printConcentration(label: string, value: KnowledgeUsageConcentration): void {
-  console.log(
-    `${label}: ${value.totalEvents} events · ${value.positiveNodes} nodes · `
-    + `top10 ${percent(value.top10Share)} · Gini ${value.gini.toFixed(3)} · `
-    + `effective ${value.effectiveNodes.toFixed(1)}`,
-  );
 }
 
 type KnowledgeSessionView = ReturnType<typeof buildKnowledgeSessionView>;
@@ -363,6 +351,67 @@ export function registerKnowledgeCommand(program: Command): void {
     });
 
   knowledge
+    .command('record')
+    .description('Record explicit knowledge attribution on the active Run without staging a candidate')
+    .argument('<knowledge-ids...>', 'Knowledge IDs to attribute')
+    .option('--signal <signal>', `Attribution signal: ${KNOWLEDGE_INPUT_SIGNALS.join('|')}`, 'consumed')
+    .option('--source <source>', `Attribution source: ${KNOWLEDGE_INPUT_SOURCES.join('|')}`, 'search')
+    .option('--evidence <refs>', 'Comma-separated evidence anchors (artifact/output/test refs)')
+    .option('--run <run-id>', 'Explicit active Run ID')
+    .option('--session <session-id>', 'Explicit Session ID (requires --run)')
+    .option('--json', 'Output as JSON')
+    .option('--workflow-root <path>', 'Project root containing .workflow', process.cwd())
+    .action(async (
+      knowledgeIds: string[],
+      opts: {
+        signal?: string;
+        source?: string;
+        evidence?: string;
+        run?: string;
+        session?: string;
+        json?: boolean;
+        workflowRoot: string;
+      },
+    ) => {
+      try {
+        if (opts.session && !opts.run) throw new Error('--session requires --run');
+        if (!KNOWLEDGE_INPUT_SIGNALS.includes(opts.signal as KnowledgeInputSignal)) {
+          throw new Error(`--signal must be one of ${KNOWLEDGE_INPUT_SIGNALS.join(', ')}`);
+        }
+        if (!KNOWLEDGE_INPUT_SOURCES.includes(opts.source as typeof KNOWLEDGE_INPUT_SOURCES[number])) {
+          throw new Error(`--source must be one of ${KNOWLEDGE_INPUT_SOURCES.join(', ')}`);
+        }
+        const projectRoot = resolve(opts.workflowRoot);
+        const store = new SessionStore(projectRoot);
+        const active = opts.run
+          ? { sessionId: store.findRun(opts.run, opts.session).sessionId, runId: opts.run }
+          : store.findUniqueActiveRun();
+        if (!active) throw new Error('No unique active Run found; pass --run and optionally --session');
+        const result = recordRunKnowledgeInputs(
+          projectRoot,
+          active.runId,
+          knowledgeIds,
+          opts.signal as KnowledgeInputSignal,
+          opts.source as typeof KNOWLEDGE_INPUT_SOURCES[number],
+          active.sessionId,
+          opts.evidence?.split(',').map(ref => ref.trim()).filter(Boolean) ?? [],
+        );
+        if (opts.json) {
+          console.log(JSON.stringify(result, null, 2));
+          return;
+        }
+        console.log(
+          `Recorded ${result.recorded} input(s) as ${opts.signal} (source ${opts.source}) `
+          + `on ${result.session_id}/${result.run_id}; `
+          + `review with "maestro knowledge review ${result.session_id}".`,
+        );
+      } catch (error) {
+        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        process.exitCode = 1;
+      }
+    });
+
+  knowledge
     .command('reconcile')
     .description('[internal] Match Run candidates against existing knowledge (auto-run by check; use review --refresh)')
     .option('--run <run-id>', 'Explicit active or sealed Run ID')
@@ -406,53 +455,6 @@ export function registerKnowledgeCommand(program: Command): void {
             + `${candidate.promotion_eligibility}] → ${candidate.canonical_id ?? 'new knowledge'}`,
           );
         }
-      } catch (error) {
-        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
-        process.exitCode = 1;
-      }
-    });
-
-  knowledge
-    .command('resolve')
-    .description('[alias] Confirm disposition (prefer: review --resolve <id> --as <choice> --reason "...")')
-    .argument('<candidate-id>', 'Knowledge candidate ID')
-    .requiredOption('--session <session-id>', 'Session identifier')
-    .requiredOption('--as <resolution>', `Resolution: ${KNOWLEDGE_RESOLUTIONS.join('|')}`)
-    .requiredOption('--reason <reason>', 'Human review reason')
-    .option('--target <knowledge-id>', 'Evidence-backed canonical knowledge ID')
-    .option('--json', 'Output as JSON')
-    .option('--workflow-root <path>', 'Project root containing .workflow', process.cwd())
-    .action((
-      candidateId: string,
-      opts: {
-        session: string;
-        as: string;
-        reason: string;
-        target?: string;
-        json?: boolean;
-        workflowRoot: string;
-      },
-    ) => {
-      try {
-        if (!KNOWLEDGE_RESOLUTIONS.includes(opts.as as KnowledgeResolutionChoice)) {
-          throw new Error(`--as must be one of ${KNOWLEDGE_RESOLUTIONS.join(', ')}`);
-        }
-        const result = resolveKnowledgeCandidate(
-          resolve(opts.workflowRoot),
-          opts.session,
-          candidateId,
-          opts.as as KnowledgeResolutionChoice,
-          { targetId: opts.target, reason: opts.reason },
-        );
-        if (opts.json) {
-          console.log(JSON.stringify(result, null, 2));
-          return;
-        }
-        console.log(
-          `Resolved ${result.candidate_id} as ${result.disposition}; `
-          + `promotion ${result.promotion_eligibility}; `
-          + `canonical ${result.canonical_id ?? 'new knowledge'}.`,
-        );
       } catch (error) {
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
         process.exitCode = 1;
@@ -582,76 +584,6 @@ export function registerKnowledgeCommand(program: Command): void {
       } catch (error) {
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
         process.exitCode = 1;
-      }
-    });
-
-  knowledge
-    .command('stats')
-    .description('[deprecated] Show knowledge exposure, explicit consumption, and concentration')
-    .option('--type <type>', `Filter by source type: ${KNOWLEDGE_SOURCE_TYPES.join(', ')}`)
-    .option('--limit <n>', 'Max top entries', '10')
-    .option('--json', 'Output as JSON')
-    .option('--workflow-root <path>', 'Project root containing .workflow', process.cwd())
-    .action(async (opts: {
-      type?: string;
-      limit?: string;
-      json?: boolean;
-      workflowRoot: string;
-    }) => {
-      console.error('Warning: "maestro knowledge stats" is deprecated; credibility signals are write-only (see docs §1.1 X3). Use "maestro knowledge audit" instead.');
-      if (opts.type && !KNOWLEDGE_SOURCE_TYPES.includes(opts.type as typeof KNOWLEDGE_SOURCE_TYPES[number])) {
-        console.error(`Error: --type must be one of ${KNOWLEDGE_SOURCE_TYPES.join(', ')}`);
-        process.exitCode = 1;
-        return;
-      }
-
-      const projectRoot = resolve(opts.workflowRoot);
-      if (!MaestroGraph.isInitialized(projectRoot)) {
-        console.error('Knowledge graph not initialized — run "maestro kg init" first.');
-        process.exitCode = 1;
-        return;
-      }
-
-      const parsedLimit = Number.parseInt(opts.limit ?? '10', 10);
-      const limit = Math.max(0, Math.min(Number.isFinite(parsedLimit) ? parsedLimit : 10, 100));
-      const graph = await MaestroGraph.open(projectRoot);
-      try {
-        const stats = buildKnowledgeUsageStats(graph.rawDb, opts.type ?? null, limit);
-        if (opts.json) {
-          console.log(JSON.stringify(stats, null, 2));
-          return;
-        }
-
-        console.log('Knowledge usage statistics');
-        console.log('Impressions are returned/injected results; consumptions are explicit content loads.');
-        console.log(
-          'Neither changes relevance scores; impressions may fill one relevance-floored '
-          + 'exploration slot, while consumptions never affect retrieval.\n',
-        );
-
-        for (const source of stats.bySource) {
-          console.log(
-            `${source.sourceType}: ${source.nodes} nodes · ${source.impressions} impressions `
-            + `(${source.impressionNodes} nodes) · ${source.consumptions} consumptions `
-            + `(${source.consumedNodes} nodes)`,
-          );
-        }
-
-        console.log('');
-        printConcentration('Impression concentration', stats.impressionConcentration);
-        printConcentration('Consumption concentration', stats.consumptionConcentration);
-
-        if (stats.topEntries.length > 0) {
-          console.log('\nTop exposed knowledge:');
-          for (const entry of stats.topEntries) {
-            console.log(
-              `  [${entry.sourceType}] ${entry.id} · ${entry.impressions} impressions `
-              + `· ${entry.consumptions} consumptions · ${entry.name}`,
-            );
-          }
-        }
-      } finally {
-        graph.close();
       }
     });
 }

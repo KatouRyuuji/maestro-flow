@@ -527,4 +527,148 @@ Full knowledge lifecycle verified.
     expect(searchResults.some(result => result.id === 'S-old-storage')).toBe(false);
     expect(errors).toEqual([]);
   });
+
+  it('records search attribution on the active Run without staging a candidate', async () => {
+    const created = createRun({
+      projectRoot,
+      command: 'knowledge-cli',
+      sessionId: 'knowledge-cli-session',
+      intent: 'record search attribution',
+    });
+
+    await run(
+      'record',
+      'spec:S-1',
+      'knowhow:K-1',
+      '--signal',
+      'consumed',
+      '--source',
+      'search',
+      '--json',
+    );
+    const recorded = JSON.parse(logs.at(-1)!) as { session_id: string; run_id: string; recorded: number };
+    expect(recorded).toMatchObject({ session_id: created.session_id, run_id: created.run_id, recorded: 2 });
+
+    const delta = readRunKnowledgeDelta(
+      new SessionStore(projectRoot),
+      created.session_id,
+      created.run_id,
+    );
+    expect(delta.inputs).toEqual([
+      expect.objectContaining({ knowledge_id: 'spec:S-1', signal: 'consumed', source: 'search' }),
+      expect.objectContaining({ knowledge_id: 'knowhow:K-1', signal: 'consumed', source: 'search' }),
+    ]);
+    expect(delta.candidates).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+
+  it('records explicit run attribution with manual source and validated signal', async () => {
+    const created = createRun({
+      projectRoot,
+      command: 'knowledge-cli',
+      sessionId: 'knowledge-cli-session',
+      intent: 'record explicit manual attribution',
+    });
+
+    await run(
+      'record',
+      'spec:rules-7',
+      '--run',
+      created.run_id,
+      '--session',
+      created.session_id,
+      '--signal',
+      'validated',
+      '--source',
+      'manual',
+      '--json',
+    );
+    const recorded = JSON.parse(logs.at(-1)!) as { recorded: number };
+    expect(recorded.recorded).toBe(1);
+
+    const delta = readRunKnowledgeDelta(
+      new SessionStore(projectRoot),
+      created.session_id,
+      created.run_id,
+    );
+    expect(delta.inputs).toEqual([
+      expect.objectContaining({ knowledge_id: 'spec:rules-7', signal: 'validated', source: 'manual' }),
+    ]);
+    expect(errors).toEqual([]);
+  });
+
+  it('rejects invalid record options before touching the ledger', async () => {
+    const created = createRun({
+      projectRoot,
+      command: 'knowledge-cli',
+      sessionId: 'knowledge-cli-session',
+      intent: 'reject invalid record options',
+    });
+
+    await run('record', 'spec:S-1', '--signal', 'unsupported', '--source', 'search');
+    expect(process.exitCode).toBe(1);
+    expect(errors.join('\n')).toContain('--signal must be one of consumed, cited, validated, contradicted');
+
+    await run('record', 'spec:S-1', '--signal', 'consumed', '--source', 'injection');
+    expect(process.exitCode).toBe(1);
+    expect(errors.join('\n')).toContain('--source must be one of search, load, manual');
+
+    await run('record', 'spec:S-1', '--session', created.session_id);
+    expect(process.exitCode).toBe(1);
+    expect(errors.join('\n')).toContain('--session requires --run');
+
+    const delta = readRunKnowledgeDelta(
+      new SessionStore(projectRoot),
+      created.session_id,
+      created.run_id,
+    );
+    expect(delta.inputs).toEqual([]);
+  });
+
+  it('fails closed when no unique active Run exists for record', async () => {
+    const created = createRun({
+      projectRoot,
+      command: 'knowledge-cli',
+      sessionId: 'knowledge-cli-session',
+      intent: 'reject record without active run',
+    });
+    const store = new SessionStore(projectRoot);
+    store.update(created.session_id, bundle => {
+      bundle.session.active_run_id = null;
+    });
+
+    await run('record', 'spec:S-1', '--signal', 'consumed', '--source', 'search');
+    expect(process.exitCode).toBe(1);
+    expect(errors.join('\n')).toContain('No unique active Run found');
+  });
+
+  it('summarizes input totals by source with knowledge-id detail', async () => {
+    const created = createRun({
+      projectRoot,
+      command: 'knowledge-cli',
+      sessionId: 'knowledge-cli-session',
+      intent: 'summarize by-source attribution',
+    });
+    await run(
+      'record', 'spec:A', '--signal', 'consumed', '--source', 'search',
+      '--run', created.run_id, '--session', created.session_id, '--json',
+    );
+    await run(
+      'record', 'spec:B', '--signal', 'validated', '--source', 'load',
+      '--run', created.run_id, '--session', created.session_id, '--json',
+    );
+
+    const summary = summarizeSessionKnowledge(projectRoot, created.session_id);
+    expect(summary.input_totals).toEqual({ consumed: 1, cited: 0, validated: 1, contradicted: 0 });
+    expect(summary.input_totals_by_source.search).toEqual(
+      { consumed: 1, cited: 0, validated: 0, contradicted: 0 },
+    );
+    expect(summary.input_totals_by_source.load).toEqual(
+      { consumed: 0, cited: 0, validated: 1, contradicted: 0 },
+    );
+    expect(summary.inputs).toEqual([
+      { run_id: created.run_id, knowledge_id: 'spec:A', signal: 'consumed', source: 'search', count: 1 },
+      { run_id: created.run_id, knowledge_id: 'spec:B', signal: 'validated', source: 'load', count: 1 },
+    ]);
+  });
 });

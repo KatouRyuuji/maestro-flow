@@ -241,6 +241,7 @@ else {
     'knowledge_context',
     '--signal-ids',
     'maestro knowledge stage',
+    'maestro knowledge record',
     'knowledge-candidate-receipt/1.0',
     'maestro knowledge promote',
   ]) {

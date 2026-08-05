@@ -69,6 +69,7 @@ describe('run-response/1.0', () => {
         policy: {
           search_and_injection: 'exposure_only' as const,
           explicit_load: 'consumed' as const,
+          record: 'explicit_attribution' as const,
           completion: 'stage_candidates' as const,
           promotion: 'explicit_review' as const,
         },

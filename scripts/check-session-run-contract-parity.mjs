@@ -41,7 +41,7 @@ const GUIDE_REQUIREMENTS = [
     tokens: [
       'session/1.3', 'command-run/1.3', 'run-response/1.0',
       'brief-result/1.1', 'knowledge_context',
-      'maestro knowledge stage', 'maestro knowledge review',
+      'maestro knowledge stage', 'maestro knowledge record', 'maestro knowledge review',
       'maestro knowledge promote',
       ...REQUIRED_OPERATIONS,
     ],
@@ -192,11 +192,11 @@ const knowledgeLifecycleCli = {
   promote: knowledgeCommands?.includes(".command('promote')") ?? false,
 };
 const expectedKnowledgeLifecycleCli = {
-  record: false,
+  record: true,
   stage: true,
   reconcile: true,
   review: true,
-  resolve: true,
+  resolve: false,
   session: false,
   promote: true,
 };

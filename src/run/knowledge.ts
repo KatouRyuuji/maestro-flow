@@ -29,6 +29,8 @@ export const knowledgeInputSchema = z.object({
   count: z.number().int().positive(),
   first_recorded_at: nonEmptyString,
   last_recorded_at: nonEmptyString,
+  /** Optional evidence anchors (artifact/output/test refs) for high-value signals. */
+  evidence: z.array(nonEmptyString).optional(),
 }).strict();
 
 export const knowledgeCandidateSchema = z.object({
@@ -52,6 +54,8 @@ export const knowledgeCandidateSchema = z.object({
   }).strict().nullable().optional(),
 }).strict();
 
+export type KnowledgeInputSource = z.infer<typeof knowledgeInputSchema>['source'];
+
 export const runKnowledgeDeltaSchema = z.object({
   schema_version: z.literal('run-knowledge-delta/1.0'),
   session_id: nonEmptyString,
@@ -73,6 +77,17 @@ export interface SessionKnowledgeSummary {
   run_count: number;
   ledger_count: number;
   input_totals: Record<KnowledgeInputSignal, number>;
+  /** Signal totals broken down by attribution source (load/search/injection/manual). */
+  input_totals_by_source: Record<KnowledgeInputSource, Record<KnowledgeInputSignal, number>>;
+  /** Knowledge-id-level attribution detail, in ledger order. */
+  inputs: Array<{
+    run_id: string;
+    knowledge_id: string;
+    signal: KnowledgeInputSignal;
+    source: KnowledgeInputSource;
+    count: number;
+    evidence?: string[];
+  }>;
   unique_inputs: number;
   candidates: Array<KnowledgeCandidate & {
     run_ids: string[];
@@ -120,6 +135,7 @@ export interface KnowledgeReconciliationCard {
   policy: {
     search_and_injection: 'exposure_only';
     explicit_load: 'consumed';
+    record: 'explicit_attribution';
     completion: 'stage_candidates';
     promotion: 'explicit_review';
   };
@@ -186,6 +202,7 @@ function addInput(
   signal: KnowledgeInputSignal,
   source: z.infer<typeof knowledgeInputSchema>['source'],
   now: string,
+  evidence: readonly string[] = [],
 ): void {
   const existing = draft.inputs.find(item =>
     item.knowledge_id === knowledgeId && item.signal === signal && item.source === source
@@ -193,6 +210,9 @@ function addInput(
   if (existing) {
     existing.count++;
     existing.last_recorded_at = now;
+    if (evidence.length > 0) {
+      existing.evidence = [...new Set([...(existing.evidence ?? []), ...evidence])];
+    }
   } else {
     draft.inputs.push({
       knowledge_id: knowledgeId,
@@ -201,6 +221,7 @@ function addInput(
       count: 1,
       first_recorded_at: now,
       last_recorded_at: now,
+      ...(evidence.length > 0 ? { evidence: [...new Set(evidence)] } : {}),
     });
   }
 }
@@ -345,6 +366,7 @@ export function recordRunKnowledgeInputs(
   signal: KnowledgeInputSignal = 'consumed',
   source: z.infer<typeof knowledgeInputSchema>['source'] = 'manual',
   sessionId?: string,
+  evidence: readonly string[] = [],
 ): { session_id: string; run_id: string; recorded: number } {
   const ids = [...new Set(knowledgeIds.map(id => id.trim()).filter(Boolean))];
   if (ids.length === 0) throw new Error('At least one knowledge ID is required');
@@ -359,7 +381,7 @@ export function recordRunKnowledgeInputs(
     runKnowledgeDeltaSchema,
     createDelta(located.sessionId, runId, now),
     draft => {
-      for (const id of ids) addInput(draft, id, signal, source, now);
+      for (const id of ids) addInput(draft, id, signal, source, now, evidence);
       draft.revision++;
       draft.updated_at = now;
       return { session_id: located.sessionId, run_id: runId, recorded: ids.length };
@@ -507,12 +529,28 @@ export function summarizeSessionKnowledge(
     validated: 0,
     contradicted: 0,
   };
+  const inputTotalsBySource: Record<KnowledgeInputSource, Record<KnowledgeInputSignal, number>> = {
+    load: { consumed: 0, cited: 0, validated: 0, contradicted: 0 },
+    search: { consumed: 0, cited: 0, validated: 0, contradicted: 0 },
+    injection: { consumed: 0, cited: 0, validated: 0, contradicted: 0 },
+    manual: { consumed: 0, cited: 0, validated: 0, contradicted: 0 },
+  };
+  const inputs: SessionKnowledgeSummary['inputs'] = [];
   const uniqueInputs = new Set<string>();
   const candidates = new Map<string, KnowledgeCandidate & { run_ids: string[] }>();
   for (const ledger of ledgers) {
     for (const input of ledger.inputs) {
       inputTotals[input.signal] += input.count;
+      inputTotalsBySource[input.source][input.signal] += input.count;
       uniqueInputs.add(input.knowledge_id);
+      inputs.push({
+        run_id: ledger.run_id,
+        knowledge_id: input.knowledge_id,
+        signal: input.signal,
+        source: input.source,
+        count: input.count,
+        ...(input.evidence?.length ? { evidence: input.evidence } : {}),
+      });
     }
     for (const candidate of ledger.candidates) {
       const existing = candidates.get(candidate.candidate_id);
@@ -543,6 +581,8 @@ export function summarizeSessionKnowledge(
     run_count: runIds.length,
     ledger_count: ledgers.length,
     input_totals: inputTotals,
+    input_totals_by_source: inputTotalsBySource,
+    inputs,
     unique_inputs: uniqueInputs.size,
     candidates: [...candidates.values()]
       .map(candidate => {
@@ -598,6 +638,7 @@ export function buildKnowledgeReconciliationCard(
     policy: {
       search_and_injection: 'exposure_only',
       explicit_load: 'consumed',
+      record: 'explicit_attribution',
       completion: 'stage_candidates',
       promotion: 'explicit_review',
     },

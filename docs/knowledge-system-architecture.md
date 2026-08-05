@@ -190,6 +190,19 @@ maestro knowledge stage spec "规则标题" "规则正文" \
   --signal validated --signal-ids spec:S-1,knowhow:K-1
 ```
 
+纯归因（不建候选）用 `record` 命令——检索命中、引用、验证或矛盾均可记账，
+高价值信号建议附证据锚点：
+
+```bash
+maestro knowledge record spec:S-1 knowhow:K-9 \
+  --signal validated --source search \
+  --evidence run:<run-id>,artifact:<artifact-id> \
+  --run <run-id>
+```
+
+`knowledge review --json` 输出按来源统计（`input_totals_by_source`）与逐条明细
+（`inputs`，含 `evidence`），可核对各来源的检索/加载/手动归因。
+
 ### 5.2 Candidate
 
 Candidate 的目标只有 `spec|knowhow`，action 为：
@@ -300,8 +313,7 @@ Run 数量线性增长。当前系统提供以下治理手段：
 人工裁决命令：
 
 ```bash
-maestro knowledge resolve <candidate-id> \
-  --session <session-id> \
+maestro knowledge review <session-id> --resolve <candidate-id> \
   --as duplicate|related|conflict|supersede|unique \
   [--target <knowledge-id>] \
   --reason "<evidence-backed reason>"
