@@ -175,7 +175,11 @@ function registerToggleSubcommand(install: Command): void {
     .option('--enable <names>', 'Non-interactive: enable items (comma-separated)')
     .option('--disable <names>', 'Non-interactive: disable items (comma-separated)')
     .option('--list', 'List all items with their status (no TUI)')
-    .action(async (opts: { global?: boolean; path?: string; type?: string; enable?: string; disable?: string; list?: boolean }) => {
+    .action(async (opts: { global?: boolean; path?: string; type?: string; enable?: string; disable?: string; list?: boolean }, cmd: Command) => {
+      // The parent `install` command also declares --path/--global and consumes
+      // them before the subcommand — merge via optsWithGlobals so toggle targets
+      // the requested project instead of always defaulting to the global install.
+      opts = { ...opts, ...cmd.optsWithGlobals() };
       const { homedir } = await import('node:os');
       const { scanToggleItems, applyToggle, updateManifestDisabledItems } = await import('./install-backend.js');
 

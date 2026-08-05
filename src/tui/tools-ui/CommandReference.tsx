@@ -25,8 +25,6 @@ const KNOWN_ROLE_REFS: Array<{ command: string; role: string }> = [
   { command: 'issue-discover', role: 'analyze' },
   { command: 'team-review/scanner', role: 'review' },
   { command: 'team-review/reviewer', role: 'review' },
-  { command: 'team-qa/scout', role: 'analyze' },
-  { command: 'team-tech-debt/scanner', role: 'explore' },
   { command: 'spec-generate (product)', role: 'analyze' },
   { command: 'spec-generate (technical)', role: 'review' },
   { command: 'spec-generate (user)', role: 'explore' },

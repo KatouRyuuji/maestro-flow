@@ -1226,6 +1226,87 @@
   ],
   "claude_skills": [
     {
+      "name": "maestro-help",
+      "path": ".claude/skills/maestro-help/SKILL.md",
+      "category": "maestro",
+      "description": "Maestro Flow 命令帮助系统。搜索命令、浏览技能、工作流推荐、新手引导。Triggers on \"maestro-help\", \"帮助\", \"命令\", \"怎么用\", \"skill\", \"workflow\", \"maestro 怎么用\".",
+      "roles": [],
+      "phases": []
+    },
+    {
+      "name": "skill-generator",
+      "path": ".claude/skills/skill-generator/SKILL.md",
+      "category": "meta",
+      "description": "Skill generator — creates new Claude Code skills with sequential or autonomous phase patterns",
+      "roles": [],
+      "phases": []
+    },
+    {
+      "name": "skill-iter-tune",
+      "path": ".claude/skills/skill-iter-tune/SKILL.md",
+      "category": "manage",
+      "description": "Iterative skill tuning via execute-evaluate-improve feedback loop with two-tool pipeline (Claude + Gemini)",
+      "roles": [
+        "executor",
+        "evaluator"
+      ],
+      "phases": [
+        "setup",
+        "execute",
+        "evaluate",
+        "improve",
+        "report"
+      ]
+    },
+    {
+      "name": "skill-simplify",
+      "path": ".claude/skills/skill-simplify/SKILL.md",
+      "category": "meta",
+      "description": "Skill simplify — refactors and trims skills while preserving behavior via integrity checks",
+      "roles": [],
+      "phases": []
+    },
+    {
+      "name": "skill-tuning",
+      "path": ".claude/skills/skill-tuning/SKILL.md",
+      "category": "meta",
+      "description": "Skill tuning — diagnoses and iteratively optimizes skill execution issues",
+      "roles": [],
+      "phases": []
+    },
+    {
+      "name": "team-arch-opt",
+      "path": ".claude/skills/team-arch-opt/SKILL.md",
+      "category": "team",
+      "description": "Architecture optimization team — multi-role analysis, bottleneck identification, and refactoring of system architecture",
+      "roles": [],
+      "phases": []
+    },
+    {
+      "name": "team-coordinate",
+      "path": ".claude/skills/team-coordinate/SKILL.md",
+      "category": "team",
+      "description": "Universal team coordination skill with dynamic role generation — analyze task → generate role-specs → dispatch → execute → deliver",
+      "roles": [
+        "coordinator"
+      ],
+      "phases": [
+        "task-analysis",
+        "role-generation",
+        "task-chain",
+        "execution",
+        "report"
+      ]
+    },
+    {
+      "name": "team-issue",
+      "path": ".claude/skills/team-issue/SKILL.md",
+      "category": "team",
+      "description": "Issue resolution pipeline team — discovers, analyzes, fixes, and closes issues end-to-end",
+      "roles": [],
+      "phases": []
+    },
+    {
       "name": "team-lifecycle-v4",
       "path": ".claude/skills/team-lifecycle-v4/SKILL.md",
       "category": "team",
@@ -1249,34 +1330,37 @@
       ]
     },
     {
-      "name": "team-coordinate",
-      "path": ".claude/skills/team-coordinate/SKILL.md",
+      "name": "team-perf-opt",
+      "path": ".claude/skills/team-perf-opt/SKILL.md",
       "category": "team",
-      "description": "Universal team coordination skill with dynamic role generation — analyze task → generate role-specs → dispatch → execute → deliver",
+      "description": "Performance optimization team — profiles, diagnoses, and fixes performance bottlenecks",
+      "roles": [],
+      "phases": []
+    },
+    {
+      "name": "team-review",
+      "path": ".claude/skills/team-review/SKILL.md",
+      "category": "team",
+      "description": "Multi-agent code review — scanner → reviewer → fixer with 4-dimension analysis (SEC/COR/PRF/MNT)",
       "roles": [
-        "coordinator"
+        "coordinator",
+        "scanner",
+        "reviewer",
+        "fixer"
       ],
       "phases": [
-        "task-analysis",
-        "role-generation",
-        "task-chain",
-        "execution",
-        "report"
+        "scan",
+        "review",
+        "fix"
       ]
     },
     {
-      "name": "team-executor",
-      "path": ".claude/skills/team-executor/SKILL.md",
+      "name": "team-swarm",
+      "path": ".claude/skills/team-swarm/SKILL.md",
       "category": "team",
-      "description": "Lightweight session execution skill — resumes existing team sessions for pure execution via team-worker agents",
-      "roles": [
-        "executor"
-      ],
-      "phases": [
-        "reconcile",
-        "execution",
-        "report"
-      ]
+      "description": "Swarm intelligence team skill — ACO-driven multi-agent exploration with hybrid LLM coordinator + Python optimization controller. Coordinator generates swarm-config from user task, then runs K iterations of N parallel ants guided by pheromone state. Universal task space via config (nodes + scoring rule). Triggers on \"team swarm\", \"swarm intelligence\", \"蚁群\".",
+      "roles": [],
+      "phases": []
     },
     {
       "name": "team-testing",
@@ -1298,97 +1382,6 @@
       ]
     },
     {
-      "name": "team-review",
-      "path": ".claude/skills/team-review/SKILL.md",
-      "category": "team",
-      "description": "Multi-agent code review — scanner → reviewer → fixer with 4-dimension analysis (SEC/COR/PRF/MNT)",
-      "roles": [
-        "coordinator",
-        "scanner",
-        "reviewer",
-        "fixer"
-      ],
-      "phases": [
-        "scan",
-        "review",
-        "fix"
-      ]
-    },
-    {
-      "name": "team-quality-assurance",
-      "path": ".claude/skills/team-quality-assurance/SKILL.md",
-      "category": "team",
-      "description": "Full closed-loop QA team — scout → strategist → generator → executor → analyst with discovery, testing, and full modes",
-      "roles": [
-        "coordinator",
-        "scout",
-        "strategist",
-        "generator",
-        "executor",
-        "analyst"
-      ],
-      "phases": [
-        "discovery",
-        "strategy",
-        "generation",
-        "execution",
-        "analysis"
-      ]
-    },
-    {
-      "name": "team-tech-debt",
-      "path": ".claude/skills/team-tech-debt/SKILL.md",
-      "category": "team",
-      "description": "Tech debt governance team — scanner → assessor → planner → executor → validator with 5 debt dimensions",
-      "roles": [
-        "coordinator",
-        "scanner",
-        "assessor",
-        "planner",
-        "executor",
-        "validator"
-      ],
-      "phases": [
-        "scan",
-        "assess",
-        "plan",
-        "fix",
-        "validate"
-      ]
-    },
-    {
-      "name": "codify-to-knowhow",
-      "path": ".claude/skills/codify-to-knowhow/SKILL.md",
-      "category": "manage",
-      "description": "Manifest-driven knowledge asset generator — converts any structured package into maestro knowhow + spec entries with ref linking",
-      "roles": [
-        "generator"
-      ],
-      "phases": [
-        "manifest-load",
-        "generate-knowhow",
-        "generate-specs",
-        "index-verify"
-      ]
-    },
-    {
-      "name": "skill-iter-tune",
-      "path": ".claude/skills/skill-iter-tune/SKILL.md",
-      "category": "manage",
-      "description": "Iterative skill tuning via execute-evaluate-improve feedback loop with two-tool pipeline (Claude + Gemini)",
-      "roles": [
-        "executor",
-        "evaluator"
-      ],
-      "phases": [
-        "setup",
-        "execute",
-        "evaluate",
-        "improve",
-        "report"
-      ]
-    },
-    {
       "name": "workflow-skill-designer",
       "path": ".claude/skills/workflow-skill-designer/SKILL.md",
       "category": "manage",
@@ -1402,192 +1395,6 @@
         "phase-design",
         "validation"
       ]
-    },
-    {
-      "name": "team-arch-opt",
-      "path": ".claude/skills/team-arch-opt/SKILL.md",
-      "category": "team",
-      "description": "Architecture optimization team — multi-role analysis, bottleneck identification, and refactoring of system architecture"
-    },
-    {
-      "name": "team-brainstorm",
-      "path": ".claude/skills/team-brainstorm/SKILL.md",
-      "category": "team",
-      "description": "Multi-role brainstorming team — generates diverse perspectives and synthesizes a converged solution"
-    },
-    {
-      "name": "team-designer",
-      "path": ".claude/skills/team-designer/SKILL.md",
-      "category": "team",
-      "description": "Team skill scaffolding — designs and generates new team skill structures with role directories"
-    },
-    {
-      "name": "team-frontend",
-      "path": ".claude/skills/team-frontend/SKILL.md",
-      "category": "team",
-      "description": "Frontend development team — component-driven UI implementation with multi-role collaboration"
-    },
-    {
-      "name": "team-frontend-debug",
-      "path": ".claude/skills/team-frontend-debug/SKILL.md",
-      "category": "team",
-      "description": "Frontend debugging team — Chrome DevTools-driven visual and runtime issue resolution"
-    },
-    {
-      "name": "team-interactive-craft",
-      "path": ".claude/skills/team-interactive-craft/SKILL.md",
-      "category": "team",
-      "description": "Interactive component crafting team — builds interactive UI components with critique loops"
-    },
-    {
-      "name": "team-issue",
-      "path": ".claude/skills/team-issue/SKILL.md",
-      "category": "team",
-      "description": "Issue resolution pipeline team — discovers, analyzes, fixes, and closes issues end-to-end"
-    },
-    {
-      "name": "team-motion-design",
-      "path": ".claude/skills/team-motion-design/SKILL.md",
-      "category": "team",
-      "description": "Animation & motion design team — designs and implements UI motion and transition patterns"
-    },
-    {
-      "name": "team-perf-opt",
-      "path": ".claude/skills/team-perf-opt/SKILL.md",
-      "category": "team",
-      "description": "Performance optimization team — profiles, diagnoses, and fixes performance bottlenecks"
-    },
-    {
-      "name": "team-planex",
-      "path": ".claude/skills/team-planex/SKILL.md",
-      "category": "team",
-      "description": "Plan-and-execute pipeline team — requirement-to-delivery closed loop driven by acceptance criteria"
-    },
-    {
-      "name": "team-roadmap-dev",
-      "path": ".claude/skills/team-roadmap-dev/SKILL.md",
-      "category": "team",
-      "description": "Roadmap-driven development team — phased milestone execution from a project roadmap"
-    },
-    {
-      "name": "team-ui-polish",
-      "path": ".claude/skills/team-ui-polish/SKILL.md",
-      "category": "team",
-      "description": "UI polish team — refines visual and interaction details for design quality"
-    },
-    {
-      "name": "team-uidesign",
-      "path": ".claude/skills/team-uidesign/SKILL.md",
-      "category": "team",
-      "description": "Design tokens & audit team — manages design tokens and runs UI design audits"
-    },
-    {
-      "name": "team-ultra-analyze",
-      "path": ".claude/skills/team-ultra-analyze/SKILL.md",
-      "category": "team",
-      "description": "Deep collaborative analysis team — multi-perspective exhaustive codebase analysis"
-    },
-    {
-      "name": "team-ux-improve",
-      "path": ".claude/skills/team-ux-improve/SKILL.md",
-      "category": "team",
-      "description": "UX interaction team — identifies and fixes user-experience interaction issues"
-    },
-    {
-      "name": "team-visual-a11y",
-      "path": ".claude/skills/team-visual-a11y/SKILL.md",
-      "category": "team",
-      "description": "Visual accessibility QA team — WCAG-compliant visual accessibility checks and fixes"
-    },
-    {
-      "name": "scholar-anti-ai-writing",
-      "path": ".claude/skills/scholar-anti-ai-writing/SKILL.md",
-      "category": "scholar",
-      "description": "Remove AI writing patterns — detects and rewrites AI-typical phrasing for natural prose"
-    },
-    {
-      "name": "scholar-citation-verify",
-      "path": ".claude/skills/scholar-citation-verify/SKILL.md",
-      "category": "scholar",
-      "description": "Citation verification — checks references against source claims and contexts"
-    },
-    {
-      "name": "scholar-experiment",
-      "path": ".claude/skills/scholar-experiment/SKILL.md",
-      "category": "scholar",
-      "description": "Experiment analysis — analyzes, interprets, and visualizes experimental results"
-    },
-    {
-      "name": "scholar-ideation",
-      "path": ".claude/skills/scholar-ideation/SKILL.md",
-      "category": "scholar",
-      "description": "Research ideation — identifies research gaps and plans promising directions"
-    },
-    {
-      "name": "scholar-latex-organizer",
-      "path": ".claude/skills/scholar-latex-organizer/SKILL.md",
-      "category": "scholar",
-      "description": "LaTeX organizer — cleans and restructures LaTeX project files and templates"
-    },
-    {
-      "name": "scholar-publish",
-      "path": ".claude/skills/scholar-publish/SKILL.md",
-      "category": "scholar",
-      "description": "Post-acceptance preparation — camera-ready and submission material packaging"
-    },
-    {
-      "name": "scholar-rebuttal-pro",
-      "path": ".claude/skills/scholar-rebuttal-pro/SKILL.md",
-      "category": "scholar",
-      "description": "Rebuttal Pro — crafts reviewer responses with CLI-assisted argument analysis"
-    },
-    {
-      "name": "scholar-review",
-      "path": ".claude/skills/scholar-review/SKILL.md",
-      "category": "scholar",
-      "description": "Paper review — reviews manuscripts and generates structured rebuttal responses"
-    },
-    {
-      "name": "scholar-thesis-docx",
-      "path": ".claude/skills/scholar-thesis-docx/SKILL.md",
-      "category": "scholar",
-      "description": "Thesis Word formatting — formats thesis documents for Word submission"
-    },
-    {
-      "name": "scholar-writing",
-      "path": ".claude/skills/scholar-writing/SKILL.md",
-      "category": "scholar",
-      "description": "End-to-end paper writing — repo to publication-ready LaTeX manuscript"
-    },
-    {
-      "name": "skill-generator",
-      "path": ".claude/skills/skill-generator/SKILL.md",
-      "category": "meta",
-      "description": "Skill generator — creates new Claude Code skills with sequential or autonomous phase patterns"
-    },
-    {
-      "name": "skill-simplify",
-      "path": ".claude/skills/skill-simplify/SKILL.md",
-      "category": "meta",
-      "description": "Skill simplify — refactors and trims skills while preserving behavior via integrity checks"
-    },
-    {
-      "name": "skill-tuning",
-      "path": ".claude/skills/skill-tuning/SKILL.md",
-      "category": "meta",
-      "description": "Skill tuning — diagnoses and iteratively optimizes skill execution issues"
-    },
-    {
-      "name": "prompt-generator",
-      "path": ".claude/skills/prompt-generator/SKILL.md",
-      "category": "meta",
-      "description": "Prompt generator — generates or converts command, skill, and agent prompt files"
-    },
-    {
-      "name": "delegation-check",
-      "path": ".claude/skills/delegation-check/SKILL.md",
-      "category": "meta",
-      "description": "Delegation check — validates delegation prompts against role definitions for boundary leaks"
     }
   ],
   "codex_skills": []

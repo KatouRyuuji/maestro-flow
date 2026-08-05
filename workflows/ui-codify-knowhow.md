@@ -5,7 +5,7 @@
 </required_reading>
 # UI Codify: Phase 4 — Knowledge Asset Generation
 
-读取提取的 JSON 文件，构建 knowhow-manifest.json，调用 codify-to-knowhow 固化为知识资产。
+读取提取的 JSON 文件，构建 knowhow-manifest.json，按 manifest 直接固化知识资产（写入 knowhow + spec 条目）。
 
 ## Prerequisites
 
@@ -203,19 +203,43 @@ echo "  knowhow-manifest.json written to ${package_dir}"
 
 ---
 
-## Step 4.4: Call codify-to-knowhow
+## Step 4.4: Persist Knowledge Assets（manifest 驱动直接写入）
 
-通过 Skill tool 调用 codify-to-knowhow：
+读取 knowhow-manifest.json，按声明**直接写入**知识资产（codify-to-knowhow 已并入本步骤，不再调用独立 skill）：
 
 ```javascript
-MANDATORY recommendation: `/codify-to-knowhow "${package_dir}"`
+// 1. 读取 manifest
+const manifest = JSON.parse(Read("${package_dir}/knowhow-manifest.json"));
+
+// 2. 幂等写入 knowhow 文件（.workflow/knowhow/）— 同 slug 已存在则跳过
+for (const kh of manifest.knowhow || []) {
+  const file = `.workflow/knowhow/${kh.prefix}-${manifest.slug}-${kh.fileSlug}.md`;
+  if (existsSync(file)) { echo(`  SKIP (exists): ${file}`); continue; }
+  Write(file, [
+    `# ${kh.title}`,
+    ``, `> 由 ${package_name} 固化（${new Date().toISOString().slice(0,10)}）`,
+    ...(kh.codePaths||[]).map(p => `- 关联代码: \`${p}\``),
+    ``, ...kh.entries.map(e => `## ${e.title}\n\n${e.body}`),
+  ].join('\n'));
+}
+
+// 3. 幂等写入 spec 条目（.workflow/specs/）— 用 <spec-entry> 闭合标签 + ref 链接
+for (const sp of manifest.specs || []) {
+  const target = `.workflow/specs/${sp.category}-conventions.md`;
+  const entry = `<spec-entry>\n- keywords: ${sp.keywords}\n- title: ${sp.title}\n- ref: ${sp.ref}\n\n${sp.body}\n</spec-entry>`;
+  // 若 target 已有同 keywords 条目则跳过，否则追加
+  Write(target, (existsSync(target) ? Read(target) + '\n' : '') + entry);
+}
+
+// 4. 验证
+const written = manifest.knowhow?.length || 0;
+echo(`  Knowledge assets persisted: ${written} knowhow + ${manifest.specs?.length || 0} spec entries`);
 ```
 
-等待 codify-to-knowhow 完成。它将：
-1. 读取 knowhow-manifest.json
-2. 创建 knowhow 文件（.workflow/knowhow/AST-*.md, DCS-*.md）
-3. 创建 spec 条目（.workflow/specs/coding-conventions.md, architecture-constraints.md）
-4. 验证 ref 链接
+写入规范：
+1. knowhow 文件（`.workflow/knowhow/`，前缀 AST-/DCS-）——幂等（同 slug 存在则跳过）
+2. spec 条目（`.workflow/specs/`，闭合 `<spec-entry>` 标签）——通过 `ref` 链接到 knowhow 详文
+3. 所有条目使用闭合标签格式；验证 ref 指向的文件存在
 
 ---
 

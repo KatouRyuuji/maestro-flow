@@ -1391,22 +1391,6 @@
         "结果报告"
       ]
     },
-    "team-executor": {
-      "name": "team-executor",
-      "name_zh": "团队执行器",
-      "description": "Lightweight session execution skill — resumes existing team sessions for pure execution via team-worker agents",
-      "description_zh": "轻量级执行技能：加载现有会话 → 协调状态 → 启动 team-worker 代理执行。无分析、无角色生成，纯执行",
-      "workflow": "配合 team-coordinate 使用，用于恢复中断的会话",
-      "workflow_zh": "team-coordinate 的执行续集，用于会话恢复",
-      "roles": [
-        "executor (执行器)"
-      ],
-      "phases_zh": [
-        "状态协调",
-        "执行",
-        "结果报告"
-      ]
-    },
     "team-testing": {
       "name": "team-testing",
       "name_zh": "团队测试",
@@ -1445,69 +1429,6 @@
         "代码扫描",
         "深度审查",
         "自动修复"
-      ]
-    },
-    "team-quality-assurance": {
-      "name": "team-quality-assurance",
-      "name_zh": "质量保证团队",
-      "description": "Full closed-loop QA team — scout → strategist → generator → executor → analyst with discovery, testing, and full modes",
-      "description_zh": "完整闭环 QA 团队：侦察者（问题发现）→ 策略师 → 生成器 → 执行器 → 分析师。支持 discovery/testing/full 三种模式",
-      "workflow": "替代 manage-issue-discover + quality-auto-test + quality-test 组合",
-      "workflow_zh": "最完整的 QA 解决方案，覆盖问题发现到测试验证的全流程",
-      "roles": [
-        "coordinator (协调器)",
-        "scout (问题侦察者)",
-        "strategist (QA 策略师)",
-        "generator (测试生成器)",
-        "executor (执行器)",
-        "analyst (分析师)"
-      ],
-      "phases_zh": [
-        "问题发现",
-        "QA 策略",
-        "测试生成",
-        "执行测试",
-        "结果分析"
-      ]
-    },
-    "team-tech-debt": {
-      "name": "team-tech-debt",
-      "name_zh": "技术债务团队",
-      "description": "Tech debt governance team — scanner → assessor → planner → executor → validator with 5 debt dimensions",
-      "description_zh": "系统性技术债务治理：扫描 → 评估影响 → 制定修复计划 → 执行重构 → 验证结果。5 个债务维度：代码质量/架构/安全/性能/文档",
-      "workflow": "替代 quality-refactor 命令，适合大规模技术债务治理",
-      "workflow_zh": "专用债务治理团队，比单命令重构更系统",
-      "roles": [
-        "coordinator (协调器)",
-        "scanner (债务扫描器)",
-        "assessor (影响评估者)",
-        "planner (修复规划者)",
-        "executor (重构执行者)",
-        "validator (验证者)"
-      ],
-      "phases_zh": [
-        "债务扫描",
-        "影响评估",
-        "修复规划",
-        "重构执行",
-        "结果验证"
-      ]
-    },
-    "codify-to-knowhow": {
-      "name": "codify-to-knowhow",
-      "name_zh": "知识固化",
-      "description": "Manifest-driven knowledge asset generator — converts any structured package into maestro knowhow + spec entries with ref linking",
-      "description_zh": "通用 manifest 驱动的知识资产生成器：读取 knowhow-manifest.json → 创建 knowhow 文件 → 创建 spec 条目 → 通过 ref 建立索引-详文桥梁",
-      "workflow": "上游 skill 生成 manifest 后调用",
-      "workflow_zh": "上游 skill（如 maestro-ui-codify）负责生成 manifest，本 skill 负责执行知识写入",
-      "roles": [
-        "generator (生成器)"
-      ],
-      "phases_zh": [
-        "加载 Manifest",
-        "生成 Knowhow 资产",
-        "生成 Spec 条目",
-        "索引验证"
       ]
     },
     "skill-iter-tune": {
@@ -1573,155 +1494,17 @@
       "description": "Architecture optimization team — multi-role analysis, bottleneck identification, and refactoring of system architecture",
       "description_zh": "多角色架构优化团队：分析系统架构 → 识别瓶颈 → 重构落地，由协调器编排 team-worker 代理执行"
     },
-    "team-brainstorm": {
-      "name": "team-brainstorm",
-      "name_zh": "多角色头脑风暴",
-      "description": "Multi-role brainstorming team — generates diverse perspectives and synthesizes a converged solution",
-      "description_zh": "多角色头脑风暴团队：从不同视角生成方案 → 交叉验证 → 综合最优解"
-    },
-    "team-designer": {
-      "name": "team-designer",
-      "name_zh": "团队技能脚手架",
-      "description": "Team skill scaffolding — designs and generates new team skill structures with role directories",
-      "description_zh": "团队技能脚手架：设计并生成新的 team skill 结构与角色目录"
-    },
-    "team-frontend": {
-      "name": "team-frontend",
-      "name_zh": "前端开发团队",
-      "description": "Frontend development team — component-driven UI implementation with multi-role collaboration",
-      "description_zh": "前端开发团队：组件驱动的 UI 实现，多角色协作完成前端功能"
-    },
-    "team-frontend-debug": {
-      "name": "team-frontend-debug",
-      "name_zh": "前端调试团队",
-      "description": "Frontend debugging team — Chrome DevTools-driven visual and runtime issue resolution",
-      "description_zh": "前端调试团队：基于 Chrome DevTools 的可视化与运行时问题定位修复"
-    },
-    "team-interactive-craft": {
-      "name": "team-interactive-craft",
-      "name_zh": "交互组件打磨",
-      "description": "Interactive component crafting team — builds interactive UI components with critique loops",
-      "description_zh": "交互组件打磨团队：构建交互式 UI 组件，配批评循环持续改进"
-    },
     "team-issue": {
       "name": "team-issue",
       "name_zh": "问题闭环团队",
       "description": "Issue resolution pipeline team — discovers, analyzes, fixes, and closes issues end-to-end",
       "description_zh": "问题闭环团队：发现 → 分析 → 修复 → 关闭的端到端 Issue 处理管线"
     },
-    "team-motion-design": {
-      "name": "team-motion-design",
-      "name_zh": "动效设计团队",
-      "description": "Animation & motion design team — designs and implements UI motion and transition patterns",
-      "description_zh": "动效设计团队：设计并实现 UI 动画与过渡效果"
-    },
     "team-perf-opt": {
       "name": "team-perf-opt",
       "name_zh": "性能优化团队",
       "description": "Performance optimization team — profiles, diagnoses, and fixes performance bottlenecks",
       "description_zh": "性能优化团队：profiling → 诊断瓶颈 → 修复，多角色协作提升性能"
-    },
-    "team-planex": {
-      "name": "team-planex",
-      "name_zh": "规划执行团队",
-      "description": "Plan-and-execute pipeline team — requirement-to-delivery closed loop driven by acceptance criteria",
-      "description_zh": "规划执行团队：需求 → 验收标准 → 规划 → 执行 → 验证的需求交付闭环"
-    },
-    "team-roadmap-dev": {
-      "name": "team-roadmap-dev",
-      "name_zh": "路线图开发团队",
-      "description": "Roadmap-driven development team — phased milestone execution from a project roadmap",
-      "description_zh": "路线图驱动开发团队：按里程碑分阶段执行 roadmap"
-    },
-    "team-ui-polish": {
-      "name": "team-ui-polish",
-      "name_zh": "UI 打磨团队",
-      "description": "UI polish team — refines visual and interaction details for design quality",
-      "description_zh": "UI 设计质量打磨团队：精修视觉与交互细节"
-    },
-    "team-uidesign": {
-      "name": "team-uidesign",
-      "name_zh": "设计令牌审计",
-      "description": "Design tokens & audit team — manages design tokens and runs UI design audits",
-      "description_zh": "设计令牌与审计团队：管理 design tokens，执行 UI 设计审计"
-    },
-    "team-ultra-analyze": {
-      "name": "team-ultra-analyze",
-      "name_zh": "深度协作分析",
-      "description": "Deep collaborative analysis team — multi-perspective exhaustive codebase analysis",
-      "description_zh": "深度协作分析团队：多视角穷尽式代码库分析"
-    },
-    "team-ux-improve": {
-      "name": "team-ux-improve",
-      "name_zh": "UX 改进团队",
-      "description": "UX interaction team — identifies and fixes user-experience interaction issues",
-      "description_zh": "UX 交互改进团队：识别并修复用户体验交互问题"
-    },
-    "team-visual-a11y": {
-      "name": "team-visual-a11y",
-      "name_zh": "视觉无障碍 QA",
-      "description": "Visual accessibility QA team — WCAG-compliant visual accessibility checks and fixes",
-      "description_zh": "视觉无障碍 QA 团队：符合 WCAG 的视觉可访问性检查与修复"
-    },
-    "scholar-anti-ai-writing": {
-      "name": "scholar-anti-ai-writing",
-      "name_zh": "去 AI 痕迹",
-      "description": "Remove AI writing patterns — detects and rewrites AI-typical phrasing for natural prose",
-      "description_zh": "检测并改写 AI 典型表达模式，使文本更自然"
-    },
-    "scholar-citation-verify": {
-      "name": "scholar-citation-verify",
-      "name_zh": "引文核验",
-      "description": "Citation verification — checks references against source claims and contexts",
-      "description_zh": "核验参考文献与原文主张的一致性"
-    },
-    "scholar-experiment": {
-      "name": "scholar-experiment",
-      "name_zh": "实验分析",
-      "description": "Experiment analysis — analyzes, interprets, and visualizes experimental results",
-      "description_zh": "分析、解读并可视化实验结果"
-    },
-    "scholar-ideation": {
-      "name": "scholar-ideation",
-      "name_zh": "研究选题",
-      "description": "Research ideation — identifies research gaps and plans promising directions",
-      "description_zh": "识别研究空白并规划研究方向"
-    },
-    "scholar-latex-organizer": {
-      "name": "scholar-latex-organizer",
-      "name_zh": "LaTeX 整理",
-      "description": "LaTeX organizer — cleans and restructures LaTeX project files and templates",
-      "description_zh": "清理并重构 LaTeX 项目文件与模板"
-    },
-    "scholar-publish": {
-      "name": "scholar-publish",
-      "name_zh": "投稿准备",
-      "description": "Post-acceptance preparation — camera-ready and submission material packaging",
-      "description_zh": "录用后准备 camera-ready 与提交材料"
-    },
-    "scholar-rebuttal-pro": {
-      "name": "scholar-rebuttal-pro",
-      "name_zh": "审稿回复 Pro",
-      "description": "Rebuttal Pro — crafts reviewer responses with CLI-assisted argument analysis",
-      "description_zh": "基于 CLI 辅助论证分析撰写审稿回复"
-    },
-    "scholar-review": {
-      "name": "scholar-review",
-      "name_zh": "论文评审",
-      "description": "Paper review — reviews manuscripts and generates structured rebuttal responses",
-      "description_zh": "评审手稿并生成结构化 rebuttal 回复"
-    },
-    "scholar-thesis-docx": {
-      "name": "scholar-thesis-docx",
-      "name_zh": "学位论文排版",
-      "description": "Thesis Word formatting — formats thesis documents for Word submission",
-      "description_zh": "学位论文 Word 格式排版"
-    },
-    "scholar-writing": {
-      "name": "scholar-writing",
-      "name_zh": "论文写作",
-      "description": "End-to-end paper writing — repo to publication-ready LaTeX manuscript",
-      "description_zh": "端到端论文写作：从代码仓库到可投稿的 LaTeX 手稿"
     },
     "skill-generator": {
       "name": "skill-generator",
@@ -1740,18 +1523,6 @@
       "name_zh": "技能调优",
       "description": "Skill tuning — diagnoses and iteratively optimizes skill execution issues",
       "description_zh": "诊断并迭代优化技能执行问题"
-    },
-    "prompt-generator": {
-      "name": "prompt-generator",
-      "name_zh": "提示词生成器",
-      "description": "Prompt generator — generates or converts command, skill, and agent prompt files",
-      "description_zh": "生成或转换命令、技能、角色定义的提示词文件"
-    },
-    "delegation-check": {
-      "name": "delegation-check",
-      "name_zh": "委托契约检查",
-      "description": "Delegation check — validates delegation prompts against role definitions for boundary leaks",
-      "description_zh": "检查委托提示词与角色定义的边界与契约一致性"
     }
   }
 }

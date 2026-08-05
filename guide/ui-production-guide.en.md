@@ -170,7 +170,7 @@ Reverse-engineer a design system from existing source code, generate a reference
 | **Phase 1** Validate | Parameter validation, path verification, workspace setup | — |
 | **Phase 2** Parallel Extract | Style (color/typography/spacing) + Animation (duration/easing) + Layout (patterns) | 3 token JSON files |
 | **Phase 3** Reference Package | Copy tokens + generate interactive showcase | `preview.html` + `preview.css` |
-| **Phase 4** Persist | `codify-to-knowhow` skill | `knowhow-manifest.json` → knowhow + spec |
+| **Phase 4** Persist | manifest-driven direct writes (ui-codify-knowhow Step 4.4) | `knowhow-manifest.json` → knowhow + spec |
 
 ---
 

@@ -108,8 +108,9 @@ Deliver: [specify expected output format]
 | `team-coordinate` | requirement | coordinated-output | `"{goal}"` |
 | `team-review` | code | review-findings | `"{goal}"` |
 | `team-testing` | code | test-passed | `"{goal}"` |
-| `team-quality-assurance` | code | qa-report | `"{goal}"` |
-| `team-tech-debt` | codebase | refactored-code | `"{goal}"` |
+| `team-arch-opt` | code | optimized-arch | `"{goal}"` |
+| `team-issue` | issue | resolution-plan | `"{goal}"` |
+| `team-perf-opt` | code | perf-report | `"{goal}"` |
 
 ## Resolution Algorithm
 

@@ -76,9 +76,9 @@ export interface ComponentDef {
 // ---------------------------------------------------------------------------
 
 const BUILTIN_TEAM_SKILLS = new Set([
-  'team-adversarial-swarm', 'team-coordinate', 'team-executor',
-  'team-lifecycle-v4', 'team-quality-assurance', 'team-review',
-  'team-swarm', 'team-tech-debt', 'team-testing',
+  'team-arch-opt', 'team-coordinate', 'team-issue',
+  'team-lifecycle-v4', 'team-perf-opt', 'team-review',
+  'team-swarm', 'team-testing',
 ]);
 
 interface OptionalSkillEntry {
@@ -87,23 +87,29 @@ interface OptionalSkillEntry {
   description: string;
 }
 
-const EXTRA_TEAM_SKILLS: OptionalSkillEntry[] = [
-  { name: 'team-arch-opt', label: 'Team Arch Opt', description: 'Architecture optimization' },
-  { name: 'team-brainstorm', label: 'Team Brainstorm', description: 'Multi-role brainstorming' },
-  { name: 'team-designer', label: 'Team Designer', description: 'Team skill scaffolding' },
-  { name: 'team-frontend', label: 'Team Frontend', description: 'Frontend development' },
-  { name: 'team-frontend-debug', label: 'Team Frontend Debug', description: 'Chrome DevTools debugging' },
-  { name: 'team-interactive-craft', label: 'Team Interactive', description: 'Interactive components' },
-  { name: 'team-issue', label: 'Team Issue', description: 'Issue resolution pipeline' },
-  { name: 'team-motion-design', label: 'Team Motion', description: 'Animation & motion design' },
-  { name: 'team-perf-opt', label: 'Team Perf Opt', description: 'Performance optimization' },
-  { name: 'team-planex', label: 'Team Planex', description: 'Plan-and-execute pipeline' },
-  { name: 'team-roadmap-dev', label: 'Team Roadmap', description: 'Roadmap-driven development' },
-  { name: 'team-ui-polish', label: 'Team UI Polish', description: 'UI design quality fixes' },
-  { name: 'team-uidesign', label: 'Team UI Design', description: 'Design tokens & audit' },
-  { name: 'team-ultra-analyze', label: 'Team Ultra Analyze', description: 'Deep collaborative analysis' },
-  { name: 'team-ux-improve', label: 'Team UX Improve', description: 'UX interaction fixes' },
-  { name: 'team-visual-a11y', label: 'Team Visual A11y', description: 'Visual accessibility QA' },
+// Former extra team skills — removed from the repo (2026-07). The bundle ID
+// is retained only for manifest-replay migration (unknown IDs are hard errors
+// in forceInstall); its fileFilter matches nothing, so it never installs.
+const EXTRA_TEAM_SKILLS: OptionalSkillEntry[] = [];
+
+// Former meta-skill bundle members — removed or moved into the core `skills`
+// component (skill-generator / skill-iter-tune / skill-simplify / skill-tuning
+// / workflow-skill-designer are now always-installed; codify-to-knowhow was
+// removed 2026-07). Bundle ID retained for manifest-replay migration only.
+const META_SKILLS: OptionalSkillEntry[] = [];
+
+// Legacy names kept for manifest-replay migration (migrateComponentIds).
+// Deleted skills map to their former group bundle, which is a no-op today.
+const LEGACY_EXTRA_TEAM_SKILL_NAMES = [
+  'team-arch-opt', 'team-brainstorm', 'team-designer', 'team-frontend',
+  'team-frontend-debug', 'team-interactive-craft', 'team-issue',
+  'team-motion-design', 'team-perf-opt', 'team-planex', 'team-roadmap-dev',
+  'team-ui-polish', 'team-uidesign', 'team-ultra-analyze', 'team-ux-improve',
+  'team-visual-a11y',
+];
+const LEGACY_META_SKILL_NAMES = [
+  'skill-generator', 'skill-simplify', 'skill-tuning',
+  'prompt-generator', 'delegation-check',
 ];
 
 const SCHOLAR_SKILLS: OptionalSkillEntry[] = [
@@ -117,14 +123,6 @@ const SCHOLAR_SKILLS: OptionalSkillEntry[] = [
   { name: 'scholar-review', label: 'Scholar Review', description: 'Paper review & rebuttal' },
   { name: 'scholar-thesis-docx', label: 'Thesis DOCX', description: 'Thesis Word formatting' },
   { name: 'scholar-writing', label: 'Scholar Writing', description: 'End-to-end paper writing' },
-];
-
-const META_SKILLS: OptionalSkillEntry[] = [
-  { name: 'skill-generator', label: 'Skill Generator', description: 'Create new Claude Code skills' },
-  { name: 'skill-simplify', label: 'Skill Simplify', description: 'Simplify skills with integrity check' },
-  { name: 'skill-tuning', label: 'Skill Tuning', description: 'Diagnose and optimize skill issues' },
-  { name: 'prompt-generator', label: 'Prompt Generator', description: 'Generate/convert prompt files' },
-  { name: 'delegation-check', label: 'Delegation Check', description: 'Check delegation prompt contracts' },
 ];
 
 const NON_CORE_SKILL_NAMES = new Set([
@@ -506,7 +504,7 @@ export const COMPONENT_DEFS: ComponentDef[] = [
   {
     id: 'skills-extra-team',
     label: 'Extra Team Skills',
-    description: `${EXTRA_TEAM_SKILLS.length} additional team skills (arch-opt, brainstorm, frontend, etc.)`,
+    description: 'Legacy no-op bundle — former extra team skills were removed (2026-07); retained for manifest-replay migration',
     sourcePath: join('.claude', 'skills'),
     target: (mode, projectPath) =>
       mode === 'global'
@@ -520,9 +518,9 @@ export const COMPONENT_DEFS: ComponentDef[] = [
   },
   {
     id: 'skills-scholar',
-    label: 'Scholar Skills',
-    description: `${SCHOLAR_SKILLS.length} academic writing & research skills`,
-    sourcePath: join('.claude', 'skills'),
+    label: 'Scholar Skills (选装)',
+    description: `${SCHOLAR_SKILLS.length} academic writing & research skills — optional, not installed by default`, 
+    sourcePath: join('optional', 'skills'),
     target: (mode, projectPath) =>
       mode === 'global'
         ? join(homedir(), '.claude', 'skills')
@@ -536,7 +534,7 @@ export const COMPONENT_DEFS: ComponentDef[] = [
   {
     id: 'skills-meta',
     label: 'Meta Skills',
-    description: `${META_SKILLS.length} skill tooling (generator, tuning, simplify, etc.)`,
+    description: 'Legacy no-op bundle — former meta-skill members moved to core `skills` (2026-07); retained for manifest-replay migration',
     sourcePath: join('.claude', 'skills'),
     target: (mode, projectPath) =>
       mode === 'global'
@@ -735,9 +733,9 @@ const VALID_IDS = new Set(COMPONENT_DEFS.map((d) => d.id));
 const LEGACY_SKILL_TO_GROUP = new Map<string, string>();
 LEGACY_SKILL_TO_GROUP.set('commands-odyssey', 'commands');
 LEGACY_SKILL_TO_GROUP.set('commands-learn', 'commands');
-for (const s of EXTRA_TEAM_SKILLS) LEGACY_SKILL_TO_GROUP.set(s.name, 'skills-extra-team');
+for (const s of LEGACY_EXTRA_TEAM_SKILL_NAMES) LEGACY_SKILL_TO_GROUP.set(s, 'skills-extra-team');
 for (const s of SCHOLAR_SKILLS) LEGACY_SKILL_TO_GROUP.set(s.name, 'skills-scholar');
-for (const s of META_SKILLS) LEGACY_SKILL_TO_GROUP.set(s.name, 'skills-meta');
+for (const s of LEGACY_META_SKILL_NAMES) LEGACY_SKILL_TO_GROUP.set(s, 'skills-meta');
 
 export function migrateComponentIds(ids: string[]): string[] {
   const result = new Set<string>();

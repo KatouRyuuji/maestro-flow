@@ -2,7 +2,7 @@
 title: "Maestro 命令使用指南"
 ---
 
-Maestro 命令系统包含 **18 个 slash 命令**，另有由编排器在 Session chain 内派发的一级 step，以及可直接调用的 `team-*`、`scholar-*` 等 skill。本文档提供命令全景图和核心工作流导航。
+Maestro 命令系统包含 **18 个 slash 命令**，另有由编排器在 Session chain 内派发的一级 step，以及可直接调用的 `team-*`、`skill-*` 等技能（`scholar-*` 为选装，见[学术技能](#十一学术技能scholar-skills选装)）。本文档提供命令全景图和核心工作流导航。
 
 ## 命令总览
 
@@ -18,7 +18,7 @@ Maestro 命令系统包含 **18 个 slash 命令**，另有由编排器在 Sessi
 除 slash 命令外还有两层，均不以 `/` 开头直接调用：
 
 - **一级 step**（`workflows/`）——`analyze`、`plan`、`execute`、`review`、`test`、`auto-test`、`debug`、`grill`、`brainstorm`、`blueprint`、`roadmap`、`harvest`、`retrospective`、`verify`、`collab` 等，由编排器在 Session chain 内派发，经 `/maestro "<意图>"` 或 `/maestro-next` 触达，不能直接键入形如 `/maestro-…` 的斜杠命令。
-- **Skill**（`.claude/skills/`，其中 25 个为 `team-*`）——可直接调用的团队与工具技能，如 `/team-swarm`；另有 `scholar-*` 学术技能族（见后文）。
+- **Skill**（`.claude/skills/`，其中 8 个为 `team-*`）——可直接调用的团队与工具技能，如 `/team-swarm`；另有 `scholar-*` 学术技能族（选装，见后文）。
 
 全局入口 `/maestro` 是**意图到链规划器**，根据用户意图和项目状态自动选择最优命令链。
 
@@ -633,9 +633,14 @@ maestro domain                                        # 查看当前领域配置
 
 ---
 
-## 十一、学术技能（Scholar Skills）
+## 十一、学术技能（Scholar Skills）— 选装
 
-10 个学术研究技能，覆盖从构思到发表的全流程。
+10 个学术研究技能，覆盖从构思到发表的全流程。**选装（默认不安装）**：源码位于 `optional/skills/`，不在默认镜像与 `.claude/skills/` 中。按需安装：
+
+```bash
+maestro install toggle --enable scholar-writing,scholar-review   # 安装指定技能到当前项目
+maestro install toggle --list                                     # 查看 available 状态的选装技能
+```
 
 | 技能 | 定位 | 触发词 |
 |------|------|--------|
@@ -649,28 +654,6 @@ maestro domain                                        # 查看当前领域配置
 | `scholar-latex-organizer` | LaTeX 模板整理 | organize LaTeX template, prepare Overleaf |
 | `scholar-publish` | 录用后会议准备 | conference preparation, prepare presentation |
 | `scholar-thesis-docx` | 学位论文 Word 排版 | thesis formatting, dissertation Word |
-
----
-
-## 十二、其他技能
-
-| 技能 | 定位 | 触发词 |
-|------|------|--------|
-| `insight-challenge` | 对抗式代码质量发现审查 | insight-challenge, challenge finding |
-| `delegation-check` | 委托提示词与角色定义一致性检查 | check delegation, delegation conflict |
-| `prompt-generator` | Claude Code 提示文件生成/转换 | create command, create skill, create agent |
-
-### `insight-challenge` — 发现对抗审查
-
-对代码质量发现进行对抗式审查。用反证挑战洞察，对照源代码验证声明，产出结构化裁决（confirmed / weakened / overturned）。
-
-### `delegation-check` — 委托一致性检查
-
-检查工作流委托提示词（Agent() 调用）与代理角色定义是否遵守内容分离边界。检测 7 个冲突维度：角色重定义、领域专业知识泄漏、质量门重复、输出格式冲突、流程覆盖、范围权限冲突、缺失契约。
-
-### `prompt-generator` — 提示文件生成
-
-生成或转换 Claude Code 提示文件 — 命令编排器、技能文件、代理角色定义，或将现有文件进行风格转换。遵循 GSD 风格内容分离，内置质量门。
 
 ---
 

@@ -18,7 +18,7 @@ The Maestro command system exposes **18 slash commands**, plus first-tier steps 
 Beyond slash commands there are two other layers, neither invoked with a leading `/`:
 
 - **First-tier steps** (`workflows/`) — `analyze`, `plan`, `execute`, `review`, `test`, `auto-test`, `debug`, `grill`, `brainstorm`, `blueprint`, `roadmap`, `harvest`, `retrospective`, `verify`, `collab` and others. They are dispatched by an orchestrator inside a Session chain; reach them through `/maestro "<intent>"` or `/maestro-next`, never by typing them as a `/maestro-…` slash command.
-- **Skills** (`.claude/skills/`, of which 25 are `team-*`) — user-invocable team and utility skills such as `/team-swarm`; the `scholar-*` academic skill family is documented below.
+- **Skills** (`.claude/skills/`, of which 8 are `team-*`) — user-invocable team and utility skills such as `/team-swarm`; the `scholar-*` academic skill family is optional (选装, see below).
 
 The global entry point `/maestro` is the **intent-to-chain planner**, which automatically selects the optimal command chain based on user intent and project state.
 
@@ -620,9 +620,14 @@ Entries are auto-indexed by WikiIndexer (type=knowhow, category={type}). Support
 
 ---
 
-## 11. Scholar Skills
+## 11. Scholar Skills (Optional)
 
-10 academic research skills covering the full pipeline from ideation to publication.
+10 academic research skills covering the full pipeline from ideation to publication. **Optional (not installed by default)**: sources live in `optional/skills/`, absent from default mirrors and `.claude/skills/`. Install on demand:
+
+```bash
+maestro install toggle --enable scholar-writing,scholar-review   # install into the current project
+maestro install toggle --list                                     # list available optional skills
+```
 
 | Skill | Purpose | Trigger Words |
 |-------|---------|---------------|
@@ -636,28 +641,6 @@ Entries are auto-indexed by WikiIndexer (type=knowhow, category={type}). Support
 | `scholar-latex-organizer` | LaTeX template organization | organize LaTeX template, prepare Overleaf |
 | `scholar-publish` | Post-acceptance conference preparation | conference preparation, prepare presentation |
 | `scholar-thesis-docx` | Thesis/dissertation Word formatting | thesis formatting, dissertation Word |
-
----
-
-## 12. Other Skills
-
-| Skill | Purpose | Trigger Words |
-|-------|---------|---------------|
-| `insight-challenge` | Adversarial review of code quality findings | insight-challenge, challenge finding |
-| `delegation-check` | Delegation prompt vs role definition consistency check | check delegation, delegation conflict |
-| `prompt-generator` | Claude Code prompt file generation/conversion | create command, create skill, create agent |
-
-### `insight-challenge` — Finding Adversarial Review
-
-Adversarial review of code quality findings. Challenges insights with counter-evidence, verifies claims against source code, and produces structured verdicts (confirmed / weakened / overturned).
-
-### `delegation-check` — Delegation Consistency Check
-
-Validates that command delegation prompts (Agent() calls) and agent role definitions respect content separation boundaries. Detects 7 conflict dimensions: role re-definition, domain expertise leaking, quality gate duplication, output format conflicts, process override, scope authority conflicts, and missing contracts.
-
-### `prompt-generator` — Prompt File Generation
-
-Generates or converts Claude Code prompt files — command orchestrators, skill files, agent role definitions, or style conversion of existing files. Follows GSD-style content separation with built-in quality gates.
 
 ---
 

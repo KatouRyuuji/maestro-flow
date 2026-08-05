@@ -1,11 +1,8 @@
 ---
 title: "Maestro Command Usage Guide"
-icon: "📝"
 ---
 
-The Maestro command system exposes **18 slash commands**, backed by 45 skills and 80 orchestrator-dispatched steps. This document provides the command panorama and core workflow navigation.
-
-> **v0.5.56 orchestration model**: Maestro and Ralph have merged into the unified **canonical Session/Run chain protocol**. `/maestro` is the **intent-to-chain planner** (intent → initial Skill chain → `maestro session create --chain-file`), `/maestro-ralph` is the **closed-loop policy layer** (Stage Mapping + decision gate + retry/drift/goal-audit). `/maestro-next` is a **pure router** (classify intent → route to companion / single Run / `/maestro`) and is no longer a planner. The old `--engine swarm --script wf-*` syntax has been fully retired.
+The Maestro command system exposes **18 slash commands**, plus first-tier steps dispatched by an orchestrator inside a Session chain, and directly-invocable `team-*` / `scholar-*` skills. This document provides the command panorama and core workflow navigation.
 
 ## Command Overview
 
@@ -20,10 +17,10 @@ The Maestro command system exposes **18 slash commands**, backed by 45 skills an
 
 Beyond slash commands there are two other layers, neither invoked with a leading `/`:
 
-- **First-tier steps** (80 in `workflows/`) — `analyze`, `plan`, `execute`, `review`, `test`, `auto-test`, `debug`, `grill`, `brainstorm`, `blueprint`, `roadmap`, `harvest`, `retrospective`, `verify`, `collab` and others. These are dispatched by an orchestrator inside a Session chain; you reach them through `/maestro "<intent>"` or `/maestro-next`, never by typing them as a `/maestro-…` slash command.
-- **Skills** (45 in `.claude/skills/`, of which 25 are `team-*`) — user-invocable team and utility skills such as `/team-swarm`.
+- **First-tier steps** (`workflows/`) — `analyze`, `plan`, `execute`, `review`, `test`, `auto-test`, `debug`, `grill`, `brainstorm`, `blueprint`, `roadmap`, `harvest`, `retrospective`, `verify`, `collab` and others. They are dispatched by an orchestrator inside a Session chain; reach them through `/maestro "<intent>"` or `/maestro-next`, never by typing them as a `/maestro-…` slash command.
+- **Skills** (`.claude/skills/`, of which 8 are `team-*`) — user-invocable team and utility skills such as `/team-swarm`; the `scholar-*` academic skill family is optional (选装, see below).
 
-The global entry point `/maestro` is the **intent-to-chain planner**, which automatically selects the optimal command chain based on user intent and project state, creates a canonical Session, and enters the shared Run loop.
+The global entry point `/maestro` is the **intent-to-chain planner**, which automatically selects the optimal command chain based on user intent and project state.
 
 ---
 
@@ -31,86 +28,85 @@ The global entry point `/maestro` is the **intent-to-chain planner**, which auto
 
 ```mermaid
 graph TB
-    subgraph entry["Entry"]
-        M["/maestro 意图到链规划器"]
-        RA["/maestro-ralph 闭环策略层"]
-        NX["/maestro-next 纯路由器"]
-        CP["/maestro-companion 轻量执行"]
+    subgraph entry["Entry (user-invocable)"]
+        M["/maestro Smart Coordinator"]
+        NX["/maestro-next Single-step Suggestion"]
     end
 
-    subgraph init["Project Initialization"]
-        BS["brainstorm"]
-        GR["grill 压力测试"]
-        BP["blueprint 正式规格"]
+    subgraph campaign["Long-running Entries (user-invocable)"]
+        OD["/maestro-odyssey --mode debug|improve|planex|review|security|ui"]
+        RA["/maestro-ralph Closed-loop Autonomy"]
+        IMP["/maestro-impeccable UI Polish"]
+    end
+
+    subgraph setup["Project Initialization"]
         INIT["/maestro-init"]
-        RM["roadmap"]
-        UID["/maestro-impeccable"]
+        BSs["brainstorm step"]
+        GRs["grill step"]
+        RMs["roadmap step"]
+        BPs["blueprint step"]
     end
 
-    subgraph pipeline["Milestone Pipeline (Skill Chain)"]
-        AN["analyze"]
-        PL["plan"]
-        EX["execute"]
-        RV["review"]
-        TT["test"]
+    subgraph pipeline["Phase Pipeline (dispatched in Session chain)"]
+        ANs["analyze step"]
+        PLs["plan step"]
+        EXs["execute step"]
+        VFs["verify step"]
     end
 
-    subgraph quality["Quality Pipeline"]
-        QAT["auto-test"]
-        QD["/maestro-odyssey --mode debug"]
-        QRF["/maestro-odyssey --mode improve"]
-        QS["maestro kg index"]
+    subgraph quality["Quality Pipeline (dispatched in Session chain)"]
+        RVs["review step"]
+        ATs["auto-test step"]
+        TSs["test step"]
+        DBs["debug step"]
+        RTs["retrospective step"]
     end
 
     subgraph issue["Issue Closed-Loop"]
-        ID["/maestro-issue discover"]
-        IC["/maestro-issue create"]
-        IA["analyze --gaps"]
-        IP["plan --gaps"]
-        IE["execute"]
-        ICL["/maestro-issue close"]
+        ISS["/maestro-issue discover|create|close"]
+        IDs["issue-discover step"]
     end
 
-    subgraph milestone["Milestone"]
-        MA["/maestro-session-seal"]
+    subgraph knowledge["Knowledge Management"]
+        CP["/maestro-companion"]
+        KN["/maestro-knowledge audit|harvest|wiki"]
+        KH["/maestro-knowhow"]
+        SP["/maestro-spec"]
+        LN["/maestro-learn follow|investigate|decompose|consult"]
     end
 
-    M -->|Intent routing| init
-    M -->|Intent routing| pipeline
-    M -->|Lightweight intent| CP
-    RA -->|Closed-loop policy| pipeline
-    NX -->|Routing| M
-    NX -->|Routing| CP
-    GR -.->|After stress test| BS
+    subgraph seal["Seal"]
+        SL["/maestro-session-seal"]
+        KGI["maestro kg index (CLI)"]
+    end
 
-    BS -.->|Optional| INIT
-    INIT --> RM
-    INIT --> BP
-    RM --> PL
-    BP --> PL
-    UID -.->|Optional| PL
+    M -->|"Classify intent → build chain"| setup
+    M -->|"Classify intent → build chain"| pipeline
+    M -->|"Classify intent → build chain"| quality
+    M -->|"Classify intent → build chain"| issue
+    NX -->|"Suggest next step"| pipeline
+    NX -->|"Suggest next step"| quality
 
-    AN --> PL
-    PL --> EX
-    EX --> RV
-    RV --> TT
-    TT -->|All Phases completed| MA
+    INIT --> RMs
+    INIT --> BPs
+    BSs -.->|"Optional prelude"| RMs
+    GRs -.->|"Stress test"| BSs
 
-    EX -.->|"post-execute decision gate"| EX
-    RV -.->|"post-review fix"| PL
-    TT -.->|"Failure"| QD
-    QD -.->|"Fix"| PL
+    ANs --> PLs --> EXs --> VFs
+    VFs --> RVs
+    RVs -->|PASS/WARN| ATs --> TSs
+    RVs -->|BLOCK| PLs
+    TSs -->|"Problems found"| DBs
+    DBs -->|"Root cause confirmed"| PLs
+    ISS --> IDs
+    IDs -.->|"gap → fix chain"| PLs
 
-    ID --> IC
-    IC --> IA
-    IA --> IP
-    IP --> IE
-    IE -->|resolved| ICL
-
-    MA -->|Next Milestone| AN
+    TSs -->|"All passed"| SL
+    SL --> RTs
+    SL --> KGI
+    RTs -.->|"Knowledge feedback"| KN
+    CP -.->|"Context/knowledge routing"| pipeline
 ```
-
-> The bare command names in the diagram (`analyze`, `plan`, `execute`, `review`, `test`, `brainstorm`, `grill`, `blueprint`, `roadmap`, `auto-test`) are **Skill chain steps**, executed within a canonical Session via `/maestro` routing or `maestro session start --chain ...`; `maestro-*` are standalone slash commands.
 
 ---
 
@@ -118,10 +114,11 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph phase_pipeline["Main Milestone Pipeline"]
+    subgraph phase_pipeline["Main Phase Pipeline"]
         direction LR
-        AN["analyze"] --> PL["plan"] --> EX["execute"] --> RV["review"]
-        RV --> QBT["auto-test"] --> TT["test"] --> MA["session-seal"]
+        AN["analyze"] -->|"Multiple"| AN
+        AN --> PL["plan"] -->|"revise"| PL -->|"Execute one-by-one"| EX["execute"] --> VF["verify"]
+        VF --> QR["review"] --> QBT["auto-test"] --> QT["test"] --> MA["session-seal"]
     end
 
     subgraph issue_loop["Issue Closed-Loop"]
@@ -132,22 +129,27 @@ graph TB
 
     subgraph shared["Shared Infrastructure"]
         JSONL[("issues.jsonl")]
-        SESS[("session.json + Evidence Registry")]
+        CMD["Commander Agent"]
+        SCHED["ExecutionScheduler"]
+        WS["WebSocket"]
     end
 
-    RV -->|"post-review decision gate finds problems"| IC
-    QBT -->|"post-business-test failure"| IC
-    TT -->|"post-test failure"| IC
+    QR -->|"Review finds problems, auto-create Issue"| IC
+    QBT -->|"auto-test failure, Create Issue"| IC
+    QT -->|"Test failure, Create Issue"| IC
+    VF -->|"Verify gaps, produce Issue"| IC
 
     IC -->|"phase_id linkage, path=workflow"| phase_pipeline
     IE -->|"Fix code, serves Phase"| EX
+
+    CMD -->|"Schedule Phase tasks"| SCHED
+    CMD -->|"Auto-advance Issue"| IA
+    CMD -->|"Auto-advance Issue"| IP
 
     IC --> JSONL
     IA --> JSONL
     IP --> JSONL
     IE --> JSONL
-    phase_pipeline --> SESS
-    issue_loop --> SESS
 ```
 
 ### Two Issue Processing Paths
@@ -155,7 +157,7 @@ graph TB
 | path | Meaning | Source | Lifecycle |
 |------|---------|--------|-----------|
 | `standalone` | Independent Issue, not bound to a Phase | Manual creation, `/maestro-issue discover`, external import | Independent closed-loop, does not affect Phase progression |
-| `workflow` | Phase-linked Issue | Auto-created by `post-review` / `post-business-test` / `post-test` decision gates, produced by Phase verification | May block milestone completion |
+| `workflow` | Phase-linked Issue | `review` step auto-create, `auto-test` step failure, Phase verification output | May block milestone completion |
 
 ---
 
@@ -164,209 +166,481 @@ graph TB
 ### Project Initialization
 
 ```
-/maestro-init → analyze (macro) → roadmap or blueprint (formal specification)
+/maestro-init → roadmap or blueprint (step, dispatched via /maestro)
 ```
 
-| Step | Command | Purpose | Output |
+| Step | Command / step | Purpose | Output |
 |------|---------|---------|--------|
-| 0 | `brainstorm` (optional, via `/maestro "brainstorm..."`) | Multi-role brainstorming | guidance-specification.md |
-| 0 | `grill` (optional, via `/maestro "grill..."`) | Adversarial stress test, validate solution assumptions | context-package |
+| 0 | `brainstorm` step (optional, via `/maestro`) | Multi-role brainstorming | guidance-specification.md |
 | 1 | `/maestro-init` | Initialize .workflow/ directory | state.json, project.md, specs/ |
-| 2 | `analyze "goal"` (macro, via `/maestro`) | Macro analysis — understand impact scope | context.md + scope_verdict |
-| 3a | `roadmap` (when scope_verdict=large) | Roadmap | roadmap.md (Milestone > Phase) |
-| 3b | `blueprint` (via `/maestro "<specification intent>"`) | Formal specification document (7 stages) | .workflow/blueprint/ |
+| 2a | `roadmap` step | Lightweight roadmap | roadmap.md |
+| 2b | `blueprint` step | 6-stage specification blueprint | PRD + architecture docs + `.workflow/blueprint/` |
 
 ### Milestone Pipeline
 
 ```
-analyze → plan → execute → ◆post-execute → review → ◆post-review → test → ◆post-test → session-seal
+analyze → plan → execute → verify → review → auto-test → test → session-seal
 ```
 
-| Stage | Skill Command | Output | Artifact |
-|-------|---------------|--------|----------|
-| Analyze | `analyze --session {session}` | context.md, analysis.md | ANL-{NNN} |
-| Plan | `plan --session {session}` | plan.json + TASK-*.json | PLN-{NNN} |
-| Execute | `execute --session {session}` | .summaries/, code changes | EXC-{NNN} |
-| Verify | (folded into the `post-execute` decision gate) | verification.json | VRF-{NNN} |
-| Review | `review --session {session}` | review.json | REV-{NNN} |
-| Test | `test --session {session}` | uat.md, test-results.json | TST-{NNN} |
+| Stage | Skill / Command | Output | Artifact |
+|-------|---------|--------|----------|
+| Analyze | `analyze` step | context.md, analysis.md | ANL-{NNN} |
+| Plan | `plan` step | plan.json + TASK-*.json | PLN-{NNN} |
+| Execute | `execute` step | .summaries/, code changes | EXC-{NNN} |
+| Verify | `execute` built-in verification gate (E2.7) | verification.json | VRF-{NNN} |
 | Seal | `/maestro-session-seal` | archived to milestones/ | — |
 
-Each `◆` is a **decision node** inserted by the Ralph policy, evaluated by a read-only evaluator that submits a verdict via `maestro session decide --verdict` (see [Ralph Guide](./maestro-ralph-guide.md)).
+**Scope routing**: No args = entire milestone; number = specific milestone (micro mode); text = macro exploration (macro mode). `--dir` specifies upstream output path directly.
 
-**Scope routing**: No args = entire milestone; number = specific phase; text = adhoc/standalone. `--from analyze:{id}` / `--from blueprint:{id}` specify the upstream artifact source.
+### Dual-Layer Analyze
 
-### Five Usage Modes
+| Layer | Argument | Purpose | Downstream Routing |
+|-------|----------|---------|-------------------|
+| **Macro** | text, e.g. `"user auth system"` | Requirement impact exploration, produces scope_verdict | large→roadmap, medium/small→plan |
+| **Micro** | number, e.g. `1` | Milestone-level 6-dimension deep analysis | Directly to plan |
 
-**A. Full mode**: `/maestro "implement X"` → analyze → plan → execute → review → test (one shot covering all phases)
+```bash
+# analyze is a Session chain step, dispatched via /maestro or /maestro-next; the args below are chain args
+# Macro: explore requirement impact before roadmap
+analyze "Implement multi-tenancy"     # → scope_verdict: large → suggests roadmap
 
-**B. Per-phase**: `/maestro "analyze phase 1"` → `/maestro "plan phase 1"` → `/maestro "execute phase 1"`
+# Micro: Milestone-level deep analysis
+analyze 1                              # → 6-dimension scoring → directly to plan
 
-**C. Mixed mode**: Full analysis + per-phase execution + adhoc mid-stream
+# Pass upstream context
+analyze "Auth module" --from brainstorm:BRN-001
+```
 
-**D. Unified planning**: analyze 1 → analyze 2 → plan → execute (analyze first, plan once)
+### Six Usage Modes
 
-**E. Standalone mode**: `analyze-plan-execute` chain (`/maestro "analyze then fix directly"`) — analyze -q → plan --dir → execute --dir, no init/roadmap needed
+**A. Full milestone**: `analyze → plan → execute → verify` (one shot, all phases)
+
+**B. Per-milestone**: `analyze 1 → plan 1 → execute 1` (each milestone independently, micro layer)
+
+**C. Mixed**: Full analysis + per-phase execution + adhoc mid-stream
+
+**D. Unified planning**: `analyze 1 → analyze 2 → plan → execute` (analyze first, plan once)
+
+**E. Standalone**: `analyze "topic" → plan --dir → execute --dir` (no init/roadmap needed)
+
+**F. Macro exploration**: `analyze "requirement"` → scope_verdict → roadmap or plan (macro layer, use before roadmap)
 
 ---
 
 ## 2. Quick Channel
 
 ```bash
-/maestro-next "fix login page bug"        # Pure router: classify intent → route to companion / single Run / /maestro
+/maestro-next "Fix login page bug"             # Pure router: classify intent → companion / single Run / /maestro
 
-/maestro-companion "fix README typo"   # Lightweight execution: minimal Run lifecycle (start + done) + evidence recording
-/maestro "implement user authentication feature"              # Intent-to-chain: create a canonical Session and execute
-/maestro-ralph "refactor auth module"           # Closed-loop policy: full lifecycle chain + decision gate
+# Scratch mode (no init required; analyze/plan/execute are steps dispatched via /maestro)
+analyze "Implement JWT auth"                   # scope=standalone
+plan --dir scratch/20260420-analyze-xxx
+execute --dir scratch/20260420-plan-xxx
 
-# CLI direct chain creation (no slash command needed)
-maestro session start "fix login chain" --chain analyze plan execute review
-maestro session start "understand auth flow" --session 20260721-learn-auth --chain learn --arg "src/auth"
+# Lite chain (explore→plan→execute→test, built by the coordinator)
+/maestro "Implement Issue system"
 ```
-
-> **`/maestro-next` is a pure router**: it classifies intent, evaluates complexity, and routes to the correct execution channel (`/maestro-companion` lightweight / standard single Run / `/maestro` multi-step). It **does not run a loop itself**, nor does it **appear as a step inside a chain**.
 
 ---
 
 ## 3. Issue Closed-Loop
 
 ```
-Discover → Create → Analyze → Plan → Execute → Review → Close
+Discover → Create → Analyze → Plan → Execute → Close
 ```
 
 ```bash
-/maestro-issue discover by-prompt "check API error handling"
-/maestro-issue create --title "memory leak" --severity high
-/maestro "fix issue ISS-xxx"            # issue-full chain: analyze --gaps → plan --gaps → execute → review → close → harvest
+/maestro-issue discover by-prompt "Check API error handling"
+/maestro-issue create --title "Memory leak" --severity high
+analyze --gaps ISS-xxx                           # Root cause analysis (step)
+plan --gaps                                      # Solution planning (step)
+execute                                          # Execute fix (step)
 /maestro-issue close ISS-xxx --resolution "Fixed"
 ```
 
-The `issue-full` chain (from the `/maestro` chain catalog):
-
-```
-analyze --gaps {issue_id} → plan --gaps → execute → review → issue close {issue_id} → harvest --auto
-```
-
-`issue-quick` fast path: `plan --gaps → execute → issue close`.
-
----
-
-## Odyssey Deep Cycle
-
-> Exhaustive iteration command family — three philosophy constraints: **Zero residual** / **Exhaustive iteration** / **Improvement is standard**
-
-Unlike the Quality pipeline (fast gate), Odyssey commands are long-running persistent sessions. Each command has a built-in fix→verify→generalize closed loop that iterates until 0 remaining actionable items before exiting.
-
-```bash
-/maestro-odyssey --mode debug "memory leak issue"                    # archaeology→diagnosis→fix→generalize siblings
-/maestro-odyssey --mode improve "src/api/"                      # 6-dim audit→round-by-round fix→exhaust all
-/maestro-odyssey --mode planex "implement JWT refresh tokens"               # requirement→acceptance criteria→iterate until ALL pass
-/maestro-odyssey --mode review "src/auth/"                      # deep review→fix all severities→re-review
-/maestro-odyssey --mode security "src/auth/"                    # OWASP Top 10 + STRIDE security audit
-/maestro-odyssey --mode ui "src/components/Dashboard"           # visual survey→divergent exploration→exhaustive polish
-```
-
-| Command | Focus | Compared to |
-|---------|-------|-------------|
-| `maestro-odyssey --mode debug` | Deep debug closed loop (with archaeology, generalization) | vs `debug` single step (fast diagnosis) |
-| `maestro-odyssey --mode improve` | Runtime quality deep improvement | vs `review` decision gate (pass/fail gate) |
-| `maestro-odyssey --mode planex` | Requirement-to-delivery exhaustive iteration | vs `execute` chain step (plan-based execution) |
-| `maestro-odyssey --mode review` | Review + fix + generalize full cycle | vs `review` decision gate (verdict only, no fix) |
-| `maestro-odyssey --mode security` | Security audit exhaustive iteration | vs a single one-shot audit (no fix loop) |
-| `maestro-odyssey --mode ui` | Persistent UI polish session | vs `/maestro-impeccable` (single execution) |
-
-**Shared flags**: `--skip-fix` (analysis only) · `--skip-generalize` (skip generalization) · `-c` (resume session) · `--auto` (automatic mode) · `-y` (auto-confirm)
+**Commander Agent** auto-advances unanalyzed Issues with priority `execute > analyze > plan`.
 
 ---
 
 ## 4. Quality Pipeline
 
-Quality gates are inserted into the chain by the Ralph policy as **decision nodes** (`post-execute` / `post-business-test` / `post-review` / `post-test` / `post-frontend-verify`), evaluated by a read-only evaluator:
-
 ```bash
-/maestro-ralph "implement X"     # execute → ◆post-execute → review → ◆post-review → test → ◆post-test → seal
-/maestro "comprehensive quality check"      # quality-loop chain: review → auto-test → test → debug → plan --gaps → execute
-/maestro "review has problems that need fixing"  # review-fix chain: plan --gaps → execute → review
-/maestro-odyssey --mode improve "auth module"  # Technical debt remediation
+execute → review → auto-test → test → /maestro-session-seal
 ```
 
-| Command | Purpose | Key Parameters |
+> Note: `auto-test` `review` `test` `debug` are first-tier steps dispatched by the orchestrator via the session chain — not directly invokable. Trigger them through `/maestro-next` or `/maestro "<intent>"`.
+
+| Step / Command | Purpose | Key Parameters |
 |---------|---------|----------------|
-| `review --session {session}` | Tiered code review (chain step) | `--tier quick` |
-| `auto-test --session {session}` | Business testing / test generation (chain step) | — |
-| `test --session {session}` | Session-based UAT (chain step) | `--frontend-verify` |
-| `/maestro-odyssey --mode debug` | Hypothesis-driven debugging | `--from-uat {N}` `--parallel` |
+| `auto-test` step | Smart routing test (spec/gap/code) | `--re-run` `--dry-run` |
+| `review` step | Tiered code review | `--level quick\|standard\|deep` |
+| `test` step | Session-based UAT | `--auto-fix` |
+| `debug` step | Hypothesis-driven debugging | `--from-uat {N}` `--parallel` |
 | `/maestro-odyssey --mode improve` | Technical debt remediation | `[scope]` |
 
-**Fix loop**: decision gate `fix` verdict → repair Skill produces `chain-proposal/1.0` → insert a repair step (plan --gaps → execute). See [Ralph Guide](./maestro-ralph-guide.md) for details.
+**Fix loop**: `verify gaps → plan --gaps → execute → verify` or `test failure → debug → plan --gaps → execute`
 
 ---
 
-## 5. Coordinator Command Chains (/maestro Chain Catalog)
+## 5. Coordinator Command Chains
 
 ```bash
-/maestro "implement user authentication module"          # Intent classification → auto-select command chain → create Session
-/maestro -y "add OAuth support"        # Auto-confirm low-risk classification and proposal
-/maestro -c                          # Continue the only live compatible Session
-/maestro --amend "change to support OAuth"    # Amend a live Session goal
-/maestro status                      # Project dashboard
+/maestro "Implement user authentication module"  # Intent recognition → auto-select chain
+/maestro -y "Add OAuth support"                  # Fully automatic mode
+/maestro continue                                # Auto-execute next step
 ```
 
 | Chain Name | Command Sequence | Use Case |
 |------------|------------------|----------|
-| `full-lifecycle` | plan → execute → review → test → session-seal → harvest | Complete milestone |
-| `spec-driven` | init → roadmap --mode full → plan → execute → harvest | Start from requirements (heavy) |
-| `roadmap-driven` | init → roadmap → plan → execute → harvest | Start from requirements (light) |
-| `blueprint-driven` | init → blueprint → plan → execute → harvest | Start from idea/specification |
-| `brainstorm-driven` | brainstorm → plan → execute → harvest | Start from exploration |
-| `grill-driven` | grill → brainstorm --from grill → plan → execute → harvest | After stress test |
-| `analyze-plan-execute` | analyze -q → plan --dir → execute --dir → harvest | Fast track (adhoc) |
-| `quality-loop` | review → auto-test → test → debug → plan --gaps → execute | Quality remediation |
-| `review-fix` | plan --gaps → execute → review | Fix review problems |
-| `issue-full` | analyze --gaps → plan --gaps → execute → review → close → harvest | Issue closed-loop |
+| `full-lifecycle` | init→blueprint→...→session-seal | Brand new project |
+| `roadmap-driven` | init→roadmap→... | Lightweight roadmap |
+| `brainstorm-driven` | brainstorm→init→roadmap→... | Start from brainstorming |
+| `analyze-plan-execute` | analyze→plan→execute | Quick execution |
+| `quality-loop` | review→test→debug | Quality pipeline |
 | `milestone-close` | session-seal | Close a milestone |
-| `next-milestone` | roadmap → plan → execute | Next milestone |
-| `companion` | `/maestro-companion "<intent>"` | Instant small tasks |
-
-> The full chain catalog and intent classification rules are in `workflows/maestro.md` (Chain Catalog). `/maestro` is the decomposition owner (creates boundary_contract + goals); downstream orchestrators only consume and never override.
+| `companion` | instant small task (`/maestro-companion`) | Instant small tasks |
 
 ---
 
 ## 6. Specification and Knowledge
 
-> **Routing boundary** (v0.5.50+): `/maestro-spec` manages project constraint rules (coding conventions, architecture constraints, quality standards); `/maestro-knowhow` manages reusable knowledge documents (decision records, operation recipes, reference material). Constraint-type entries go through `/maestro-spec`, knowledge-type entries go through `/maestro-knowhow`. `/maestro-spec` records only — loading is `maestro spec load`, removal is the `specs-remove` step.
-
 ```bash
-maestro spec init                                        # Seed skeleton spec files (no codebase scan)
-maestro run skill specs-setup                            # Existing projects: scan the codebase
-/maestro-spec coding "all APIs use Hono framework"       # Record a constraint rule (first positional is the category)
-maestro spec load --category coding                      # Load specs
-maestro kg index                            # Incremental refresh codebase docs
-maestro knowhow search "authentication"          # Search reusable knowledge
-/maestro-knowledge audit --scope all             # Audit the three stores, clean up stale/conflicting entries
-maestro session status                                   # Project dashboard
-maestro search "authentication"                                    # Unified knowledge search (wiki + code)
-maestro load --category coding --keyword auth           # Unified knowledge loading
+maestro spec init                                  # Seed skeleton spec files (no codebase scan)
+maestro run skill specs-setup                      # Existing projects: scan the codebase
+/maestro-spec coding "All APIs use Hono framework"  # Record a spec
+maestro spec load --category coding                 # Load specs
+maestro kg index                                   # Rebuild codebase docs
+maestro search "authentication" --type knowhow     # Search knowhow
+maestro session status                             # Project dashboard
 ```
 
-### Command Quick Reference
+---
 
-| Command | Focus | Use Case |
-|---------|-------|----------|
-| `/maestro` | Intent-to-chain planner | Broad intent routing; create canonical Session + initial chain; decomposition owner |
-| `/maestro-ralph` | Closed-loop policy layer | Full lifecycle chain + decision gate + retry/drift/goal-audit |
-| `/maestro-next` | Pure router | Classify intent → route to companion / single Run / `/maestro`; does not run a loop |
-| `/maestro-companion` | Lightweight execution | Mechanically clear small tasks; minimal Run lifecycle (start + done) + evidence |
-| `grill` | Stress test | Adversarial Socratic interview, validate solution assumptions, produce context-package |
-| `blueprint` | Formal specification | 7-stage document chain (Brief → PRD → Architecture → Epics), complementary to brainstorm |
-| `/maestro-knowledge audit` | Knowledge audit | Audit and retire the spec/knowhow/artifact three stores (keep/deprecate/delete) |
-| `/team-swarm` | Ant colony intelligence | ACO-driven swarm optimization, pheromone convergence, 4 roles + Python controller |
-| `/maestro-odyssey --mode debug` | Deep debugging | Archaeology→diagnosis→fix→generalize, exhaustive iteration under three philosophy constraints |
-| `/maestro-odyssey --mode improve` | Deep improvement | 6-dim audit→round-by-round fix→0 remaining actionable |
-| `/maestro-odyssey --mode planex` | Requirement delivery | Acceptance criteria ALL pass, no "almost passing" allowed |
-| `/maestro-odyssey --mode review` | Review and fix | Round-by-round fix across all severities + re-review gate |
-| `/maestro-odyssey --mode security` | Security audit | OWASP Top 10 + STRIDE + supply chain analysis |
-| `/maestro-odyssey --mode ui` | Deep UI optimization | Visual survey→divergent exploration→exhaustive polish of every pixel |
+## 7. Odyssey Series
+
+Academic research and deep improvement workflows — 5 commands covering debugging, improvement, requirement implementation, code review, and UI optimization.
+
+### Command Overview
+
+| Command | Purpose | Core Flow |
+|---------|---------|-----------|
+| `/maestro-odyssey --mode debug` | Deep debugging closed-loop | Archaeology → Explore → Diagnose → Fix → Confirm → Generalize → Discover → Persist |
+| `/maestro-odyssey --mode improve` | Codebase quality improvement | Survey → 6-dimension audit → Diagnose → Fix → Verify → Generalize → Discover → Persist |
+| `/maestro-odyssey --mode planex` | Requirement-driven iterative delivery | Parse requirement → Acceptance criteria → Plan → Execute → Verify → Fix loop → Generalize |
+| `/maestro-odyssey --mode review` | Deep code review + fix | Archaeology → Explore → Multi-dimension review → Exhaustive fix → Confirm → Generalize → Discover → Persist |
+| `/maestro-odyssey --mode ui` | UI visual experience optimization | Survey → 6-dimension audit → Divergent exploration → Fix → Verify → Generalize → Discover → Persist |
+
+### Common Traits
+
+- **Zero-residual principle**: Every finding must have a concrete action (fix / create Issue / record decision) — no "report and shelve"
+- **Phase auto-commit**: Automatic `git commit` after each phase, no user confirmation needed
+- **Multi CLI assist**: Cross-validation via `maestro delegate` with multiple tools
+- **Quality gate self-iteration**: Each analytical phase auto-evaluates coverage/depth/actionability, re-enters if insufficient (max 3 rounds)
+- **Knowledge persistence**: S_RECORD phase writes reusable knowledge to understanding.md, later persisted via `/maestro-spec`
+- **Session resumable**: `-c` flag resumes last session, `-y` auto-confirms all decision points
+
+### `/maestro-odyssey --mode debug` — Deep Debugging
+
+```bash
+/maestro-odyssey --mode debug "Login API returns 500"                # Full debug loop
+/maestro-odyssey --mode debug "Memory leak" --template memory-leak   # Predefined strategy
+/maestro-odyssey --mode debug "Performance degradation" --skip-fix    # Analysis only
+/maestro-odyssey --mode debug "Race condition" -y                     # Full auto mode
+/maestro-odyssey --mode debug -c                                      # Resume last session
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `<issue>` | Issue description |
+| `--template <name>` | Predefined strategy: `performance` / `memory-leak` / `race-condition` / `regression` / `crash` |
+| `--skip-fix` | Analysis only, no fix execution |
+| `--skip-generalize` | Skip generalization scan |
+| `--auto` | CLI delegates without confirmation |
+| `-y` | Auto-confirm all decisions |
+| `-c` | Resume most recent session |
+
+**Output**: `session.json` + `evidence.ndjson` + `explore.json` + `understanding.md` (9 sections)
+
+### `/maestro-odyssey --mode improve` — Codebase Quality Improvement
+
+```bash
+/maestro-odyssey --mode improve src/auth/                            # Audit specific module
+/maestro-odyssey --mode improve HEAD                                 # Audit recent changes
+/maestro-odyssey --mode improve --dimensions performance,security    # Specify dimensions
+/maestro-odyssey --mode improve --all --skip-fix                     # Full project scan, review only
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `<target>` | Module path / `HEAD` / `staged` / keyword / `--all` |
+| `--dimensions <list>` | 6-dimension subset: `performance` / `security` / `architecture` / `reliability` / `observability` / `maintainability` |
+| `--fix-threshold <severity>` | Fix threshold: `all` / `critical` / `high` / `medium` / `low` |
+| `--skip-fix` | Audit + diagnose only |
+| `--skip-generalize` | Skip generalization |
+
+**6 dimensions**: Performance (hot paths, N+1 queries), Security (OWASP Top 10), Architecture (layer violations, circular deps), Reliability (error handling), Observability (logging coverage), Maintainability (complexity, dead code)
+
+### `/maestro-odyssey --mode planex` — Requirement-Driven Iterative Delivery
+
+```bash
+/maestro-odyssey --mode planex "Implement JWT authentication"         # Full requirement loop
+/maestro-odyssey --mode planex "Fix login bug" --template bugfix      # Bug fix template
+/maestro-odyssey --mode planex "Refactor API layer" --template refactor  # Refactor template
+/maestro-odyssey --mode planex "Implement payments" --max-iterations 5   # Max 5 verify cycles
+/maestro-odyssey --mode planex "Migrate DB" --method cli --executor codex  # CLI execution
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `<requirement>` | Requirement description |
+| `--template <name>` | Template: `feature` / `bugfix` / `refactor` / `migration` / `api-endpoint` |
+| `--max-iterations N` | Max verify→fix cycles (default 3) |
+| `--method agent\|cli\|auto` | Execution method |
+| `--executor <tool>` | Explicit CLI executor tool |
+| `--skip-verify` | Skip post-execution validation gate |
+
+**Core loop**: Define acceptance criteria → Plan → Execute → Verify each criterion → Fix failures → Re-verify until all pass
+
+### `/maestro-odyssey --mode review` — Deep Code Review
+
+```bash
+/maestro-odyssey --mode review src/api/                     # Review specific directory
+/maestro-odyssey --mode review HEAD                         # Review recent changes
+/maestro-odyssey --mode review --dimensions correctness,security  # Specify dimensions
+/maestro-odyssey --mode review --fix-threshold high         # Only fix critical + high
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `<target>` | File/dir path / `HEAD` / `staged` / Phase number / PR number |
+| `--dimensions <list>` | Dimension subset: `correctness` / `security` / `performance` / `architecture` |
+| `--fix-threshold <severity>` | Fix threshold (default `all` = exhaustive) |
+| `--skip-fix` | Review only |
+| `--skip-generalize` | Skip generalization |
+
+**Exhaustive fix**: Per severity tier (critical → high → medium → low), re-review modified area after each tier
+
+### `/maestro-odyssey --mode ui` — UI Visual Experience Optimization
+
+```bash
+/maestro-odyssey --mode ui src/components/Header/                    # Audit specific component
+/maestro-odyssey --mode ui --dimensions visual_hierarchy,accessibility  # Specify dimensions
+/maestro-odyssey --mode ui --skip-fix                                # Review + divergent exploration only
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `<target>` | Component/page path / `staged` / `HEAD` / feature area name |
+| `--dimensions <list>` | 6-dimension subset: `visual_hierarchy` / `interaction_states` / `accessibility` / `responsiveness` / `micro_interactions` / `edge_cases` |
+| `--skip-fix` | Review only |
+| `--skip-generalize` | Skip generalization |
+
+**Unique phase**: S_DIVERGE (Divergent exploration) — Goes beyond defect fixing to ask "what would make this delightful?"
+
+---
+
+## 8. Ralph Lifecycle Engine
+
+Ralph is the adaptive lifecycle engine that reads project state → infers position → builds adaptive step chains → delegates execution.
+
+### `/maestro-ralph` — Adaptive Decision Engine
+
+```bash
+/maestro-ralph "Implement user authentication"        # Auto-infer position and build chain
+/maestro-ralph "phase 2"                              # Specify phase
+/maestro-ralph status                                 # View current session status
+/maestro-ralph continue                               # Resume execution
+/maestro-ralph -y "Refactor API layer"                # Full auto mode
+```
+
+**Core invariants**:
+- Session/Run/Artifact/Evidence protocol files are the only authority
+- Ralph policy owns proposal disposition, budgets, confidence, escalation, and stop conditions
+- `run-executor` executes exactly one Skill Run and never completes or advances the chain
+- Skills may only emit typed proposals; the Runtime owns mutation authority
+
+**Decision gates**: post-execute / post-business-test / post-review / post-test / post-goal-audit / post-analyze-scope / post-milestone — auto-evaluates quality gate results, decides proceed / fix / escalate
+
+### `run-executor` — Generic Single-Run Executor
+
+```bash
+maestro run next --session <session-id>               # Allocate the next chain Run
+maestro run brief <run-id> --session <session-id>     # Load the canonical Resume Packet
+```
+
+`run-executor` performs `run next/brief` → one inline Skill → `run check` → returns Artifacts and an optional proposal. The outer `/maestro-ralph` policy evaluates the proposal and completes through `maestro run complete --verdict [--chain-proposal]`; only another explicit `run next` allocates a later Run.
+
+---
+
+## 9. Additional maestro-* Commands
+
+### `/maestro-overlay --amend` — Workflow Deficiency Fix
+
+```bash
+/maestro-overlay --amend --scan                                 # Auto-scan .workflow/ for signals
+/maestro-overlay --amend --from-verify .workflow/scratch/xxx    # Collect from verification results
+/maestro-overlay --amend --from-review .workflow/scratch/xxx    # Collect from code review
+/maestro-overlay --amend --from-issues ISS-001,ISS-002          # Collect from Issues
+/maestro-overlay --amend "Missing verification after execute"   # Direct description
+```
+
+Signal-driven overlay generator — collects workflow deficiency signals from multiple sources, diagnoses which commands need amendment, batch-generates targeted overlays. Unlike `/maestro-overlay` (single explicit intent), this command **discovers** what needs amending. (To change a Session's goal instead, use `/maestro-ralph`.)
+
+### `collab` step — Multi-Tool Cross-Verification
+
+`collab` is a Session chain step, dispatched via `/maestro` (chain form `{"command": "collab", "args": "..."}`); the args below are chain args:
+
+```bash
+collab "Evaluate microservice decomposition"  # Multi-tool parallel analysis
+collab "Review security architecture" --tools gemini,claude  # Specify tools
+collab "API design review" --mode analysis    # Read-only analysis mode
+```
+
+Fans out requirement to multiple CLI tools in parallel → cross-verifies for consensus/conflicts → synthesizes unified report (collab-report.md + context.md + conclusions.json).
+
+### `/maestro-fork` — Milestone Worktree Parallel Dev
+
+```bash
+/maestro-fork -m 2                                    # Create worktree for Milestone 2
+/maestro-fork -m 2 --base develop                     # Specify base branch
+/maestro-fork -m 2 --sync                             # Sync latest main changes
+```
+
+Creates or syncs a milestone-level git worktree for parallel development. Auto-copies shared `.workflow/` files, writes scope marker and scoped state.json.
+
+### `/maestro-merge` — Milestone Worktree Merge
+
+```bash
+/maestro-merge -m 2                                   # Merge Milestone 2 worktree
+/maestro-merge -m 2 --dry-run                         # Preview merge
+/maestro-merge -m 2 --no-cleanup                      # Merge but keep worktree
+/maestro-merge -m 2 --continue                        # Continue after conflict resolution
+```
+
+Merges a milestone worktree branch back into main, syncs scratch artifacts, reconciles artifact registry. Two-phase: git merge first, artifact sync second.
+
+### `/maestro-guard` — Editing Boundary Management
+
+```bash
+/maestro-guard on                                     # Enable boundary protection
+/maestro-guard off                                    # Disable
+/maestro-guard status                                 # View status
+/maestro-guard allow src/                             # Allow editing src/ directory
+/maestro-guard deny node_modules/                     # Deny editing node_modules/
+```
+
+Configures directory-level write boundaries enforced by the `workflow-guard` PreToolUse hook.
+
+### `/maestro-overlay` — Command Overlay Creation
+
+```bash
+/maestro-overlay "Always run review after execute"     # Create overlay from natural language
+/maestro-overlay "Load domain knowledge before analyze"  # Inject required_reading
+```
+
+Turns natural-language instructions into command overlays — JSON patch files that augment `.claude/commands/*.md` non-invasively. Supports injection point preview, skill chain configuration, idempotent installation. Management via `maestro overlay list` (ink TUI).
+
+### `/maestro-impeccable --codify` — Design System Extraction
+
+```bash
+/maestro-impeccable --codify src/components/                    # Extract design system from source
+/maestro-impeccable --codify src/ --package-name my-design      # Specify package name
+/maestro-impeccable --codify src/ --output-dir .workflow/ref    # Specify output directory
+```
+
+4-phase pipeline: Validate → Extract (3 parallel Agents) → Package (preview.html) → Knowhow persistence. Outputs design-tokens.json + layout-templates.json + preview + knowhow manifest.
+
+### `/maestro-update` — Version Upgrade
+
+```bash
+/maestro-update                                       # Detect and upgrade
+/maestro-update --dry-run                             # Preview upgrade plan
+/maestro-update --force                               # Skip confirmation
+/maestro-update --setup-only                          # Run only current version setup
+```
+
+Detects current version → runs schema migration → executes version-specific upgrade workflow. Auto-backs up state.json, supports incremental migration.
+
+---
+
+## 10. CLI Subsystems
+
+### `maestro install toggle` — Command Enable/Disable
+
+```bash
+maestro install toggle                                # Interactive TUI
+maestro install toggle --type command                  # Manage commands only
+maestro install toggle --list                         # List all installed items
+maestro install toggle --enable "maestro-ralph,maestro-search"   # Enable specified
+maestro install toggle --disable "team-swarm,team-review"        # Disable specified
+```
+
+Provides both interactive TUI and non-interactive CLI to manage enabled state of installed commands, skills, and agents.
+
+### `maestro workspace` — Workspace Management
+
+```bash
+maestro workspace link <path>                         # Link external workspace
+maestro workspace unlink <path>                       # Unlink
+maestro workspace list                                # List all linked workspaces
+maestro workspace status                              # View workspace status
+```
+
+Manages multi-project workspace links, supporting cross-project knowledge sharing and artifact references.
+
+### `maestro domain` — Domain Knowledge Management
+
+```bash
+maestro domain                                        # View current domain config
+```
+
+Manages project domain knowledge configuration, affecting spec injection and knowledge search scope.
+
+### `/maestro-knowledge extractors` — Knowledge Graph Extractor Config
+
+```bash
+/maestro-knowledge extractors                                 # Scan and generate extraction rules
+/maestro-knowledge extractors --scan-only                     # Scan only, no write
+/maestro-knowledge extractors --append                        # Append to existing config
+/maestro-knowledge extractors --language typescript            # Limit to specific language
+```
+
+Analyzes codebase patterns to auto-generate `.workflow/kg/extractors.yaml` — teaches MaestroGraph's codegraph extractor to recognize project-specific symbols (builder/factory APIs, domain constants, custom decorators, etc.). 3 parallel agents scan builder/factory calls, constants/annotations, and framework-specific patterns.
+
+### `store_knowhow` MCP Tool
+
+`store_knowhow` is a built-in MCP tool for knowledge entry storage and search:
+
+| Operation | Description |
+|-----------|-------------|
+| `add` | Create new knowhow entry (type: session/tip/template/recipe/reference/decision/asset/blueprint/document) |
+| `search` | Full-text search knowhow entries |
+
+Entries are auto-indexed by WikiIndexer (type=knowhow, category={type}). Supports tags, categorization, and spec category bridging (`specCategory` parameter allows knowhow entries to be injected alongside spec entries).
+
+---
+
+## 11. Scholar Skills (Optional)
+
+10 academic research skills covering the full pipeline from ideation to publication. **Optional (not installed by default)**: sources live in `optional/skills/`, absent from default mirrors and `.claude/skills/`. Install on demand:
+
+```bash
+maestro install toggle --enable scholar-writing,scholar-review   # install into the current project
+maestro install toggle --list                                     # list available optional skills
+```
+
+| Skill | Purpose | Trigger Words |
+|-------|---------|---------------|
+| `scholar-ideation` | Research ideation & literature review | brainstorm research ideas, identify research gaps |
+| `scholar-experiment` | Experimental results analysis | analyze experimental results, statistical analysis |
+| `scholar-writing` | End-to-end paper writing | write paper, draft paper |
+| `scholar-review` | Paper self-review & reviewer response | review paper, write rebuttal |
+| `scholar-rebuttal-pro` | Enhanced reviewer response (multi-perspective) | rebuttal, respond to reviewers |
+| `scholar-citation-verify` | Citation verification (4-layer) | verify citations, check references |
+| `scholar-anti-ai-writing` | Remove AI writing patterns | remove AI patterns, humanize text |
+| `scholar-latex-organizer` | LaTeX template organization | organize LaTeX template, prepare Overleaf |
+| `scholar-publish` | Post-acceptance conference preparation | conference preparation, prepare presentation |
+| `scholar-thesis-docx` | Thesis/dissertation Word formatting | thesis formatting, dissertation Word |
 
 ---
 
@@ -374,94 +648,16 @@ maestro load --category coding --keyword auth           # Unified knowledge load
 
 | Topic | Guide |
 |-------|-------|
-| Ralph closed-loop engine and coordinator | [Ralph Guide](./maestro-ralph-guide.md) |
 | Quality pipeline details | [Quality Pipeline Guide](./quality-pipeline-guide.md) |
 | Issue discovery & closed-loop | [Issue Discover Guide](./issue-discover-guide.md) |
 | Learning toolkit | [Learn Tools Guide](./learn-tools-guide.md) |
 | Knowledge graph management | [Knowledge Management Guide](./knowledge-management-guide.md) |
+| Search system | [Search System Guide](./search-system-guide.md) |
+| Installation guide | [Install Guide](./install-guide.md) |
 | CLI command reference | [CLI Commands Guide](./cli-commands-guide.md) |
-| Artifact directory structure | [Workflow Structure Guide](./workflow-structure-guide.md) |
 | Spec system | [Spec System Guide](./spec-system-guide.md) |
+| Spec injection mechanism | [Spec Injection Guide](./spec-injection-guide.md) |
 | MCP tools reference | [MCP Tools Guide](./mcp-tools-guide.md) |
 | Delegate async tasks | [Delegate Async Guide](./delegate-async-guide.md) |
 | Overlay command extension | [Overlay Guide](./overlay-guide.md) |
 | Hooks automation | [Hooks Guide](./hooks-guide.md) |
-
----
-
-## Appendix: Auxiliary Commands
-
-Auxiliary commands used in the workflow for maintenance, release, and specification management.
-
-### maestro-overlay --amend — Incremental Amendment
-
-A signal-driven Overlay generator. It collects workflow defect signals from multiple sources, diagnoses which commands need supplementary amendments, and batch-generates targeted Overlay patches. All amendments are done through the Overlay system (`~/.maestro/overlays/*.json`) — non-invasive to the original command files, idempotent, and preserved after reinstall.
-
-Unlike `/maestro-overlay` (single explicit creation), `/maestro-overlay --amend` automatically **discovers** what needs fixing by analyzing workflow artifacts.
-
-#### Signal Sources
-
-| Flag | Source | Collected Content |
-|------|--------|-------------------|
-| `--from-verify <dir>` | verification.json | Workflow gaps exposed by verification failures |
-| `--from-review <dir>` | review.json | Process defects found by code review |
-| `--from-session <id>` | Session artifacts | Problems encountered during execution |
-| `--from-issues ISS-xxx,...` | issues.jsonl | Issues traced back to command defects |
-| `--scan` | Auto-scan .workflow/ | Discover all workflow-related signals |
-| _(positional argument text)_ | User description | Direct observations and notes |
-
-```bash
-/maestro-overlay --amend --from-verify .workflow/phases/1    # Discover command gaps from verification results
-/maestro-overlay --amend --scan                               # Auto-scan all signals
-/maestro-overlay --amend "execute chain step lacks a CLI compile verification step"  # Describe the problem directly
-```
-
-### maestro-update — Update Check
-
-Detects the schema version of the current `.workflow/`, displays available migration plans, and interactively executes version upgrades. Supports incremental chained upgrades (e.g. 1.0 → 2.0 → 3.0).
-
-```bash
-/maestro-update --dry-run   # Check whether there are pending migrations
-/maestro-update             # Interactive step-by-step upgrade
-/maestro-update --force     # One-click full upgrade
-```
-
-### specs-remove — Spec Removal
-
-Removes the specified `<spec-entry>` entry from the specs file. Entry ID format: `spec-{file-stem}-{NNN}`.
-
-`specs-remove` is an orchestrator-dispatched step (no `/xxx` form), reached through `/maestro "<intent>"` or `/maestro-next`; `/maestro-spec` only records (it has no remove subcommand); loading is `maestro spec load`, initialization is `maestro spec init` / `maestro run skill specs-setup`.
-
-```bash
-maestro wiki list --type spec --json    # List all spec entries
-specs-remove spec-learnings-003         # In-chain step: remove the specified entry
-```
-
-### /maestro-knowledge audit — Knowledge Audit
-
-Audits the spec / knowhow / artifact three stores, identifying contradictions, staleness, orphans, and metadata quality issues.
-
-| Flag | Description |
-|------|-------------|
-| `--scope <spec\|knowhow\|artifact\|all>` | Audit scope (required) |
-| `--level P0\|P1\|P2` | Severity level filter |
-| `--dry-run` | Preview without modifying |
-| `--report` | Generate audit report only |
-
-```bash
-/maestro-knowledge audit --scope all              # Full audit
-/maestro-knowledge audit --scope spec --level P0  # P0-level spec issues only
-```
-
-### Milestone Release (/maestro-milestone-release Retired)
-
-> `/maestro-milestone-release` has been retired (v0.5.51). For releases, use the npm CLI directly to perform semver version bumps and git tags, or use `/maestro-update` to check migrations.
-
-```bash
-npm version minor && git tag                  # Standard release (minor increment)
-npm version patch && git tag                  # Patch version
-npm version 2.0.0 && git tag v2.0.0            # Explicit version number
-npm version --dry-run                          # Preview only
-```
-
-Milestone lifecycle: `/maestro-session-seal → release (npm version + tag / /maestro-update)`

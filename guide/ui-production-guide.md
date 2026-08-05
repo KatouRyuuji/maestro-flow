@@ -170,7 +170,7 @@ S_PARSE → S_SETUP → S_CHAIN → S_GATE → S_REPORT
 | **Phase 1** 验证 | 参数校验、路径验证、工作区创建 | — |
 | **Phase 2** 并行提取 | Style（色彩/排版/间距）+ Animation（时长/缓动）+ Layout（布局模式） | 3 个 token JSON |
 | **Phase 3** 参考包 | 复制 token + 生成交互式展示 | `preview.html` + `preview.css` |
-| **Phase 4** 知识固化 | `codify-to-knowhow` skill | `knowhow-manifest.json` → knowhow + spec |
+| **Phase 4** 知识固化 | manifest 驱动直接写入（ui-codify-knowhow Step 4.4） | `knowhow-manifest.json` → knowhow + spec |
 
 ---
 

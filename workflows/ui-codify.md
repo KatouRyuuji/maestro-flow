@@ -13,7 +13,7 @@
 Phase 1 (inline)     Phase 2 (deferred)       Phase 3 (deferred)       Phase 4 (deferred)
   Validate &           3 Parallel Agents        Reference Package        Knowhow Assets
   Setup                ┌─ Style Agent           Copy tokens +            Manifest +
-  ├─ Parse args        ├─ Animation Agent       Generate preview         codify-to-knowhow
+  ├─ Parse args        ├─ Animation Agent       Generate preview         Manifest + direct write
   ├─ Validate source   └─ Layout Agent          (preview.html/css)       + cleanup
   ├─ Package name      ↓                        ↓                        ↓
   └─ Workspace         design-tokens.json       preview.html             knowhow-manifest.json
@@ -32,7 +32,7 @@ Phase 2 → design-tokens.json, animation-tokens.json, layout-templates.json
     ↓      (written to temp_dir)
 Phase 3 → preview.html, preview.css, token files copied to package_dir
     ↓
-Phase 4 → knowhow-manifest.json → codify-to-knowhow → knowhow + specs
+Phase 4 → knowhow-manifest.json → 直接写入 knowhow + specs（manifest 驱动）
     ↓
 Completion report
 ```
@@ -44,7 +44,7 @@ Completion report
   {"content": "Phase 1: 参数验证与工作区准备", "status": "in_progress"},
   {"content": "Phase 2: 并行 Agent 提取 (Style + Animation + Layout)", "status": "pending"},
   {"content": "Phase 3: 参考包生成 (preview.html + preview.css)", "status": "pending"},
-  {"content": "Phase 4: 知识资产固化 (manifest + codify-to-knowhow)", "status": "pending"}
+  {"content": "Phase 4: 知识资产固化 (manifest → 直接写入 knowhow + specs)", "status": "pending"}
 ]
 ```
 
@@ -181,7 +181,7 @@ Variables available to Phase 4:
 
 Phase 4 writes:
 - `${package_dir}/knowhow-manifest.json`
-- Then calls `/codify-to-knowhow ${package_dir}` via Skill tool
+- Then persists knowledge assets per ui-codify-knowhow Step 4.4 (manifest-driven direct writes, no standalone skill)
 
 **TodoWrite**: Mark Phase 4 completed (all tasks done).
 
@@ -199,7 +199,7 @@ Phase 4 writes:
 | 3 | Token copy failed | Report missing file, exit |
 | 3 | Preview generation failed | Report error, continue (preview is non-critical); flag preview.html/css as [LOW CONFIDENCE] (preview generation failed) |
 | 4 | Manifest build failed | Report error, package still usable without knowhow; flag knowhow assets as [LOW CONFIDENCE] (manifest build failed) |
-| 4 | codify-to-knowhow failed | Report error, manifest remains for manual retry; flag knowhow/spec entries as [LOW CONFIDENCE] (codify-to-knowhow failed) |
+| 4 | Knowledge asset persist failed | Report error, manifest remains for manual retry; flag knowhow/spec entries as [LOW CONFIDENCE] (persist failed) |
 
 ## Completion Message
 

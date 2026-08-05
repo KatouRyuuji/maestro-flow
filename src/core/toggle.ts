@@ -132,6 +132,11 @@ export function scanToggleItems(pkgRoot: string, targetBase: string): ToggleItem
   markTarget(join(tgtCodex, 'skills'), 'skill', true);
   markTarget(join(tgtCodex, 'agents'), 'agent', false);
 
+  // Optional skills — shipped at <pkgRoot>/optional/skills/, NOT installed by
+  // default (选装). `maestro install toggle --enable <name>` copies them into
+  // the target .claude/skills/ via the available → on applyToggle branch.
+  addSource(join(pkgRoot, 'optional', 'skills'), join(tgtClaude, 'skills'), 'skill', true);
+
   return [...items.values()].sort((a, b) => a.type.localeCompare(b.type) || a.name.localeCompare(b.name));
 }
 
