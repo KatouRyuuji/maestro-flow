@@ -283,3 +283,8 @@ BLOCKED conditions: `verification.json` missing, or a criterion not verified, or
 | W002 | No test framework detected | Skip coverage computation, warn the user |
 | W003 | Coverage command failed | Do requirement mapping only, mark coverage [LOW CONFIDENCE] |
 | W004 | Verifier/auditor agent failed | Retry once, if still failing write partial results, mark [LOW CONFIDENCE] |
+
+## Knowledge Hooks
+
+- Verification results against canonical rules: `maestro knowledge record <ids...> --signal validated|contradicted --source manual`.
+- Stage reusable verification recipes before completion.

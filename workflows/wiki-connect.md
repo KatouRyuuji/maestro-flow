@@ -121,6 +121,8 @@ If `--fix`: proceed to Stage 5.
 
 For each accepted suggestion: fetch entry, append target-id to `related` list (dedup), update via `maestro wiki update <source-id> --frontmatter`.
 
+> Relationship maintenance only — updating an existing entry's links never creates new knowledge. If a suggestion implies new content, route it through the candidate pipeline (`maestro knowledge stage` → `review` → `promote`).
+
 After all updates: re-run `maestro wiki health`, report applied/skipped counts and health delta.
 
 ---

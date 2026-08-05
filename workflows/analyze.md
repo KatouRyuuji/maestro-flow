@@ -400,3 +400,8 @@ Record as it occurs:
 | W001 | cli-explore-agent failed | Retry once; if still failing mark subsequent decisions LOW CONFIDENCE, continue with existing context |
 | W002 | CLI timeout | Shorten prompt and retry; if still failing mark that perspective [LOW CONFIDENCE] and continue |
 | W003 | Max rounds reached (5) | Force synthesis, offer a continue option |
+
+## Knowledge Hooks
+
+- Attribute every knowledge hit you actually use: `maestro knowledge record <knowledge-ids...> --signal consumed|cited --source search` — exposure becomes evidence only when recorded.
+- Write domain terms and accepted decisions to `report.md` frontmatter (`decisions`/`constraints`); sealing stages them as spec candidates automatically.
