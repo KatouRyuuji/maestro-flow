@@ -281,8 +281,9 @@ outputs/self-check.json (Step 7)
 
 ```
 Read all outputs/summaries/*.md, extract strategy adjustments, patterns, pitfalls.
-Deduplicate against maestro spec load --category coding.
-Append new entries in spec-entry format (category="learning", 3-5 keywords, source="execute").
+Deduplicate against `maestro spec load --category coding` (read-only check).
+Stage reusable learnings with `maestro knowledge stage knowhow "<title>" --content-file <path|-> --run <run-id>`;
+never append spec entries directly — routine Run completion must not call `maestro spec add`.
 ```
 
 Full knowledge extraction (constraints → spec, decisions → knowhow, terminology → domain glossary) is not done here; it is handled uniformly at session wrap-up.
@@ -368,3 +369,8 @@ Resume behavior:
 | W002 | Agent dispatch failed | Retry once, mark blocked if still failing |
 | W003 | Delegate failed | `--resume ${fixedId}` → fall back to agent, mark [LOW CONFIDENCE] |
 | W004 | Git commit failed | Record warning, mark [LOW CONFIDENCE] (commit failed), don't mark fully complete until commit succeeds |
+
+## Knowledge Hooks
+
+- `maestro load` records consumed automatically; attribute search hits with `maestro knowledge record <ids...> --source search`.
+- Stage reusable recipes/pitfalls: `maestro knowledge stage knowhow "<title>" --content-file <path|-> --run <run-id>`; never write spec/knowhow directly.

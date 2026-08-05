@@ -219,7 +219,7 @@ Fragments extracted: 8 (filtered from 12 by confidence ≥ 0.5)
 
 ### 6a. Wiki routing
 
-`maestro wiki create --type <wiki_type> --slug harvest-<source_type>-<short_id>`. Fallback: write `.workflow/harvest/wiki-pending-{id}.md`; flag wiki entry as [LOW CONFIDENCE] (pending offline).
+New knowledge created here must flow through the candidate pipeline, not direct wiki writes: `maestro knowledge stage knowhow "<title>" --content-file <path|-> --run <run-id>` (or spec for patterns/decisions), then `maestro knowledge review <session-id>` → `promote`. Direct `maestro wiki create` is reserved for audited admin exceptions only. Fallback: write `.workflow/harvest/wiki-pending-{id}.md`; flag wiki entry as [LOW CONFIDENCE] (pending offline).
 
 ### 6b. Spec routing
 
@@ -407,14 +407,12 @@ For each `graduated` artifact:
    - Top 3 fragment titles as representative items
    - Original path for disk reference
 
-2. **Create knowhow entry**:
+2. **Create knowhow candidate** (not a direct wiki write):
    ```bash
-   maestro wiki create --type knowhow \
-     --slug "graduated-{type}-{short_id}" \
-     --title "Graduated: {type} {id}" \
-     --tags "graduated,{type},{milestone}" \
-     --body "{compact_summary}"
+   maestro knowledge stage knowhow "Graduated: {type} {id}" --content-file <path|-> --run <run-id> \
+     --evidence run:<run-id>,artifact:<artifact-id>
    ```
+   Route through `maestro knowledge review <session-id>` → `promote` before it becomes project knowledge.
 
 3. **Archive in state.json**: Move from `artifacts[]` to `artifact_archive[]`:
    ```json

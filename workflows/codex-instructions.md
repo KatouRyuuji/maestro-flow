@@ -255,8 +255,8 @@ Runtime birth packets, `maestro run brief`, completion receipts, and the `maestr
 
 1. Search and automatic injection are exposure; explicit `load` records consumption.
 2. Put accepted decisions and locked constraints in `report.md` frontmatter; completion stages them automatically as pending candidates.
-3. Stage reusable recipes or pitfalls with `maestro knowledge stage spec|knowhow "<title>" "<content>" --run <run-id> [--category <category>]`.
-4. When staging content that cites, validates, or contradicts existing knowledge, add `--signal cited|validated|contradicted --signal-ids <knowledge-ids>`.
+3. Stage reusable recipes or pitfalls with `maestro knowledge stage spec|knowhow "<title>" --content-file <path|-> --run <run-id> [--category <category>]`; write content to a temp file, never inline.
+4. When staging content that cites, validates, or contradicts existing knowledge, add `--signal cited|validated|contradicted --signal-ids <comma-separated ids>` (space-separated values leak into positional arguments).
 5. Routine Run completion never writes project Spec/Knowhow directly and never promotes candidates.
 6. The finish checklist is soft guidance. Work through it and put intentionally unresolved items in `report.md` concerns. Unresolved reconciliation may be sealed but cannot be promoted.
 7. Review, resolve, promote, supersede, conflict marking, and audit are explicit governance actions. Execute them only when the user requests knowledge governance or a confirmed workflow step requires it.

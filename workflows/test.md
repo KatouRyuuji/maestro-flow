@@ -338,3 +338,8 @@ BLOCKED conditions: Readiness Gate not passed, or `test-results.json` missing.
 | E003 | Smoke failed (app won't start) | Suggest `debug` |
 | W001 | One or more scenarios failed | Auto-diagnose, suggest fix options |
 | W002 | Coverage below threshold | Suggest generating additional tests |
+
+## Knowledge Hooks
+
+- Rules validated through tests: `maestro knowledge record <ids...> --signal validated --source manual`.
+- Stage reusable test recipes/pitfalls: `maestro knowledge stage knowhow "<title>" --content-file <path|-> --run <run-id>`.

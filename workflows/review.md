@@ -309,3 +309,8 @@ BLOCKED conditions: `review-findings.json` missing, or there are unhandled UNMET
 | E003 | All dimension agents failed | Abort; cannot complete the review, retry |
 | W001 | Reviewer agent failed (one dimension) | Record, continue with available dimension results |
 | W002 | Deep-dive agent failed | Record finding as unresolved, skip enrichment, mark [LOW CONFIDENCE] |
+
+## Knowledge Hooks
+
+- Confirmed findings and contradictions: `maestro knowledge record <knowledge-ids...> --signal validated|contradicted --source manual` against the entries you verified.
+- Stage review-derived rules with `maestro knowledge stage spec "<title>" --content-file <path|-> --run <run-id>` when they generalize.

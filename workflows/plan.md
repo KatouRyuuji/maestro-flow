@@ -257,3 +257,8 @@ Collision: {clear|{N} overlaps}
 | E006 | Planner produced invalid JSON | Retry once, then abort with details |
 | W001 | Exploration agent failed | Record, continue with existing exploration; mark plan [LOW CONFIDENCE] |
 | W002 | Plan-checker exceeded 3 rounds | Accept the plan with warnings, record in index; mark [LOW CONFIDENCE] |
+
+## Knowledge Hooks
+
+- Stage locked constraints and accepted decisions in `report.md` frontmatter (`constraints`/`decisions`); sealing converts them to spec candidates.
+- Reusable planning recipes → `maestro knowledge stage knowhow "<title>" --content-file <path|-> --run <run-id>` before completion.
