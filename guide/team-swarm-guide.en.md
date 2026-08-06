@@ -1,15 +1,18 @@
 # Team Swarm Intelligence Guide
 
-> This document introduces Maestro's Ant Colony Optimization (ACO) team skills, including team-swarm and team-adversarial-swarm.
+> This document introduces Maestro's Ant Colony Optimization (ACO) team skill team-swarm.
 
 ## Overview
 
-Maestro provides two team skills based on Ant Colony Optimization (ACO) algorithms:
+Maestro provides an Ant Colony Optimization (ACO) based team skill:
 
 | Skill | Purpose | Features |
 |-------|---------|----------|
 | `team-swarm` | ACO-driven multi-agent exploration | Hybrid LLM coordinator + Python optimization controller |
-| `team-adversarial-swarm` | ACO + modular Workflow + adversarial decisions | 4 composable Workflow scripts + adversarial patterns |
+
+> **v0.5.61 change**: the `team-adversarial-swarm` skill was removed. Its adversarial
+> decision patterns (prosecutor/defender/judge, 3-vote, etc.) survive as general workflow
+> patterns in `workflows/swarm/` (wf-analyze.js / wf-verify.js), reusable in any Workflow script.
 
 ## Ant Colony Optimization (ACO) Principles
 
@@ -89,93 +92,11 @@ Coordinator (LLM)
 
 ---
 
-## team-adversarial-swarm
+## Adversarial Decision Patterns (general workflow patterns)
 
-### Purpose
-
-ACO swarm optimization + modular Workflow composition + adversarial decision gates.
-
-### Core Features
-
-- **4 Composable Workflow Scripts**: explore/score/converge/synthesize
-- **Adversarial Decision Patterns**: Inject adversarial agents at every decision node (prosecutor/defender/judge)
-- **Python ACO Scripts**: Numerical optimization and pheromone management
-- **Modular Design**: Each module independently usable or composable
-
-### Architecture
-
-```
-SKILL.md (Coordinator)
-    │
-    │  Phase 1: Config Generation
-    │  Phase 2: ACO Init
-    │
-    │  Phase 3: Iteration Loop ×K
-    │  ┌──────────────────────────────────────┐
-    │  │ 3a. aco.py select → assignments      │
-    │  │ 3b. wf-swarm-explore → ant_results   │
-    │  │ 3c. wf-swarm-score → verified_scores │
-    │  │ 3d. aco.py update → pheromone        │
-    │  │ 3e. wf-swarm-converge → converged?   │
-    │  │ 3f. if converged: break              │
-    │  └──────────────────────────────────────┘
-    │
-    │  Phase 4: wf-swarm-synthesize → best-solution.md
-```
-
-### Workflow Modules
-
-| Module | Script | Adversarial Pattern | Returns |
-|--------|--------|---------------------|---------|
-| **Explore** | `wf-swarm-explore.js` | N ants parallel | `{ ant_results[] }` |
-| **Score** | `wf-swarm-score.js` | 3-vote per ant | `{ scores{}, calibration }` |
-| **Converge** | `wf-swarm-converge.js` | prosecutor/defender/judge | `{ converged, reason }` |
-| **Synthesize** | `wf-swarm-synthesize.js` | 3-perspective + arbitrator | `{ report, caveats }` |
-
-### Use Cases
-
-- Deep analysis of complex problems
-- Tasks requiring multi-round iterative optimization
-- Decisions requiring adversarial validation
-- Systematic auditing of large codebases
-
-### Configuration Example
-
-```json
-{
-  "task": {
-    "objective": "Analyze code quality of last 100 commits",
-    "evidence_requirements": "Identify quality degradation trends and causes"
-  },
-  "swarm": {
-    "n_ants": 5,
-    "max_iterations": 4
-  },
-  "aco": {
-    "alpha": 1.0,
-    "beta": 2.0,
-    "rho": 0.1,
-    "q": 1.0
-  },
-  "task_space": {
-    "nodes": ["src/commands/", "src/skills/", "docs-site/"],
-    "auto_discover_from": "git log --oneline -100"
-  },
-  "scoring": {
-    "mode": "adversarial",
-    "rubric": "Coverage + Accuracy + Timeliness + Readability"
-  },
-  "convergence": {
-    "patience": 2,
-    "min_improvement": 0.01,
-    "max_iterations": 4
-  }
-}
-```
-
----
-
-## Adversarial Decision Patterns
+> The former `team-adversarial-swarm` skill was removed in v0.5.61, but the adversarial
+> decision patterns below remain general Maestro Workflow capabilities, now carried by the
+> scripts under `workflows/swarm/` (wf-analyze.js, wf-verify.js) and reusable in any Workflow script.
 
 ### Prosecutor/Defender/Judge
 
@@ -219,18 +140,18 @@ const decision = await agent('You are the REFEREE...', { label: 'referee' })
 
 ## Relationship with Other Team Skills
 
-| Dimension | team-swarm | team-adversarial-swarm | team-coordinate |
-|-----------|-----------|----------------------|-----------------|
-| Algorithm | ACO | ACO + Workflow | Beat/Cadence |
-| Agent Model | Ant | Ant + Adversarial | Worker |
-| Decision Pattern | Pheromone-guided | Adversarial | Role collaboration |
-| Use Case | Exploration optimization | Deep analysis | General collaboration |
-| Complexity | Medium | High | Low |
+| Dimension | team-swarm | team-coordinate |
+|-----------|-----------|-----------------|
+| Algorithm | ACO | Beat/Cadence |
+| Agent Model | Ant | Worker |
+| Decision Pattern | Pheromone-guided | Role collaboration |
+| Use Case | Exploration optimization | General collaboration |
+| Complexity | Medium | Low |
 
 ### Selection Guide
 
 1. **Exploration optimization** → Use `team-swarm`
-2. **Deep analysis** → Use `team-adversarial-swarm`
+2. **Deep analysis (adversarial validation)** → Use `team-swarm` + the adversarial patterns in `workflows/swarm/`
 3. **General collaboration** → Use `team-coordinate`
 4. **Lifecycle management** → Use `team-lifecycle-v4`
 

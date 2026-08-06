@@ -196,12 +196,15 @@ Confirmed root cause + applied fix.
 
 ## Knowledge Persistence (§9)
 
+Follow-up = governed candidate staging, NEVER a direct corpus write: `maestro knowledge stage spec "<title>" --content-file <path|-> --run {run_id} --category <cat>` (stage BEFORE seal; promote only after seal with a fresh receipt).
+
+
 | Category | Content | Follow-up |
 |----------|---------|-----------|
-| Recurring root cause pattern | Type + triggers + fix + detection | `/maestro-spec debug` |
-| Non-obvious workaround | Problem + steps + why obvious fix fails | `/maestro-spec learning` |
-| Architecture boundary violation | Violation + correct boundary + verification | `/maestro-spec arch` |
-| Reusable generalization pattern | Signature + risk + fix template + scope | `/maestro-spec coding` |
+| Recurring root cause pattern | Type + triggers + fix + detection | `stage spec → debug` |
+| Non-obvious workaround | Problem + steps + why obvious fix fails | `stage spec → learning` |
+| Architecture boundary violation | Violation + correct boundary + verification | `stage spec → arch` |
+| Reusable generalization pattern | Signature + risk + fix template + scope | `stage spec → coding` |
 
 ---
 

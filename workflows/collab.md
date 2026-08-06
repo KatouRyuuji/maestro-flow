@@ -207,9 +207,9 @@ Output: {output_dir}
 
 | Condition | Suggestion |
 |-----------|-----------|
-| Deep feasibility needed | step `analyze` (`maestro run prepare analyze` + `maestro run create analyze --session YYYYMMDD-analyze-{topic} --intent "{topic}"`) |
-| Plan from conclusions | step `plan` (`maestro run prepare plan` + `maestro run create plan --session YYYYMMDD-plan-{topic} --intent "{goal}"`) |
-| Expand ideas | step `brainstorm` (`maestro run prepare brainstorm` + `maestro run create brainstorm --session YYYYMMDD-brainstorm-{topic} --intent "{topic}"`) |
+| Deep feasibility needed | step `analyze` (`maestro run prepare analyze` + `maestro run create analyze --session YYYYMMDD-analyze-{topic} --arg "{topic}" --intent "{topic}"`) |
+| Plan from conclusions | step `plan` (`maestro run prepare plan` + `maestro run create plan --session YYYYMMDD-plan-{topic} --arg "{goal}" --intent "{goal}"`) |
+| Expand ideas | step `brainstorm` (`maestro run prepare brainstorm` + `maestro run create brainstorm --session YYYYMMDD-brainstorm-{topic} --arg "{topic}" --intent "{topic}"`) |
 
 ---
 

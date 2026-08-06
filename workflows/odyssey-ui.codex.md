@@ -209,12 +209,15 @@ Audit findings + diverge ideas (severity >= medium OR impact = high).
 
 ## Knowledge Persistence (§8)
 
+Follow-up = governed candidate staging, NEVER a direct corpus write: `maestro knowledge stage spec "<title>" --content-file <path|-> --run {run_id} --category <cat>` (stage BEFORE seal; promote only after seal with a fresh receipt).
+
+
 | Category | Content | Follow-up |
 |----------|---------|-----------|
-| Design pattern | Component pattern + applicable scenarios + token references | `$maestro-spec ui` |
-| Interaction spec | State definitions + transition rules + feedback patterns | `$maestro-spec ui` |
-| Accessibility rule | WCAG requirement + implementation approach | `$maestro-spec ui` |
-| Reusable generalization pattern | Pattern signature + application scope | `$maestro-spec coding` |
+| Design pattern | Component pattern + applicable scenarios + token references | `stage spec → ui` |
+| Interaction spec | State definitions + transition rules + feedback patterns | `stage spec → ui` |
+| Accessibility rule | WCAG requirement + implementation approach | `stage spec → ui` |
+| Reusable generalization pattern | Pattern signature + application scope | `stage spec → coding` |
 
 ---
 
@@ -291,5 +294,5 @@ Goals:      {done}/{total} ({skipped} skipped)
 | Code quality review | `$maestro-odyssey <changed-files> --mode review` |
 | Document pattern | `$maestro-learn decompose <component>` |
 | Second opinion | `$maestro-learn consult <understanding.md>` |
-| Design/interaction pattern to persist | `$maestro-spec ui "..."` |
+| Design/interaction pattern to persist | `stage spec → ui` |
 | Pending decisions | Filter evidence phase=decision status=pending |

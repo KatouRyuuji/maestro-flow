@@ -866,6 +866,30 @@ function readStdin(): Promise<string> {
 }
 
 /**
+ * K4 — register/refresh the knowledge identity channel for a host session.
+ * Channels let knowledge stage/record resolve write authority without
+ * guessing; registration is best-effort and must never break host hooks.
+ */
+async function registerKnowledgeChannel(
+  workspace: string,
+  hostSessionId: string,
+  boundMaestroSessionId: string | null,
+): Promise<void> {
+  try {
+    const { touchChannel } = await import('../run/knowledge-identity.js');
+    touchChannel(workspace, {
+      identity: hostSessionId,
+      hostKind: 'hook',
+      context: boundMaestroSessionId
+        ? { kind: 'session', session_id: boundMaestroSessionId }
+        : null,
+    });
+  } catch {
+    // Channel registration must never break host hooks.
+  }
+}
+
+/**
  * Extract key fields from hook stdin for analytics logging.
  * Keeps only short, diagnostic-relevant fields — never full prompts.
  */
@@ -1165,6 +1189,21 @@ const HOOK_RUNNERS: Record<string, HookRunner> = {
     if (result) {
       process.stdout.write(JSON.stringify(result));
     }
+    // K4: register the host-session knowledge channel (SessionStart). Context
+    // binding is best-effort from an existing coord bridge; the
+    // coordinator-tracker Stop hook rebinds once a maestro Session resolves.
+    const channelSessionId: string = data.session_id ?? '';
+    const channelWorkspace = resolveWorkspace(data);
+    if (channelSessionId && channelWorkspace) {
+      let bound: string | null = null;
+      try {
+        const { readCoordBridge } = await import('../hooks/coordinator-tracker.js');
+        bound = readCoordBridge(channelSessionId)?.maestro_session_id ?? null;
+      } catch {
+        // Best-effort binding only.
+      }
+      await registerKnowledgeChannel(channelWorkspace, channelSessionId, bound);
+    }
   },
 
   'skill-context': async () => {
@@ -1246,6 +1285,9 @@ const HOOK_RUNNERS: Record<string, HookRunner> = {
     if (!bridgeData) return;
     bridgeData.session_id = sessionId;
     writeCoordBridge(sessionId, bridgeData);
+    // K4: bind the host-session knowledge channel to the resolved maestro
+    // Session so knowledge writes can attribute without guessing.
+    await registerKnowledgeChannel(workspace, sessionId, bridgeData.maestro_session_id ?? null);
   },
 
   'search-cache-invalidator': async () => {

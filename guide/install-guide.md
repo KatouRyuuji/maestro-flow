@@ -142,23 +142,29 @@ maestro install
 
 | 分组 | 包含技能 | 说明 |
 |------|----------|------|
-| **skills-extra-team** | team-arch-opt, team-brainstorm, team-designer, team-frontend, team-issue, team-planex 等 | 团队协作相关技能 |
-| **skills-scholar** | scholar-anti-ai-writing, scholar-citation-verify, scholar-experiment, scholar-ideation 等 | 学术研究技能 |
-| **skills-meta** | meta-workflow, meta-analysis 等 | 元技能和工作流编排 |
+| **skills-scholar** | scholar-ideation, scholar-writing, scholar-review, scholar-rebuttal-pro 等 10 个 | 学术研究技能（选装，默认不安装，源自 `optional/skills/`） |
+| **skills-extra-team** | — | 遗留空 bundle，仅为旧清单回放迁移保留，不再安装任何技能 |
+| **skills-meta** | — | 遗留空 bundle（原成员已并入核心 `skills`），仅为迁移保留 |
+
+> 自 v0.5.61 起，skill 面大幅精简：20 个零使用团队/辅助 skill 已删除，
+> 10 个 `scholar-*` 技能改为选装。技能管理用 `maestro install toggle`，
+> 例如 `maestro install toggle --enable scholar-writing`。
 
 ### 内置团队技能（始终安装）
 
-以下 9 个团队技能随核心组件自动安装，无需单独选择：
+以下 8 个团队技能随核心组件（`skills-team`）自动安装，无需单独选择：
 
-- team-adversarial-swarm
+- team-arch-opt
 - team-coordinate
-- team-executor
+- team-issue
 - team-lifecycle-v4
-- team-quality-assurance
+- team-perf-opt
 - team-review
 - team-swarm
-- team-tech-debt
 - team-testing
+
+另有 6 个核心元技能随 `skills` 组件始终安装：maestro-help、skill-generator、
+skill-iter-tune、skill-simplify、skill-tuning、workflow-skill-designer。
 
 ---
 
@@ -336,9 +342,10 @@ MCP 工具列表（6 个）：`write_file`, `edit_file`, `read_file`, `read_many
 
 | 旧 ID | 新 ID |
 |--------|-------|
-| team-arch-opt | skills-extra-team |
-| team-brainstorm | skills-extra-team |
-| scholar-ideation | skills-scholar |
+| team-arch-opt / team-issue / team-perf-opt | skills-team（已转为内置） |
+| team-brainstorm 等已删除 team 技能 | skills-extra-team（遗留空 bundle，无操作） |
+| prompt-generator / delegation-check | skills-meta（遗留空 bundle，无操作） |
+| scholar-ideation 等 scholar-* | skills-scholar |
 | ... | ... |
 
 迁移在安装时自动执行，无需手动操作。

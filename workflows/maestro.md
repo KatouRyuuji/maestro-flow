@@ -74,7 +74,7 @@ Directly match user intent to the best `task_type` (maps to chain in chainMap). 
 | `issue_analyze` | Analyze a specific issue |
 | `issue_plan` | Plan fix for an issue |
 | `issue_execute` | Fix issue end-to-end (auto-upgrades to issue-full) |
-| `full-lifecycle` | Complete phase: plan→execute→review→test→session-seal |
+| `full-lifecycle` | Complete phase: plan→execute→review→test→harvest→session-seal |
 | `grill` | Stress-test a plan/idea against codebase reality (Socratic; `-y` → Auto mode code-answers, stage NOT skipped) |
 | `blueprint` | Formal spec package — 7-phase spec-generate |
 | `analyze-macro` | Broad/medium intent, no numeric phase — produces scope evidence for a later decision node |
@@ -184,7 +184,7 @@ const chainMap = {
   'merge':              [{ cmd: 'maestro-merge', args: '-m {milestone_num}' }],
 
   // ── Multi-step chains ──
-  'full-lifecycle':       [{ cmd: 'plan', args: '{phase}' }, { cmd: 'execute', args: '{phase}' }, { cmd: 'review', args: '{phase}' }, { cmd: 'test', args: '{phase}' }, { cmd: 'maestro-session-seal' }, { cmd: 'harvest', args: '--auto' }],
+  'full-lifecycle':       [{ cmd: 'plan', args: '{phase}' }, { cmd: 'execute', args: '{phase}' }, { cmd: 'review', args: '{phase}' }, { cmd: 'test', args: '{phase}' }, { cmd: 'harvest', args: '--auto' }, { cmd: 'maestro-session-seal' }],
   'spec-driven':          [{ cmd: 'maestro-init' }, { cmd: 'roadmap', args: '--mode full "{description}"' }, { cmd: 'plan', args: '{phase}' }, { cmd: 'execute', args: '{phase}' }, { cmd: 'harvest', args: '--auto' }],
   'roadmap-driven':       [{ cmd: 'maestro-init' }, { cmd: 'roadmap', args: '"{description}"' }, { cmd: 'plan', args: '{phase}' }, { cmd: 'execute', args: '{phase}' }, { cmd: 'harvest', args: '--auto' }],
   'grill-driven':         [{ cmd: 'grill', args: '"{description}"' }, { cmd: 'brainstorm', args: '"{description}" --from grill:{grill_id}' }, { cmd: 'plan', args: '{phase}' }, { cmd: 'execute', args: '{phase}' }, { cmd: 'harvest', args: '--auto' }],
@@ -251,7 +251,7 @@ detectNextAction(state):
 
 | Chain | Steps | Use Case |
 |-------|-------|----------|
-| `full-lifecycle` | plan → execute → review → test → session-seal → harvest | Full milestone completion |
+| `full-lifecycle` | plan → execute → review → test → harvest → session-seal (harvest stages candidates BEFORE seal; sealed runs reject stage writes) | Full milestone completion |
 | `blueprint-driven` | init → blueprint → plan → execute → harvest | From idea/requirements (heavy) |
 | `roadmap-driven` | init → roadmap → plan → execute → harvest | From requirements (light) |
 | `brainstorm-driven` | brainstorm → plan → execute → harvest | From exploration |

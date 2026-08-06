@@ -154,12 +154,15 @@ Security findings with severity >= medium + vulnerability patterns across scan p
 
 ## Knowledge Persistence (§7)
 
+Follow-up = governed candidate staging, NEVER a direct corpus write: `maestro knowledge stage spec "<title>" --content-file <path|-> --run {run_id} --category <cat>` (stage BEFORE seal; promote only after seal with a fresh receipt).
+
+
 | Category | Content | Follow-up |
 |----------|---------|-----------|
-| Vulnerability pattern | CWE + trigger + detection pattern + remediation | `/maestro-spec debug` |
-| Security constraint | Trust boundary + validation rule + enforcement | `/maestro-spec arch` |
-| Dependency risk | Package + CVE + safe version + migration path | `/maestro-spec coding` |
-| CI/CD hardening | Misconfiguration + fix + prevention check | `/maestro-spec coding` |
+| Vulnerability pattern | CWE + trigger + detection pattern + remediation | `stage spec → debug` |
+| Security constraint | Trust boundary + validation rule + enforcement | `stage spec → arch` |
+| Dependency risk | Package + CVE + safe version + migration path | `stage spec → coding` |
+| CI/CD hardening | Misconfiguration + fix + prevention check | `stage spec → coding` |
 
 ---
 
@@ -242,5 +245,5 @@ Goals:       {done}/{total} ({skipped} skipped)
 | Need deeper audit tier | `/maestro-odyssey <target> --mode security --tier deep` |
 | Document pattern | `/maestro-learn decompose <module>` |
 | Second opinion | `/maestro-learn consult <understanding.md>` |
-| Security pattern to persist | `/maestro-spec debug "..."` |
+| Security pattern to persist | `stage spec → debug` |
 | Pending decisions | Filter evidence phase=decision status=pending |

@@ -3,16 +3,19 @@ title: "团队蚁群智能指南"
 icon: "🐜"
 ---
 
-> 本文档介绍 Maestro 的蚁群优化（ACO）团队技能，包括 team-swarm 和 team-adversarial-swarm。
+> 本文档介绍 Maestro 的蚁群优化（ACO）团队技能 team-swarm。
 
 ## 概述
 
-Maestro 提供两个基于蚁群优化（ACO）算法的团队技能：
+Maestro 提供基于蚁群优化（ACO）算法的团队技能：
 
 | 技能 | 用途 | 特点 |
 |------|------|------|
 | `team-swarm` | ACO 驱动的多代理探索 | 混合 LLM 协调器 + Python 优化控制器 |
-| `team-adversarial-swarm` | ACO + 模块化 Workflow + 对抗决策 | 4 个可组合 Workflow 脚本 + 对抗模式 |
+
+> **v0.5.61 变更**：`team-adversarial-swarm` 技能已删除。其对抗决策模式
+> （prosecutor/defender/judge、3-vote 等）作为通用工作流模式保留在
+> `workflows/swarm/`（wf-analyze.js / wf-verify.js）中，可在任意 Workflow 脚本里复用。
 
 ## 蚁群优化（ACO）原理
 
@@ -92,93 +95,11 @@ Coordinator (LLM)
 
 ---
 
-## team-adversarial-swarm
+## 对抗决策模式（通用工作流模式）
 
-### 用途
-
-ACO 蚁群优化 + 模块化 Workflow 编排 + 对抗决策门控。
-
-### 核心特性
-
-- **4 个可组合 Workflow 脚本**：explore/score/converge/synthesize
-- **对抗决策模式**：每个决策节点注入对抗性 agent（prosecutor/defender/judge）
-- **Python ACO 脚本**：数值优化和信息素管理
-- **模块化设计**：每个模块独立可用，也可组合编排
-
-### 架构
-
-```
-SKILL.md (Coordinator)
-    │
-    │  Phase 1: Config Generation
-    │  Phase 2: ACO Init
-    │
-    │  Phase 3: Iteration Loop ×K
-    │  ┌──────────────────────────────────────┐
-    │  │ 3a. aco.py select → assignments      │
-    │  │ 3b. wf-swarm-explore → ant_results   │
-    │  │ 3c. wf-swarm-score → verified_scores │
-    │  │ 3d. aco.py update → pheromone        │
-    │  │ 3e. wf-swarm-converge → converged?   │
-    │  │ 3f. if converged: break              │
-    │  └──────────────────────────────────────┘
-    │
-    │  Phase 4: wf-swarm-synthesize → best-solution.md
-```
-
-### Workflow 模块
-
-| 模块 | 脚本 | 对抗模式 | 返回值 |
-|------|------|---------|--------|
-| **Explore** | `wf-swarm-explore.js` | N ants 并行 | `{ ant_results[] }` |
-| **Score** | `wf-swarm-score.js` | 3-vote per ant | `{ scores{}, calibration }` |
-| **Converge** | `wf-swarm-converge.js` | prosecutor/defender/judge | `{ converged, reason }` |
-| **Synthesize** | `wf-swarm-synthesize.js` | 3-perspective + arbitrator | `{ report, caveats }` |
-
-### 使用场景
-
-- 复杂问题的深度分析
-- 需要多轮迭代优化的任务
-- 需要对抗性验证的决策
-- 大规模代码库的系统性审计
-
-### 配置示例
-
-```json
-{
-  "task": {
-    "objective": "分析最近 100 个 commit 的代码质量",
-    "evidence_requirements": "识别质量下降的趋势和原因"
-  },
-  "swarm": {
-    "n_ants": 5,
-    "max_iterations": 4
-  },
-  "aco": {
-    "alpha": 1.0,
-    "beta": 2.0,
-    "rho": 0.1,
-    "q": 1.0
-  },
-  "task_space": {
-    "nodes": ["src/commands/", "src/skills/", "docs-site/"],
-    "auto_discover_from": "git log --oneline -100"
-  },
-  "scoring": {
-    "mode": "adversarial",
-    "rubric": "覆盖度 + 准确度 + 时效性 + 可读性"
-  },
-  "convergence": {
-    "patience": 2,
-    "min_improvement": 0.01,
-    "max_iterations": 4
-  }
-}
-```
-
----
-
-## 对抗决策模式
+> 原 `team-adversarial-swarm` 技能已于 v0.5.61 删除，但以下对抗决策模式仍是
+> Maestro Workflow 的通用能力，现由 `workflows/swarm/` 下的脚本（wf-analyze.js、
+> wf-verify.js）承载，可在任意 Workflow 脚本中复用。
 
 ### Prosecutor/Defender/Judge
 
@@ -222,18 +143,18 @@ const decision = await agent('You are the REFEREE...', { label: 'referee' })
 
 ## 与其他团队技能的关系
 
-| 维度 | team-swarm | team-adversarial-swarm | team-coordinate |
-|------|-----------|----------------------|-----------------|
-| 算法 | ACO | ACO + Workflow | Beat/Cadence |
-| 代理模型 | Ant | Ant + Adversarial | Worker |
-| 决策模式 | 信息素引导 | 对抗决策 | 角色协作 |
-| 适用场景 | 探索优化 | 深度分析 | 通用协作 |
-| 复杂度 | 中 | 高 | 低 |
+| 维度 | team-swarm | team-coordinate |
+|------|-----------|-----------------|
+| 算法 | ACO | Beat/Cadence |
+| 代理模型 | Ant | Worker |
+| 决策模式 | 信息素引导 | 角色协作 |
+| 适用场景 | 探索优化 | 通用协作 |
+| 复杂度 | 中 | 低 |
 
 ### 选择建议
 
 1. **探索优化** → 使用 `team-swarm`
-2. **深度分析** → 使用 `team-adversarial-swarm`
+2. **深度分析（对抗验证）** → 使用 `team-swarm` + `workflows/swarm/` 对抗模式
 3. **通用协作** → 使用 `team-coordinate`
 4. **生命周期** → 使用 `team-lifecycle-v4`
 

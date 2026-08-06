@@ -352,6 +352,8 @@ Create learnings.md with frontmatter (title, type: spec, roles: [implement]) if 
 
 ### Append entries
 
+Governed corpus persistence: each insight that should become project knowledge is staged as a candidate — `maestro knowledge stage spec "<title>" --content-file <path|-> --run <run-id> --category learning` — and reaches the corpus only via post-seal `review --refresh → promote`. The `learnings.md` file below is the session-local distillation draft.
+
 For each insight in `distilled_insights`, append a `<spec-entry>` to `.workflow/specs/learnings.md`:
 
 ```html

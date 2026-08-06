@@ -7,15 +7,24 @@ import {
   knowledgeCandidateId,
   promoteSessionKnowledge,
   readRunKnowledgeDelta,
+  readSessionKnowledgeDelta,
+  readSessionKnowledgeReconciliation,
   reportKnowledgeCandidateDrafts,
   runKnowledgeDeltaPath,
   runKnowledgeDeltaSchema,
+  SESSION_RECONCILIATION_RUN_ID,
+  sessionKnowledgeSnapshotHash,
+  sessionReconciliationPath,
+  sessionKnowledgeDeltaPath,
+  sessionKnowledgeDeltaSchema,
   summarizeSessionKnowledge,
   type KnowledgeCandidate,
   type KnowledgeCandidateDraft,
   type KnowledgePromotionResult,
   type PromoteSessionKnowledgeOptions,
   type RunKnowledgeDelta,
+  type SessionKnowledgeDelta,
+  type SessionKnowledgeSummary,
 } from '../run/knowledge.js';
 import { readReportFrontmatter } from '../run/report.js';
 import type { ReportFrontmatter } from '../run/schemas.js';
@@ -813,6 +822,125 @@ export function persistKnowledgeReconciliation(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Session-level reconciliation (origin=session candidates).
+// Same receipt schema (run_id sentinel SESSION_RECONCILIATION_RUN_ID) and the
+// identical dual-fingerprint freshness model as run receipts (K5/K7a).
+// ---------------------------------------------------------------------------
+
+function sessionCandidateViews(delta: SessionKnowledgeDelta): CandidateView[] {
+  return delta.candidates
+    .filter(candidate => candidate.status !== 'promoted')
+    .map(candidate => ({
+      candidate_id: candidate.candidate_id,
+      target: candidate.target,
+      action: candidate.action,
+      title: candidate.title,
+      content: candidate.content,
+      category: candidate.category,
+      source_kind: candidate.source_kind,
+    }))
+    .sort((left, right) => left.candidate_id.localeCompare(right.candidate_id));
+}
+
+export function reconcileSessionKnowledgeSync(
+  projectRoot: string,
+  sessionId: string,
+  options: ReconcileOptions = {},
+): KnowledgeReconciliation {
+  const store = new SessionStore(projectRoot);
+  const delta = readSessionKnowledgeDelta(store, sessionId, true);
+  const documents = loadCorpus(projectRoot);
+  const candidates = sessionCandidateViews(delta);
+  const associated = associationDocuments(documents, delta.inputs);
+  let identityDocuments = 0;
+  let semanticDocuments = 0;
+  let relationDocuments = 0;
+  const results = candidates.map(candidate => {
+    const reconciled = reconcileCandidate(
+      candidate,
+      documents,
+      associated,
+      options.embeddingScores?.get(candidate.candidate_id) ?? new Map(),
+    );
+    identityDocuments += reconciled.identityCount;
+    semanticDocuments += reconciled.semanticCount;
+    relationDocuments += reconciled.relationCount;
+    return reconciled.result;
+  });
+  return knowledgeReconciliationSchema.parse({
+    schema_version: 'knowledge-reconciliation/1.0',
+    session_id: sessionId,
+    run_id: SESSION_RECONCILIATION_RUN_ID,
+    candidate_snapshot_hash: sessionKnowledgeSnapshotHash(delta),
+    corpus_fingerprint: corpusFingerprint(documents),
+    matcher_revision: 'semantic-delta/1.0',
+    generated_at: new Date().toISOString(),
+    retrieval: {
+      mode: options.retrievalMode ?? 'lexical-kg',
+      embedding_used: options.embeddingUsed ?? false,
+      candidate_limit: DISCOVERY_LIMIT + MATCH_LIMIT,
+      identity_documents: identityDocuments,
+      semantic_documents: semanticDocuments,
+      relation_documents: relationDocuments,
+    },
+    counts: countReceipt(results),
+    candidates: results,
+  });
+}
+
+export function isSessionKnowledgeReconciliationFresh(
+  projectRoot: string,
+  sessionId: string,
+  receipt: KnowledgeReconciliation,
+  expectedCorpusFingerprint: string = currentKnowledgeCorpusFingerprint(projectRoot),
+): boolean {
+  const store = new SessionStore(projectRoot);
+  const delta = readSessionKnowledgeDelta(store, sessionId, true);
+  return receipt.session_id === sessionId
+    && receipt.run_id === SESSION_RECONCILIATION_RUN_ID
+    && receipt.candidate_snapshot_hash === sessionKnowledgeSnapshotHash(delta)
+    && receipt.corpus_fingerprint === expectedCorpusFingerprint;
+}
+
+export function ensureSessionKnowledgeReconciliation(
+  projectRoot: string,
+  sessionId: string,
+  expectedCorpusFingerprint: string = currentKnowledgeCorpusFingerprint(projectRoot),
+): KnowledgeReconciliation {
+  const store = new SessionStore(projectRoot);
+  const existing = readSessionKnowledgeReconciliation(store, sessionId, true);
+  if (existing && isSessionKnowledgeReconciliationFresh(
+    projectRoot,
+    sessionId,
+    existing,
+    expectedCorpusFingerprint,
+  )) return existing;
+  return reconcileSessionKnowledgeSync(projectRoot, sessionId);
+}
+
+export function writeSessionKnowledgeReconciliation(
+  store: SessionStore,
+  tx: StoreTransaction,
+  receipt: KnowledgeReconciliation,
+): void {
+  tx.writeJson(
+    sessionReconciliationPath(store, receipt.session_id),
+    receipt,
+    knowledgeReconciliationSchema,
+  );
+}
+
+export function persistSessionKnowledgeReconciliation(
+  projectRoot: string,
+  receipt: KnowledgeReconciliation,
+): void {
+  const store = new SessionStore(projectRoot);
+  store.updateKnowledgeLifecycle(receipt.session_id, (_lifecycle, tx) => {
+    writeSessionKnowledgeReconciliation(store, tx, receipt);
+  });
+}
+
 /**
  * Refresh every source receipt before invoking the lower-level promotion
  * transaction. A corpus change invalidates prior human resolution and forces
@@ -871,6 +999,19 @@ export function promoteReconciledSessionKnowledge(
     );
     persistKnowledgeReconciliation(projectRoot, receipt);
   }
+  // K7a: refresh the session receipt for session-origin candidates (same
+  // TOCTOU fence position as the run refresh above).
+  const needsSessionRefresh = candidatesToRefresh.some(candidate =>
+    (candidate.origin ?? 'run') === 'session'
+  );
+  if (needsSessionRefresh) {
+    const sessionReceipt = ensureSessionKnowledgeReconciliation(
+      projectRoot,
+      sessionId,
+      expectedCorpusFingerprint,
+    );
+    persistSessionKnowledgeReconciliation(projectRoot, sessionReceipt);
+  }
   return promoteSessionKnowledge(projectRoot, sessionId, options);
 }
 
@@ -918,8 +1059,15 @@ export function resolveKnowledgeCandidate(
   const reason = options.reason.trim();
   if (!reason) throw new Error('Knowledge resolution requires a non-empty reason');
   const summary = summarizeSessionKnowledge(projectRoot, sessionId, { readOnly: true, strict: true });
-  const candidate = summary.candidates.find(item => item.candidate_id === candidateId);
-  if (!candidate) throw new Error(`Unknown candidate ID: ${candidateId}`);
+  const matches = summary.candidates.filter(item => item.candidate_id === candidateId);
+  if (matches.length === 0) throw new Error(`Unknown candidate ID: ${candidateId}`);
+  // Cross-origin same-ID candidates are separately accounted (K7); resolution
+  // targets the run-origin copy first, deterministically.
+  const candidate = matches.find(item => (item.origin ?? 'run') === 'run') ?? matches[0];
+  // K7b: session-origin candidates resolve through the session receipt/delta.
+  if ((candidate.origin ?? 'run') === 'session') {
+    return resolveSessionKnowledgeCandidate(projectRoot, sessionId, candidate, choice, options, reason);
+  }
   const store = new SessionStore(projectRoot);
   const receipts = candidate.run_ids.map(runId => ({
     runId,
@@ -1036,6 +1184,110 @@ export function resolveKnowledgeCandidate(
   };
 }
 
+/**
+ * Resolution path for session-origin candidates (K7b): same evidence-backed
+ * matching and receipt semantics as run candidates, writing the session
+ * receipt and session delta instead of per-run sidecars.
+ */
+function resolveSessionKnowledgeCandidate(
+  projectRoot: string,
+  sessionId: string,
+  candidate: SessionKnowledgeSummary['candidates'][number],
+  choice: KnowledgeResolutionChoice,
+  options: { targetId?: string; reason: string },
+  reason: string,
+): ResolveKnowledgeCandidateResult {
+  const store = new SessionStore(projectRoot);
+  const receipt = readSessionKnowledgeReconciliation(store, sessionId, true);
+  if (!receipt) {
+    throw new Error(
+      `Candidate ${candidate.candidate_id} has no session reconciliation receipt; `
+      + `run "maestro knowledge review ${sessionId} --refresh" first`,
+    );
+  }
+  if (!isSessionKnowledgeReconciliationFresh(projectRoot, sessionId, receipt)) {
+    throw new Error(
+      `Candidate ${candidate.candidate_id} has a stale session reconciliation receipt; `
+      + `run "maestro knowledge review ${sessionId} --refresh" before resolving`,
+    );
+  }
+  const entry = receipt.candidates.find(item => item.candidate_id === candidate.candidate_id);
+  if (!entry) {
+    throw new Error(`Candidate ${candidate.candidate_id} is missing from the session reconciliation receipt`);
+  }
+  if (choice === 'unique' && options.targetId?.trim()) {
+    throw new Error('--target is not valid for unique resolution');
+  }
+  const targetRequired = choice !== 'unique';
+  const targetId = choice === 'unique'
+    ? null
+    : options.targetId?.trim() || entry.canonical_id || null;
+  if (targetRequired && !targetId) throw new Error(`--target is required for ${choice} resolution`);
+  const targetMatch = targetId
+    ? entry.matches.find(match => match.knowledge_id === targetId)
+    : null;
+  if (targetId && !targetMatch) {
+    throw new Error(`Resolution target ${targetId} is not an evidence-backed match for ${candidate.candidate_id}`);
+  }
+  if (choice === 'supersede' && targetMatch?.target !== candidate.target) {
+    throw new Error('Supersession requires candidate and target to use the same knowledge store');
+  }
+
+  let conflictMarked = false;
+  if (choice === 'conflict' && targetMatch?.target === 'spec' && targetMatch.source_line !== null) {
+    const file = basename(targetMatch.source_path);
+    const marked = markConflict(projectRoot, file, targetMatch.source_line, {
+      note: `Knowledge candidate ${candidate.candidate_id}: ${reason}`,
+      confidence: 'contested',
+    });
+    if (!marked.success) throw new Error(marked.error ?? `Failed to mark conflict on ${targetId}`);
+    conflictMarked = true;
+  }
+
+  const state = resolutionState(choice);
+  const resolvedAt = new Date().toISOString();
+  const nextCorpusFingerprint = corpusFingerprint(loadCorpus(projectRoot));
+  store.updateKnowledgeLifecycle(sessionId, (_lifecycle, tx) => {
+    const next = structuredClone(receipt);
+    const target = next.candidates.find(value => value.candidate_id === candidate.candidate_id)!;
+    target.disposition = state.disposition;
+    target.promotion_eligibility = state.promotionEligibility;
+    target.canonical_id = targetId;
+    target.resolution = { status: 'confirmed', reason, resolved_at: resolvedAt };
+    next.corpus_fingerprint = nextCorpusFingerprint;
+    next.counts = countReceipt(next.candidates);
+    writeSessionKnowledgeReconciliation(store, tx, next);
+
+    const delta = readSessionKnowledgeDelta(store, sessionId);
+    const ledgerCandidate = delta.candidates.find(value => value.candidate_id === candidate.candidate_id);
+    if (ledgerCandidate) {
+      if (state.rejectCandidate && ledgerCandidate.status === 'pending') {
+        ledgerCandidate.status = 'rejected';
+      } else if (!state.rejectCandidate && ledgerCandidate.status === 'rejected') {
+        ledgerCandidate.status = 'pending';
+      }
+      delta.revision++;
+      delta.updated_at = resolvedAt;
+      tx.writeJson(
+        sessionKnowledgeDeltaPath(store, sessionId),
+        delta,
+        sessionKnowledgeDeltaSchema,
+      );
+    }
+  });
+
+  return {
+    schema_version: 'knowledge-resolution-result/1.0',
+    session_id: sessionId,
+    candidate_id: candidate.candidate_id,
+    disposition: state.disposition,
+    promotion_eligibility: state.promotionEligibility,
+    canonical_id: targetId,
+    affected_runs: [],
+    conflict_marked: conflictMarked,
+  };
+}
+
 export function reconciliationForCandidate(
   projectRoot: string,
   sessionId: string,
@@ -1043,6 +1295,12 @@ export function reconciliationForCandidate(
   candidateId: string,
 ): KnowledgeCandidateReconciliation[] {
   const store = new SessionStore(projectRoot);
+  if (runIds.length === 0) {
+    // Session-origin candidate: the receipt lives at the Session directory.
+    const receipt = readSessionKnowledgeReconciliation(store, sessionId, true);
+    const candidate = receipt?.candidates.find(item => item.candidate_id === candidateId);
+    return candidate ? [candidate] : [];
+  }
   return runIds.flatMap(runId => {
     const receipt = readKnowledgeReconciliation(store, sessionId, runId, true);
     const candidate = receipt?.candidates.find(item => item.candidate_id === candidateId);

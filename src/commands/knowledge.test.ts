@@ -78,6 +78,7 @@ describe('maestro knowledge Run lifecycle CLI', () => {
       'validated',
       '--signal-ids',
       'spec:S-1,knowhow:K-1',
+      '--allow-unknown',
       '--json',
     );
     const staged = JSON.parse(logs.at(-1)!) as { candidate_id: string; signal_recorded: number };
@@ -393,6 +394,7 @@ Use independent file writes for coordinated state.
       created.run_id,
       '--session',
       created.session_id,
+      '--allow-unknown',
       '--json',
     );
     const candidateId = (JSON.parse(logs.at(-1)!) as { candidate_id: string }).candidate_id;
@@ -544,6 +546,7 @@ Full knowledge lifecycle verified.
       'consumed',
       '--source',
       'search',
+      '--allow-unknown',
       '--json',
     );
     const recorded = JSON.parse(logs.at(-1)!) as { session_id: string; run_id: string; recorded: number };
@@ -559,7 +562,9 @@ Full knowledge lifecycle verified.
       expect.objectContaining({ knowledge_id: 'knowhow:K-1', signal: 'consumed', source: 'search' }),
     ]);
     expect(delta.candidates).toEqual([]);
-    expect(errors).toEqual([]);
+    // Narrowed-scan attribution is allowed but always warned (K3 tier C).
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('No caller identity found');
   });
 
   it('records explicit run attribution with manual source and validated signal', async () => {
@@ -581,6 +586,7 @@ Full knowledge lifecycle verified.
       'validated',
       '--source',
       'manual',
+      '--allow-unknown',
       '--json',
     );
     const recorded = JSON.parse(logs.at(-1)!) as { recorded: number };
@@ -613,9 +619,11 @@ Full knowledge lifecycle verified.
     expect(process.exitCode).toBe(1);
     expect(errors.join('\n')).toContain('--source must be one of search, load, manual');
 
+    // --session without --run is now legal (session-source attribution); the
+    // fake ID must still be rejected by K8 validation before any ledger write.
     await run('record', 'spec:S-1', '--session', created.session_id);
     expect(process.exitCode).toBe(1);
-    expect(errors.join('\n')).toContain('--session requires --run');
+    expect(errors.join('\n')).toContain('Unknown knowledge ID(s)');
 
     const delta = readRunKnowledgeDelta(
       new SessionStore(projectRoot),
@@ -625,7 +633,25 @@ Full knowledge lifecycle verified.
     expect(delta.inputs).toEqual([]);
   });
 
-  it('fails closed when no unique active Run exists for record', async () => {
+  it('attributes a lone running Session without an active Run (narrowed session branch)', async () => {
+    const created = createRun({
+      projectRoot,
+      command: 'knowledge-cli',
+      sessionId: 'knowledge-cli-session',
+      intent: 'record without active run resolves to session',
+    });
+    const store = new SessionStore(projectRoot);
+    store.update(created.session_id, bundle => {
+      bundle.session.active_run_id = null;
+    });
+
+    await run('record', 'spec:S-1', '--signal', 'consumed', '--source', 'search', '--allow-unknown', '--json');
+    expect(process.exitCode ?? 0).toBe(0);
+    const recorded = JSON.parse(logs.at(-1)!) as { session_id: string; origin: string; recorded: number };
+    expect(recorded).toMatchObject({ session_id: created.session_id, origin: 'session', recorded: 1 });
+  });
+
+  it('fails closed when write authority is ambiguous for record', async () => {
     const created = createRun({
       projectRoot,
       command: 'knowledge-cli',
@@ -636,10 +662,17 @@ Full knowledge lifecycle verified.
     store.update(created.session_id, bundle => {
       bundle.session.active_run_id = null;
     });
+    // A second running Session makes authority ambiguous (no unique target).
+    createRun({
+      projectRoot,
+      command: 'knowledge-cli',
+      sessionId: 'knowledge-cli-other',
+      intent: 'second running session',
+    });
 
     await run('record', 'spec:S-1', '--signal', 'consumed', '--source', 'search');
     expect(process.exitCode).toBe(1);
-    expect(errors.join('\n')).toContain('No unique active Run found');
+    expect(errors.join('\n')).toContain('Knowledge write authority is ambiguous');
   });
 
   it('summarizes input totals by source with knowledge-id detail', async () => {
@@ -651,11 +684,11 @@ Full knowledge lifecycle verified.
     });
     await run(
       'record', 'spec:A', '--signal', 'consumed', '--source', 'search',
-      '--run', created.run_id, '--session', created.session_id, '--json',
+      '--run', created.run_id, '--session', created.session_id, '--allow-unknown', '--json',
     );
     await run(
       'record', 'spec:B', '--signal', 'validated', '--source', 'load',
-      '--run', created.run_id, '--session', created.session_id, '--json',
+      '--run', created.run_id, '--session', created.session_id, '--allow-unknown', '--json',
     );
 
     const summary = summarizeSessionKnowledge(projectRoot, created.session_id);
@@ -670,5 +703,61 @@ Full knowledge lifecycle verified.
       { run_id: created.run_id, knowledge_id: 'spec:A', signal: 'consumed', source: 'search', count: 1 },
       { run_id: created.run_id, knowledge_id: 'spec:B', signal: 'validated', source: 'load', count: 1 },
     ]);
+  });
+
+  it('rejects unknown knowledge IDs by default (K8)', async () => {
+    const created = createRun({
+      projectRoot,
+      command: 'knowledge-cli',
+      sessionId: 'knowledge-cli-session',
+      intent: 'reject unknown signal ids',
+    });
+    await run(
+      'record',
+      'spec:definitely-not-in-index',
+      '--run',
+      created.run_id,
+      '--session',
+      created.session_id,
+      '--signal',
+      'validated',
+      '--source',
+      'manual',
+    );
+    expect(process.exitCode).toBe(1);
+    expect(errors.join('\n')).toContain('Unknown knowledge ID(s)');
+    const delta = readRunKnowledgeDelta(
+      new SessionStore(projectRoot),
+      created.session_id,
+      created.run_id,
+    );
+    expect(delta.inputs).toEqual([]);
+  });
+
+  it('stages on an explicit session without a run (session source)', async () => {
+    const created = createRun({
+      projectRoot,
+      command: 'knowledge-cli',
+      sessionId: 'session-source-cli',
+      intent: 'session-source staging via CLI',
+    });
+    await run(
+      'stage',
+      'knowhow',
+      'Session-source recipe',
+      'Staged through the session ledger without a run.',
+      '--session',
+      created.session_id,
+      '--evidence',
+      'src/session-source.ts:9',
+      '--json',
+    );
+    const staged = JSON.parse(logs.at(-1)!) as { candidate_id: string; session_id: string; origin: string };
+    expect(staged.origin).toBe('session');
+    expect(staged.session_id).toBe(created.session_id);
+    const summary = summarizeSessionKnowledge(projectRoot, created.session_id);
+    const candidate = summary.candidates.find(item => item.candidate_id === staged.candidate_id);
+    expect(candidate?.origin).toBe('session');
+    expect(candidate?.run_ids).toEqual([]);
   });
 });

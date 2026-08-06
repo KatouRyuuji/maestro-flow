@@ -288,7 +288,7 @@ never append spec entries directly — routine Run completion must not call `mae
 
 Full knowledge extraction (constraints → spec, decisions → knowhow, terminology → domain glossary) is not done here; it is handled uniformly at session wrap-up.
 
-→ Wrap-up follows ref/finish-work.md
+→ Wrap-up follows ref/finish-work.md (stages knowledge candidates BEFORE seal; corpus writes only via post-seal promote)
 
 ---
 

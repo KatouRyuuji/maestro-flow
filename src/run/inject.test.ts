@@ -140,9 +140,9 @@ describe('buildEnvelope', () => {
       '',
       '<!-- session_anchor: read-only grounding. Honor Intent + Boundary Contract before acting.',
       '     If your work would fall outside in_scope (or hit out_of_scope), stop and report via',
-      '     `maestro ralph complete <N> --session S1 --status BLOCKED --reason "out_of_scope: ..."` instead of proceeding.',
+      '     `maestro ralph complete <N> --session S1 --verdict blocked --reason "out_of_scope: ..."` instead of proceeding.',
       '     If Accumulated Signals suggest prior work conflicts with your task, report via',
-      '     `maestro ralph complete <N> --session S1 --status BLOCKED --reason "drift_conflict: ..."` instead of proceeding. -->',
+      '     `maestro ralph complete <N> --session S1 --verdict blocked --reason "drift_conflict: ..."` instead of proceeding. -->',
       '</session_anchor>',
     ].join('\n'));
   });
@@ -153,8 +153,8 @@ describe('buildEnvelope', () => {
       sections: ['**Intent**: x'],
       completionVerb: (n) => `maestro run complete ${n}`,
     });
-    expect(envelope).toContain('`maestro run complete <N> --status BLOCKED --reason "out_of_scope: ..."`');
-    expect(envelope).toContain('`maestro run complete <N> --status BLOCKED --reason "drift_conflict: ..."`');
+    expect(envelope).toContain('`maestro run complete <N> --verdict blocked --reason "out_of_scope: ..."`');
+    expect(envelope).toContain('`maestro run complete <N> --verdict blocked --reason "drift_conflict: ..."`');
   });
 
   it('full assembly preserves section order and separates sections with a blank line', () => {

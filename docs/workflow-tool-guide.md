@@ -428,18 +428,14 @@ if (severity.length > 0) {
 
 `/maestro-ralph --engine swarm --script wf-*` 这一层并行加速语法**已随 v0.5.56 的 Session/Run 链统一全部退役**，没有 1:1 后继：Ralph 不再拥有独立 CLI 驱动，只调用 `maestro session ... / maestro run ...`。`workflows/swarm/` 下的 8 个旧脚本在活树里已无任何引用。不要用别的命令去"顶替"这个语法。
 
-### 活的对抗式 swarm：`/team-adversarial-swarm`
+### 对抗式 swarm 模式（workflows/swarm/）
 
-ACO 蚁群 + 对抗决策门，由 skill 内的 coordinator 驱动迭代循环，4 个可组合 Workflow 脚本各自内建对抗模式（脚本位于 `.claude/skills/team-adversarial-swarm/workflows/`）：
+> v0.5.61 起 `team-adversarial-swarm` skill 已删除。其对抗决策模式作为通用能力保留在
+> `workflows/swarm/` 的 Workflow 脚本中（如 `wf-analyze.js`、`wf-verify.js`）：
+> prosecutor/defender/judge、3-vote 多数决、3-way advocacy + referee。
 
-| 模块 | 脚本 | 对抗模式 | 返回 |
-|------|------|---------|------|
-| Explore | `wf-swarm-explore.js` | N 只 ant 并行 | `{ ant_results[] }` |
-| Score | `wf-swarm-score.js` | 每只 ant 3 票（prosecutor / defender / judge） | `{ scores{}, calibration }` |
-| Converge | `wf-swarm-converge.js` | prosecutor(continue) / defender(stop) / judge | `{ converged, reason, confidence }` |
-| Synthesize | `wf-swarm-synthesize.js` | 3 视角 + arbitrator | `{ report, caveats }` |
-
-调用方式是 skill 自身（`/team-adversarial-swarm`），不是 Ralph 的 flag；每个脚本用 `Workflow({ scriptPath })` 起。
+需要"并行探索 + 对抗验证"式深度分析时，直接用 `Workflow({ scriptPath })` 调用
+`workflows/swarm/` 下对应脚本；ACO 信息素驱动的多代理探索用 `team-swarm` skill。
 
 ## 限制与注意事项
 

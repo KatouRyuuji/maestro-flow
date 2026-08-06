@@ -14,6 +14,7 @@ import { supersedeKnowhowEntry } from '../tools/knowhow-lifecycle.js';
 import {
   knowledgeReconciliationSchema,
   type KnowledgeCandidateReconciliation,
+  type KnowledgeReconciliation,
 } from '../knowledge/reconciliation-schema.js';
 
 const nonEmptyString = z.string().min(1);
@@ -55,6 +56,16 @@ export const knowledgeCandidateSchema = z.object({
 }).strict();
 
 export type KnowledgeInputSource = z.infer<typeof knowledgeInputSchema>['source'];
+export type KnowledgeInput = z.infer<typeof knowledgeInputSchema>;
+
+/**
+ * Minimal ledger surface shared by run and session knowledge deltas, so
+ * input/candidate append logic stays single-sourced (session delta reuse).
+ */
+export interface KnowledgeLedgerDraft {
+  inputs: KnowledgeInput[];
+  candidates: KnowledgeCandidate[];
+}
 
 export const runKnowledgeDeltaSchema = z.object({
   schema_version: z.literal('run-knowledge-delta/1.0'),
@@ -67,7 +78,23 @@ export const runKnowledgeDeltaSchema = z.object({
   candidates: z.array(knowledgeCandidateSchema),
 }).strict();
 
+/**
+ * Session-level knowledge ledger (origin=session). Separate schema family on
+ * purpose: run-knowledge-delta/1.0 is strict() and frozen byte-for-byte for
+ * backward compatibility with deployed CLIs (see knowledge-session-decoupling-mvp.md S1).
+ */
+export const sessionKnowledgeDeltaSchema = z.object({
+  schema_version: z.literal('session-knowledge-delta/1.0'),
+  session_id: nonEmptyString,
+  revision: z.number().int().nonnegative(),
+  created_at: nonEmptyString,
+  updated_at: nonEmptyString,
+  inputs: z.array(knowledgeInputSchema),
+  candidates: z.array(knowledgeCandidateSchema),
+}).strict();
+
 export type RunKnowledgeDelta = z.infer<typeof runKnowledgeDeltaSchema>;
+export type SessionKnowledgeDelta = z.infer<typeof sessionKnowledgeDeltaSchema>;
 export type KnowledgeCandidate = z.infer<typeof knowledgeCandidateSchema>;
 export type KnowledgeInputSignal = z.infer<typeof knowledgeInputSignalSchema>;
 
@@ -82,6 +109,8 @@ export interface SessionKnowledgeSummary {
   /** Knowledge-id-level attribution detail, in ledger order. */
   inputs: Array<{
     run_id: string;
+    /** Origin of the attribution ledger ('session' for session-level deltas). */
+    origin?: 'run' | 'session';
     knowledge_id: string;
     signal: KnowledgeInputSignal;
     source: KnowledgeInputSource;
@@ -91,6 +120,8 @@ export interface SessionKnowledgeSummary {
   unique_inputs: number;
   candidates: Array<KnowledgeCandidate & {
     run_ids: string[];
+    /** Origin of the candidate ledger ('session' for session-level deltas). */
+    origin?: 'run' | 'session';
     stage: 'observed' | 'corroborated';
   }>;
 }
@@ -178,8 +209,81 @@ function createDelta(sessionId: string, runId: string, now: string = nowIso()): 
   };
 }
 
+export function createSessionDelta(sessionId: string, now: string = nowIso()): SessionKnowledgeDelta {
+  return {
+    schema_version: 'session-knowledge-delta/1.0',
+    session_id: sessionId,
+    revision: 0,
+    created_at: now,
+    updated_at: now,
+    inputs: [],
+    candidates: [],
+  };
+}
+
 export function runKnowledgeDeltaPath(store: SessionStore, sessionId: string, runId: string): string {
   return join(store.runDir(sessionId, runId), 'knowledge-delta.json');
+}
+
+export function sessionKnowledgeDeltaPath(store: SessionStore, sessionId: string): string {
+  return join(store.sessionDir(sessionId), 'knowledge-delta.json');
+}
+
+export function readSessionKnowledgeDelta(
+  store: SessionStore,
+  sessionId: string,
+  readOnly = false,
+): SessionKnowledgeDelta {
+  const path = sessionKnowledgeDeltaPath(store, sessionId);
+  const fallback = createSessionDelta(sessionId);
+  return readOnly
+    ? store.readJsonFileReadOnly(path, sessionKnowledgeDeltaSchema, fallback)
+    : store.readJsonFile(path, sessionKnowledgeDeltaSchema, fallback);
+}
+
+// ---------------------------------------------------------------------------
+// Session-level reconciliation receipt (origin=session governance gate).
+// Reuses knowledge-reconciliation/1.0 with the run_id sentinel 'session';
+// the receipt lives at the Session directory, never inside a run directory,
+// so run-scoped readers never encounter it (byte-compat with deployed CLIs).
+// ---------------------------------------------------------------------------
+
+export const SESSION_RECONCILIATION_RUN_ID = 'session';
+
+export function sessionReconciliationPath(store: SessionStore, sessionId: string): string {
+  return join(store.sessionDir(sessionId), 'knowledge-reconciliation.json');
+}
+
+export function readSessionKnowledgeReconciliation(
+  store: SessionStore,
+  sessionId: string,
+  readOnly = false,
+): KnowledgeReconciliation | null {
+  const path = sessionReconciliationPath(store, sessionId);
+  if (!existsSync(path)) return null;
+  return readOnly
+    ? store.readJsonFileReadOnly(path, knowledgeReconciliationSchema, null)
+    : store.readJsonFile(path, knowledgeReconciliationSchema, null);
+}
+
+/**
+ * Snapshot hash over pending session-ledger candidates; the session receipt's
+ * freshness anchor (mirrors knowledgeCandidateSnapshotHash for run deltas).
+ */
+export function sessionKnowledgeSnapshotHash(delta: SessionKnowledgeDelta): string {
+  const views = delta.candidates
+    .filter(candidate => candidate.status !== 'promoted')
+    .map(candidate => ({
+      candidate_id: candidate.candidate_id,
+      target: candidate.target,
+      action: candidate.action,
+      title: normalizedText(candidate.title),
+      content: normalizedText(candidate.content),
+      category: candidate.category,
+      source_kind: candidate.source_kind,
+    }))
+    .sort((left, right) => left.candidate_id.localeCompare(right.candidate_id));
+  return createHash('sha256').update(JSON.stringify(views)).digest('hex');
 }
 
 export function knowledgeCandidateId(target: KnowledgeCandidate['target'], content: string): string {
@@ -196,8 +300,8 @@ function contentHash(value: string): string {
   return createHash('sha256').update(normalizedText(value)).digest('hex');
 }
 
-function addInput(
-  draft: RunKnowledgeDelta,
+export function addInput(
+  draft: KnowledgeLedgerDraft,
   knowledgeId: string,
   signal: KnowledgeInputSignal,
   source: z.infer<typeof knowledgeInputSchema>['source'],
@@ -226,8 +330,8 @@ function addInput(
   }
 }
 
-function addCandidate(
-  draft: RunKnowledgeDelta,
+export function addCandidate(
+  draft: KnowledgeLedgerDraft,
   input: Pick<KnowledgeCandidate, 'target' | 'action' | 'title' | 'content' | 'category' | 'source_kind'>
     & { evidence_refs: string[] },
   now: string,
@@ -523,6 +627,36 @@ export function summarizeSessionKnowledge(
     .filter(runId => existsSync(runKnowledgeDeltaPath(store, sessionId, runId)))
     .map(runId => readRunKnowledgeDelta(store, sessionId, runId, options.readOnly));
 
+  // Session-level ledger (origin=session) is aggregated alongside run ledgers.
+  // Candidate/input bookkeeping stays separated per origin: cross-origin same
+  // candidate IDs are accounted separately and never merge gates (K7).
+  const sessionLedgerPath = sessionKnowledgeDeltaPath(store, sessionId);
+  const sessionLedger = existsSync(sessionLedgerPath)
+    ? readSessionKnowledgeDelta(store, sessionId, options.readOnly)
+    : null;
+  type LedgerView = {
+    origin: 'run' | 'session';
+    run_id: string;
+    inputs: KnowledgeInput[];
+    candidates: KnowledgeCandidate[];
+  };
+  const ledgerViews: LedgerView[] = [
+    ...ledgers.map(ledger => ({
+      origin: 'run' as const,
+      run_id: ledger.run_id,
+      inputs: ledger.inputs,
+      candidates: ledger.candidates,
+    })),
+    ...(sessionLedger && (sessionLedger.inputs.length > 0 || sessionLedger.candidates.length > 0)
+      ? [{
+          origin: 'session' as const,
+          run_id: '',
+          inputs: sessionLedger.inputs,
+          candidates: sessionLedger.candidates,
+        }]
+      : []),
+  ];
+
   const inputTotals: Record<KnowledgeInputSignal, number> = {
     consumed: 0,
     cited: 0,
@@ -537,14 +671,15 @@ export function summarizeSessionKnowledge(
   };
   const inputs: SessionKnowledgeSummary['inputs'] = [];
   const uniqueInputs = new Set<string>();
-  const candidates = new Map<string, KnowledgeCandidate & { run_ids: string[] }>();
-  for (const ledger of ledgers) {
-    for (const input of ledger.inputs) {
+  const candidates = new Map<string, KnowledgeCandidate & { run_ids: string[]; origin: 'run' | 'session' }>();
+  for (const view of ledgerViews) {
+    for (const input of view.inputs) {
       inputTotals[input.signal] += input.count;
       inputTotalsBySource[input.source][input.signal] += input.count;
       uniqueInputs.add(input.knowledge_id);
       inputs.push({
-        run_id: ledger.run_id,
+        run_id: view.run_id,
+        ...(view.origin === 'session' ? { origin: 'session' as const } : {}),
         knowledge_id: input.knowledge_id,
         signal: input.signal,
         source: input.source,
@@ -552,11 +687,12 @@ export function summarizeSessionKnowledge(
         ...(input.evidence?.length ? { evidence: input.evidence } : {}),
       });
     }
-    for (const candidate of ledger.candidates) {
-      const existing = candidates.get(candidate.candidate_id);
+    for (const candidate of view.candidates) {
+      const key = `${view.origin}\u0000${candidate.candidate_id}`;
+      const existing = candidates.get(key);
       if (existing) {
         existing.occurrences += candidate.occurrences;
-        existing.run_ids.push(ledger.run_id);
+        if (view.origin === 'run') existing.run_ids.push(view.run_id);
         existing.evidence_refs = [...new Set([...existing.evidence_refs, ...candidate.evidence_refs])];
         if (candidate.last_recorded_at > existing.last_recorded_at) {
           existing.last_recorded_at = candidate.last_recorded_at;
@@ -570,7 +706,11 @@ export function summarizeSessionKnowledge(
           existing.promoted_id = candidate.promoted_id;
         }
       } else {
-        candidates.set(candidate.candidate_id, { ...structuredClone(candidate), run_ids: [ledger.run_id] });
+        candidates.set(key, {
+          ...structuredClone(candidate),
+          run_ids: view.origin === 'run' ? [view.run_id] : [],
+          origin: view.origin,
+        });
       }
     }
   }
@@ -809,6 +949,11 @@ function candidateReconciliationPolicies(
   sessionId: string,
   candidate: SessionKnowledgeSummary['candidates'][number],
 ): KnowledgeCandidateReconciliation[] {
+  if ((candidate.origin ?? 'run') === 'session') {
+    const receipt = readSessionKnowledgeReconciliation(store, sessionId, true);
+    const policy = receipt?.candidates.find(item => item.candidate_id === candidate.candidate_id);
+    return policy ? [policy] : [];
+  }
   return candidate.run_ids.flatMap(runId => {
     const path = join(store.runDir(sessionId, runId), 'knowledge-reconciliation.json');
     if (!existsSync(path)) return [];
@@ -912,9 +1057,24 @@ export function promoteSessionKnowledge(
       .map(candidate => candidate.candidate_id)
     : [];
   const blockedForAll = new Set([...skippedReviewRequired, ...skippedSuppressed]);
-  const selected = eligiblePending.filter(candidate => !blockedForAll.has(candidate.candidate_id));
+  const eligibleSelected = eligiblePending.filter(candidate => !blockedForAll.has(candidate.candidate_id));
+  // Cross-origin same-ID candidates carry identical content but divergent
+  // evidence metadata; the corpus write happens once (run-origin copy as the
+  // representative) and write-back below dispatches to each origin ledger.
+  const selectedById = new Map<string, typeof eligibleSelected[number]>();
+  for (const candidate of eligibleSelected) {
+    const existing = selectedById.get(candidate.candidate_id);
+    if (!existing) {
+      selectedById.set(candidate.candidate_id, candidate);
+      continue;
+    }
+    if ((candidate.origin ?? 'run') === 'run' && (existing.origin ?? 'run') !== 'run') {
+      selectedById.set(candidate.candidate_id, candidate);
+    }
+  }
+  const selected = [...selectedById.values()];
   const skippedObserved = options.all
-    ? selected.filter(candidate => candidate.stage === 'observed').map(candidate => candidate.candidate_id)
+    ? eligibleSelected.filter(candidate => candidate.stage === 'observed').map(candidate => candidate.candidate_id)
     : [];
   const unsealedSources = selected.flatMap(candidate =>
     candidate.run_ids
@@ -925,6 +1085,30 @@ export function promoteSessionKnowledge(
     throw new Error(
       `Knowledge candidates require sealed source Runs before promotion: ${unsealedSources.join(', ')}`,
     );
+  }
+  // Session-origin gate (K5, equivalent strength): the Session must be sealed
+  // (delta immutability) and the session reconciliation receipt must exist.
+  // Receipt FRESHNESS is enforced one layer up: promoteReconciledSessionKnowledge
+  // (and review --refresh) re-issue the receipt in the TOCTOU fence position
+  // immediately before this transaction — the same model as run receipts, whose
+  // sealed-run check here likewise trusts the wrapper's refresh. Direct callers
+  // of this low-level entry bypass the freshness fence by contract.
+  const sessionSourceSelected = selected.filter(candidate => (candidate.origin ?? 'run') === 'session');
+  if (sessionSourceSelected.length > 0) {
+    const sessionStatus = store.readBundle(sessionId).session.status;
+    if (sessionStatus !== 'sealed') {
+      throw new Error(
+        `Session-source candidates require Session ${sessionId} to be sealed before promotion `
+        + `(current status: ${sessionStatus})`,
+      );
+    }
+    const sessionReceipt = readSessionKnowledgeReconciliation(store, sessionId, true);
+    if (!sessionReceipt) {
+      throw new Error(
+        `Session ${sessionId} has no session knowledge reconciliation receipt; `
+        + `run "maestro knowledge review ${sessionId} --refresh" first`,
+      );
+    }
   }
   if (selected.length === 0 && alreadyPromoted.length === 0) {
     if (options.all) {
@@ -1000,6 +1184,23 @@ export function promoteSessionKnowledge(
         tx.writeJson(runKnowledgeDeltaPath(store, sessionId, runId), delta, runKnowledgeDeltaSchema);
       }
     }
+    // K7 origin dispatch: session-source intents land in the session delta.
+    if (plan.some(item => (item.candidate.origin ?? 'run') === 'session')) {
+      const sessionDelta = readSessionKnowledgeDelta(store, sessionId);
+      let changed = false;
+      for (const candidate of sessionDelta.candidates) {
+        const item = plan.find(entry => entry.candidate.candidate_id === candidate.candidate_id);
+        if (!item || candidate.status === 'promoted') continue;
+        candidate.status = 'promoting';
+        candidate.promoted_id = item.promotedId;
+        changed = true;
+      }
+      if (changed) {
+        sessionDelta.revision++;
+        sessionDelta.updated_at = intentAt;
+        tx.writeJson(sessionKnowledgeDeltaPath(store, sessionId), sessionDelta, sessionKnowledgeDeltaSchema);
+      }
+    }
   });
 
   const promoted = plan.map(({ candidate, promotedId, supersessionTarget }) => {
@@ -1052,6 +1253,28 @@ export function promoteSessionKnowledge(
         delta.revision++;
         delta.updated_at = promotedAt;
         tx.writeJson(runKnowledgeDeltaPath(store, sessionId, runId), delta, runKnowledgeDeltaSchema);
+      }
+    }
+    // K7 origin dispatch: session-source completion lands in the session delta.
+    if (summary.candidates.some(candidate => (candidate.origin ?? 'run') === 'session')) {
+      const sessionDelta = readSessionKnowledgeDelta(store, sessionId);
+      let changed = false;
+      for (const candidate of sessionDelta.candidates) {
+        const item = promoted.find(entry => entry.candidate_id === candidate.candidate_id);
+        if (!item) continue;
+        candidate.status = 'promoted';
+        candidate.promoted_id = item.promoted_id;
+        candidate.promotion_receipt = {
+          outcome: item.outcome,
+          promoted_at: promotedAt,
+          content_hash: contentHash(candidate.content),
+        };
+        changed = true;
+      }
+      if (changed) {
+        sessionDelta.revision++;
+        sessionDelta.updated_at = promotedAt;
+        tx.writeJson(sessionKnowledgeDeltaPath(store, sessionId), sessionDelta, sessionKnowledgeDeltaSchema);
       }
     }
   });

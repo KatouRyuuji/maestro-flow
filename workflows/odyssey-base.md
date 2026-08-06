@@ -219,7 +219,7 @@ Commit: `"...({slug}): DISCOVER — discovery triage complete"`
 3. **Goal audit:** all `completion_confirmed` → `phase_goals_all_done = true`. Incomplete: Normal → AskUserQuestion | `-y` → auto accept
 4. `current_state = "COMPLETED"`, emit completion summary (format defined by each mode)
 
-Knowledge harvesting into spec/knowhow stores is owned by `ref/finish-work.md` — do not restate its extraction or `archive.json` logic here.
+Knowledge harvesting stages spec/knowhow candidates (never direct corpus writes) and is owned by `ref/finish-work.md` — do not restate its extraction or `archive.json` logic here. Staging happens BEFORE seal; promotion (sealed source + fresh receipt) is a separate post-seal step.
 
 Commit: `"...({slug}): RECORD — summary and knowledge persistence"`
 

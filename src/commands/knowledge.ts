@@ -1,21 +1,30 @@
 import type { Command } from 'commander';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 
 import {
   recordRunKnowledgeInputs,
+  readSessionKnowledgeReconciliation,
   stageRunKnowledgeCandidate,
   summarizeSessionKnowledge,
   type KnowledgeInputSignal,
 } from '../run/knowledge.js';
+import {
+  recordSessionKnowledgeInputs,
+  stageSessionKnowledgeCandidate,
+} from '../run/session-knowledge.js';
+import { resolveWriteAuthority } from '../run/knowledge-identity.js';
 import { auditKnowledge, type KnowledgeAuditScope } from '../knowledge/audit.js';
 import { SessionStore } from '../run/store.js';
 import {
   persistActiveKnowledgeReconciliation,
   persistKnowledgeReconciliation,
+  persistSessionKnowledgeReconciliation,
   promoteReconciledSessionKnowledge,
   currentKnowledgeCorpusFingerprint,
+  ensureSessionKnowledgeReconciliation,
   isKnowledgeReconciliationFresh,
+  isSessionKnowledgeReconciliationFresh,
   readKnowledgeReconciliation,
   reconcileRunKnowledge,
   resolveKnowledgeCandidate,
@@ -37,6 +46,49 @@ function percent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
 }
 
+// ---------------------------------------------------------------------------
+// K8 — signal-id existence validation (wiki index, alias-tolerant resolver)
+// ---------------------------------------------------------------------------
+
+/**
+ * Validate knowledge IDs against the wiki index before they enter any ledger.
+ * Unknown IDs are rejected unless --allow-unknown is passed, in which case a
+ * degraded-marker JSONL trail is written for audit (ghost IDs must never
+ * silently pollute the health contest queue).
+ */
+async function validateKnowledgeSignalIds(
+  projectRoot: string,
+  ids: string[],
+  allowUnknown: boolean | undefined,
+): Promise<void> {
+  const unique = [...new Set(ids.map(id => id.trim()).filter(Boolean))];
+  if (unique.length === 0) return;
+  const { getWikiIndexer, findEntry } = await import('./load.js');
+  const indexer = await getWikiIndexer();
+  const index = await indexer.get();
+  const unknown = unique.filter(id => !findEntry(index, id));
+  if (unknown.length === 0) return;
+  if (!allowUnknown) {
+    throw new Error(
+      `Unknown knowledge ID(s): ${unknown.join(', ')} — no match in the wiki index. `
+      + 'Use --allow-unknown to record them with a degraded marker.',
+    );
+  }
+  const dir = join(projectRoot, '.workflow', 'tmp');
+  mkdirSync(dir, { recursive: true });
+  const trailPath = join(dir, 'knowledge-unknown-signals.jsonl');
+  const now = new Date().toISOString();
+  const actor = process.env.USER ?? process.env.USERNAME ?? 'unknown';
+  const lines = unknown.map(id => JSON.stringify({
+    schema_version: 'knowledge-unknown-signal/1.0',
+    raw_id: id,
+    actor,
+    reason: 'wiki-index-miss',
+    recorded_at: now,
+  }));
+  appendFileSync(trailPath, `${lines.join('\n')}\n`, 'utf8');
+}
+
 type KnowledgeSessionView = ReturnType<typeof buildKnowledgeSessionView>;
 
 function uniqueRunIds(
@@ -52,7 +104,7 @@ function resolutionChoices(
 ): string[] {
   if (policy.promotion_eligibility !== 'review_required') return [];
   const target = policy.canonical_id ?? policy.matches[0]?.knowledge_id;
-  const base = `maestro knowledge resolve ${candidateId} --session ${sessionId}`;
+  const base = `maestro knowledge review ${sessionId} --resolve ${candidateId}`;
   const withTarget = (choice: string): string =>
     `${base} --as ${choice}${target ? ` --target ${target}` : ''} --reason "<reason>"`;
   switch (policy.disposition) {
@@ -88,7 +140,34 @@ function buildKnowledgeSessionView(projectRoot: string, sessionId: string) {
       : false;
     return [runId, { receipt, fresh }] as const;
   }));
+  // Session-level receipt state for origin=session candidates (K7a).
+  const sessionReceipt = readSessionKnowledgeReconciliation(store, sessionId, true);
+  const sessionFresh = sessionReceipt
+    ? isSessionKnowledgeReconciliationFresh(projectRoot, sessionId, sessionReceipt, expectedCorpusFingerprint)
+    : false;
   const candidates = summary.candidates.map(candidate => {
+    if ((candidate.origin ?? 'run') === 'session') {
+      const policy = sessionReceipt?.candidates.find(
+        item => item.candidate_id === candidate.candidate_id,
+      ) ?? null;
+      const freshness = !policy
+        ? 'missing' as const
+        : sessionFresh ? 'fresh' as const : 'stale' as const;
+      const reconcileCommands = !policy || !sessionFresh
+        ? [`maestro knowledge review ${sessionId} --refresh`]
+        : [];
+      return {
+        ...candidate,
+        reconciliation: policy ? { ...policy, freshness } : null,
+        review: {
+          freshness,
+          reconcile_commands: reconcileCommands,
+          resolution_commands: policy
+            ? resolutionChoices(candidate.candidate_id, sessionId, policy)
+            : [],
+        },
+      };
+    }
     const reconciliation = candidate.run_ids.flatMap(runId => {
       const state = receiptByRun.get(runId);
       const policy = state?.receipt?.candidates
@@ -240,18 +319,20 @@ export function registerKnowledgeCommand(program: Command): void {
 
   knowledge
     .command('stage')
-    .description('Stage a reviewable spec or knowhow candidate on the active Run')
+    .description('Stage a reviewable spec or knowhow candidate on the active Run or Session')
     .argument('<target>', `Candidate target: ${KNOWLEDGE_CANDIDATE_TARGETS.join('|')}`)
     .argument('<title>', 'Candidate title')
     .argument('[content]', 'Candidate content (omit when using --content-file)')
     .option('--content-file <path>', 'Read candidate content from a file; "-" reads stdin')
     .option('--action <action>', `Candidate intent: ${KNOWLEDGE_CANDIDATE_ACTIONS.join('|')}`, 'propose')
     .option('--category <category>', 'Spec/knowhow category')
-    .option('--evidence <refs>', 'Comma-separated evidence references')
+    .option('--evidence <refs>', 'Comma-separated evidence references (required for session-source candidates)')
     .option('--signal <signal>', `Also record a knowledge signal: ${KNOWLEDGE_INPUT_SIGNALS.join('|')}`)
     .option('--signal-ids <ids>', 'Comma-separated knowledge IDs for --signal')
-    .option('--run <run-id>', 'Explicit active Run ID')
-    .option('--session <session-id>', 'Explicit Session ID (requires --run)')
+    .option('--run <run-id>', 'Explicit Run ID (run-source staging)')
+    .option('--session <session-id>', 'Explicit Session ID (session-source staging; usable without --run)')
+    .option('--channel <name>', 'Caller identity channel (write authorization, see knowledge-session-decoupling-mvp.md)')
+    .option('--allow-unknown', 'Record unknown signal IDs with a degraded marker instead of rejecting')
     .option('--json', 'Output as JSON')
     .option('--workflow-root <path>', 'Project root containing .workflow', process.cwd())
     .action(async (
@@ -267,6 +348,8 @@ export function registerKnowledgeCommand(program: Command): void {
         signalIds?: string;
         run?: string;
         session?: string;
+        channel?: string;
+        allowUnknown?: boolean;
         json?: boolean;
         workflowRoot: string;
       },
@@ -290,13 +373,16 @@ export function registerKnowledgeCommand(program: Command): void {
           opts.contentFile === '-' ? 0 : resolve(opts.workflowRoot, opts.contentFile!),
           'utf8',
         );
-        if (opts.session && !opts.run) throw new Error('--session requires --run');
         const projectRoot = resolve(opts.workflowRoot);
         const store = new SessionStore(projectRoot);
-        const active = opts.run
-          ? { runId: opts.run, sessionId: opts.session }
-          : store.findUniqueActiveRun();
-        if (!active) throw new Error('No unique active Run found; pass --run and optionally --session');
+        const authority = resolveWriteAuthority({
+          projectRoot,
+          store,
+          explicitRun: opts.run,
+          explicitSession: opts.session,
+          explicitChannel: opts.channel,
+        });
+        if (authority.warning) console.error(`Warning: ${authority.warning}`);
 
         let signal: KnowledgeInputSignal | null = null;
         let signalIds: string[] = [];
@@ -311,36 +397,63 @@ export function registerKnowledgeCommand(program: Command): void {
         } else if (!opts.signal && opts.signalIds) {
           throw new Error('--signal-ids requires --signal');
         }
+        await validateKnowledgeSignalIds(projectRoot, signalIds, opts.allowUnknown);
 
-        const result = stageRunKnowledgeCandidate(
-          projectRoot,
-          active.runId,
-          {
+        const evidenceRefs = opts.evidence?.split(',');
+        let result: { session_id: string; candidate_id: string; run_id?: string; origin?: 'session' };
+        let signalResult: { recorded: number } | null = null;
+        if (authority.kind === 'run') {
+          result = stageRunKnowledgeCandidate(
+            projectRoot,
+            authority.runId,
+            {
+              target: target as 'spec' | 'knowhow',
+              action: opts.action as typeof KNOWLEDGE_CANDIDATE_ACTIONS[number],
+              title,
+              content,
+              category: opts.category,
+              evidenceRefs,
+            },
+            authority.sessionId,
+          );
+          if (signal) {
+            signalResult = recordRunKnowledgeInputs(
+              projectRoot,
+              authority.runId,
+              signalIds,
+              signal,
+              'manual',
+              authority.sessionId,
+            );
+          }
+        } else {
+          result = stageSessionKnowledgeCandidate(projectRoot, authority.sessionId, {
             target: target as 'spec' | 'knowhow',
             action: opts.action as typeof KNOWLEDGE_CANDIDATE_ACTIONS[number],
             title,
             content,
             category: opts.category,
-            evidenceRefs: opts.evidence?.split(','),
-          },
-          active.sessionId,
-        );
-        const signalResult = signal
-          ? recordRunKnowledgeInputs(
+            evidenceRefs,
+          });
+          if (signal) {
+            signalResult = recordSessionKnowledgeInputs(
               projectRoot,
-              active.runId,
+              authority.sessionId,
               signalIds,
               signal,
               'manual',
-              active.sessionId,
-            )
-          : null;
+            );
+          }
+        }
         if (opts.json) {
           console.log(JSON.stringify({ ...result, signal_recorded: signalResult?.recorded ?? 0 }, null, 2));
           return;
         }
+        const where = authority.kind === 'run'
+          ? `${result.session_id}/${result.run_id}`
+          : `${result.session_id} (session source)`;
         console.log(
-          `Staged ${result.candidate_id} on ${result.session_id}/${result.run_id}`
+          `Staged ${result.candidate_id} on ${where}`
           + (signalResult ? `; recorded ${signalResult.recorded} signal(s) as ${opts.signal}` : '')
           + `; review after completion with "maestro knowledge review ${result.session_id}".`,
         );
@@ -352,13 +465,15 @@ export function registerKnowledgeCommand(program: Command): void {
 
   knowledge
     .command('record')
-    .description('Record explicit knowledge attribution on the active Run without staging a candidate')
+    .description('Record explicit knowledge attribution on the active Run or Session without staging a candidate')
     .argument('<knowledge-ids...>', 'Knowledge IDs to attribute')
     .option('--signal <signal>', `Attribution signal: ${KNOWLEDGE_INPUT_SIGNALS.join('|')}`, 'consumed')
     .option('--source <source>', `Attribution source: ${KNOWLEDGE_INPUT_SOURCES.join('|')}`, 'search')
     .option('--evidence <refs>', 'Comma-separated evidence anchors (artifact/output/test refs)')
-    .option('--run <run-id>', 'Explicit active Run ID')
-    .option('--session <session-id>', 'Explicit Session ID (requires --run)')
+    .option('--run <run-id>', 'Explicit Run ID (run-source attribution)')
+    .option('--session <session-id>', 'Explicit Session ID (session-source attribution; usable without --run)')
+    .option('--channel <name>', 'Caller identity channel (write authorization)')
+    .option('--allow-unknown', 'Record unknown knowledge IDs with a degraded marker instead of rejecting')
     .option('--json', 'Output as JSON')
     .option('--workflow-root <path>', 'Project root containing .workflow', process.cwd())
     .action(async (
@@ -369,12 +484,13 @@ export function registerKnowledgeCommand(program: Command): void {
         evidence?: string;
         run?: string;
         session?: string;
+        channel?: string;
+        allowUnknown?: boolean;
         json?: boolean;
         workflowRoot: string;
       },
     ) => {
       try {
-        if (opts.session && !opts.run) throw new Error('--session requires --run');
         if (!KNOWLEDGE_INPUT_SIGNALS.includes(opts.signal as KnowledgeInputSignal)) {
           throw new Error(`--signal must be one of ${KNOWLEDGE_INPUT_SIGNALS.join(', ')}`);
         }
@@ -383,26 +499,47 @@ export function registerKnowledgeCommand(program: Command): void {
         }
         const projectRoot = resolve(opts.workflowRoot);
         const store = new SessionStore(projectRoot);
-        const active = opts.run
-          ? { sessionId: store.findRun(opts.run, opts.session).sessionId, runId: opts.run }
-          : store.findUniqueActiveRun();
-        if (!active) throw new Error('No unique active Run found; pass --run and optionally --session');
-        const result = recordRunKnowledgeInputs(
+        const authority = resolveWriteAuthority({
           projectRoot,
-          active.runId,
-          knowledgeIds,
-          opts.signal as KnowledgeInputSignal,
-          opts.source as typeof KNOWLEDGE_INPUT_SOURCES[number],
-          active.sessionId,
-          opts.evidence?.split(',').map(ref => ref.trim()).filter(Boolean) ?? [],
-        );
+          store,
+          explicitRun: opts.run,
+          explicitSession: opts.session,
+          explicitChannel: opts.channel,
+        });
+        if (authority.warning) console.error(`Warning: ${authority.warning}`);
+        await validateKnowledgeSignalIds(projectRoot, knowledgeIds, opts.allowUnknown);
+        const evidence = opts.evidence?.split(',').map(ref => ref.trim()).filter(Boolean) ?? [];
+        let result: { session_id: string; recorded: number; run_id?: string; origin?: 'session' };
+        if (authority.kind === 'run') {
+          result = recordRunKnowledgeInputs(
+            projectRoot,
+            authority.runId,
+            knowledgeIds,
+            opts.signal as KnowledgeInputSignal,
+            opts.source as typeof KNOWLEDGE_INPUT_SOURCES[number],
+            authority.sessionId,
+            evidence,
+          );
+        } else {
+          result = recordSessionKnowledgeInputs(
+            projectRoot,
+            authority.sessionId,
+            knowledgeIds,
+            opts.signal as KnowledgeInputSignal,
+            opts.source as typeof KNOWLEDGE_INPUT_SOURCES[number],
+            evidence,
+          );
+        }
         if (opts.json) {
           console.log(JSON.stringify(result, null, 2));
           return;
         }
+        const where = authority.kind === 'run'
+          ? `${result.session_id}/${result.run_id}`
+          : `${result.session_id} (session source)`;
         console.log(
           `Recorded ${result.recorded} input(s) as ${opts.signal} (source ${opts.source}) `
-          + `on ${result.session_id}/${result.run_id}; `
+          + `on ${where}; `
           + `review with "maestro knowledge review ${result.session_id}".`,
         );
       } catch (error) {
@@ -415,7 +552,7 @@ export function registerKnowledgeCommand(program: Command): void {
     .command('reconcile')
     .description('[internal] Match Run candidates against existing knowledge (auto-run by check; use review --refresh)')
     .option('--run <run-id>', 'Explicit active or sealed Run ID')
-    .option('--session <session-id>', 'Explicit Session ID (requires --run)')
+    .option('--session <session-id>', 'Explicit Session ID of the target Run')
     .option('--json', 'Output as JSON')
     .option('--workflow-root <path>', 'Project root containing .workflow', process.cwd())
     .action(async (opts: {
@@ -425,13 +562,23 @@ export function registerKnowledgeCommand(program: Command): void {
       workflowRoot: string;
     }) => {
       try {
-        if (opts.session && !opts.run) throw new Error('--session requires --run');
+        if (opts.session && !opts.run) {
+          throw new Error(
+            'reconcile is Run-scoped: pass --run <run-id> '
+            + '(session-level reconciliation uses "maestro knowledge review <session-id> --refresh")',
+          );
+        }
         const projectRoot = resolve(opts.workflowRoot);
         const store = new SessionStore(projectRoot);
         const active = opts.run
           ? { sessionId: store.findRun(opts.run, opts.session).sessionId, runId: opts.run }
           : store.findUniqueActiveRun();
-        if (!active) throw new Error('No unique active Run found; pass --run and optionally --session');
+        if (!active) {
+          throw new Error(
+            'No active Run to reconcile; pass --run <run-id> '
+            + '(session-level reconciliation uses "maestro knowledge review <session-id> --refresh")',
+          );
+        }
         const receipt = await reconcileRunKnowledge(
           projectRoot,
           active.sessionId,
@@ -573,6 +720,10 @@ export function registerKnowledgeCommand(program: Command): void {
           for (const runId of uniqueRunIds(view.candidates)) {
             const receipt = await reconcileRunKnowledge(projectRoot, sessionId, runId);
             persistKnowledgeReconciliation(projectRoot, receipt);
+          }
+          if (view.candidates.some(candidate => (candidate.origin ?? 'run') === 'session')) {
+            const sessionReceipt = ensureSessionKnowledgeReconciliation(projectRoot, sessionId);
+            persistSessionKnowledgeReconciliation(projectRoot, sessionReceipt);
           }
           view = buildKnowledgeSessionView(projectRoot, sessionId);
         }

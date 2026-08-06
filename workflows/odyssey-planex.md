@@ -223,12 +223,15 @@ Max iterations (default 3) prevents infinite loops.
 
 ## Knowledge Persistence (§8)
 
+Follow-up = governed candidate staging, NEVER a direct corpus write: `maestro knowledge stage spec "<title>" --content-file <path|-> --run {run_id} --category <cat>` (stage BEFORE seal; promote only after seal with a fresh receipt).
+
+
 | Category | Content | Follow-up |
 |----------|---------|-----------|
-| Multi-round fix cycle pattern | Problem scenario + fix iteration + final approach | `/maestro-spec debug` |
-| Reusable implementation pattern | Pattern + applicable scope + code template | `/maestro-spec coding` |
-| Acceptance criteria template | Standard template + verify_method suggestion | `/maestro-spec review` |
-| Generalization pattern | Signature + risk + fix template | `/maestro-spec coding` |
+| Multi-round fix cycle pattern | Problem scenario + fix iteration + final approach | `stage spec → debug` |
+| Reusable implementation pattern | Pattern + applicable scope + code template | `stage spec → coding` |
+| Acceptance criteria template | Standard template + verify_method suggestion | `stage spec → review` |
+| Generalization pattern | Signature + risk + fix template | `stage spec → coding` |
 
 ---
 
@@ -305,5 +308,5 @@ Status:      {ALL_PASSED|PARTIAL|ESCALATED}
 | UI-related findings | `/maestro-odyssey <component> --mode ui` |
 | Document pattern | `/maestro-learn decompose <module>` |
 | Second opinion | `/maestro-learn consult <understanding.md>` |
-| Reusable pattern to persist | `/maestro-spec coding "..."` |
+| Reusable pattern to persist | `stage spec → coding` |
 | Pending decisions | Filter evidence phase=decision status=pending |

@@ -743,9 +743,20 @@ export function registerSessionCommand(program: Command): void {
   // ── Step-driving commands (migrated from maestro run) ─────────────────────
 
   const VALID_VERDICTS: CompletionVerdict[] = ['done', 'done-with-concerns', 'needs-retry', 'blocked'];
+  /** Ready-vocabulary aliases (report frontmatter layer) mapped onto the
+   * chain-advance vocabulary: ready→done, ready_with_concerns→done-with-concerns,
+   * failed→needs-retry. `blocked` exists in both and needs no alias. */
+  const VERDICT_ALIASES: Readonly<Record<string, CompletionVerdict>> = {
+    ready: 'done',
+    'ready-with-concerns': 'done-with-concerns',
+    failed: 'needs-retry',
+  };
+  const VERDICT_ALIAS_LABEL = 'aliases: ready|ready_with_concerns|failed';
   const parseVerdict = (raw: string | undefined): CompletionVerdict | null => {
-    const normalized = (raw ?? 'done').trim().toLowerCase().replace(/_/g, '-');
-    return (VALID_VERDICTS as string[]).includes(normalized) ? (normalized as CompletionVerdict) : null;
+    if (!raw) return 'done';
+    const normalized = raw.trim().toLowerCase().replace(/_/g, '-');
+    if ((VALID_VERDICTS as string[]).includes(normalized)) return normalized as CompletionVerdict;
+    return VERDICT_ALIASES[normalized] ?? null;
   };
 
   session
@@ -790,7 +801,7 @@ export function registerSessionCommand(program: Command): void {
     .command('done [run-id]')
     .description('Complete a Run step and advance the chain (returns continuation)')
     .option('--session <id>', 'explicit Session ID')
-    .option('--verdict <verdict>', `completion verdict: ${VALID_VERDICTS.join('|')} (default done)`)
+    .option('--verdict <verdict>', `completion verdict: ${VALID_VERDICTS.join('|')} (default done; ${VERDICT_ALIAS_LABEL})`)
     .option('--summary <text>', 'handoff.summary fallback when the report frontmatter left it empty')
     .option('--reason <text>', 'blocker reason (blocked) merged into handoff concerns')
     .option('--note <text>', 'supplementary concern merged into the handoff (repeatable)', collect, [])
@@ -818,7 +829,7 @@ export function registerSessionCommand(program: Command): void {
       try {
         const projectRoot = resolve(opts.workflowRoot);
         const verdict = parseVerdict(opts.verdict);
-        if (!verdict) throw new Error(`invalid --verdict "${opts.verdict}"; valid: ${VALID_VERDICTS.join(', ')}`);
+        if (!verdict) throw new Error(`invalid --verdict "${opts.verdict}"; valid: ${VALID_VERDICTS.join(', ')} (${VERDICT_ALIAS_LABEL})`);
         const store = new SessionStore(projectRoot);
         let sessionId: string;
         let runId: string;

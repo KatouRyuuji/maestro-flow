@@ -595,8 +595,25 @@ const reportNextItemSchema = z.union([
   }).strict(),
 ]);
 
+/** Frontmatter verdict accepts the chain-advance tokens too and maps them onto
+ * the report-layer ready vocabulary (mirroring the CLI alias table), so an
+ * agent that mirrors `session done --verdict` and writes `verdict: done` in
+ * report.md never hard-fails the frontmatter. Ready tokens stay exact/case
+ * sensitive, as before. */
+const reportVerdictSchema = z.preprocess(
+  (value) => {
+    if (typeof value !== 'string') return value;
+    const token = value.trim().toLowerCase().replace(/_/g, '-');
+    if (token === 'done') return 'ready';
+    if (token === 'done-with-concerns') return 'ready_with_concerns';
+    if (token === 'needs-retry') return 'failed';
+    return value;
+  },
+  z.enum(['ready', 'ready_with_concerns', 'blocked', 'failed']).default('ready'),
+);
+
 export const reportFrontmatterSchema = z.object({
-  verdict: z.enum(['ready', 'ready_with_concerns', 'blocked', 'failed']).default('ready'),
+  verdict: reportVerdictSchema,
   summary: z.string().default(''),
   constraints: z.array(reportConstraintItemSchema).default([]),
   decisions: z.array(reportDecisionItemSchema).default([]),

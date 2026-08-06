@@ -223,7 +223,7 @@ New knowledge created here must flow through the candidate pipeline, not direct 
 
 ### 6b. Spec routing
 
-MANDATORY recommendation: `/maestro-spec <category> <content>`. Mapping: pattern→`coding`, decision→`arch`, bug→`debug`, knowhow→`review`.
+Spec-class fragments flow through the same candidate pipeline as 6a (never direct corpus writes): `maestro knowledge stage spec "<title>" --content-file <path|-> --run <run-id> --category <mapping>`. Mapping: pattern→`coding`, decision→`arch`, bug→`debug`, knowhow→`review`. Promotion happens post-seal via `review --refresh → promote`.
 
 ### 6c. Issue routing
 

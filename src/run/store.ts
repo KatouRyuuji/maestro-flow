@@ -734,6 +734,28 @@ export class SessionStore {
     return active;
   }
 
+  /**
+   * Enumerate Sessions currently in `running` status with their active Run
+   * (if any). Used by the knowledge write-authority resolver to implement the
+   * narrowed single-session scan and fail-closed ambiguity reporting.
+   */
+  listRunningSessions(): Array<{ sessionId: string; activeRunId: string | null }> {
+    if (!existsSync(this.sessionsRoot)) return [];
+    const running: Array<{ sessionId: string; activeRunId: string | null }> = [];
+    for (const sessionId of readdirSync(this.sessionsRoot).sort()) {
+      const sessionPath = join(this.sessionsRoot, sessionId, 'session.json');
+      if (!existsSync(sessionPath)) continue;
+      try {
+        const session = this.readValidated(sessionPath, sessionStateSchema);
+        if (session.status !== 'running') continue;
+        running.push({ sessionId, activeRunId: session.active_run_id ?? null });
+      } catch {
+        // Corrupt sessions cannot participate in authority resolution.
+      }
+    }
+    return running;
+  }
+
   issueRecallConfirmation(input: IssueRecallConfirmationInput): { token: string; record: RecallConfirmationRecord } {
     return this.withLock(() => {
       const registry = this.readRecallRegistryUnlocked();

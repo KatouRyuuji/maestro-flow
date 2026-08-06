@@ -55,7 +55,7 @@ next:
 ---
 ```
 
-2. Before completion, stage reusable recipes/pitfalls with `maestro knowledge stage knowhow "<title>" --content-file <path|-> --run <run_id>`; write content to a temp file, never inline. Search/injection is exposure only; use `--signal cited|validated|contradicted --signal-ids <comma-separated ids>` on the same stage command for explicit relations.
+2. Before completion, stage reusable recipes/pitfalls with `maestro knowledge stage knowhow "<title>" --content-file <path|-> --run <run_id>` (session source without a Run: `--session <session-id> --evidence <file:line,...>` — no Run required); write content to a temp file, never inline. Search/injection is exposure only; use `--signal cited|validated|contradicted --signal-ids <comma-separated ids>` on the same stage command for explicit relations.
 3. Run `maestro session done <run_id>`. The `check` step is optional — done includes the same evaluation through the completion engine. Completion returns candidate IDs but never promotes project knowledge.
 4. Completion is fail-closed: if `session done` fails, fix the blocking gate (missing or malformed `outputs/` artifacts) and retry. While it keeps failing, do not archive/clean the team or claim success — keep the team active (status=paused) and surface the blocking gate to the user.
 5. Review durable candidates and evidence with `maestro knowledge review <session_id>`; promote selected candidates explicitly. Session seal does not discard an unreviewed backlog.

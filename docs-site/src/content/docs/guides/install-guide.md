@@ -60,34 +60,12 @@ maestro install
 
 ### 可选技能包
 
-以下 3 个技能包默认不选中（`defaultSelected: false`），按需勾选安装。安装后可经 `maestro install toggle` 逐个启用/禁用（见下文「逐个启用/禁用技能」章节）。
+> 自 v0.5.61 起 skill 面大幅精简：20 个零使用团队/辅助 skill 已删除，
+> 原 skills-extra-team / skills-meta 成员或并入核心、或移除。现仅保留 1 个实质可选包。
 
-#### skills-extra-team（16 个额外团队技能）
+#### skills-scholar（10 个学术技能，选装）
 
-团队协作增强技能，覆盖架构、前端、调试、动效、性能、UX、无障碍等场景：
-
-| 技能 | 说明 |
-|------|------|
-| team-arch-opt | 架构优化 |
-| team-brainstorm | 多角色头脑风暴 |
-| team-designer | 团队技能脚手架 |
-| team-frontend | 前端开发 |
-| team-frontend-debug | 前端调试（Chrome DevTools） |
-| team-interactive-craft | 交互组件打磨 |
-| team-issue | 问题闭环 |
-| team-motion-design | 动效设计 |
-| team-perf-opt | 性能优化 |
-| team-planex | 规划执行 |
-| team-roadmap-dev | 路线图开发 |
-| team-ui-polish | UI 打磨 |
-| team-uidesign | 设计令牌审计 |
-| team-ultra-analyze | 深度协作分析 |
-| team-ux-improve | UX 改进 |
-| team-visual-a11y | 视觉无障碍 QA |
-
-#### skills-scholar（10 个学术技能）
-
-学术写作与研究的端到端技能链：
+学术写作与研究的端到端技能链，默认不安装（源自 `optional/skills/`），用 `maestro install toggle` 启用：
 
 | 技能 | 说明 |
 |------|------|
@@ -102,31 +80,29 @@ maestro install
 | scholar-thesis-docx | 学位论文排版 |
 | scholar-publish | 投稿准备 |
 
-#### skills-meta（5 个元技能）
+#### skills-extra-team / skills-meta（遗留空 bundle）
 
-技能与提示词的工程化工具：
+仅为旧清单回放迁移保留的 no-op 分组，不再安装任何技能。原成员去向：
 
-| 技能 | 说明 |
-|------|------|
-| skill-generator | 技能生成器 |
-| skill-simplify | 技能精简 |
-| skill-tuning | 技能调优 |
-| prompt-generator | 提示词生成器 |
-| delegation-check | 委托契约检查 |
+- `team-arch-opt`、`team-issue`、`team-perf-opt` → 转为内置团队技能（skills-team）
+- `skill-generator`、`skill-simplify`、`skill-iter-tune`、`skill-tuning`、`workflow-skill-designer` → 并入核心 `skills` 组件（始终安装）
+- 其余 17 个 team-* 及 `prompt-generator`、`delegation-check`、`codify-to-knowhow`、`insight-challenge` → 已删除
 
 ### 内置团队技能（始终安装）
 
-以下 9 个团队技能随核心组件自动安装，无需单独选择：
+以下 8 个团队技能随核心组件（`skills-team`）自动安装，无需单独选择：
 
-- team-adversarial-swarm
+- team-arch-opt
 - team-coordinate
-- team-executor
+- team-issue
 - team-lifecycle-v4
-- team-quality-assurance
+- team-perf-opt
 - team-review
 - team-swarm
-- team-tech-debt
 - team-testing
+
+另有 6 个核心元技能随 `skills` 组件始终安装：maestro-help、skill-generator、
+skill-iter-tune、skill-simplify、skill-tuning、workflow-skill-designer。
 
 ### 逐个启用/禁用技能（install toggle）
 
@@ -143,8 +119,8 @@ maestro install toggle --list
 maestro install toggle --type skill --list
 
 # 非交互式启用/禁用（逗号分隔）
-maestro install toggle --type skill --enable team-planex,scholar-writing
-maestro install toggle --type skill --disable team-arch-opt
+maestro install toggle --type skill --enable scholar-writing,scholar-review
+maestro install toggle --type skill --disable scholar-latex-organizer
 
 # 项目级安装作用域
 maestro install toggle --path ./my-project --list
@@ -186,9 +162,10 @@ maestro install --path <dir>
 
 | 旧 ID | 新 ID |
 |--------|-------|
-| team-arch-opt | skills-extra-team |
-| team-brainstorm | skills-extra-team |
-| scholar-ideation | skills-scholar |
+| team-arch-opt / team-issue / team-perf-opt | skills-team（已转为内置） |
+| team-brainstorm 等已删除 team 技能 | skills-extra-team（遗留空 bundle，无操作） |
+| prompt-generator / delegation-check | skills-meta（遗留空 bundle，无操作） |
+| scholar-ideation 等 scholar-* | skills-scholar |
 | ... | ... |
 
 迁移在安装时自动执行，无需手动操作。

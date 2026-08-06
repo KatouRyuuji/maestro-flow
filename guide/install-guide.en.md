@@ -59,23 +59,30 @@ Since v0.5.32, install components have been consolidated from 53 individual entr
 
 | Group | Included Skills | Description |
 |-------|----------------|-------------|
-| **skills-extra-team** | team-arch-opt, team-brainstorm, team-designer, team-frontend, team-issue, team-planex, etc. | Team collaboration skills |
-| **skills-scholar** | scholar-anti-ai-writing, scholar-citation-verify, scholar-experiment, scholar-ideation, etc. | Academic research skills |
-| **skills-meta** | meta-workflow, meta-analysis, etc. | Meta skills and workflow orchestration |
+| **skills-scholar** | scholar-ideation, scholar-writing, scholar-review, scholar-rebuttal-pro, etc. (10 skills) | Academic research skills (optional, not installed by default; sourced from `optional/skills/`) |
+| **skills-extra-team** | — | Legacy no-op bundle, retained only for manifest-replay migration |
+| **skills-meta** | — | Legacy no-op bundle (members moved into core `skills`), retained for migration |
+
+> Since v0.5.61 the skill surface was sharply trimmed: 20 zero-usage team/helper
+> skills were deleted and the 10 `scholar-*` skills became opt-in. Manage skills
+> with `maestro install toggle`, e.g. `maestro install toggle --enable scholar-writing`.
 
 ### Built-in Team Skills (always installed)
 
-The following 9 team skills are automatically installed with core components:
+The following 8 team skills are automatically installed with the core `skills-team` component:
 
-- team-adversarial-swarm
+- team-arch-opt
 - team-coordinate
-- team-executor
+- team-issue
 - team-lifecycle-v4
-- team-quality-assurance
+- team-perf-opt
 - team-review
 - team-swarm
-- team-tech-debt
 - team-testing
+
+Six additional core meta skills are always installed with the `skills` component:
+maestro-help, skill-generator, skill-iter-tune, skill-simplify, skill-tuning,
+workflow-skill-designer.
 
 ---
 
@@ -253,9 +260,10 @@ Legacy individual skill IDs are automatically mapped to new group IDs:
 
 | Old ID | New ID |
 |--------|--------|
-| team-arch-opt | skills-extra-team |
-| team-brainstorm | skills-extra-team |
-| scholar-ideation | skills-scholar |
+| team-arch-opt / team-issue / team-perf-opt | skills-team (now built-in) |
+| team-brainstorm and other deleted team skills | skills-extra-team (legacy no-op bundle) |
+| prompt-generator / delegation-check | skills-meta (legacy no-op bundle) |
+| scholar-ideation and other scholar-* | skills-scholar |
 | ... | ... |
 
 Migration runs automatically during install, no manual action needed.

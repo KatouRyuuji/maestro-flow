@@ -202,12 +202,15 @@ Review findings with severity >= medium.
 
 ## Knowledge Persistence (§8)
 
+Follow-up = governed candidate staging, NEVER a direct corpus write: `maestro knowledge stage spec "<title>" --content-file <path|-> --run {run_id} --category <cat>` (stage BEFORE seal; promote only after seal with a fresh receipt).
+
+
 | Category | Content | Follow-up |
 |----------|---------|-----------|
-| Cross-dimension recurring pattern | Pattern + affected dimensions + coding standard | `$maestro-spec review` |
-| Security finding | Vulnerability type + triggers + fix approach | `$maestro-spec debug` |
-| Architecture violation pattern | Violation + correct boundary + verification | `$maestro-spec arch` |
-| Reusable generalization pattern | Signature + risk + fix template + scope | `$maestro-spec coding` |
+| Cross-dimension recurring pattern | Pattern + affected dimensions + coding standard | `stage spec → review` |
+| Security finding | Vulnerability type + triggers + fix approach | `stage spec → debug` |
+| Architecture violation pattern | Violation + correct boundary + verification | `stage spec → arch` |
+| Reusable generalization pattern | Signature + risk + fix template + scope | `stage spec → coding` |
 
 ---
 

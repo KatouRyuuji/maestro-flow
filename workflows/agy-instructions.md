@@ -231,20 +231,20 @@ Runtime birth packets, `maestro run brief`, completion receipts, and the `maestr
 
 1. Search and automatic injection are exposure; explicit `load` records consumption.
 2. Put accepted decisions and locked constraints in `report.md` frontmatter; completion stages them automatically as pending candidates.
-3. Stage reusable recipes or pitfalls with `maestro knowledge stage spec|knowhow "<title>" --content-file <path|-> --run <run-id> [--category <category>]`; write content to a temp file, never inline.
+3. Stage reusable recipes or pitfalls with `maestro knowledge stage spec|knowhow "<title>" --content-file <path|-> --run <run-id> [--category <category>]`; write content to a temp file, never inline. Without a Run, session-source staging works the same way via `--session <session-id> --evidence <file:line,...>` (write authority resolves through identity tiers; with nothing running a daily synthetic knowledge Session is created).
 4. When staging content that cites, validates, or contradicts existing knowledge, add `--signal cited|validated|contradicted --signal-ids <comma-separated ids>` (space-separated values leak into positional arguments).
 5. Routine Run completion never writes project Spec/Knowhow directly and never promotes candidates.
 6. The finish checklist is soft guidance. Work through it and put intentionally unresolved items in `report.md` concerns. Unresolved reconciliation may be sealed but cannot be promoted.
 7. Review, resolve, promote, supersede, conflict marking, and audit are explicit governance actions. Execute them only when the user requests knowledge governance or a confirmed workflow step requires it.
 
-Outside a Run, direct `maestro spec add` or `maestro knowhow add` writes are reserved for explicit knowledge-management work. Category routing: decisions→`arch`, patterns→`coding`, pitfalls→`debug`/`learning`, rules→`review`, tests→`test`.
+Outside a Run, governed staging remains available (see item 3); direct `maestro spec add` or `maestro knowhow add` writes stay reserved for explicit knowledge-management work. Category routing: decisions→`arch`, patterns→`coding`, pitfalls→`debug`/`learning`, rules→`review`, tests→`test`.
 
 ### Governance Boundary
 
 Use commands supplied by the current `knowledge_context`, completion receipt, and `run check` output; those Runtime surfaces override static examples here.
 
 - `maestro knowledge review <session-id> --refresh` refreshes reconciliation; `--resolve` records human disposition.
-- Promotion requires eligible candidates, fresh receipts, and sealed source Runs; normal completion never implies approval.
+- Promotion requires eligible candidates with fresh receipts and sealed sources: sealed Runs for run-source candidates; sealed Session + fresh session receipt (+ non-empty `--evidence` at stage) for session-source candidates. Normal completion never implies approval.
 - Session seal may report a pending backlog but never silently promotes or discards candidates.
 - Deprecated/superseded knowledge remains auditable and is excluded from normal search and injection.
 - Low exposure never triggers automatic deletion or pruning.

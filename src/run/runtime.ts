@@ -38,6 +38,8 @@ import {
   applyAutomaticKnowledgeSuppression,
   ensureKnowledgeReconciliation,
   isKnowledgeReconciliationFresh,
+  ensureSessionKnowledgeReconciliation,
+  persistSessionKnowledgeReconciliation,
   readKnowledgeReconciliation,
   reconcileRunKnowledgeSync,
   reconciliationForCandidate,
@@ -2075,6 +2077,7 @@ function buildFinishChecklist(projectRoot: string, run: CommandRun, frontmatter:
     lines.push('report.md handoff frontmatter is empty — fill summary (plus concerns/decisions) before completing; the sealed handoff is derived from it.');
   }
   lines.push(`Stage knowledge before sealing: put accepted decisions and locked constraints in report.md frontmatter (completion stages them automatically); reusable recipes/pitfalls → \`maestro knowledge stage knowhow "<title>" "<content>" --run ${run.run_id}\`. Do not write project spec/knowhow directly from routine Run completion.`);
+  lines.push('Session-source candidates (staged with `--session`, run-less work) promote only after the Session is sealed with a fresh session reconciliation receipt; `maestro knowledge review <session-id> --refresh` repairs missing/stale session receipts.');
   lines.push(`Inspect the reconciliation receipt created by this check. Resolve semantic duplicates, conflicts, or supersession candidates with \`maestro knowledge review <session-id> --resolve <candidate-id> --as <duplicate|related|conflict|supersede|unique> --target <knowledge-id> --reason "<reason>"\`. Unresolved items may be sealed but cannot be promoted.`);
   lines.push(`Record stronger knowledge relations during staging: \`maestro knowledge stage <target> "<title>" "<content>" --run ${run.run_id} --signal cited|validated|contradicted --signal-ids <knowledge-ids>\`. A search result or automatic injection is exposure only; it is not evidence of use.`);
   lines.push(`Attribute search hits before citing: \`maestro knowledge record <knowledge-ids...> --signal consumed|cited|validated|contradicted --source search --run ${run.run_id}\` records pure attribution without staging a candidate (use stage --signal only when a candidate is intended); record/load turn exposure into evidence.`);
@@ -2372,6 +2375,16 @@ export function sealSession(projectRoot: string, sessionId: string, summary = ''
   const projected = ensureSessionProjection(state, projectSessionEntry(bundle.session), false);
   if (projected.active_session_id === sessionId) projected.active_session_id = null;
   writeStateJson(projectRoot, projected);
+  // K6: refresh the session-level reconciliation receipt at seal time
+  // (isomorphic to the run-seal reconciliation write). Best-effort: a receipt
+  // failure must not block sealing — the missing receipt keeps promotion of
+  // session-origin candidates fail-closed until review --refresh repairs it.
+  try {
+    const sessionReceipt = ensureSessionKnowledgeReconciliation(projectRoot, sessionId);
+    persistSessionKnowledgeReconciliation(projectRoot, sessionReceipt);
+  } catch {
+    // Missing receipt → promotion of session-origin candidates fails closed.
+  }
   const knowledge = summarizeSessionKnowledge(projectRoot, sessionId, { readOnly: true });
   const reconciliation = knowledge.candidates.map(candidate => {
     const policies = reconciliationForCandidate(
@@ -2977,7 +2990,6 @@ export function completeRun(
       summary_fallback: options.summaryFallback ?? null,
       decisions: options.decisions ?? [],
       chain_verdict: options.chainVerdict ?? null,
-      require_running_session: options.requireRunningSession ?? false,
       chain_proposal: preparedInputs.chainProposal
         ? {
             path: preparedInputs.chainProposal.path,

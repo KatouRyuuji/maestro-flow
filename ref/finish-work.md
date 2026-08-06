@@ -1,5 +1,7 @@
 # Workflow: finish-work
 
+> Knowledge model: session-level decoupling MVP. Wrap-up **stages candidates** (run-source when a run is linked, session-source otherwise); it NEVER writes the spec/knowhow corpus directly. Corpus writes happen only via `maestro knowledge promote` after the source is sealed with a fresh reconciliation receipt.
+
 ## Inputs
 
 Caller passes: `SESSION_DIR`, `SESSION_TYPE` (grill | brainstorm | analyze | blueprint | plan | execute | verify), `SESSION_ID`, `LINKED_RUN` (optional).
@@ -25,17 +27,17 @@ If none present → skip Steps 2-3, continue with empty `content_refs` and `extr
 
 Iterate detected files; build a `fragments[]` array. Each fragment: `{ kind, category, title, content, keywords[], confidence, ref }`.
 
-| Source field | kind | Target store | Default category |
-|--------------|------|--------------|------------------|
+| Source field | kind | Candidate type | Default category |
+|--------------|------|----------------|------------------|
 | `context-package.json#constraints[status=locked]` | rule | spec | `arch` if area matches arch keywords (module/layer/boundary), else `coding` |
-| `context-package.json#insights[]` | knowhow | knowhow (type: `DCS` for decisions, `RCP` for patterns) | `arch` for decisions, `coding` for patterns |
+| `context-package.json#insights[]` | knowhow | knowhow | `arch` for decisions, `coding` for patterns |
 | `conclusions.json#decisions[status=locked]` | rule | spec | `arch` |
-| `conclusions.json#recommendations[]` (priority ≥ medium) | knowhow | knowhow (`REF`) | derived from area |
-| `reflection-log.md` "## Lessons" / "## Pitfalls" sections | learning | spec (category `learning`) or knowhow (`KNW`) by length: < 200 chars → spec, else knowhow | `learning` |
+| `conclusions.json#recommendations[]` (priority ≥ medium) | knowhow | knowhow | derived from area |
+| `reflection-log.md` "## Lessons" / "## Pitfalls" sections | learning | spec (category `learning`) if < 200 chars, else knowhow | `learning` |
 | `{role}/analysis.md` §2 Decisions[status=locked] | rule | spec | role-derived (`arch` for system-architect, `coding` for code-quality, etc.) |
 | `grill-report.md` "## Synthesis" locked decisions | rule | spec | `arch` if scope/integration/security branch, else `coding` |
-| `grill-report.md` "## Risk Register" items (severity ≥ medium) | knowhow | knowhow (`REF`) | `debug` |
-| `terminology.md` locked terms | knowhow | knowhow (`REF`) | `coding` |
+| `grill-report.md` "## Risk Register" items (severity ≥ medium) | knowhow | knowhow | `debug` |
+| `terminology.md` locked terms | knowhow | knowhow | `coding` |
 
 **Confidence scoring** (drop if < 0.5):
 - +0.3 if `status == "locked"` or section is explicit "## Decisions"
@@ -46,22 +48,36 @@ Iterate detected files; build a `fragments[]` array. Each fragment: `{ kind, cat
 
 **Keyword extraction**: take 3-5 lowercased domain terms (filter stop words, take frequency-ranked nouns/identifiers from content).
 
-**Deduplication**: hash `(kind, content[:100])` — skip if any existing spec/knowhow entry has matching hash (MANDATORY, NOT SUBSTITUTABLE by manual Read/Grep: check via `maestro spec list --json` + `maestro knowhow list --json`).
+**Duplicate pre-check** (cheap, advisory): `maestro search "<title keywords>" --json` per fragment; if an entry with the same title already exists in the corpus, skip staging that fragment (`skipped_count++`, reason `duplicate-in-corpus`). Fine-grained duplicate/related/conflict disposition happens later at `maestro knowledge review --resolve` time — do not block staging on fuzzy matches here.
 
-### 3. Route fragments
+### 3. Stage fragments as candidates
 
-Auto mode (`-y`): apply all. Otherwise prompt once with batch summary:
+Write authority (per the knowledge model):
+- `LINKED_RUN` present → run-source: `--run {LINKED_RUN}`.
+- No linked run → session-source: write authority resolves through identity tiers (`--channel`/`MAESTRO_CHANNEL` → host lease → single live hook channel → narrowed scan); with nothing running a daily synthetic knowledge Session (`ksyn-*`) is created idempotently. Session-source staging requires non-empty `--evidence`.
+
+Auto mode (`-y`): stage all approved fragments. Otherwise prompt once with batch summary:
 ```
-Found {N} fragments — {S_spec} spec / {S_knowhow} knowhow.
-Apply? (auto | spec-only | knowhow-only | skip)
+Found {N} fragments — {S_spec} spec / {S_knowhow} knowhow candidates.
+Stage? (auto | spec-only | knowhow-only | skip)
 ```
 
-Then for each fragment in approved buckets:
+For each fragment in approved buckets — MANDATORY, NOT SUBSTITUTABLE by manual Read/Grep, and NEVER inline content (write each fragment body to a temp file first; spaces/quotes/unicode/newlines/leading dashes shift positional arguments):
 
-- **spec**: MANDATORY, NOT SUBSTITUTABLE by manual Read/Grep: `maestro spec add <category> "<title>" "<content>" --keywords {csv} --description "<one-line summary>" --source finish-work` (capture returned id into `extracted_spec_ids[]`)
-- **knowhow**: MANDATORY, NOT SUBSTITUTABLE by manual Read/Grep: `maestro knowhow add --type {DCS|RCP|REF|KNW} --title "{title}" --body "{content}" --keywords {csv}` (capture id into `extracted_knowhow_ids[]`)
-- Below confidence threshold: increment `skipped_count`, do nothing
-- CLI failure: log W002, continue with remaining fragments; flag harvest as [LOW CONFIDENCE] (CLI failure)
+```bash
+# run-source (LINKED_RUN present)
+maestro knowledge stage spec|knowhow "<title>" --content-file <tmpfile> --run {LINKED_RUN} \
+  --category <mapping> --evidence "<source-file>:<section>" [--signal cited --signal-ids <ids>]
+# session-source (no linked run; --evidence mandatory)
+maestro knowledge stage spec|knowhow "<title>" --content-file <tmpfile> \
+  --category <mapping> --evidence "<source-file>:<section>" [--session <session-id> | --channel <name>]
+```
+
+- Capture returned candidate IDs into `staged_candidates[]` (`{candidate_id, origin: run|session, kind}`).
+- Below confidence threshold: increment `skipped_count`, do nothing.
+- CLI failure: log W002, continue with remaining fragments; flag harvest as [LOW CONFIDENCE] (CLI failure).
+
+**Timing law**: staging must happen BEFORE the run/session is sealed (sealed targets reject writes). Promotion is a separate, later step (Step 5 note).
 
 ### 3.5 Domain Term Extraction (interactive, conditional)
 
@@ -87,13 +103,15 @@ Skip conditions:
   - Session has no terminology source files
   - All candidate terms already registered
 
+> Domain glossary writes are a separate store (explicit knowledge-management work), not the governed spec/knowhow corpus — direct `domain add` remains correct here.
+
 ### 4. Write `archive.json`
 
-Overwrites; idempotent. Schema `session-archive/1.0`:
+Overwrites; idempotent. Schema `session-archive/1.1`:
 
 ```jsonc
 {
-  "$schema": "session-archive/1.0",
+  "$schema": "session-archive/1.1",
   "session_id": "{SESSION_ID}",
   "session_type": "{SESSION_TYPE}",
   "session_path": "{SESSION_DIR relative to .workflow/}",
@@ -102,9 +120,8 @@ Overwrites; idempotent. Schema `session-archive/1.0`:
   "extraction": {
     "harvested": true,
     "harvested_at": "{ISO now}",
-    "spec_ids": [/* from Step 3 */],
-    "knowhow_ids": [/* from Step 3 */],
-    "domain_ids": [/* from Step 3.5 */],
+    "staged_candidates": [ /* { candidate_id, origin: run|session, kind } from Step 3 */ ],
+    "domain_ids": [ /* from Step 3.5 */ ],
     "skipped_count": 0
   },
   "pruned": null
@@ -121,14 +138,18 @@ If Step 2 produced zero fragments or user chose skip:
 ```
 === SESSION COMPLETE ===
 Session: {SESSION_ID} ({SESSION_TYPE})
-Wiki:    searchable via `maestro wiki search` (category {arch|coding|review})
-Knowledge: {len(spec_ids)} spec / {len(knowhow_ids)} knowhow extracted, {skipped_count} skipped
+Candidates: {N} staged ({S_spec} spec / {S_knowhow} knowhow), {skipped_count} skipped
+Next: seal the run/session, then `maestro knowledge review <session-id> --refresh` → resolve → promote
+        (candidates become corpus/searchable only after promotion)
 ```
 
 ## Idempotency
 
+- Re-running re-stages only fragments whose duplicate pre-check finds no corpus match; review-time disposition (`--as duplicate`) absorbs any residual double-staging. `archive.json` is overwritten, not appended.
+
 ## Boundary
 
+- Does NOT write the spec/knowhow corpus directly — staging only; the corpus is written exclusively by `maestro knowledge promote` (dual-source gates: run-source = sealed run + fresh receipt; session-source = sealed Session + fresh session receipt + non-empty stage `--evidence`).
 - Does NOT flip `archived_at` or move files.
 - Does NOT prune `context-package.json`.
 - Does NOT touch `state.json` — caller handles artifact registration.
@@ -141,4 +162,4 @@ Knowledge: {len(spec_ids)} spec / {len(knowhow_ids)} knowhow extracted, {skipped
 | E001 | SESSION_DIR missing |
 | E002 | SESSION_TYPE unknown |
 | W001 | No substantive outputs (still completes with empty content_refs) |
-| W002 | A `spec add` / `knowhow add` CLI invocation failed (continue with remaining fragments) |
+| W002 | A `knowledge stage` CLI invocation failed (continue with remaining fragments) |

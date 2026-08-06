@@ -193,7 +193,7 @@ next:
 ```
 Body has fixed sections `Summary`, `Conclusion/Verdict`, `Discussion/Retrospective`, `Artifacts`, `Handoff/Next`, reference `current-plan` via aref, never copy the JSON source of truth.
 
-→ Wrap-up (archiving, spec/knowhow extraction) follows ref/finish-work.md.
+→ Wrap-up (archiving, spec/knowhow candidate extraction) follows ref/finish-work.md — staging happens BEFORE seal; the corpus is written only via post-seal promote.
 
 ---
 

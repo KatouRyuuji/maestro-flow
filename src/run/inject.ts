@@ -130,9 +130,9 @@ export function buildEnvelope(input: EnvelopeInput): string | null {
     '',
     '<!-- session_anchor: read-only grounding. Honor Intent + Boundary Contract before acting.',
     '     If your work would fall outside in_scope (or hit out_of_scope), stop and report via',
-    `     \`${input.completionVerb('<N>')} --status BLOCKED --reason "out_of_scope: ..."\` instead of proceeding.`,
+    `     \`${input.completionVerb('<N>')} --verdict blocked --reason "out_of_scope: ..."\` instead of proceeding.`,
     '     If Accumulated Signals suggest prior work conflicts with your task, report via',
-    `     \`${input.completionVerb('<N>')} --status BLOCKED --reason "drift_conflict: ..."\` instead of proceeding. -->`,
+    `     \`${input.completionVerb('<N>')} --verdict blocked --reason "drift_conflict: ..."\` instead of proceeding. -->`,
     '</session_anchor>',
   ].join('\n');
 }

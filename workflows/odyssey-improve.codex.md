@@ -175,14 +175,17 @@ Diagnosed root causes + applied fixes across all dimensions. **Discover routing:
 
 ## Knowledge Persistence (§9)
 
+Follow-up = governed candidate staging, NEVER a direct corpus write: `maestro knowledge stage spec "<title>" --content-file <path|-> --run {run_id} --category <cat>` (stage BEFORE seal; promote only after seal with a fresh receipt).
+
+
 A_RECORD extra: §8 improvement metrics — re-capture and build before/after comparison table from `baseline_metrics` vs current.
 
 | Category | Content | Follow-up |
 |----------|---------|-----------|
-| Performance pattern | Bottleneck type + fix approach + measurement | `$maestro-spec coding` |
-| Security rule | Vulnerability class + fix + prevention | `$maestro-spec debug` |
-| Architecture constraint | Violation + correct boundary + check | `$maestro-spec arch` |
-| Reliability pattern | Failure mode + handling strategy + verification | `$maestro-spec coding` |
+| Performance pattern | Bottleneck type + fix approach + measurement | `stage spec → coding` |
+| Security rule | Vulnerability class + fix + prevention | `stage spec → debug` |
+| Architecture constraint | Violation + correct boundary + check | `stage spec → arch` |
+| Reliability pattern | Failure mode + handling strategy + verification | `stage spec → coding` |
 
 ---
 
@@ -267,5 +270,5 @@ Goals:       {done}/{total} ({skipped} skipped)
 | UI-related findings | `$maestro-odyssey <component> --mode ui` |
 | Document pattern | `$maestro-learn decompose <module>` |
 | Second opinion | `$maestro-learn consult <understanding.md>` |
-| Design/perf/arch pattern to persist | `$maestro-spec coding\|arch "..."` |
+| Design/perf/arch pattern to persist | `stage spec → coding|arch` |
 | Pending decisions | Filter evidence phase=decision status=pending |

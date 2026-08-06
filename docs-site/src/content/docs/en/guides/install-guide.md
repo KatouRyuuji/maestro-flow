@@ -53,34 +53,14 @@ Since v0.5.32, install components are consolidated from 53 individual entries in
 
 ### Optional Skill Packs
 
-The following 3 skill packs are unchecked by default (`defaultSelected: false`) — opt in as needed. After install, use `maestro install toggle` to enable/disable individual skills (see the *Enable/Disable Individual Skills* section below).
+> Since v0.5.61 the skill surface was sharply trimmed: 20 zero-usage team/helper skills were
+> deleted, and former skills-extra-team / skills-meta members were either merged into core
+> or removed. Only one substantive optional pack remains.
 
-#### skills-extra-team (16 extra team skills)
+#### skills-scholar (10 academic skills, opt-in)
 
-Team collaboration enhancers covering architecture, frontend, debugging, motion, performance, UX, and accessibility:
-
-| Skill | Description |
-|-------|-------------|
-| team-arch-opt | Architecture optimization |
-| team-brainstorm | Multi-role brainstorming |
-| team-designer | Team skill scaffolding |
-| team-frontend | Frontend development |
-| team-frontend-debug | Frontend debugging (Chrome DevTools) |
-| team-interactive-craft | Interactive component crafting |
-| team-issue | Issue resolution pipeline |
-| team-motion-design | Animation & motion design |
-| team-perf-opt | Performance optimization |
-| team-planex | Plan-and-execute pipeline |
-| team-roadmap-dev | Roadmap-driven development |
-| team-ui-polish | UI polish |
-| team-uidesign | Design tokens & audit |
-| team-ultra-analyze | Deep collaborative analysis |
-| team-ux-improve | UX interaction fixes |
-| team-visual-a11y | Visual accessibility QA |
-
-#### skills-scholar (10 academic skills)
-
-End-to-end academic writing and research skill chain:
+End-to-end academic writing and research skill chain. Not installed by default (sourced from
+`optional/skills/`); enable with `maestro install toggle`:
 
 | Skill | Description |
 |-------|-------------|
@@ -95,31 +75,29 @@ End-to-end academic writing and research skill chain:
 | scholar-thesis-docx | Thesis Word formatting |
 | scholar-publish | Post-acceptance preparation |
 
-#### skills-meta (5 meta skills)
+#### skills-extra-team / skills-meta (legacy no-op bundles)
 
-Skill and prompt engineering tooling:
+No-op group bundles retained only for manifest-replay migration; they no longer install any skills. Where former members went:
 
-| Skill | Description |
-|-------|-------------|
-| skill-generator | Skill generator |
-| skill-simplify | Skill simplify |
-| skill-tuning | Skill tuning |
-| prompt-generator | Prompt generator |
-| delegation-check | Delegation check |
+- `team-arch-opt`, `team-issue`, `team-perf-opt` → became built-in team skills (skills-team)
+- `skill-generator`, `skill-simplify`, `skill-iter-tune`, `skill-tuning`, `workflow-skill-designer` → merged into the core `skills` component (always installed)
+- The other 17 team-* skills plus `prompt-generator`, `delegation-check`, `codify-to-knowhow`, `insight-challenge` → deleted
 
 ### Built-in Team Skills (always installed)
 
-The following 9 team skills are installed automatically with the core components — no separate selection needed:
+The following 8 team skills are installed automatically with the core `skills-team` component — no separate selection needed:
 
-- team-adversarial-swarm
+- team-arch-opt
 - team-coordinate
-- team-executor
+- team-issue
 - team-lifecycle-v4
-- team-quality-assurance
+- team-perf-opt
 - team-review
 - team-swarm
-- team-tech-debt
 - team-testing
+
+Six additional core meta skills are always installed with the `skills` component: maestro-help,
+skill-generator, skill-iter-tune, skill-simplify, skill-tuning, workflow-skill-designer.
 
 ### Enable/Disable Individual Skills (install toggle)
 
@@ -136,8 +114,8 @@ maestro install toggle --list
 maestro install toggle --type skill --list
 
 # Non-interactive enable/disable (comma-separated)
-maestro install toggle --type skill --enable team-planex,scholar-writing
-maestro install toggle --type skill --disable team-arch-opt
+maestro install toggle --type skill --enable scholar-writing,scholar-review
+maestro install toggle --type skill --disable scholar-latex-organizer
 
 # Project-level install scope
 maestro install toggle --path ./my-project --list
@@ -179,9 +157,10 @@ Old per-skill IDs are automatically mapped to new group bundle IDs:
 
 | Old ID | New ID |
 |--------|-------|
-| team-arch-opt | skills-extra-team |
-| team-brainstorm | skills-extra-team |
-| scholar-ideation | skills-scholar |
+| team-arch-opt / team-issue / team-perf-opt | skills-team (now built-in) |
+| team-brainstorm and other deleted team skills | skills-extra-team (legacy no-op bundle) |
+| prompt-generator / delegation-check | skills-meta (legacy no-op bundle) |
+| scholar-ideation and other scholar-* | skills-scholar |
 | ... | ... |
 
 Migration runs automatically during install — no manual action required.

@@ -27,13 +27,11 @@ After installation, the `/maestro-*` family of slash commands and the `maestro` 
 
 ### Optional Skill Packs (install as needed)
 
-In the `maestro install` interactive UI, the following 3 skill packs are unchecked by default — opt in as needed. Each skill has its own detail page on the docs site (look under the Team / Scholar / Meta categories); see the [Installation Guide](/guides/install) for full details.
+In the `maestro install` interactive UI, the **skills-scholar** pack is unchecked by default — opt in as needed; see the [Installation Guide](/guides/install) for full details.
 
-**skills-extra-team (16 team collaboration skills)**: team-arch-opt, team-brainstorm, team-designer, team-frontend, team-frontend-debug, team-interactive-craft, team-issue, team-motion-design, team-perf-opt, team-planex, team-roadmap-dev, team-ui-polish, team-uidesign, team-ultra-analyze, team-ux-improve, team-visual-a11y
+> Since v0.5.61 the skill surface was sharply trimmed: 20 zero-usage team/helper skills were deleted, and former skills-extra-team / skills-meta members were either merged into core or removed; skills-extra-team and skills-meta remain only as legacy no-op bundles.
 
-**skills-scholar (10 academic skills)**: scholar-ideation, scholar-writing, scholar-experiment, scholar-citation-verify, scholar-anti-ai-writing, scholar-latex-organizer, scholar-review, scholar-rebuttal-pro, scholar-thesis-docx, scholar-publish
-
-**skills-meta (5 meta skills)**: skill-generator, skill-simplify, skill-tuning, prompt-generator, delegation-check
+**skills-scholar (10 academic skills, opt-in)**: scholar-ideation, scholar-writing, scholar-experiment, scholar-citation-verify, scholar-anti-ai-writing, scholar-latex-organizer, scholar-review, scholar-rebuttal-pro, scholar-thesis-docx, scholar-publish
 
 ```bash
 # After installing a pack, enable/disable individual skills one by one
@@ -41,7 +39,7 @@ maestro install toggle --type skill --list
 maestro install toggle --type skill --enable scholar-writing
 ```
 
-> 9 built-in team skills (team-coordinate, team-executor, team-lifecycle-v4, team-quality-assurance, team-review, team-swarm, team-tech-debt, team-testing, team-adversarial-swarm) are installed automatically with the core components — no separate selection needed.
+> 8 built-in team skills (team-arch-opt, team-coordinate, team-issue, team-lifecycle-v4, team-perf-opt, team-review, team-swarm, team-testing) are installed automatically with the core components — no separate selection needed.
 
 ---
 

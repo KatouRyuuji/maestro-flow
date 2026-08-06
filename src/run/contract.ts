@@ -387,9 +387,8 @@ function resolveCommandSourceUncached(projectRoot: string, commandName: string):
     normalized.startsWith('maestro-') ? normalized.slice('maestro-'.length) : `maestro-${normalized}`,
   ]));
   const project = paths.project(projectRoot);
-  const prepareCandidates = names.flatMap(name => [
+  const projectPrepareCandidates = names.flatMap(name => [
     join(project.prepare, `${name}.md`),
-    join(paths.prepare, `${name}.md`),
     join(projectRoot, 'prepare', `${name}.md`),
   ]);
   const projectClaudeCandidates = names.flatMap(name => [
@@ -401,13 +400,20 @@ function resolveCommandSourceUncached(projectRoot: string, commandName: string):
     join(claudeHome, 'commands', `${name}.md`),
     join(claudeHome, 'skills', name, 'SKILL.md'),
   ]);
+  // Project-local definitions always win over the user-global library: a
+  // project's own prepare/`.claude/commands` override must never be shadowed
+  // by `~/.maestro/prepare/<name>.md` (e.g. a global `test.md` swallowing a
+  // project command or fixture, hollow-sealing a required consume gate).
   const projectCandidates = [
-    ...prepareCandidates,
+    ...projectPrepareCandidates,
     ...projectClaudeCandidates,
   ];
+  const globalPrepareCandidates = names.flatMap(name => [
+    join(paths.prepare, `${name}.md`),
+  ]);
   const path = projectCandidates.find(candidate => existsSync(candidate))
     ?? resolveStepContentUncached(projectRoot, normalized).prepare?.path
-    ?? globalClaudeCandidates.find(candidate => existsSync(candidate));
+    ?? [...globalPrepareCandidates, ...globalClaudeCandidates].find(candidate => existsSync(candidate));
   if (!path) {
     const empty = '';
     const contract = parseCommandContract({});
@@ -526,11 +532,14 @@ const PLATFORM_SUFFIX_RE = /\.(?:codex|agy|pi)\.md$/;
 function stepRegistryDirs(projectRoot: string): { prepareDirs: string[]; workflowDirs: string[] } {
   const project = paths.project(projectRoot);
   return {
-    prepareDirs: [project.prepare, paths.prepare, join(projectRoot, 'prepare')],
+    // Project-local prepare dirs beat the user-global library (same priority
+    // as resolveCommandSourceUncached): a project override must never be
+    // shadowed by ~/.maestro/prepare.
+    prepareDirs: [project.prepare, join(projectRoot, 'prepare'), paths.prepare],
     workflowDirs: [
       join(project.workflow, 'workflows'),
-      paths.workflows,
       join(projectRoot, 'workflows'),
+      paths.workflows,
     ],
   };
 }

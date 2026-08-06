@@ -37,6 +37,11 @@ async function getIndexer(): Promise<WikiIndexer> {
   return _indexer;
 }
 
+/** Shared indexer accessor for knowledge signal-id validation (K8). */
+export async function getWikiIndexer(): Promise<WikiIndexer> {
+  return getIndexer();
+}
+
 function matchesType(entry: WikiEntry, type: LoadType): boolean {
   if (type === 'session') return entry.category === 'session';
   if (type === 'scratch') return entry.category === 'scratch';
@@ -133,10 +138,29 @@ export async function recordLoadedKnowledge(entries: WikiEntry[]): Promise<void>
       process.cwd(),
       entries.map(entry => ({ id: entry.id, sourceRef: entry.sourceRef })),
     );
-    if (result.nodeIds.length > 0) {
-      const { recordActiveRunKnowledgeInputs } = await import('../run/knowledge.js');
-      recordActiveRunKnowledgeInputs(process.cwd(), result.nodeIds);
+    if (result.nodeIds.length === 0) return;
+    const { recordActiveRunKnowledgeInputs } = await import('../run/knowledge.js');
+    const runAttribution = recordActiveRunKnowledgeInputs(process.cwd(), result.nodeIds);
+    if (runAttribution) return;
+    // No unique active Run: try an unambiguous Session identity (lease or a
+    // single live channel). Never creates Sessions for attribution purposes.
+    try {
+      const { SessionStore } = await import('../run/store.js');
+      const { findSessionAttributionTarget } = await import('../run/knowledge-identity.js');
+      const store = new SessionStore(process.cwd());
+      const sessionId = findSessionAttributionTarget(process.cwd(), store);
+      if (sessionId) {
+        const { recordSessionKnowledgeInputs } = await import('../run/session-knowledge.js');
+        recordSessionKnowledgeInputs(process.cwd(), sessionId, result.nodeIds, 'consumed', 'load');
+        return;
+      }
+    } catch {
+      // Session attribution is best-effort; fall through to the warning.
     }
+    console.error(
+      'Warning: knowledge consumption recorded in the global ledger, but run/session '
+      + 'attribution was skipped (no resolvable write authority).',
+    );
   } catch {
     // Usage analytics must never block knowledge loading.
   }

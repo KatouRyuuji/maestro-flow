@@ -120,6 +120,13 @@ export function prepareTransitionMutation(input: {
   const requestId = input.options?.requestId?.trim() || `req_${randomUUID()}`;
   const existing = transitionRecord(input.session, requestId);
   const existingPayload = existing?.payload.payload ?? {};
+  // v0.5.61–v0.5.63 persisted `require_running_session` inside the complete
+  // payload hash (since removed). Rebuild it for legacy receipts so a retry of
+  // that request_id reproduces the stored hash and replays instead of hitting
+  // REQUEST_CONFLICT.
+  const legacyCompleteFields = 'require_running_session' in existingPayload
+    ? { require_running_session: existingPayload.require_running_session }
+    : {};
   const expectedIdentityRevision = input.options?.expectedIdentityRevision
     ?? numberFromPayload(existingPayload.expected_identity_revision)
     ?? input.currentFence.session_identity_revision;
@@ -135,6 +142,7 @@ export function prepareTransitionMutation(input: {
   };
   const payload = {
     ...input.payload,
+    ...legacyCompleteFields,
     expected_identity_revision: expectedIdentityRevision,
     expected_activity_revision: expectedActivityRevision,
     lease: leaseClaim ?? {},

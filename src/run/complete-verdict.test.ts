@@ -15,6 +15,7 @@ import { checkLease } from './lease.js';
 import { updateChainStepStatus } from './chain.js';
 import { SessionStore } from './store.js';
 import { registerRunCommand } from '../commands/run.js';
+import { registerSessionCommand } from '../commands/session.js';
 import { writeStateJson, migrateV1toV2 } from '../utils/state-schema.js';
 import type { SessionState } from './schemas.js';
 import { prepareTransitionMutation } from './transition-receipts.js';
@@ -158,6 +159,38 @@ async function runCompleteCli(projectRoot: string, argv: string[]): Promise<unkn
   vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
   try {
     await program.parseAsync(['node', 'maestro', 'run', 'complete', ...argv, '--workflow-root', projectRoot]);
+  } catch {
+    /* commander exitOverride throws on parse/validation exit — inspect exitCode */
+  }
+  const last = log.mock.calls.at(-1)?.[0];
+  return typeof last === 'string' ? JSON.parse(last) : undefined;
+}
+
+/** Drive `maestro session done` through commander with the given argv tail. */
+async function runSessionDoneCli(projectRoot: string, argv: string[]): Promise<unknown> {
+  const program = new Command();
+  program.exitOverride();
+  registerSessionCommand(program);
+  const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  try {
+    await program.parseAsync(['node', 'maestro', 'session', 'done', ...argv, '--workflow-root', projectRoot]);
+  } catch {
+    /* commander exitOverride throws on parse/validation exit — inspect exitCode */
+  }
+  const last = log.mock.calls.at(-1)?.[0];
+  return typeof last === 'string' ? JSON.parse(last) : undefined;
+}
+
+/** Drive `maestro run done` through commander with the given argv tail. */
+async function runDoneCli(projectRoot: string, argv: string[]): Promise<unknown> {
+  const program = new Command();
+  program.exitOverride();
+  registerRunCommand(program);
+  const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  try {
+    await program.parseAsync(['node', 'maestro', 'run', 'done', ...argv, '--workflow-root', projectRoot]);
   } catch {
     /* commander exitOverride throws on parse/validation exit — inspect exitCode */
   }
@@ -310,8 +343,8 @@ describe('run complete — verdict chain transitions', () => {
 describe('run complete — required consume gate blocks hollow seal', () => {
   it('done over a failed blocking consume gate forces blocked, not a hollow ready seal', () => {
     const projectRoot = root();
-    requiredConsumeCommand(projectRoot, 'test', 'verification', 'latest-verification');
-    seedSession(projectRoot, 's', [{ command: 'test' }]);
+    requiredConsumeCommand(projectRoot, 'zz-consume-gate', 'verification', 'latest-verification');
+    seedSession(projectRoot, 's', [{ command: 'zz-consume-gate' }]);
     // startStep writes a `verdict: ready` report but registers NO verification
     // artifact — the required latest-verification consume gate must fail.
     const runId = startStep(projectRoot, 's', 0);
@@ -531,6 +564,13 @@ describe('run complete — completion gate integrity', () => {
       options: transition,
     });
     expect(reconstructed.request).toEqual((storedRequest as any).payload);
+    // The complete payload shape is pinned (no stray fields such as the removed
+    // require_running_session may be re-introduced on either path).
+    expect(Object.keys((storedRequest as any).payload.payload).sort()).toEqual([
+      'chain_proposal', 'chain_verdict', 'completion_input_snapshot', 'decisions',
+      'expected_activity_revision', 'expected_identity_revision', 'extra_artifacts',
+      'lease', 'notes', 'run_id', 'summary_fallback',
+    ]);
     const replay = completeRunWithVerdict(projectRoot, runId, 's', { verdict: 'needs-retry', transition });
     expect(first.seal.transition.status).toBe('applied');
     expect(replay.seal.transition.status).toBe('replayed');
@@ -933,6 +973,106 @@ describe('run complete CLI — verdict + 免参 + lease', () => {
     await runCompleteCli(projectRoot, ['--verdict', 'maybe']);
     expect(process.exitCode).toBe(2);
     expect(chainOf(projectRoot, 's')[0].status).toBe('running'); // untouched
+  });
+
+  it('maps ready-vocabulary verdict aliases onto the chain-advance vocabulary', async () => {
+    const aliases: Array<[string, string, string]> = [
+      ['ready', 'done', 'sealed'],
+      ['ready_with_concerns', 'done-with-concerns', 'sealed'],
+      ['failed', 'needs-retry', 'pending'],
+      ['blocked', 'blocked', 'failed'],
+    ];
+    for (const [token, expected, stepStatus] of aliases) {
+      const projectRoot = root();
+      stepCommand(projectRoot, 'demo');
+      seedSession(projectRoot, 's', [{ command: 'demo' }], { active: true });
+      const runId = startStep(projectRoot, 's', 0);
+
+      const out = (await runCompleteCli(projectRoot, [runId, '--session', 's', '--verdict', token])) as { verdict?: string; chain?: { step_status?: string } };
+      expect(out?.verdict).toBe(expected);
+      expect(out?.chain?.step_status).toBe(stepStatus);
+      expect(process.exitCode).toBeFalsy();
+    }
+  });
+
+  it('session done maps the full ready-vocabulary alias matrix', async () => {
+    const aliases: Array<[string, string, string]> = [
+      ['ready', 'done', 'sealed'],
+      ['ready_with_concerns', 'done-with-concerns', 'sealed'],
+      ['failed', 'needs-retry', 'pending'],
+      ['blocked', 'blocked', 'failed'],
+    ];
+    for (const [token, expected, stepStatus] of aliases) {
+      const projectRoot = root();
+      stepCommand(projectRoot, 'demo');
+      seedSession(projectRoot, 's', [{ command: 'demo' }], { active: true });
+      const runId = startStep(projectRoot, 's', 0);
+
+      const out = (await runSessionDoneCli(projectRoot, [runId, '--session', 's', '--verdict', token])) as { verdict?: string; chain?: { step_status?: string } };
+      expect(out?.verdict).toBe(expected);
+      expect(out?.chain?.step_status).toBe(stepStatus);
+      expect(process.exitCode).toBeFalsy();
+    }
+  });
+
+  it('session done 免参 resolves the active step under a ready alias', async () => {
+    const projectRoot = root();
+    stepCommand(projectRoot, 'demo');
+    seedSession(projectRoot, 's', [{ command: 'demo' }], { active: true });
+    startStep(projectRoot, 's', 0);
+
+    const out = (await runSessionDoneCli(projectRoot, ['--session', 's', '--verdict', 'ready'])) as { chain?: { step_status?: string } };
+    expect(out?.chain?.step_status).toBe('sealed');
+    expect(process.exitCode).toBeFalsy();
+  });
+
+  it('run done maps the full ready-vocabulary alias matrix', async () => {
+    const aliases: Array<[string, string, string]> = [
+      ['ready', 'done', 'sealed'],
+      ['ready_with_concerns', 'done-with-concerns', 'sealed'],
+      ['failed', 'needs-retry', 'pending'],
+      ['blocked', 'blocked', 'failed'],
+    ];
+    for (const [token, expected, stepStatus] of aliases) {
+      const projectRoot = root();
+      stepCommand(projectRoot, 'demo');
+      seedSession(projectRoot, 's', [{ command: 'demo' }], { active: true });
+      const runId = startStep(projectRoot, 's', 0);
+
+      const out = (await runDoneCli(projectRoot, [runId, '--session', 's', '--verdict', token])) as { verdict?: string; chain?: { step_status?: string } };
+      expect(out?.verdict).toBe(expected);
+      expect(out?.chain?.step_status).toBe(stepStatus);
+      expect(process.exitCode).toBeFalsy();
+    }
+  });
+
+  it('treats an empty --verdict as the default done on run complete and session done', async () => {
+    const projectRoot = root();
+    stepCommand(projectRoot, 'demo');
+    seedSession(projectRoot, 's', [{ command: 'demo' }], { active: true });
+    const runId = startStep(projectRoot, 's', 0);
+
+    const complete = (await runCompleteCli(projectRoot, [runId, '--session', 's', '--verdict', ''])) as { verdict?: string };
+    expect(complete?.verdict).toBe('done');
+
+    const second = root();
+    stepCommand(second, 'demo');
+    seedSession(second, 's', [{ command: 'demo' }], { active: true });
+    const secondRunId = startStep(second, 's', 0);
+    const sessionDone = (await runSessionDoneCli(second, [secondRunId, '--session', 's', '--verdict', ''])) as { verdict?: string };
+    expect(sessionDone?.verdict).toBe('done');
+  });
+
+  it('decide rejects ready-vocabulary tokens as INVALID_VERDICT (exit 2)', async () => {
+    const program = new Command();
+    program.exitOverride();
+    registerRunCommand(program);
+    try {
+      await program.parseAsync(['node', 'maestro', 'run', 'decide', 'DP-1', '--session', 's', '--verdict', 'ready', '--confidence', 'high', '--workflow-root', root()]);
+    } catch {
+      /* commander exitOverride throws on validation exit — inspect exitCode */
+    }
+    expect(process.exitCode).toBe(2);
   });
 
   it('refuses on a lease conflict (exit 1) and does not advance the chain', async () => {

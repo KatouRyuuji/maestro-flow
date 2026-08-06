@@ -27,13 +27,11 @@ maestro hooks install --level standard
 
 ### 可选技能包（按需安装）
 
-`maestro install` 交互界面中，以下 3 个技能包默认不选中，按需勾选。每个技能在文档站都有单独介绍页（Team / Scholar / Meta 分类下可查），完整说明见[安装指南](/guides/install)。
+`maestro install` 交互界面中，**skills-scholar** 技能包默认不选中，按需勾选；完整说明见[安装指南](/guides/install)。
 
-**skills-extra-team（16 个团队协作技能）**：team-arch-opt、team-brainstorm、team-designer、team-frontend、team-frontend-debug、team-interactive-craft、team-issue、team-motion-design、team-perf-opt、team-planex、team-roadmap-dev、team-ui-polish、team-uidesign、team-ultra-analyze、team-ux-improve、team-visual-a11y
+> v0.5.61 起 skill 面大幅精简：20 个零使用团队/辅助 skill 已删除，原 skills-extra-team / skills-meta 成员或并入核心、或移除；skills-extra-team、skills-meta 仅作为遗留空 bundle 保留。
 
-**skills-scholar（10 个学术技能）**：scholar-ideation、scholar-writing、scholar-experiment、scholar-citation-verify、scholar-anti-ai-writing、scholar-latex-organizer、scholar-review、scholar-rebuttal-pro、scholar-thesis-docx、scholar-publish
-
-**skills-meta（5 个元技能）**：skill-generator、skill-simplify、skill-tuning、prompt-generator、delegation-check
+**skills-scholar（10 个学术技能，选装）**：scholar-ideation、scholar-writing、scholar-experiment、scholar-citation-verify、scholar-anti-ai-writing、scholar-latex-organizer、scholar-review、scholar-rebuttal-pro、scholar-thesis-docx、scholar-publish
 
 ```bash
 # 安装组包后，逐个启用/禁用单个技能
@@ -41,7 +39,7 @@ maestro install toggle --type skill --list
 maestro install toggle --type skill --enable scholar-writing
 ```
 
-> 9 个内置团队技能（team-coordinate、team-executor、team-lifecycle-v4、team-quality-assurance、team-review、team-swarm、team-tech-debt、team-testing、team-adversarial-swarm）随核心组件自动安装，无需单独选择。
+> 8 个内置团队技能（team-arch-opt、team-coordinate、team-issue、team-lifecycle-v4、team-perf-opt、team-review、team-swarm、team-testing）随核心组件自动安装，无需单独选择。
 
 ---
 
