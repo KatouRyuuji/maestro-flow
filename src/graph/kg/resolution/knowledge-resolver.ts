@@ -23,6 +23,16 @@ const GENERIC_NAMES = new Set([
 
 const DEFINES_CONFIDENCE_THRESHOLD = 0.6;
 
+// D3.5b: 泛化路径 token 黑名单 — 命中即不建 constrains 边 (路径 token 匹配只对具体词有效)
+// 'run'/'components' 等高频泛化词曾贡献 81.7% 的噪声边 (896 + 813 / 2092)
+const GENERIC_PATH_TOKENS = new Set([
+  'run', 'components', 'component', 'core', 'api', 'util', 'utils', 'common', 'shared',
+  'main', 'index', 'src', 'test', 'tests', 'spec', 'config', 'app', 'client', 'server',
+  'db', 'data', 'service', 'services', 'types', 'type', 'model', 'models', 'module',
+  'modules', 'hook', 'hooks', 'page', 'pages', 'style', 'styles', 'helpers', 'constants',
+  'lib', 'libs', 'bin', 'dist', 'build', 'node_modules', 'assets', 'public', 'views',
+]);
+
 // D2.5: 关系传播硬限制
 const MAX_PROPAGATION_DEPTH = 3;
 const MAX_RELATED_TERMS = 50;
@@ -170,8 +180,11 @@ function resolveDefinesEdges(db: DatabaseSync): UnifiedEdge[] {
 // D2.3: keywords 匹配使用 IN-clause, 不用 json_each JOIN
 // ---------------------------------------------------------------------------
 function resolveConstrainsEdges(db: DatabaseSync): UnifiedEdge[] {
+  // 排除 name='' 的残缺 spec 条目 — 空名条目 (如 ui-conventions-002 qualified_name='spec:')
+  // 曾贡献 896 条噪声边
   const specNodes = db.prepare(
-    `SELECT id, keywords, category FROM nodes WHERE source_type = 'spec' AND status = 'active'`
+    `SELECT id, keywords, category FROM nodes
+     WHERE source_type = 'spec' AND status = 'active' AND name != ''`
   ).all() as unknown as Array<{ id: string; keywords: string | null; category: string | null }>;
 
   // 收集所有 spec 的 keywords，建立标准化 keyword → spec 映射
@@ -194,47 +207,63 @@ function resolveConstrainsEdges(db: DatabaseSync): UnifiedEdge[] {
 
   // 单次读取候选代码节点，并建立 name/path-token 倒排索引。
   // 避免 leading-wildcard LIKE 扫描和 match × keyword 笛卡尔循环。
+  // nameMatches: 符号名精确匹配; pathMatches: 路径 token 匹配 (泛化词已过滤)
   const codeNodes = db.prepare(
     `SELECT id, name, kind, file_path FROM nodes
      WHERE source_type = 'codegraph'
        AND kind IN ('function', 'method', 'class', 'interface')`
   ).all() as unknown as Array<{ id: string; name: string; kind: string; file_path: string }>;
-  const matchesByKeyword = new Map<string, Map<string, typeof codeNodes[number]>>();
-  const addMatch = (keyword: string, node: typeof codeNodes[number]): void => {
+  const nameMatches = new Map<string, Map<string, typeof codeNodes[number]>>();
+  const pathMatches = new Map<string, Map<string, typeof codeNodes[number]>>();
+  const addMatch = (
+    bucket: Map<string, Map<string, typeof codeNodes[number]>>,
+    keyword: string,
+    node: typeof codeNodes[number],
+  ): void => {
     if (!keywordToSpecs.has(keyword)) return;
-    let matches = matchesByKeyword.get(keyword);
+    let matches = bucket.get(keyword);
     if (!matches) {
       matches = new Map();
-      matchesByKeyword.set(keyword, matches);
+      bucket.set(keyword, matches);
     }
     matches.set(node.id, node);
   };
   for (const node of codeNodes) {
-    addMatch(node.name.toLowerCase(), node);
+    addMatch(nameMatches, node.name.toLowerCase(), node);
     const pathTokens = node.file_path.toLowerCase().split(/[^a-z0-9_$-]+/).filter(token => token.length >= 3);
-    for (const token of pathTokens) addMatch(token, node);
+    for (const token of pathTokens) {
+      if (GENERIC_PATH_TOKENS.has(token)) continue; // 泛化词禁路径匹配
+      addMatch(pathMatches, token, node);
+    }
   }
 
   const edges: UnifiedEdge[] = [];
   const seen = new Set<string>();
-  for (const [kw, specs] of keywordToSpecs) {
-    const matches = matchesByKeyword.get(kw);
-    if (!matches) continue;
-    for (const match of matches.values()) {
-      for (const spec of specs) {
-        const key = `${spec.id}->${match.id}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        edges.push({
-          source: spec.id,
-          target: match.id,
-          kind: 'constrains',
-          provenance: 'knowledge-resolver' as EdgeProvenance,
-          metadata: { matchedKeyword: kw },
-        });
+  const collectMatches = (
+    bucket: Map<string, Map<string, typeof codeNodes[number]>>,
+    via: 'name' | 'path-token',
+  ): void => {
+    for (const [kw, matches] of bucket) {
+      const specs = keywordToSpecs.get(kw);
+      if (!specs) continue;
+      for (const match of matches.values()) {
+        for (const spec of specs) {
+          const key = `${spec.id}->${match.id}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          edges.push({
+            source: spec.id,
+            target: match.id,
+            kind: 'constrains',
+            provenance: 'knowledge-resolver' as EdgeProvenance,
+            metadata: { matchedKeyword: kw, matchedVia: via },
+          });
+        }
       }
     }
-  }
+  };
+  collectMatches(nameMatches, 'name');
+  collectMatches(pathMatches, 'path-token');
 
   return edges;
 }

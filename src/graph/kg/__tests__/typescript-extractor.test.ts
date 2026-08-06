@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { CodeParseRunner } from '../extraction/code/worker-parser.js';
 import { isTreeSitterAvailable } from '../extraction/code/tree-sitter.js';
-import type { ExtractedSymbol } from '../extraction/code/tree-sitter-types.js';
+import type { ExtractedSymbol, ExtractedReference, LanguageExtractionResult } from '../extraction/code/tree-sitter-types.js';
 
 // ---------------------------------------------------------------------------
 // Fixture — TS source exercising JSDoc, decorators, and generics.
@@ -29,7 +29,39 @@ export function transform<Input, Output>(input: Input): Output {
 }
 `;
 
+const CALLBACK_SOURCE = `
+import { helper } from './helper';
+import { service } from '@/services/thing';
+
+export function run(items: Array<{ id: string }>) {
+  // 箭头回调 — 参数名绝不产生符号
+  const names = items.map(item => item.id);
+  const doubled = items.map((entry) => entry.id + entry.id);
+
+  // 具名箭头函数
+  const pick = (entry: { id: string }) => entry.id;
+
+  // 调用引用
+  helper(names);
+  service.get();
+  this.refresh();
+
+  return names;
+}
+
+class Engine {
+  refresh(): void {
+    this.tick();
+  }
+  tick(): void {
+    /* noop */
+  }
+}
+`;
+
 let symbols: ExtractedSymbol[] = [];
+let references: ExtractedReference[] = [];
+let edges: LanguageExtractionResult['edges'] = [];
 let parsed = false;
 
 beforeAll(async () => {
@@ -38,6 +70,8 @@ beforeAll(async () => {
   try {
     const result = await runner.extract(SOURCE, 'typescript', 'repo.ts');
     symbols = result?.symbols ?? [];
+    references = result?.references ?? [];
+    edges = result?.edges ?? [];
     parsed = result !== null;
   } finally {
     runner.dispose();
@@ -96,5 +130,70 @@ describe.skipIf(!isTreeSitterAvailable())('typescriptExtractor: JSDoc / decorato
     expect(findById).toBeDefined();
     expect(findById!.decorators).toEqual([]);
     expect(findById!.typeParameters).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 回归断言: 边缺失 / 伪符号 / 引用收集 (本次修复引入)
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!isTreeSitterAvailable())('typescriptExtractor: edges / references / arrow fix', () => {
+  let cbSymbols: ExtractedSymbol[] = [];
+  let cbReferences: ExtractedReference[] = [];
+  let cbEdges: LanguageExtractionResult['edges'] = [];
+
+  beforeAll(async () => {
+    const runner = new CodeParseRunner();
+    try {
+      const result = await runner.extract(CALLBACK_SOURCE, 'typescript', 'callback.ts');
+      cbSymbols = result?.symbols ?? [];
+      cbReferences = result?.references ?? [];
+      cbEdges = result?.edges ?? [];
+    } finally {
+      runner.dispose();
+    }
+  });
+
+  it('produces contains edges for nested symbols (class → method)', () => {
+    const contains = edges.filter(e => e.kind === 'contains');
+    expect(contains.length).toBeGreaterThan(0);
+    // Repository → findById
+    const repoToMethod = contains.find(e =>
+      e.source === 'code:repo.ts:Repository' && e.target === 'code:repo.ts:Repository.findById');
+    expect(repoToMethod).toBeDefined();
+  });
+
+  it('collects imports references anchored to the file node', () => {
+    const imports = cbReferences.filter(r => r.referenceKind === 'imports');
+    expect(imports.length).toBeGreaterThanOrEqual(2);
+    expect(imports[0]!.fromSymbolId).toBe('code:callback.ts:<file>');
+  });
+
+  it('collects calls references (direct, member, this-method)', () => {
+    const calls = cbReferences.filter(r => r.referenceKind === 'calls');
+    const names = calls.map(c => c.referenceName);
+    expect(names).toContain('helper');
+    expect(names).toContain('get');
+    expect(names).toContain('refresh');
+    expect(names).toContain('tick');
+  });
+
+  it('never treats arrow function parameters as symbol names', () => {
+    // item / entry 是回调参数 — 绝不产生同名符号
+    expect(cbSymbols.some(s => s.name === 'item')).toBe(false);
+    expect(cbSymbols.some(s => s.name === 'entry' && s.kind === 'function')).toBe(false);
+  });
+
+  it('keeps named arrow functions as symbols (const pick = ...)', () => {
+    const pick = cbSymbols.find(s => s.name === 'pick');
+    expect(pick).toBeDefined();
+    expect(pick!.kind).toBe('function');
+  });
+
+  it('produces contains edges for named arrow function body symbols', () => {
+    // run → 具名箭头函数 pick (父级 run 之下)
+    const runPick = cbEdges.find(e =>
+      e.kind === 'contains' && e.source === 'code:callback.ts:run' && e.target === 'code:callback.ts:run.pick');
+    expect(runPick).toBeDefined();
   });
 });

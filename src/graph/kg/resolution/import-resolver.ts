@@ -87,15 +87,19 @@ export function resolveTsconfigAlias(
       const targetPath = suffix ? join(mapping.target, suffix) : mapping.target;
 
       // 尝试解析为文件
+      // NodeNext: '../db/types.js' 磁盘上实为 '../db/types.ts' — 需扩展名替换
+      const stripped = targetPath.replace(/\.jsx?$/i, '');
       const candidates = [
-        targetPath + '.ts',
-        targetPath + '.tsx',
-        targetPath + '.js',
-        targetPath + '.jsx',
-        join(targetPath, 'index.ts'),
-        join(targetPath, 'index.tsx'),
-        join(targetPath, 'index.js'),
-        join(targetPath, 'index.jsx'),
+        // 已带扩展名的别名导入直接命中
+        targetPath,
+        stripped + '.ts',
+        stripped + '.tsx',
+        stripped + '.js',
+        stripped + '.jsx',
+        join(stripped, 'index.ts'),
+        join(stripped, 'index.tsx'),
+        join(stripped, 'index.js'),
+        join(stripped, 'index.jsx'),
       ];
 
       for (const candidate of candidates) {
@@ -332,11 +336,15 @@ export class ImportResolver {
     if (importPath.startsWith('.')) {
       const fromDir = dirname(fromFilePath);
       const targetPath = resolve(fromDir, importPath);
+      // NodeNext: '../db/types.js' 磁盘上实为 '../db/types.ts' — 扩展名替换
+      const stripped = targetPath.replace(/\.jsx?$/i, '');
       const candidates = [
-        targetPath + '.ts', targetPath + '.tsx', targetPath + '.js', targetPath + '.jsx',
-        targetPath + '.go', targetPath + '.rs', targetPath + '.py',
-        join(targetPath, 'index.ts'), join(targetPath, 'index.tsx'),
-        join(targetPath, 'index.js'), join(targetPath, 'index.jsx'),
+        // 已带扩展名的导入 (NodeNext: '../db/types.js') 直接命中
+        targetPath,
+        stripped + '.ts', stripped + '.tsx', stripped + '.js', stripped + '.jsx',
+        stripped + '.go', stripped + '.rs', stripped + '.py',
+        join(stripped, 'index.ts'), join(stripped, 'index.tsx'),
+        join(stripped, 'index.js'), join(stripped, 'index.jsx'),
       ];
 
       for (const candidate of candidates) {

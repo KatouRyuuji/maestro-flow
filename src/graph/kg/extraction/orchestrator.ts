@@ -7,6 +7,7 @@ import type { MaestroGraph } from '../engine.js';
 import { KnowledgeExtractorRegistry } from './knowledge-extractor-registry.js';
 import { forEachCodeExtractionResult } from './code/code-extractor.js';
 import { resolveKnowledgeEdges } from '../resolution/knowledge-resolver.js';
+import { resolveCodeReferences } from '../resolution/code-resolver.js';
 import type { SyncResult, SourceType } from '../db/types.js';
 import { FileLock } from '../sync/file-lock.js';
 import { writeSyncState, getGitHead } from '../sync-state.js';
@@ -121,9 +122,12 @@ async function syncKnowledgeGraphUnlocked(
       let totalNodes = 0;
       let totalEdges = 0;
       let stagedEdges = 0;
+      let stagedRefs = 0;
       const connection = mg.getConnection();
       const removedCode = await connection.transactionAsync(async () => {
         const removed = queries.deleteNodesBySourceType('codegraph');
+        // 同步清理 codegraph 的 files 行 — 修复 files 表残留 (已删文件/目录冒充/旧快照并集)
+        connection.raw.exec("DELETE FROM files WHERE source_type = 'codegraph'");
         connection.raw.exec(`
           DROP TABLE IF EXISTS temp._kg_pending_edges;
           CREATE TEMP TABLE _kg_pending_edges (
@@ -138,6 +142,10 @@ async function syncKnowledgeGraphUnlocked(
         `);
         const stageEdge = connection.raw.prepare(`
           INSERT INTO _kg_pending_edges (source, target, kind, metadata, line, col, provenance)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `);
+        const stageRef = connection.raw.prepare(`
+          INSERT INTO unresolved_refs (from_node_id, reference_name, reference_kind, line, col, file_path, language)
           VALUES (?, ?, ?, ?, ?, ?, ?)
         `);
 
@@ -166,6 +174,19 @@ async function syncKnowledgeGraphUnlocked(
                 edge.provenance ?? null,
               );
               stagedEdges++;
+            }
+            // 未解析引用 (imports/calls) → unresolved_refs, 供 resolveCodeReferences 解析为边
+            for (const ref of result.references ?? []) {
+              stageRef.run(
+                ref.fromSymbolId,
+                ref.referenceName,
+                ref.referenceKind,
+                ref.line ?? 0,
+                ref.col ?? 0,
+                ref.filePath,
+                ref.language,
+              );
+              stagedRefs++;
             }
           });
         }
@@ -198,6 +219,23 @@ async function syncKnowledgeGraphUnlocked(
       writeSyncState(projectPath, getGitHead(projectPath));
     }
 
+    // ── Code reference resolution (unresolved_refs → edges) ────────
+    // 接通两阶段模型: extraction → unresolved_refs → resolution → edges
+    // 产 imports (file→file) 与 calls (file→symbol) 边, provenance='code-resolution'
+    if (shouldSync('codegraph')) {
+      const codeStartMs = Date.now();
+      const codeResult = resolveCodeReferences(mg.getConnection().raw, { projectPath });
+      results.push({
+        source: 'code-resolution',
+        nodesAdded: 0,
+        nodesUpdated: 0,
+        nodesRemoved: 0,
+        edgesAdded: codeResult.edgesCreated,
+        edgesRemoved: 0,
+        durationMs: Date.now() - codeStartMs,
+      });
+    }
+
     // ── Cross-source edge resolution ────────────────────────────────
 
     const resolveStartMs = Date.now();
@@ -222,10 +260,39 @@ async function syncKnowledgeGraphUnlocked(
         for (const [nodeId, body] of changedKnowledgeNodes) {
           store.upsert(nodeId, contentHash(body), nowMs);
         }
+        // 清理陈旧 codegraph 消费痕迹 — 指向已不存在节点的 credibility 记录
+        mg.getConnection().raw.prepare(
+          `DELETE FROM credibility WHERE node_id LIKE 'code:%' AND node_id NOT IN (SELECT id FROM nodes)`
+        ).run();
         store.cleanOrphans();
       });
     } catch (err) {
       process.stderr.write(`[MaestroGraph] Credibility sync skipped: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
+
+    // ── FTS 一致性校验 + 修复 (code_fts/knowledge_fts 必须按 source_type 过滤回填) ──
+    // 历史版本曾无过滤全表回填导致两表各含全部节点 (99.6% 为跨类空壳), 此处重建为过滤版。
+    try {
+      ensureFtsConsistency(mg.getConnection().raw);
+    } catch (err) {
+      process.stderr.write(`[MaestroGraph] FTS consistency check failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
+
+    // ── Project metadata (审计/健康度) ─────────────────────────────
+    try {
+      const now = Date.now();
+      const upsertMeta = mg.getConnection().raw.prepare(
+        `INSERT OR REPLACE INTO project_metadata (key, value, updated_at) VALUES (?, ?, ?)`
+      );
+      upsertMeta.run('last_sync_at', String(now), now);
+      upsertMeta.run('last_sync_head', getGitHead(projectPath) ?? '', now);
+      upsertMeta.run('schema_version', String(getSchemaVersion(mg.getConnection().raw)), now);
+      const stats = mg.getStats();
+      if (stats.detectedFrameworks.length > 0) {
+        upsertMeta.run('detected_frameworks', JSON.stringify(stats.detectedFrameworks), now);
+      }
+    } catch (err) {
+      process.stderr.write(`[MaestroGraph] project_metadata sync skipped: ${err instanceof Error ? err.message : String(err)}\n`);
     }
 
     return results;
@@ -242,4 +309,57 @@ function resolveSourceDirectory(projectPath: string, inputPath: string): string 
   const rel = relative(root, actual);
   if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) return actual;
   throw new Error(`Code source directory must be inside project root: ${inputPath}`);
+}
+
+// ── FTS 一致性校验 + 重建 ───────────────────────────────────────────────
+// 语义 (schema.sql): code_fts 只含 codegraph 节点, knowledge_fts 只含知识节点。
+// 历史版本曾无过滤全表回填 (两表各 = 全部节点); 外部内容表模式又忽略触发器 WHERE。
+// 现在 FTS 为内部存储表 + INSERT 触发器过滤; DELETE/REPLACE 不直接删 FTS
+// (FTS5 delete 命令无法在触发器中按 source_type 过滤, 且内部表允许重复 rowid),
+// 因此每次同步末尾无条件重建, 保证索引与 nodes 完全一致。
+function ensureFtsConsistency(db: import('node:sqlite').DatabaseSync): void {
+  const codeNodes = Number(db.prepare(
+    "SELECT COUNT(*) FROM nodes WHERE source_type = 'codegraph'"
+  ).get()?.['COUNT(*)'] ?? 0);
+  const knowledgeNodes = Number(db.prepare(
+    "SELECT COUNT(*) FROM nodes WHERE source_type != 'codegraph'"
+  ).get()?.['COUNT(*)'] ?? 0);
+  const codeFts = Number(db.prepare('SELECT COUNT(*) FROM code_fts').get()?.['COUNT(*)'] ?? -1);
+  const knowledgeFts = Number(db.prepare('SELECT COUNT(*) FROM knowledge_fts').get()?.['COUNT(*)'] ?? -1);
+
+  if (codeFts === codeNodes && knowledgeFts === knowledgeNodes) return;
+
+  process.stderr.write(
+    `[MaestroGraph] FTS drift detected (code_fts=${codeFts}/${codeNodes}, knowledge_fts=${knowledgeFts}/${knowledgeNodes}) — rebuilding filtered indexes\n`
+  );
+  db.exec(`
+    DROP TABLE IF EXISTS code_fts;
+    CREATE VIRTUAL TABLE code_fts USING fts5(
+      id, name, qualified_name, docstring, signature, keywords,
+      tokenize = 'unicode61 remove_diacritics 2'
+    );
+    INSERT INTO code_fts(rowid, id, name, qualified_name, docstring, signature, keywords)
+    SELECT rowid, id, name, qualified_name, docstring, signature, keywords
+    FROM nodes WHERE source_type = 'codegraph';
+
+    DROP TABLE IF EXISTS knowledge_fts;
+    CREATE VIRTUAL TABLE knowledge_fts USING fts5(
+      id, name, definition, body, aliases, keywords,
+      tokenize = 'trigram'
+    );
+    INSERT INTO knowledge_fts(rowid, id, name, definition, body, aliases, keywords)
+    SELECT rowid, id, name, definition, body, aliases, keywords
+    FROM nodes WHERE source_type != 'codegraph';
+  `);
+}
+
+function getSchemaVersion(db: import('node:sqlite').DatabaseSync): number {
+  try {
+    const row = db.prepare(
+      "SELECT version FROM schema_versions ORDER BY version DESC LIMIT 1"
+    ).get() as { version?: number } | undefined;
+    return row?.version ?? 0;
+  } catch {
+    return 0;
+  }
 }

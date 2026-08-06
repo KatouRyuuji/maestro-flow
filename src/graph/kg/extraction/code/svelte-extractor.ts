@@ -6,6 +6,7 @@
 import type { LanguageExtractionResult, ExtractedSymbol, ExtractedReference } from './tree-sitter-types.js';
 import type { Language } from '../../db/types.js';
 import { getTreeSitterEngine } from './tree-sitter.js';
+import { makeFileNodeId } from './tree-sitter-types.js';
 
 // Svelte 5 runes — 这些是编译器指令, 不产生符号
 const SVELTE_RUNES = new Set([
@@ -102,8 +103,8 @@ export async function extractSvelte(
       seen.add(componentName);
       const line = source.substring(0, compMatch.index).split('\n').length;
       references.push({
-        fromSymbolName: '<markup>',
-        fromSymbolId: `${filePath}:<markup>`,
+        fromSymbolName: '<file>',
+        fromSymbolId: makeFileNodeId(filePath),
         referenceName: componentName,
         referenceKind: 'imports',
         line,
@@ -112,6 +113,26 @@ export async function extractSvelte(
         language: 'svelte' as Language,
       });
     }
+  }
+
+  // 标记(markup)表达式函数调用 → calls: {fmt(n)} / {#if fn()} / on:click={() => inc()}
+  const markupCallRegex = /\{([^{}]*?)([A-Za-z_$][\w$]*)\s*\(/g;
+  const MARKUP_KEYWORDS = new Set(['if','each','await','key','then','catch','snippet','render','html','const','debug']);
+  let mcMatch: RegExpExecArray | null;
+  while ((mcMatch = markupCallRegex.exec(source)) !== null) {
+    const fnName = mcMatch[2];
+    if (SVELTE_RUNES.has(fnName) || MARKUP_KEYWORDS.has(fnName)) continue;
+    const line = source.substring(0, mcMatch.index).split('\n').length;
+    references.push({
+      fromSymbolName: '<file>',
+      fromSymbolId: makeFileNodeId(filePath),
+      referenceName: fnName,
+      referenceKind: 'calls',
+      line,
+      col: mcMatch.index + (mcMatch[0].length - fnName.length) + 1,
+      filePath,
+      language: 'svelte' as Language,
+    });
   }
 
   return { symbols, references, edges };

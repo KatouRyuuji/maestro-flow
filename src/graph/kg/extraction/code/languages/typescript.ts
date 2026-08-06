@@ -4,6 +4,7 @@
 
 import type { LanguageExtractor, LanguageExtractionResult, ExtractedSymbol, ExtractedReference } from '../tree-sitter-types.js';
 import type { Language } from '../../../db/types.js';
+import { makeCodeNodeId, makeFileNodeId } from '../tree-sitter-types.js';
 
 // TypeScript tree-sitter 节点类型 → 符号 kind 映射
 const TS_NODE_TYPE_MAP: Record<string, string> = {
@@ -35,10 +36,17 @@ const TS_NODE_TYPE_MAP: Record<string, string> = {
 };
 
 // 提取符号名 — 处理各种 TS/JS 节点
+// 注意: arrow_function 无 name 字段, 绝不可回退取第一个 identifier (那是参数名),
+// 否则 `item => ...` 会被误建为名为 item 的假函数符号。具名箭头函数
+// (const f = (...) => ...) 由 variable_declarator 分支负责建符号。
 function extractName(node: any): string | null { // eslint-disable-line @typescript-eslint/no-explicit-any
-  const nameNode = node.childForFieldName?.('name') ?? node.children?.find((c: any) => c.type === 'identifier' || c.type === 'type_identifier'); // eslint-disable-line @typescript-eslint/no-explicit-any
+  const nameNode = node.childForFieldName?.('name');
   if (nameNode) return nameNode.text;
-  return null;
+  if (node.type === 'arrow_function' || node.type === 'function_expression' || node.type === 'function') {
+    return null;
+  }
+  const fallback = node.children?.find((c: any) => c.type === 'identifier' || c.type === 'type_identifier'); // eslint-disable-line @typescript-eslint/no-explicit-any
+  return fallback ? fallback.text : null;
 }
 
 // 提取修饰符 (export/static/async/abstract)
@@ -150,72 +158,184 @@ function extractTypeParameters(node: any): string[] { // eslint-disable-line @ty
   return names;
 }
 
+// 从 call_expression / JSX 元素提取被调用名 (calls 引用)
+function collectCallReference(
+  node: any, // eslint-disable-line @typescript-eslint/no-explicit-any
+  filePath: string,
+  language: Language,
+  references: ExtractedReference[],
+): void {
+  const startRow = node.startPosition.row + 1;
+  const col = node.startPosition.column + 1;
+  const fileNodeId = makeFileNodeId(filePath);
+
+  let callee: string | null = null;
+  if (node.type === 'call_expression') {
+    const fn = node.childForFieldName?.('function') ?? node.namedChildren?.[0];
+    if (fn) {
+      if (fn.type === 'identifier') {
+        callee = fn.text;
+      } else if (fn.type === 'member_expression') {
+        // obj.method() → 记录 method; this.method() / super.method() 也记录 (解析阶段过滤)
+        const prop = fn.childForFieldName?.('property');
+        if (prop && (prop.type === 'property_identifier' || prop.type === 'identifier' || prop.type === 'private_property_identifier')) {
+          callee = prop.text;
+        }
+      }
+    }
+  } else if (node.type === 'jsx_self_closing_element' || node.type === 'jsx_opening_element') {
+    // <Foo /> / <ns.Foo> → 记录 Foo
+    const name = node.childForFieldName?.('name');
+    if (name && (name.type === 'identifier' || name.type === 'nested_identifier')) {
+      const text = name.text ?? '';
+      callee = text.split('.').pop() || null;
+    }
+  }
+
+  if (callee) {
+    references.push({
+      fromSymbolName: '<file>',
+      fromSymbolId: fileNodeId,
+      referenceName: callee,
+      referenceKind: 'calls',
+      line: startRow,
+      col,
+      filePath,
+      language,
+    });
+  }
+}
+
+// 构建一条 contains 边 (父符号 → 子符号)
+function pushContainsEdge(
+  edges: LanguageExtractionResult['edges'],
+  filePath: string,
+  parentQualifiedName: string,
+  qualifiedName: string,
+  line: number,
+): void {
+  if (!parentQualifiedName) return;
+  edges.push({
+    source: makeCodeNodeId(filePath, parentQualifiedName),
+    target: makeCodeNodeId(filePath, qualifiedName),
+    kind: 'contains',
+    line,
+  });
+}
+
+function pushSymbol(
+  node: any, // eslint-disable-line @typescript-eslint/no-explicit-any
+  kind: string,
+  name: string,
+  filePath: string,
+  language: Language,
+  parentQualifiedName: string,
+  symbols: ExtractedSymbol[],
+  edges: LanguageExtractionResult['edges'],
+): string | null {
+  const startRow = node.startPosition.row + 1;
+  const endRow = node.endPosition.row + 1;
+  const qualifiedName = parentQualifiedName ? `${parentQualifiedName}.${name}` : name;
+  const mods = extractModifiers(node);
+
+  // 提取 signature (简化版 — 取节点第一行文本)
+  const nodeText = node.text || '';
+  const firstLine = nodeText.split('\n')[0]?.trim().substring(0, 200) ?? '';
+
+  symbols.push({
+    kind,
+    name,
+    qualifiedName,
+    filePath,
+    language,
+    startLine: startRow,
+    endLine: endRow,
+    startColumn: node.startPosition.column + 1,
+    endColumn: node.endPosition.column + 1,
+    docstring: extractDocstring(node),
+    signature: firstLine,
+    visibility: mods.visibility,
+    isExported: mods.isExported,
+    isAsync: mods.isAsync,
+    isStatic: mods.isStatic,
+    isAbstract: mods.isAbstract,
+    decorators: extractDecorators(node),
+    typeParameters: extractTypeParameters(node),
+  });
+
+  pushContainsEdge(edges, filePath, parentQualifiedName, qualifiedName, startRow);
+  return qualifiedName;
+}
+
 function traverse(
   node: any, // eslint-disable-line @typescript-eslint/no-explicit-any
   filePath: string,
   language: Language,
   symbols: ExtractedSymbol[],
   references: ExtractedReference[],
+  edges: LanguageExtractionResult['edges'],
   parentQualifiedName: string,
 ): void {
-  const kind = TS_NODE_TYPE_MAP[node.type];
   const startRow = node.startPosition.row + 1;  // tree-sitter 0-indexed → 1-indexed
   const endRow = node.endPosition.row + 1;
+
+  // calls / JSX 引用收集 (call_expression / jsx 元素)
+  if (node.type === 'call_expression' || node.type === 'jsx_self_closing_element' || node.type === 'jsx_opening_element') {
+    collectCallReference(node, filePath, language, references);
+  }
+
+  // 具名箭头函数 / 函数表达式: const f = (...) => ... — 从 variable_declarator 取 name
+  // (arrow_function 本身不建符号, 避免参数名被误取)
+  if (node.type === 'variable_declarator') {
+    const value = node.childForFieldName?.('value');
+    if (value && (value.type === 'arrow_function' || value.type === 'function_expression')) {
+      const name = node.childForFieldName?.('name')?.text;
+      if (name) {
+        const qualifiedName = pushSymbol(node, 'function', name, filePath, language, parentQualifiedName, symbols, edges);
+        if (qualifiedName) {
+          traverseChildren(value, filePath, language, symbols, references, edges, qualifiedName);
+        }
+      }
+    }
+  }
+
+  // arrow_function 自身永不建符号 (参数名会被误取)
+  if (node.type === 'arrow_function' || node.type === 'function_expression') {
+    traverseChildren(node, filePath, language, symbols, references, edges, parentQualifiedName);
+    return;
+  }
+
+  const kind = TS_NODE_TYPE_MAP[node.type];
 
   if (kind && kind !== 'import' && kind !== 'export') {
     const name = extractName(node);
     if (name) {
-      const qualifiedName = parentQualifiedName ? `${parentQualifiedName}.${name}` : name;
-      const mods = extractModifiers(node);
-
-      // 提取 signature (简化版 — 取节点第一行文本)
-      const nodeText = node.text || '';
-      const firstLine = nodeText.split('\n')[0]?.trim().substring(0, 200) ?? '';
-
-      symbols.push({
-        kind,
-        name,
-        qualifiedName,
-        filePath,
-        language,
-        startLine: startRow,
-        endLine: endRow,
-        startColumn: node.startPosition.column + 1,
-        endColumn: node.endPosition.column + 1,
-        docstring: extractDocstring(node),
-        signature: firstLine,
-        visibility: mods.visibility,
-        isExported: mods.isExported,
-        isAsync: mods.isAsync,
-        isStatic: mods.isStatic,
-        isAbstract: mods.isAbstract,
-        decorators: extractDecorators(node),
-        typeParameters: extractTypeParameters(node),
-      });
+      const qualifiedName = pushSymbol(node, kind, name, filePath, language, parentQualifiedName, symbols, edges);
+      if (!qualifiedName) return;
 
       // 递归处理子节点 (类成员等)
       const childFields = node.namedChildren ?? [];
       for (const child of childFields) {
         // body 块内的声明作为子符号
         if (['class_body', 'object', 'block', 'declaration_list', 'statement_block'].includes(child.type)) {
-          traverseChildren(child, filePath, language, symbols, references, qualifiedName);
-        } else if (TS_NODE_TYPE_MAP[child.type]) {
-          traverse(child, filePath, language, symbols, references, qualifiedName);
+          traverseChildren(child, filePath, language, symbols, references, edges, qualifiedName);
+        } else if (TS_NODE_TYPE_MAP[child.type] || child.type === 'variable_declarator') {
+          traverse(child, filePath, language, symbols, references, edges, qualifiedName);
         } else {
-          traverseChildren(child, filePath, language, symbols, references, qualifiedName);
+          traverseChildren(child, filePath, language, symbols, references, edges, qualifiedName);
         }
       }
       return;
     }
   }
 
-  // import_statement — 记录引用
+  // import_statement — 记录引用 (from 锚点 = 本文件 file 节点)
   if (node.type === 'import_statement') {
     const sourceNode = node.childForFieldName?.('source');
     if (sourceNode) {
       references.push({
-        fromSymbolName: '<module>',
-        fromSymbolId: `${filePath}:<module>`,
+        fromSymbolName: '<file>',
+        fromSymbolId: makeFileNodeId(filePath),
         referenceName: sourceNode.text.replace(/['"]/g, ''),
         referenceKind: 'imports',
         line: startRow,
@@ -226,7 +346,7 @@ function traverse(
     }
   }
 
-  traverseChildren(node, filePath, language, symbols, references, parentQualifiedName);
+  traverseChildren(node, filePath, language, symbols, references, edges, parentQualifiedName);
 }
 
 function traverseChildren(
@@ -235,10 +355,11 @@ function traverseChildren(
   language: Language,
   symbols: ExtractedSymbol[],
   references: ExtractedReference[],
+  edges: LanguageExtractionResult['edges'],
   parentQualifiedName: string,
 ): void {
   for (const child of node.namedChildren ?? []) {
-    traverse(child, filePath, language, symbols, references, parentQualifiedName);
+    traverse(child, filePath, language, symbols, references, edges, parentQualifiedName);
   }
 }
 
@@ -249,12 +370,13 @@ function extractTypeScriptFamily(
 ): LanguageExtractionResult {
     const symbols: ExtractedSymbol[] = [];
     const references: ExtractedReference[] = [];
+    const edges: LanguageExtractionResult['edges'] = [];
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rootNode = (tree as any).rootNode;
-    traverse(rootNode, filePath, language, symbols, references, '');
+    traverse(rootNode, filePath, language, symbols, references, edges, '');
 
-    return { symbols, references, edges: [] };
+    return { symbols, references, edges };
 }
 
 export const typescriptExtractor: LanguageExtractor = {

@@ -513,6 +513,11 @@ export function findShortestPath(
             path.unshift({ nodeId: p.from, edge: p.edge });
             current = p.from;
           }
+          // 起点 (path[0]) 无入边 — edge 属于 "从上一节点到当前节点的边",
+          // 起点没有上一节点, 故强制置 null。
+          if (path.length > 0 && path[0]!.nodeId === fromId) {
+            path[0] = { nodeId: fromId, edge: null };
+          }
           return path;
         }
     }

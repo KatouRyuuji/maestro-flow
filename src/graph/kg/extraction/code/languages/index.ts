@@ -4,6 +4,7 @@
 
 import type { LanguageExtractor } from '../tree-sitter-types.js';
 import type { Language } from '../../../db/types.js';
+import { makeCodeNodeId, makeFileNodeId } from '../tree-sitter-types.js';
 import { typescriptExtractor, javascriptExtractor, tsxExtractor, jsxExtractor } from './typescript.js';
 
 // ---------------------------------------------------------------------------
@@ -96,7 +97,8 @@ function findChild(node: AnyNode, fieldOrType: string): AnyNode | null {
 function nodeName(node: AnyNode): string | null {
   const n = node.childForFieldName?.('name') ??
     node.children?.find((c: AnyNode) =>
-      c.type === 'identifier' || c.type === 'name' || c.type === 'type_identifier');
+      c.type === 'identifier' || c.type === 'name' || c.type === 'type_identifier'
+      || c.type === 'simple_identifier' || c.type === 'field_identifier');
   return n?.text ?? null;
 }
 
@@ -200,9 +202,33 @@ EXTRACTOR_REGISTRY.set('python', {
     const lang = 'python' as Language;
     const symbols: import('../tree-sitter-types.js').ExtractedSymbol[] = [];
     const references: import('../tree-sitter-types.js').ExtractedReference[] = [];
+    const fileNodeId = makeFileNodeId(filePath);
 
     const walk = (node: AnyNode, parent: string): void => {
       const type = node.type;
+
+      // calls 引用 — helper(x) / obj.method(y) (call.function → identifier|attribute)
+      if (type === 'call') {
+        const fn = node.childForFieldName?.('function');
+        let callee: string | null = null;
+        if (fn) {
+          if (fn.type === 'identifier') {
+            callee = fn.text;
+          } else if (fn.type === 'attribute') {
+            const kids = fn.namedChildren ?? [];
+            const last = kids[kids.length - 1];
+            callee = last?.type === 'identifier' ? last.text : null;
+          }
+        }
+        if (callee) {
+          references.push({
+            fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+            referenceName: callee, referenceKind: 'calls',
+            line: (node.startPosition?.row ?? 0) + 1, col: (node.startPosition?.column ?? 0) + 1,
+            filePath, language: lang,
+          });
+        }
+      }
 
       // decorated_definition — 展开内部定义, 收集装饰器
       if (type === 'decorated_definition') {
@@ -230,6 +256,26 @@ EXTRACTOR_REGISTRY.set('python', {
         const qn = parent ? `${parent}.${name}` : name;
         const isMethod = type === 'function_definition' && parent !== '';
         const kind = isMethod ? 'method' : (type === 'function_definition' ? 'function' : 'class');
+
+        // 继承引用 — class B(A, C) → superclasses 字段
+        if (type === 'class_definition') {
+          const supers = node.childForFieldName?.('superclasses');
+          for (const sc of (supers?.namedChildren ?? [])) {
+            if (sc.type === 'identifier' || sc.type === 'attribute') {
+              const baseName = sc.type === 'attribute'
+                ? (sc.namedChildren?.[sc.namedChildren.length - 1]?.text ?? sc.text)
+                : sc.text;
+              if (baseName && baseName !== name) {
+                references.push({
+                  fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+                  referenceName: baseName, referenceKind: 'extends',
+                  line: (sc.startPosition?.row ?? 0) + 1, col: (sc.startPosition?.column ?? 0) + 1,
+                  filePath, language: lang,
+                });
+              }
+            }
+          }
+        }
 
         // decorators
         const decos: string[] = node.__decos ?? [];
@@ -303,9 +349,34 @@ EXTRACTOR_REGISTRY.set('go', {
     const lang = 'go' as Language;
     const symbols: import('../tree-sitter-types.js').ExtractedSymbol[] = [];
     const references: import('../tree-sitter-types.js').ExtractedReference[] = [];
+    const fileNodeId = makeFileNodeId(filePath);
 
     const walk = (node: AnyNode, parent: string): void => {
       const type = node.type;
+
+      // calls 引用 — helper(x) / obj.Method(y) / pkg.Fn(x)
+      if (type === 'call_expression') {
+        const fn = node.childForFieldName?.('function');
+        let callee: string | null = null;
+        if (fn) {
+          if (fn.type === 'identifier') {
+            callee = fn.text;
+          } else if (fn.type === 'selector_expression') {
+            const ids = (fn.namedChildren ?? []).filter((c: AnyNode) => c.type === 'field_identifier');
+            callee = ids[ids.length - 1]?.text ?? null;
+          } else {
+            callee = fn.text;
+          }
+        }
+        if (callee) {
+          references.push({
+            fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+            referenceName: callee, referenceKind: 'calls',
+            line: (node.startPosition?.row ?? 0) + 1, col: (node.startPosition?.column ?? 0) + 1,
+            filePath, language: lang,
+          });
+        }
+      }
 
       if (type === 'function_declaration') {
         const name = nodeName(node);
@@ -360,8 +431,44 @@ EXTRACTOR_REGISTRY.set('go', {
           isExported, visibility: isExported ? 'public' : 'package',
           signature: firstLine(node),
         }));
-        // 遍历 struct/interface 内部 field
-        if (bodyType) walkChildren(bodyType, qn);
+        // 遍历 struct/interface 内部 field + 嵌入类型引用
+        // (Go 组合: struct 嵌入 → extends; interface 嵌入 → implements)
+        if (bodyType) {
+          const embeds: AnyNode[] = [];
+          if (bodyType.type === 'struct_type') {
+            const fl = findChild(bodyType, 'field_declaration_list');
+            for (const fd of (fl?.namedChildren ?? [])) {
+              if (fd.type === 'field_declaration' && !fd.childForFieldName?.('name')) embeds.push(fd);
+            }
+          } else if (bodyType.type === 'interface_type') {
+            for (const ce of (bodyType.namedChildren ?? [])) {
+              if (ce.type === 'constraint_elem') embeds.push(ce);
+            }
+          }
+          for (const emb of embeds) {
+            const typeNode = findChild(emb, 'type_identifier') ?? findChild(emb, 'qualified_type') ?? findChild(emb, 'pointer_type');
+            let baseName: string | null = null;
+            if (typeNode) {
+              if (typeNode.type === 'qualified_type') {
+                baseName = typeNode.text.split('.').pop() ?? typeNode.text;
+              } else if (typeNode.type === 'pointer_type') {
+                baseName = typeNode.namedChildren?.[0]?.text ?? typeNode.text.replace(/^\*/, '');
+              } else {
+                baseName = typeNode.text;
+              }
+            }
+            if (baseName && baseName !== name) {
+              references.push({
+                fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+                referenceName: baseName,
+                referenceKind: bodyType.type === 'struct_type' ? 'extends' : 'implements',
+                line: (emb.startPosition?.row ?? 0) + 1, col: (emb.startPosition?.column ?? 0) + 1,
+                filePath, language: lang,
+              });
+            }
+          }
+          walkChildren(bodyType, qn);
+        }
         return;
       }
 
@@ -420,10 +527,26 @@ EXTRACTOR_REGISTRY.set('java', {
     const symbols: import('../tree-sitter-types.js').ExtractedSymbol[] = [];
     const references: import('../tree-sitter-types.js').ExtractedReference[] = [];
     const edges: Array<{ source: string; target: string; kind: string; line?: number }> = [];
+    const fileNodeId = makeFileNodeId(filePath);
 
     const walk = (node: AnyNode, parent: string): void => {
       const type = node.type;
       const kind = JAVA_NODE_MAP[type];
+
+      // calls 引用 — method_invocation / object_creation_expression
+      if (type === 'method_invocation' || type === 'object_creation_expression') {
+        const calleeNode = node.childForFieldName?.('name') ?? node.childForFieldName?.('type');
+        const calleeText = calleeNode?.text ?? '';
+        const callee = calleeText ? (calleeText.includes('.') ? calleeText.split('.').pop() ?? '' : calleeText) : '';
+        if (callee) {
+          references.push({
+            fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+            referenceName: callee, referenceKind: 'calls',
+            line: (node.startPosition?.row ?? 0) + 1, col: (node.startPosition?.column ?? 0) + 1,
+            filePath, language: lang,
+          });
+        }
+      }
 
       if (kind === 'import') {
         const scopedId = findChild(node, 'scoped_identifier');
@@ -456,17 +579,50 @@ EXTRACTOR_REGISTRY.set('java', {
         const tpNode = findChild(node, 'type_parameters');
         if (tpNode) typeParams.push(tpNode.text);
 
-        // extends / implements edges
-        const superclass = findChild(node, 'superclass');
-        if (superclass) {
-          const superName = findChild(superclass, 'type_identifier')?.text ?? superclass.text;
-          edges.push({ source: qn, target: superName, kind: 'extends', line: (node.startPosition?.row ?? 0) + 1 });
-        }
-        const interfaces = findChild(node, 'interfaces') ?? findChild(node, 'super_interfaces');
-        if (interfaces) {
-          for (const iface of (interfaces.namedChildren ?? [])) {
-            const ifaceName = findChild(iface, 'type_identifier')?.text ?? iface.text;
-            edges.push({ source: qn, target: ifaceName, kind: 'implements', line: (node.startPosition?.row ?? 0) + 1 });
+        // extends / implements 引用 (替代裸名 edges — 端点需为合法节点 ID,
+        // 裸名边会被 orchestrator JOIN 过滤丢弃; 引用经 code-resolution 按名解析)
+        if (type === 'class_declaration' || type === 'interface_declaration' ||
+            type === 'enum_declaration' || type === 'record_declaration') {
+          const superclass = node.childForFieldName?.('superclass');
+          if (superclass) {
+            const scChild = superclass.namedChildren?.find((c: AnyNode) =>
+              c.type === 'type_identifier' || c.type === 'generic_type');
+            const superName = scChild?.type === 'generic_type'
+              ? findChild(scChild, 'type_identifier')?.text ?? null
+              : scChild?.text ?? null;
+            if (superName && superName !== name) {
+              references.push({
+                fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+                referenceName: superName, referenceKind: 'extends',
+                line: (node.startPosition?.row ?? 0) + 1, col: (node.startPosition?.column ?? 0) + 1,
+                filePath, language: lang,
+              });
+            }
+          }
+          // interface_declaration 的 extends 是 extends_interfaces 子节点 (无 interfaces 字段)
+          const ifacesNode = node.childForFieldName?.('interfaces') ?? findChild(node, 'extends_interfaces');
+          if (ifacesNode) {
+            const ifaceKind = type === 'interface_declaration' ? 'extends' : 'implements';
+            const typeNames: string[] = [];
+            const collectTypes = (n: AnyNode): void => {
+              for (const c of (n.namedChildren ?? [])) {
+                if (c.type === 'type_identifier') typeNames.push(c.text);
+                else if (c.type === 'generic_type') {
+                  const ti = findChild(c, 'type_identifier');
+                  if (ti) typeNames.push(ti.text);
+                } else collectTypes(c);
+              }
+            };
+            collectTypes(ifacesNode);
+            for (const tname of typeNames) {
+              if (tname === name) continue;
+              references.push({
+                fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+                referenceName: tname, referenceKind: ifaceKind,
+                line: (node.startPosition?.row ?? 0) + 1, col: (node.startPosition?.column ?? 0) + 1,
+                filePath, language: lang,
+              });
+            }
           }
         }
 
@@ -516,9 +672,36 @@ EXTRACTOR_REGISTRY.set('rust', {
     const symbols: import('../tree-sitter-types.js').ExtractedSymbol[] = [];
     const references: import('../tree-sitter-types.js').ExtractedReference[] = [];
     const edges: Array<{ source: string; target: string; kind: string; line?: number }> = [];
+    const fileNodeId = makeFileNodeId(filePath);
 
     const walk = (node: AnyNode, parent: string): void => {
       const type = node.type;
+
+      // calls 引用 — helper(x) / obj.method(y) / std::io::read(x)
+      if (type === 'call_expression') {
+        const fn = node.childForFieldName?.('function');
+        let callee: string | null = null;
+        if (fn) {
+          if (fn.type === 'identifier') callee = fn.text;
+          else if (fn.type === 'field_expression') {
+            const ids = (fn.namedChildren ?? []).filter((c: AnyNode) => c.type === 'field_identifier');
+            callee = ids[ids.length - 1]?.text ?? null;
+          } else if (fn.type === 'scoped_identifier') {
+            const segs = (fn.namedChildren ?? []).filter((c: AnyNode) => c.type === 'identifier');
+            callee = segs[segs.length - 1]?.text ?? null;
+          } else {
+            callee = fn.text;
+          }
+        }
+        if (callee) {
+          references.push({
+            fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+            referenceName: callee, referenceKind: 'calls',
+            line: (node.startPosition?.row ?? 0) + 1, col: (node.startPosition?.column ?? 0) + 1,
+            filePath, language: lang,
+          });
+        }
+      }
 
       if (type === 'use_declaration') {
         const arg = findChild(node, 'use_list') ?? findChild(node, 'scoped_identifier') ?? findChild(node, 'identifier');
@@ -539,8 +722,16 @@ EXTRACTOR_REGISTRY.set('rust', {
         const implParent = typeName || parent;
 
         if (traitNode) {
-          edges.push({ source: typeName, target: traitNode.text, kind: 'implements',
-            line: (node.startPosition?.row ?? 0) + 1 });
+          // 泛型 trait (impl Vec<T> for C) 取 < 前裸名, 否则 code-resolution 按名匹配不到
+          let traitName = traitNode.text ?? '';
+          const nameNode = traitNode.childForFieldName?.('name') ??
+            traitNode.namedChildren?.find((c: AnyNode) => c.type === 'type_identifier');
+          if (nameNode?.text) traitName = nameNode.text;
+          if (traitName.includes('<')) traitName = traitName.slice(0, traitName.indexOf('<'));
+          if (traitName) {
+            edges.push({ source: typeName, target: traitName, kind: 'implements',
+              line: (node.startPosition?.row ?? 0) + 1 });
+          }
         }
 
         // 遍历 impl body
@@ -644,10 +835,43 @@ EXTRACTOR_REGISTRY.set('csharp', {
     const lang = 'csharp' as Language;
     const symbols: import('../tree-sitter-types.js').ExtractedSymbol[] = [];
     const references: import('../tree-sitter-types.js').ExtractedReference[] = [];
+    const fileNodeId = makeFileNodeId(filePath);
 
     const walk = (node: AnyNode, parent: string): void => {
       const type = node.type;
       const kind = CSHARP_NODE_MAP[type];
+
+      // calls 引用 — helper(x) / obj.Method(y) / new Foo()
+      if (type === 'invocation_expression') {
+        const fn = node.childForFieldName?.('function');
+        let callee: string | null = null;
+        if (fn) {
+          if (fn.type === 'identifier') callee = fn.text;
+          else if (fn.type === 'member_access_expression') callee = fn.childForFieldName?.('name')?.text ?? null;
+          else callee = fn.text;
+        }
+        if (callee) {
+          references.push({
+            fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+            referenceName: callee, referenceKind: 'calls',
+            line: (node.startPosition?.row ?? 0) + 1, col: (node.startPosition?.column ?? 0) + 1,
+            filePath, language: lang,
+          });
+        }
+      }
+      if (type === 'object_creation_expression') {
+        const typeNode = node.childForFieldName?.('type') ?? node.namedChildren?.[0];
+        let ctorName = typeNode?.text ?? null;
+        if (ctorName?.includes('<')) ctorName = ctorName.slice(0, ctorName.indexOf('<'));
+        if (ctorName) {
+          references.push({
+            fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+            referenceName: ctorName, referenceKind: 'calls',
+            line: (node.startPosition?.row ?? 0) + 1, col: (node.startPosition?.column ?? 0) + 1,
+            filePath, language: lang,
+          });
+        }
+      }
 
       if (type === 'using_directive') {
         const nameNode = findChild(node, 'qualified_name') ?? findChild(node, 'identifier');
@@ -684,6 +908,28 @@ EXTRACTOR_REGISTRY.set('csharp', {
           const returnType = node.childForFieldName?.('type')?.text ?? '';
           if (returnType.startsWith('Task') || returnType.startsWith('ValueTask') || returnType.startsWith('async')) {
             isAsync = true;
+          }
+        }
+
+        // base_list → 首位基类 = extends, 其余接口 = implements (C# 语义: 基类至多一个且必在首位)
+        if (type === 'class_declaration' || type === 'interface_declaration' ||
+            type === 'struct_declaration' || type === 'record_declaration') {
+          const baseList = findChild(node, 'base_list');
+          if (baseList) {
+            (baseList.namedChildren ?? []).forEach((b: AnyNode, i: number) => {
+              const nameNode = b.namedChildren?.find((c: AnyNode) => c.type === 'identifier') ?? b;
+              let baseName = nameNode?.text ?? b.text ?? '';
+              if (baseName.includes('<')) baseName = baseName.slice(0, baseName.indexOf('<'));
+              if (baseName && baseName !== name) {
+                references.push({
+                  fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+                  referenceName: baseName,
+                  referenceKind: i === 0 ? 'extends' : 'implements',
+                  line: (b.startPosition?.row ?? 0) + 1, col: (b.startPosition?.column ?? 0) + 1,
+                  filePath, language: lang,
+                });
+              }
+            });
           }
         }
 
@@ -732,6 +978,7 @@ EXTRACTOR_REGISTRY.set('ruby', {
     const symbols: import('../tree-sitter-types.js').ExtractedSymbol[] = [];
     const references: import('../tree-sitter-types.js').ExtractedReference[] = [];
     let currentVisibility = 'public';
+    const fileNodeId = makeFileNodeId(filePath);
 
     const walk = (node: AnyNode, parent: string): void => {
       const type = node.type;
@@ -743,6 +990,22 @@ EXTRACTOR_REGISTRY.set('ruby', {
         const kind = type === 'class' ? 'class' : 'module';
         const savedVis = currentVisibility;
         currentVisibility = 'public';
+
+        // 继承引用 — class B < A / class C < ::NS::Base
+        if (type === 'class') {
+          const sup = node.childForFieldName?.('superclass');
+          const supName = sup?.namedChildren?.[0]?.text?.split('::').pop()
+            ?? sup?.text?.replace(/^<\s*/, '')?.split('::').pop() ?? null;
+          if (supName && supName !== name) {
+            references.push({
+              fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+              referenceName: supName, referenceKind: 'extends',
+              line: (sup.startPosition?.row ?? 0) + 1, col: (sup.startPosition?.column ?? 0) + 1,
+              filePath, language: lang,
+            });
+          }
+        }
+
         symbols.push(sym(kind, name, qn, filePath, lang, node, { signature: firstLine(node) }));
         walkChildren(node, qn);
         currentVisibility = savedVis;
@@ -780,14 +1043,19 @@ EXTRACTOR_REGISTRY.set('ruby', {
       }
 
       if (type === 'call' || type === 'identifier') {
-        const methodName = nodeName(node) ?? node.text;
+        const hasReceiver = node.childForFieldName?.('receiver') != null;
+        // 被调用名: call 用 method 字段 (无 receiver 的裸调用同样走此字段);
+        // 避免 nodeName 取第一个 identifier 误取接收者 (obj.method → 'obj')
+        const methodName = type === 'call'
+          ? (node.childForFieldName?.('method')?.text ?? nodeName(node) ?? node.text)
+          : (nodeName(node) ?? node.text);
         // visibility modifiers
-        if (['private', 'protected', 'public'].includes(methodName)) {
+        if (!hasReceiver && ['private', 'protected', 'public'].includes(methodName)) {
           currentVisibility = methodName;
           return;
         }
         // attr_accessor/reader/writer → properties
-        if (['attr_accessor', 'attr_reader', 'attr_writer'].includes(methodName)) {
+        if (!hasReceiver && ['attr_accessor', 'attr_reader', 'attr_writer'].includes(methodName)) {
           const args = findChild(node, 'argument_list');
           for (const arg of (args?.namedChildren ?? [])) {
             if (arg.type === 'simple_symbol' || arg.type === 'symbol') {
@@ -799,7 +1067,7 @@ EXTRACTOR_REGISTRY.set('ruby', {
           return;
         }
         // include/extend/prepend → import references
-        if (['include', 'extend', 'prepend', 'require', 'require_relative'].includes(methodName)) {
+        if (!hasReceiver && ['include', 'extend', 'prepend', 'require', 'require_relative'].includes(methodName)) {
           const args = findChild(node, 'argument_list');
           for (const arg of (args?.namedChildren ?? [])) {
             references.push({
@@ -811,6 +1079,15 @@ EXTRACTOR_REGISTRY.set('ruby', {
             });
           }
           return;
+        }
+        // 普通方法调用 → calls 引用 (helper(x) / obj.method(x) — 带 receiver 也收集, 由解析阶段按名过滤)
+        if (type === 'call' && methodName) {
+          references.push({
+            fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+            referenceName: methodName, referenceKind: 'calls',
+            line: (node.startPosition?.row ?? 0) + 1, col: (node.startPosition?.column ?? 0) + 1,
+            filePath, language: lang,
+          });
         }
       }
 
@@ -837,6 +1114,8 @@ const SWIFT_NODE_MAP: Record<string, string> = {
   'typealias_declaration': 'type_alias', 'variable_declaration': 'property',
   'import_declaration': 'import', 'init_declaration': 'method',
   'deinit_declaration': 'method', 'subscript_declaration': 'method',
+  // tree-sitter-swift 实际语法: enum 为 class_declaration + enum_class_body + enum_entry
+  'enum_entry': 'enum_member',
 };
 
 EXTRACTOR_REGISTRY.set('swift', {
@@ -845,15 +1124,45 @@ EXTRACTOR_REGISTRY.set('swift', {
     const lang = 'swift' as Language;
     const symbols: import('../tree-sitter-types.js').ExtractedSymbol[] = [];
     const references: import('../tree-sitter-types.js').ExtractedReference[] = [];
+    const edges: import('../tree-sitter-types.js').LanguageExtractionResult['edges'] = [];
+    const fileNodeId = makeFileNodeId(filePath);
 
     const walk = (node: AnyNode, parent: string): void => {
       const type = node.type;
       const kind = SWIFT_NODE_MAP[type];
 
+      // calls 引用 — helper(id) / items.joined() (tree-sitter-swift 新语法:
+      // call_expression 直接子为 simple_identifier 或 navigation_expression)
+      if (type === 'call_expression' || type === 'function_call_expression') {
+        const fn = node.childForFieldName?.('function') ?? node.namedChildren?.[0];
+        let callee: string | null = null;
+        if (fn) {
+          if (fn.type === 'simple_identifier' || fn.type === 'identifier') {
+            callee = fn.text;
+          } else if (fn.type === 'navigation_expression') {
+            // items.joined() → 最后一个 navigation_suffix 的 simple_identifier
+            const suffixes = (fn.namedChildren ?? []).filter((c: AnyNode) => c.type === 'navigation_suffix');
+            const last = suffixes[suffixes.length - 1]?.namedChildren?.find((c: AnyNode) => c.type === 'simple_identifier');
+            callee = last?.text ?? null;
+          } else if (fn.type === 'user_type') {
+            callee = fn.text;
+          }
+        }
+        if (callee) {
+          references.push({
+            fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+            referenceName: callee, referenceKind: 'calls',
+            line: (node.startPosition?.row ?? 0) + 1, col: (node.startPosition?.column ?? 0) + 1,
+            filePath, language: lang,
+          });
+        }
+      }
+
       if (type === 'import_declaration') {
-        const mod = node.namedChildren?.find((c: AnyNode) => c.type === 'identifier');
+        const mod = node.namedChildren?.find((c: AnyNode) => c.type === 'simple_identifier')
+          ?? node.namedChildren?.find((c: AnyNode) => c.type === 'identifier');
         references.push({
-          fromSymbolName: '<module>', fromSymbolId: `${filePath}:<module>`,
+          fromSymbolName: '<file>', fromSymbolId: fileNodeId,
           referenceName: mod?.text ?? node.text.replace(/^import\s+/, '').trim(),
           referenceKind: 'imports',
           line: (node.startPosition?.row ?? 0) + 1, col: (node.startPosition?.column ?? 0) + 1,
@@ -866,8 +1175,31 @@ EXTRACTOR_REGISTRY.set('swift', {
         const name = nodeName(node) ?? (type === 'init_declaration' ? 'init' : type === 'deinit_declaration' ? 'deinit' : null);
         if (!name) { walkChildren(node, parent); return; }
         const qn = parent ? `${parent}.${name}` : name;
+
+        // extension UserRepository {} — 不建新类型节点 (与主类型同 qn 会覆盖),
+        // 直接把成员挂到扩展类型的 qn 下 (contains 边 source 与主类型节点一致)
+        if (type === 'extension_declaration') {
+          walkChildren(node, name);
+          return;
+        }
+
+        // tree-sitter-swift: enum/struct 实际都是 class_declaration — 用源码关键字区分
+        let effectiveKind = kind;
+        if (type === 'class_declaration') {
+          const declText = (node.text || '').trimStart();
+          if (declText.startsWith('enum') || (node.namedChildren ?? []).some((c: AnyNode) => c.type === 'enum_class_body')) {
+            effectiveKind = 'enum';
+          } else if (declText.startsWith('struct')) {
+            effectiveKind = 'struct';
+          } else if (declText.startsWith('protocol')) {
+            effectiveKind = 'protocol';
+          } else {
+            effectiveKind = 'class';
+          }
+        }
+
         const isMethod = parent !== '' && (type === 'function_declaration' || type === 'init_declaration' || type === 'deinit_declaration' || type === 'subscript_declaration');
-        const finalKind = isMethod ? 'method' : kind;
+        const finalKind = isMethod ? 'method' : effectiveKind;
 
         // modifiers: public/private/fileprivate/internal/static/class
         let visibility = '', isStatic = false, isAsync = false;
@@ -887,13 +1219,19 @@ EXTRACTOR_REGISTRY.set('swift', {
           }
         }
 
-        // protocol conformance
-        const conformance = findChild(node, 'type_inheritance_clause');
-        if (conformance) {
-          for (const t of (conformance.namedChildren ?? [])) {
-            if (t.type === 'user_type' || t.type === 'type_identifier') {
-              // recorded as edge later if needed
-            }
+        // protocol conformance → extends 引用 (tree-sitter-swift: inheritance_specifier → user_type)
+        const inheritance = (node.namedChildren ?? []).filter((c: AnyNode) => c.type === 'inheritance_specifier');
+        for (const spec of inheritance) {
+          const ut = spec.namedChildren?.find((c: AnyNode) => c.type === 'user_type');
+          const protoName = (ut?.text ?? spec.text ?? '').trim();
+          if (protoName && protoName !== name) {
+            references.push({
+              fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+              referenceName: protoName, referenceKind: 'extends',
+              line: (spec.startPosition?.row ?? 0) + 1,
+              col: (spec.startPosition?.column ?? 0) + 1,
+              filePath, language: lang,
+            });
           }
         }
 
@@ -908,6 +1246,17 @@ EXTRACTOR_REGISTRY.set('swift', {
           visibility, isStatic, isAsync, decorators: decos,
           signature: firstLine(node), docstring,
         }));
+
+        // contains 边 — 父符号 → 子符号 (端点均为合法节点 ID)
+        if (parent) {
+          edges.push({
+            source: makeCodeNodeId(filePath, parent),
+            target: makeCodeNodeId(filePath, qn),
+            kind: 'contains',
+            line: (node.startPosition?.row ?? 0) + 1,
+          });
+        }
+
         walkChildren(node, qn);
         return;
       }
@@ -920,7 +1269,7 @@ EXTRACTOR_REGISTRY.set('swift', {
     };
 
     walk((tree as AnyNode).rootNode, '');
-    return { symbols, references, edges: [] };
+    return { symbols, references, edges };
   },
 });
 
@@ -942,10 +1291,33 @@ EXTRACTOR_REGISTRY.set('kotlin', {
     const lang = 'kotlin' as Language;
     const symbols: import('../tree-sitter-types.js').ExtractedSymbol[] = [];
     const references: import('../tree-sitter-types.js').ExtractedReference[] = [];
+    const fileNodeId = makeFileNodeId(filePath);
 
     const walk = (node: AnyNode, parent: string): void => {
       const type = node.type;
       const kind = KOTLIN_NODE_MAP[type];
+
+      // calls 引用 — 本 grammar 无字段, 按位置取 namedChildren[0]
+      // helper(x) → simple_identifier; obj.method(y) → navigation_expression 末段
+      if (type === 'call_expression') {
+        const fn = node.namedChildren?.[0];
+        let callee: string | null = null;
+        if (fn?.type === 'simple_identifier') {
+          callee = fn.text;
+        } else if (fn?.type === 'navigation_expression') {
+          const suffixes = (fn.namedChildren ?? []).filter((c: AnyNode) => c.type === 'navigation_suffix');
+          const lastSuffix = suffixes[suffixes.length - 1];
+          callee = lastSuffix?.namedChildren?.find((c: AnyNode) => c.type === 'simple_identifier')?.text ?? null;
+        }
+        if (callee) {
+          references.push({
+            fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+            referenceName: callee, referenceKind: 'calls',
+            line: (node.startPosition?.row ?? 0) + 1, col: (node.startPosition?.column ?? 0) + 1,
+            filePath, language: lang,
+          });
+        }
+      }
 
       if (type === 'import_header') {
         const id = findChild(node, 'identifier') ?? findChild(node, 'scoped_identifier');
@@ -965,6 +1337,27 @@ EXTRACTOR_REGISTRY.set('kotlin', {
         const qn = parent ? `${parent}.${name}` : name;
         const isMethod = parent !== '' && type === 'function_declaration';
         const finalKind = isMethod ? 'method' : kind;
+
+        // 继承/实现引用 — delegation_specifier 列表 (首个=extends, 其余=implements)
+        if (type === 'class_declaration' || type === 'interface_declaration' || type === 'object_declaration') {
+          const delegations = (node.namedChildren ?? []).filter((c: AnyNode) => c.type === 'delegation_specifier');
+          delegations.forEach((spec: AnyNode, i: number) => {
+            const ci = spec.namedChildren?.find((c: AnyNode) =>
+              c.type === 'constructor_invocation' || c.type === 'explicit_delegation');
+            const ut = ci
+              ? ci.namedChildren?.find((c: AnyNode) => c.type === 'user_type')
+              : spec.namedChildren?.find((c: AnyNode) => c.type === 'user_type');
+            const parentName = ut?.namedChildren?.find((c: AnyNode) => c.type === 'type_identifier')?.text ?? null;
+            if (parentName && parentName !== name) {
+              references.push({
+                fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+                referenceName: parentName, referenceKind: i === 0 ? 'extends' : 'implements',
+                line: (node.startPosition?.row ?? 0) + 1, col: (node.startPosition?.column ?? 0) + 1,
+                filePath, language: lang,
+              });
+            }
+          });
+        }
 
         // modifiers: visibility, suspend, override, data, abstract
         let visibility = '', isAsync = false, isStatic = false, isAbstract = false;
@@ -1033,10 +1426,30 @@ EXTRACTOR_REGISTRY.set('php', {
     const lang = 'php' as Language;
     const symbols: import('../tree-sitter-types.js').ExtractedSymbol[] = [];
     const references: import('../tree-sitter-types.js').ExtractedReference[] = [];
+    const fileNodeId = makeFileNodeId(filePath);
 
     const walk = (node: AnyNode, parent: string): void => {
       const type = node.type;
       const kind = PHP_NODE_MAP[type];
+
+      // calls 引用 — helper($x) / $obj->method($y) / A::staticCall($z)
+      if (type === 'function_call_expression' || type === 'member_call_expression' || type === 'scoped_call_expression') {
+        let callee: string | null = null;
+        if (type === 'function_call_expression') {
+          const fn = node.childForFieldName?.('function');
+          callee = fn ? (fn.text.split('\\').pop() || null) : null;
+        } else {
+          callee = node.childForFieldName?.('name')?.text ?? null;
+        }
+        if (callee) {
+          references.push({
+            fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+            referenceName: callee, referenceKind: 'calls',
+            line: (node.startPosition?.row ?? 0) + 1, col: (node.startPosition?.column ?? 0) + 1,
+            filePath, language: lang,
+          });
+        }
+      }
 
       if (type === 'namespace_use_declaration' || type === 'use_declaration') {
         const nameNode = findChild(node, 'qualified_name') ?? findChild(node, 'name');
@@ -1062,6 +1475,32 @@ EXTRACTOR_REGISTRY.set('php', {
         if (prev?.type === 'comment' && prev.text.startsWith('/**')) {
           const raw = prev.text.replace(/^\/\*\*|\*\/$/g, '').replace(/^\s*\*\s?/gm, '').trim();
           docstring = raw;
+        }
+
+        // 继承/实现引用 — base_clause(extends) / class_interface_clause(implements)
+        // 注意: 这两个是子节点类型而非 field (childForFieldName 返回 NULL)
+        if (type === 'class_declaration' || type === 'interface_declaration' || type === 'enum_declaration') {
+          const clauses: Array<[string, string]> = [
+            ['base_clause', 'extends'],
+            ['class_interface_clause', 'implements'],
+          ];
+          for (const [clauseType, refKind] of clauses) {
+            const clause = findChild(node, clauseType);
+            if (!clause) continue;
+            for (const c of (clause.namedChildren ?? [])) {
+              if (c.type === 'name' || c.type === 'qualified_name') {
+                const target = c.text.split('\\').pop();
+                if (target && target !== name) {
+                  references.push({
+                    fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+                    referenceName: target, referenceKind: refKind,
+                    line: (c.startPosition?.row ?? 0) + 1, col: (c.startPosition?.column ?? 0) + 1,
+                    filePath, language: lang,
+                  });
+                }
+              }
+            }
+          }
         }
 
         // class traits (use TraitName;)
@@ -1119,9 +1558,34 @@ EXTRACTOR_REGISTRY.set('c', {
     const lang = 'c' as Language;
     const symbols: import('../tree-sitter-types.js').ExtractedSymbol[] = [];
     const references: import('../tree-sitter-types.js').ExtractedReference[] = [];
+    const fileNodeId = makeFileNodeId(filePath);
 
     const walk = (node: AnyNode, parent: string): void => {
       const type = node.type;
+
+      // calls 引用 — helper(x) / obj->method(y) / obj.method(y)
+      if (type === 'call_expression') {
+        const fn = node.childForFieldName?.('function') ?? node.namedChildren?.[0];
+        let callee: string | null = null;
+        if (fn) {
+          if (fn.type === 'identifier') {
+            callee = fn.text;
+          } else if (fn.type === 'field_expression') {
+            const ids = (fn.namedChildren ?? []).filter((c: AnyNode) => c.type === 'field_identifier');
+            callee = ids[ids.length - 1]?.text ?? null;
+          } else {
+            callee = fn.text;
+          }
+        }
+        if (callee) {
+          references.push({
+            fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+            referenceName: callee, referenceKind: 'calls',
+            line: (node.startPosition?.row ?? 0) + 1, col: (node.startPosition?.column ?? 0) + 1,
+            filePath, language: lang,
+          });
+        }
+      }
 
       // #include → import reference
       if (type === 'preproc_include') {
@@ -1241,9 +1705,31 @@ EXTRACTOR_REGISTRY.set('cpp', {
     const symbols: import('../tree-sitter-types.js').ExtractedSymbol[] = [];
     const references: import('../tree-sitter-types.js').ExtractedReference[] = [];
     const edges: Array<{ source: string; target: string; kind: string; line?: number }> = [];
+    const fileNodeId = makeFileNodeId(filePath);
 
     const walk = (node: AnyNode, parent: string, sectionVisibility?: string): void => {
       const type = node.type;
+
+      // calls 引用 — helper(x) / obj->method(y) / obj.method(y)
+      if (type === 'call_expression') {
+        const fn = node.childForFieldName?.('function') ?? node.namedChildren?.[0];
+        let callee: string | null = null;
+        if (fn) {
+          if (fn.type === 'identifier') callee = fn.text;
+          else if (fn.type === 'field_expression') {
+            const ids = (fn.namedChildren ?? []).filter((c: AnyNode) => c.type === 'field_identifier');
+            callee = ids[ids.length - 1]?.text ?? null;
+          } else callee = fn.text;
+        }
+        if (callee) {
+          references.push({
+            fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+            referenceName: callee, referenceKind: 'calls',
+            line: (node.startPosition?.row ?? 0) + 1, col: (node.startPosition?.column ?? 0) + 1,
+            filePath, language: lang,
+          });
+        }
+      }
 
       // #include → import
       if (type === 'preproc_include') {
@@ -1288,12 +1774,18 @@ EXTRACTOR_REGISTRY.set('cpp', {
         const kind = type === 'class_specifier' ? 'class' : 'struct';
         const typeParams: string[] = node.__templateParams ? [node.__templateParams] : [];
 
-        // base class clause
+        // base class clause — 裸名 edges 由通用层转为 file 锚点引用 (code-resolution 按名解析)
+        // 修正: 模板基类 (A<int>) 取 < 前裸名; 跳过 access_specifier
         const baseClause = findChild(node, 'base_class_clause');
         if (baseClause) {
           for (const base of (baseClause.namedChildren ?? [])) {
-            const baseName = findChild(base, 'type_identifier')?.text ?? base.text?.replace(/\b(public|private|protected|virtual)\s+/g, '').trim();
-            if (baseName) edges.push({ source: qn, target: baseName, kind: 'extends', line: (node.startPosition?.row ?? 0) + 1 });
+            if (base.type === 'access_specifier') continue;
+            const nameNode = base.childForFieldName?.('name') ??
+              (base.type === 'type_identifier' ? base : base.namedChildren?.find((c: AnyNode) => c.type === 'type_identifier'));
+            let baseName = nameNode?.text ?? base.text ?? '';
+            if (baseName.includes('<')) baseName = baseName.slice(0, baseName.indexOf('<'));
+            baseName = baseName.replace(/(public|private|protected|virtual)\s+/g, '').trim();
+            if (baseName && baseName !== name) edges.push({ source: qn, target: baseName, kind: 'extends', line: (node.startPosition?.row ?? 0) + 1 });
           }
         }
 
@@ -1376,6 +1868,7 @@ EXTRACTOR_REGISTRY.set('dart', {
     const lang = 'dart' as Language;
     const symbols: import('../tree-sitter-types.js').ExtractedSymbol[] = [];
     const references: import('../tree-sitter-types.js').ExtractedReference[] = [];
+    const fileNodeId = makeFileNodeId(filePath);
 
     // Dart tree-sitter grammars vary; also scan source lines for import/part/export
     const lines = sourceCode.split('\n');
@@ -1384,7 +1877,7 @@ EXTRACTOR_REGISTRY.set('dart', {
       const importMatch = line.match(/^(?:import|export|part|part\s+of)\s+['"]([^'"]+)['"]/);
       if (importMatch) {
         references.push({
-          fromSymbolName: '<module>', fromSymbolId: `${filePath}:<module>`,
+          fromSymbolName: '<file>', fromSymbolId: fileNodeId,
           referenceName: importMatch[1], referenceKind: 'imports',
           line: i + 1, col: 1, filePath, language: lang,
         });
@@ -1394,6 +1887,53 @@ EXTRACTOR_REGISTRY.set('dart', {
     const walk = (node: AnyNode, parent: string): void => {
       const type = node.type;
 
+      // calls 引用 — akavel grammar: 调用 = identifier + selector(argument_part) 兄弟链
+      if (type === 'selector' && node.namedChildren?.[0]?.type === 'argument_part') {
+        const prev = node.previousNamedSibling;
+        let callee: string | null = null;
+        if (prev) {
+          if (prev.type === 'identifier') callee = prev.text;
+          else if (prev.type === 'unconditional_assignable_selector' || prev.type === 'conditional_assignable_selector') {
+            callee = prev.namedChildren?.find((c: AnyNode) => c.type === 'identifier')?.text ?? null;
+          } else if (prev.type === 'selector') {
+            callee = prev.namedChildren?.[0]?.namedChildren?.find((c: AnyNode) => c.type === 'identifier')?.text ?? null;
+          }
+        }
+        if (callee) {
+          references.push({
+            fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+            referenceName: callee, referenceKind: 'calls',
+            line: (node.startPosition?.row ?? 0) + 1, col: (node.startPosition?.column ?? 0) + 1,
+            filePath, language: lang,
+          });
+        }
+      }
+      // 新语法兜底
+      if (type === 'function_expression' || type === 'method_invocation') {
+        const fn = node.childForFieldName?.('function') ?? node.namedChildren?.[0];
+        const callee = fn?.type === 'identifier' ? fn.text : fn?.text ?? null;
+        if (callee) {
+          references.push({
+            fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+            referenceName: callee, referenceKind: 'calls',
+            line: (node.startPosition?.row ?? 0) + 1, col: (node.startPosition?.column ?? 0) + 1,
+            filePath, language: lang,
+          });
+        }
+      }
+      // new Foo() → 构造调用
+      if (type === 'new_expression') {
+        const typeNode = node.namedChildren?.find((c: AnyNode) => c.type === 'type_identifier');
+        if (typeNode?.text) {
+          references.push({
+            fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+            referenceName: typeNode.text, referenceKind: 'calls',
+            line: (node.startPosition?.row ?? 0) + 1, col: (node.startPosition?.column ?? 0) + 1,
+            filePath, language: lang,
+          });
+        }
+      }
+
       if (type === 'class_definition' || type === 'mixin_declaration' || type === 'enum_declaration' || type === 'extension_declaration') {
         const name = nodeName(node);
         if (!name) { walkChildren(node, parent); return; }
@@ -1402,6 +1942,42 @@ EXTRACTOR_REGISTRY.set('dart', {
 
         // annotations (@override, @deprecated, etc.)
         const decos = extractDecorators(node, 'annotation');
+
+        // 继承/实现引用 — superclass 字段 = extends; interfaces 字段 = implements
+        const superNode = node.childForFieldName?.('superclass') ?? findChild(node, 'superclass');
+        if (superNode) {
+          const extType = superNode.namedChildren?.find((c: AnyNode) => c.type === 'type_identifier');
+          if (extType?.text && extType.text !== name) {
+            references.push({
+              fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+              referenceName: extType.text, referenceKind: 'extends',
+              line: (superNode.startPosition?.row ?? 0) + 1, col: (superNode.startPosition?.column ?? 0) + 1,
+              filePath, language: lang,
+            });
+          }
+          const mixins = superNode.namedChildren?.find((c: AnyNode) => c.type === 'mixins');
+          for (const m of (mixins?.namedChildren ?? [])) {
+            if (m.type === 'type_identifier' && m.text !== name) {
+              references.push({
+                fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+                referenceName: m.text, referenceKind: 'implements',
+                line: (m.startPosition?.row ?? 0) + 1, col: (m.startPosition?.column ?? 0) + 1,
+                filePath, language: lang,
+              });
+            }
+          }
+        }
+        const ifaceNode = node.childForFieldName?.('interfaces') ?? findChild(node, 'interfaces');
+        for (const it of (ifaceNode?.namedChildren ?? [])) {
+          if (it.type === 'type_identifier' && it.text !== name) {
+            references.push({
+              fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+              referenceName: it.text, referenceKind: 'implements',
+              line: (it.startPosition?.row ?? 0) + 1, col: (it.startPosition?.column ?? 0) + 1,
+              filePath, language: lang,
+            });
+          }
+        }
 
         symbols.push(sym(kind, name, qn, filePath, lang, node, {
           isExported: !name.startsWith('_'), decorators: decos,
@@ -1726,7 +2302,7 @@ const PASCAL_NODE_MAP: Record<string, string> = {
 
 EXTRACTOR_REGISTRY.set('pascal', {
   language: 'pascal' as Language, grammarName: 'pascal', nodeTypeMap: PASCAL_NODE_MAP,
-  extract(_tree, sourceCode, filePath) {
+  extract(tree, sourceCode, filePath) {
     const lang = 'pascal' as Language;
     const symbols: import('../tree-sitter-types.js').ExtractedSymbol[] = [];
     const references: import('../tree-sitter-types.js').ExtractedReference[] = [];
@@ -1810,6 +2386,42 @@ EXTRACTOR_REGISTRY.set('pascal', {
       }
     }
 
+    // calls 引用 — 真实 AST 遍历 (vendored tree-sitter-pascal.wasm)
+    // 调用节点类型为 exprCall, 被调者 = 首个 named child:
+    //   identifier (writeln/sqrt/IntToStr) 或 exprDot (TForm1.Button1Click → 末位 identifier 即方法名)
+    const pascalRoot = (tree as AnyNode | null | undefined)?.rootNode;
+    if (pascalRoot) {
+      const fileNodeId = makeFileNodeId(filePath);
+      const walkPascal = (node: AnyNode): void => {
+        if (node.type === 'exprCall') {
+          const fn = node.namedChildren?.[0];
+          let callee: string | null = null;
+          if (fn) {
+            if (fn.type === 'identifier') {
+              callee = fn.text;
+            } else if (fn.type === 'exprDot') {
+              const ids = (fn.namedChildren ?? []).filter((c: AnyNode) => c.type === 'identifier');
+              callee = ids[ids.length - 1]?.text ?? null;
+            }
+          }
+          if (callee) {
+            references.push({
+              fromSymbolName: '<file>',
+              fromSymbolId: fileNodeId,
+              referenceName: callee,
+              referenceKind: 'calls',
+              line: (node.startPosition?.row ?? 0) + 1,
+              col: (node.startPosition?.column ?? 0) + 1,
+              filePath,
+              language: lang,
+            });
+          }
+        }
+        for (const c of node.namedChildren ?? []) walkPascal(c);
+      };
+      walkPascal(pascalRoot);
+    }
+
     return { symbols, references, edges: [] };
   },
 });
@@ -1831,9 +2443,34 @@ EXTRACTOR_REGISTRY.set('scala', {
     const lang = 'scala' as Language;
     const symbols: import('../tree-sitter-types.js').ExtractedSymbol[] = [];
     const references: import('../tree-sitter-types.js').ExtractedReference[] = [];
+    const fileNodeId = makeFileNodeId(filePath);
 
     const walk = (node: AnyNode, parent: string): void => {
       const type = node.type;
+
+      // calls 引用 — call_expression (function 字段: identifier/generic_function/field_expression/operator_identifier)
+      if (type === 'call_expression') {
+        const fn = node.childForFieldName?.('function') ?? node.namedChildren?.[0];
+        let callee: string | null = null;
+        if (fn) {
+          if (fn.type === 'identifier') callee = fn.text;
+          else if (fn.type === 'generic_function') {
+            callee = fn.childForFieldName?.('function')?.text ?? fn.namedChildren?.[0]?.text ?? null;
+          } else if (fn.type === 'field_expression') {
+            callee = fn.childForFieldName?.('field')?.text ?? null;
+          } else if (fn.type === 'operator_identifier') {
+            callee = fn.text;
+          }
+        }
+        if (callee) {
+          references.push({
+            fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+            referenceName: callee, referenceKind: 'calls',
+            line: (node.startPosition?.row ?? 0) + 1, col: (node.startPosition?.column ?? 0) + 1,
+            filePath, language: lang,
+          });
+        }
+      }
 
       // import
       if (type === 'import_declaration') {
@@ -1867,6 +2504,33 @@ EXTRACTOR_REGISTRY.set('scala', {
         const isAbstract = text.includes('abstract ');
         const isSealed = text.includes('sealed ');
         if (isSealed) decos.push('sealed');
+
+        // 继承/实现引用 — extends_clause 是位置子节点 (无字段), 递归收集全部父类型
+        // (兼容 vendored compound_type 平铺与新版 with 子句两种 grammar)
+        const ext = node.namedChildren?.find((c: AnyNode) => c.type === 'extends_clause');
+        if (ext) {
+          const parentNames: string[] = [];
+          const collectTypes = (n: AnyNode | null | undefined): void => {
+            if (!n) return;
+            if (n.type === 'type_identifier') { parentNames.push(n.text); return; }
+            if (n.type === 'generic_type') {
+              const ti = findChild(n, 'type_identifier');
+              if (ti) parentNames.push(ti.text);
+              return;
+            }
+            for (const c of (n.namedChildren ?? [])) collectTypes(c);
+          };
+          collectTypes(ext);
+          parentNames.forEach((pn, i) => {
+            if (pn === name) return;
+            references.push({
+              fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+              referenceName: pn, referenceKind: i === 0 ? 'extends' : 'implements',
+              line: (ext.startPosition?.row ?? 0) + 1, col: (ext.startPosition?.column ?? 0) + 1,
+              filePath, language: lang,
+            });
+          });
+        }
 
         symbols.push(sym(kind, name, qn, filePath, lang, node, {
           isAbstract, decorators: decos, isStatic: type === 'object_definition',
@@ -1933,6 +2597,43 @@ EXTRACTOR_REGISTRY.set('scala', {
 // 18. Lua — function (global/local), require, module pattern, tables
 // ---------------------------------------------------------------------------
 
+/** Lua/Luau 被调用名 — 兼容两种 grammar 形状:
+ *  tree-sitter-wasms lua: call.function → variable (最后一个 identifier / name 字段)
+ *  vendored lua/luau:    function_call.name → identifier | dot_index_expression | method_index_expression */
+function extractLuaCallee(node: AnyNode): string | null {
+  const fn = node.childForFieldName?.('function');
+  if (fn) {
+    if (fn.type === 'variable') {
+      const kids = fn.namedChildren ?? [];
+      const last = kids[kids.length - 1];
+      if (last?.type === 'identifier') return last.text;
+      const n = fn.childForFieldName?.('name');
+      return n?.text ?? null;
+    }
+    return fn.text ?? null;
+  }
+  const nameNode = node.childForFieldName?.('name');
+  if (!nameNode) return null;
+  if (nameNode.type === 'identifier') return nameNode.text;
+  const kids = nameNode.namedChildren ?? [];
+  const last = kids[kids.length - 1];
+  if (last?.type === 'identifier') return last.text;
+  return nameNode.text.split(/[.:]/).pop() ?? null;
+}
+
+/** 取调用参数中第一个字符串字面量 (require 模块名) — 兼容 arguments / argument_list 子树 */
+function firstStringArg(node: AnyNode): string | null {
+  const args = node.childForFieldName?.('arguments')
+    ?? node.children?.find((c: AnyNode) => c.type === 'arguments' || c.type === 'argument_list');
+  const stack: AnyNode[] = args ? [args] : [];
+  while (stack.length) {
+    const cur = stack.pop()!;
+    if (cur.type === 'string') return cur.text.replace(/['"]/g, '');
+    for (const c of (cur.namedChildren ?? [])) stack.push(c);
+  }
+  return null;
+}
+
 const LUA_NODE_MAP: Record<string, string> = {
   'function_declaration': 'function', 'function_definition': 'function',
   'local_function': 'function', 'assignment_statement': '_assign',
@@ -1945,9 +2646,33 @@ EXTRACTOR_REGISTRY.set('lua', {
     const lang = 'lua' as Language;
     const symbols: import('../tree-sitter-types.js').ExtractedSymbol[] = [];
     const references: import('../tree-sitter-types.js').ExtractedReference[] = [];
+    const fileNodeId = makeFileNodeId(filePath);
 
     const walk = (node: AnyNode, parent: string): void => {
       const type = node.type;
+
+      // calls 引用 — helper(x) / obj:method(x) / obj.method(x); require('m') → imports
+      if (type === 'function_call' || type === 'call') {
+        const callee = extractLuaCallee(node);
+        if (callee === 'require') {
+          const mod = firstStringArg(node) ?? '';
+          references.push({
+            fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+            referenceName: mod, referenceKind: 'imports',
+            line: (node.startPosition?.row ?? 0) + 1, col: (node.startPosition?.column ?? 0) + 1,
+            filePath, language: lang,
+          });
+          return;
+        }
+        if (callee) {
+          references.push({
+            fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+            referenceName: callee, referenceKind: 'calls',
+            line: (node.startPosition?.row ?? 0) + 1, col: (node.startPosition?.column ?? 0) + 1,
+            filePath, language: lang,
+          });
+        }
+      }
 
       // function declarations (global and local)
       if (type === 'function_declaration' || type === 'local_function') {
@@ -2041,6 +2766,7 @@ EXTRACTOR_REGISTRY.set('luau', {
     const lang = 'luau' as Language;
     const symbols: import('../tree-sitter-types.js').ExtractedSymbol[] = [];
     const references: import('../tree-sitter-types.js').ExtractedReference[] = [];
+    const fileNodeId = makeFileNodeId(filePath);
 
     // Detect strict mode from first line
     const firstSrcLine = sourceCode.split('\n')[0]?.trim() ?? '';
@@ -2048,6 +2774,29 @@ EXTRACTOR_REGISTRY.set('luau', {
 
     const walk = (node: AnyNode, parent: string): void => {
       const type = node.type;
+
+      // calls 引用 — helper(x) / obj:method(x) / obj.method(x); require('m') → imports
+      if (type === 'function_call' || type === 'call') {
+        const callee = extractLuaCallee(node);
+        if (callee === 'require') {
+          const mod = firstStringArg(node) ?? '';
+          references.push({
+            fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+            referenceName: mod, referenceKind: 'imports',
+            line: (node.startPosition?.row ?? 0) + 1, col: (node.startPosition?.column ?? 0) + 1,
+            filePath, language: lang,
+          });
+          return;
+        }
+        if (callee) {
+          references.push({
+            fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+            referenceName: callee, referenceKind: 'calls',
+            line: (node.startPosition?.row ?? 0) + 1, col: (node.startPosition?.column ?? 0) + 1,
+            filePath, language: lang,
+          });
+        }
+      }
 
       // function declarations
       if (type === 'function_declaration' || type === 'local_function') {
@@ -2078,23 +2827,6 @@ EXTRACTOR_REGISTRY.set('luau', {
           signature: firstLine(node),
         }));
         return;
-      }
-
-      // require
-      if (type === 'function_call' || type === 'call') {
-        const fnName = nodeName(node) ?? findChild(node, 'identifier')?.text;
-        if (fnName === 'require') {
-          const args = findChild(node, 'arguments') ?? findChild(node, 'argument_list');
-          const strArg = args?.namedChildren?.[0] ?? findChild(node, 'string');
-          references.push({
-            fromSymbolName: '<module>', fromSymbolId: `${filePath}:<module>`,
-            referenceName: (strArg?.text ?? '').replace(/['"]/g, ''),
-            referenceKind: 'imports',
-            line: (node.startPosition?.row ?? 0) + 1, col: (node.startPosition?.column ?? 0) + 1,
-            filePath, language: lang,
-          });
-          return;
-        }
       }
 
       // assignment: M.fn = function() or M = {}
@@ -2150,6 +2882,7 @@ EXTRACTOR_REGISTRY.set('objc', {
     const lang = 'objc' as Language;
     const symbols: import('../tree-sitter-types.js').ExtractedSymbol[] = [];
     const references: import('../tree-sitter-types.js').ExtractedReference[] = [];
+    const fileNodeId = makeFileNodeId(filePath);
 
     // #import / @import from source lines (tree-sitter coverage varies)
     const lines = sourceCode.split('\n');
@@ -2158,7 +2891,7 @@ EXTRACTOR_REGISTRY.set('objc', {
       const importMatch = line.match(/^(?:#import|@import|#include)\s+[<"]([^>"]+)[>"]/);
       if (importMatch) {
         references.push({
-          fromSymbolName: '<module>', fromSymbolId: `${filePath}:<module>`,
+          fromSymbolName: '<file>', fromSymbolId: fileNodeId,
           referenceName: importMatch[1], referenceKind: 'imports',
           line: i + 1, col: 1, filePath, language: lang,
         });
@@ -2167,6 +2900,43 @@ EXTRACTOR_REGISTRY.set('objc', {
 
     const walk = (node: AnyNode, parent: string): void => {
       const type = node.type;
+
+      // calls 引用 — [obj method] / helper(x)
+      if (type === 'message_expression') {
+        const receiver = node.childForFieldName?.('receiver');
+        const kids = node.namedChildren ?? [];
+        const ids = kids.filter((c: AnyNode) => c.type === 'identifier');
+        // receiver 之后第一个 identifier 即方法名 (childForFieldName 返回新包装对象, 按 text 定位)
+        let callee: string | null = null;
+        if (receiver) {
+          const ridx = kids.findIndex((c: AnyNode) => c.type === 'identifier' && c.text === receiver.text);
+          callee = ids.slice(ridx + 1)[0]?.text ?? null;
+        } else if (ids.length > 1) {
+          callee = ids[1]?.text ?? null; // 无 receiver 字段: 跳过首个 identifier (接收者)
+        } else {
+          callee = ids[0]?.text ?? null;
+        }
+        if (callee) {
+          references.push({
+            fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+            referenceName: callee, referenceKind: 'calls',
+            line: (node.startPosition?.row ?? 0) + 1, col: (node.startPosition?.column ?? 0) + 1,
+            filePath, language: lang,
+          });
+        }
+      }
+      if (type === 'call_expression') {
+        const fn = node.childForFieldName?.('function') ?? node.namedChildren?.[0];
+        const callee = fn?.type === 'identifier' ? fn.text : fn?.text ?? null;
+        if (callee) {
+          references.push({
+            fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+            referenceName: callee, referenceKind: 'calls',
+            line: (node.startPosition?.row ?? 0) + 1, col: (node.startPosition?.column ?? 0) + 1,
+            filePath, language: lang,
+          });
+        }
+      }
 
       // @interface ClassName (Category) / @interface ClassName / @implementation / @protocol
       if (type === 'class_interface' || type === 'class_implementation' ||
@@ -2184,6 +2954,47 @@ EXTRACTOR_REGISTRY.set('objc', {
         const decos: string[] = [];
         if (categoryName) decos.push('category');
         if (type === 'class_implementation' || type === 'category_implementation') decos.push('implementation');
+
+        // 继承/实现引用
+        // @interface B : A <P, Q> — superclass 字段 = extends; 协议列表 = implements
+        if (type === 'class_interface') {
+          const sup = node.childForFieldName?.('superclass');
+          if (sup?.text && sup.text !== name) {
+            references.push({
+              fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+              referenceName: sup.text, referenceKind: 'extends',
+              line: (sup.startPosition?.row ?? 0) + 1, col: (sup.startPosition?.column ?? 0) + 1,
+              filePath, language: lang,
+            });
+          }
+          const protoArgs = node.namedChildren?.find((c: AnyNode) => c.type === 'parameterized_arguments');
+          for (const tn of (protoArgs?.namedChildren ?? [])) {
+            const tid = tn.namedChildren?.find((c: AnyNode) => c.type === 'type_identifier');
+            const pName = tid?.text ?? tn.text;
+            if (pName && pName !== name) {
+              references.push({
+                fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+                referenceName: pName, referenceKind: 'implements',
+                line: (tn.startPosition?.row ?? 0) + 1, col: (tn.startPosition?.column ?? 0) + 1,
+                filePath, language: lang,
+              });
+            }
+          }
+        }
+        // @protocol P <NSObject> — 超协议 → extends
+        if (type === 'protocol_declaration') {
+          const protoRefs = node.namedChildren?.find((c: AnyNode) => c.type === 'protocol_reference_list');
+          for (const idn of (protoRefs?.namedChildren ?? [])) {
+            if (idn.type === 'identifier' && idn.text !== name) {
+              references.push({
+                fromSymbolName: '<file>', fromSymbolId: fileNodeId,
+                referenceName: idn.text, referenceKind: 'extends',
+                line: (idn.startPosition?.row ?? 0) + 1, col: (idn.startPosition?.column ?? 0) + 1,
+                filePath, language: lang,
+              });
+            }
+          }
+        }
 
         symbols.push(sym(kind, displayName, qn, filePath, lang, node, {
           isExported: true, decorators: decos, signature: firstLine(node),
@@ -2209,6 +3020,8 @@ EXTRACTOR_REGISTRY.set('objc', {
           decorators: isInstance ? ['instance'] : isStatic ? ['class_method'] : [],
           signature: firstLine(node),
         }));
+        // 继续遍历方法体 — 收集 [self go] 等 message_expression 调用
+        walkChildren(node, qn);
         return;
       }
 
@@ -2259,7 +3072,7 @@ const EXTENSION_TO_LANGUAGE: Record<string, Language> = {
   '.go': 'go', '.rs': 'rust', '.java': 'java',
   '.c': 'c', '.h': 'c', '.cpp': 'cpp', '.cc': 'cpp', '.cxx': 'cpp', '.hpp': 'cpp', '.hh': 'cpp',
   '.cs': 'csharp', '.php': 'php', '.rb': 'ruby',
-  '.swift': 'swift', '.kt': 'kotlin', '.kts': 'kotlin', '.dart': 'dart',
+  '.swift': 'swift', '.kt': 'kotlin', '.kts': 'kotlin', '.dart': 'dart', '.luau': 'luau',
   '.svelte': 'svelte', '.vue': 'vue', '.liquid': 'liquid',
   '.pas': 'pascal', '.scala': 'scala', '.sc': 'scala',
   '.lua': 'lua', '.m': 'objc', '.mm': 'objc',

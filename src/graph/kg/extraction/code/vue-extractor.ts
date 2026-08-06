@@ -6,6 +6,7 @@ import { createRequire } from 'node:module';
 import type { LanguageExtractionResult, ExtractedSymbol } from './tree-sitter-types.js';
 import type { Language } from '../../db/types.js';
 import { getTreeSitterEngine } from './tree-sitter.js';
+import { makeFileNodeId } from './tree-sitter-types.js';
 
 const require = createRequire(import.meta.url);
 
@@ -109,10 +110,6 @@ export async function extractVueSFC(
       // 从模板中提取 PascalCase 组件引用 → import edges
       const componentRegex = /<([A-Z][a-zA-Z0-9]*)/g;
       let compMatch: RegExpExecArray | null;
-      const lineOffsets = source.split('\n').reduce((acc, line, i) => {
-        acc[i + 1] = (acc[i] ?? 0) + line.length + 1;
-        return acc;
-      }, {} as Record<number, number>);
 
       const seen = new Set<string>();
       while ((compMatch = componentRegex.exec(block.content)) !== null) {
@@ -120,8 +117,8 @@ export async function extractVueSFC(
         if (!seen.has(componentName)) {
           seen.add(componentName);
           references.push({
-            fromSymbolName: '<template>',
-            fromSymbolId: `${filePath}:<template>`,
+            fromSymbolName: '<file>',
+            fromSymbolId: makeFileNodeId(filePath),
             referenceName: componentName,
             referenceKind: 'imports',  // 组件引用作为 import
             line: block.startLine,
@@ -130,6 +127,26 @@ export async function extractVueSFC(
             language: 'vue' as Language,
           });
         }
+      }
+
+      // 模板表达式函数调用 → calls 引用 ({{ fn() }} / @click="fn()" / v-on:click / :prop)
+      const templateCallRegex = /(?:^|[\s{}=:(,>"'])([A-Za-z_$][\w$]*)\s*\(/g;
+      const TEMPLATE_KEYWORDS = new Set(['if','for','while','switch','catch','function','return','new','typeof','instanceof','delete','void','in','of']);
+      let tplCall: RegExpExecArray | null;
+      while ((tplCall = templateCallRegex.exec(block.content)) !== null) {
+        const fnName = tplCall[1];
+        if (TEMPLATE_KEYWORDS.has(fnName)) continue;
+        const lineInBlock = block.content.substring(0, tplCall.index).split('\n').length;
+        references.push({
+          fromSymbolName: '<file>',
+          fromSymbolId: makeFileNodeId(filePath),
+          referenceName: fnName,
+          referenceKind: 'calls',
+          line: block.startLine + lineInBlock - 1,
+          col: tplCall.index + (tplCall[0].length - fnName.length) + 1,
+          filePath,
+          language: 'vue' as Language,
+        });
       }
     }
   }

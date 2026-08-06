@@ -89,7 +89,7 @@ export const GIT_HOOK_SCRIPT = `#!/bin/sh
 
 MAESTRO_ROOT="$(git rev-parse --show-toplevel)"
 if [ -f "$MAESTRO_ROOT/.workflow/kg/maestro.db" ]; then
-  cd "$MAESTRO_ROOT" && npx maestro kg sync --incremental 2>/dev/null || true
+  cd "$MAESTRO_ROOT" && npx maestro kg sync --incremental >>"$MAESTRO_ROOT/.workflow/kg/sync-hook.log" 2>&1 || true
 fi
 `;
 

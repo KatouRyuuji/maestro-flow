@@ -9,7 +9,7 @@ import type { UnifiedNode, UnifiedEdge, FileRecord, ExtractionResult, SourceType
 import { getTreeSitterEngine } from './tree-sitter.js';
 import { getExtractor, detectLanguageFromPath, isFileLevelOnlyLanguage } from './languages/index.js';
 import { isGeneratedFile, isTestFile } from './generated-detection.js';
-import { symbolToNode, makeFileNodeId } from './tree-sitter-types.js';
+import { symbolToNode, makeCodeNodeId, makeFileNodeId } from './tree-sitter-types.js';
 import type { ExtractedSymbol, ExtractedReference, LanguageExtractionResult } from './tree-sitter-types.js';
 import { extractVueSFC } from './vue-extractor.js';
 import { extractSvelte } from './svelte-extractor.js';
@@ -262,11 +262,13 @@ async function runCodeExtraction(
             customResult.symbols, customResult.references, customResult.edges,
             file, relPath,
           );
+          const normalizedRefs = normalizeReferenceAnchors(customResult.references, file.path);
           await emitResult({
             nodes,
             edges,
+            references: normalizedRefs,
             fileRecord: createFileRecord(file, nodes.length),
-          }, customResult.references.length);
+          }, normalizedRefs.length);
           continue;
         }
 
@@ -276,6 +278,7 @@ async function runCodeExtraction(
           await emitResult({
             nodes: [fileNode],
             edges: [],
+            references: [],
             fileRecord: createFileRecord(file, 1),
           }, 0);
           continue;
@@ -322,13 +325,14 @@ async function runCodeExtraction(
           continue;
         }
 
-        const { nodes, edges } = buildResultFromTreeSitter(extracted, file.path);
+        const { nodes, edges, normalizedRefs } = buildResultFromTreeSitter(extracted, file);
 
         await emitResult({
           nodes,
           edges,
+          references: normalizedRefs,
           fileRecord: createFileRecord(file, nodes.length),
-        }, extracted.references.length);
+        }, normalizedRefs.length);
 
       } catch (err) {
         errors.push({
@@ -419,13 +423,17 @@ function buildResultFromCustomExtractor(
     kind: e.kind as UnifiedEdge['kind'],
     provenance: 'tree-sitter' as UnifiedEdge['provenance'],
   }));
+  // 自定义提取器 (vue/svelte/liquid) 也必须建 file 节点 —
+  // 否则引用锚点 (makeFileNodeId) 无对应节点, unresolved_refs FK 插入失败,
+  // 所有 calls/imports 引用被逐文件静默丢弃 (曾致 vue/svelte script 内引用全丢)
+  nodes.push(createFileNode(file));
   return { nodes, edges };
 }
 
 function buildResultFromTreeSitter(
   extracted: LanguageExtractionResult,
-  filePath: string,
-): { nodes: UnifiedNode[]; edges: UnifiedEdge[] } {
+  file: ScannedFile,
+): { nodes: UnifiedNode[]; edges: UnifiedEdge[]; normalizedRefs: NonNullable<ExtractionResult['references']> } {
   const now = Date.now();
   const nodes: UnifiedNode[] = extracted.symbols.map(s => {
     const node = symbolToNode(s, now);
@@ -436,27 +444,151 @@ function buildResultFromTreeSitter(
     return node;
   });
 
-  const edges: UnifiedEdge[] = extracted.edges.map(e => ({
-    source: e.source,
-    target: e.target,
-    kind: e.kind as UnifiedEdge['kind'],
-    line: e.line,
-    column: e.col,
-    provenance: 'tree-sitter' as UnifiedEdge['provenance'],
-  }));
+  // 统一引用锚点 — 旧格式 fromSymbolId (\`\${filePath}:<module>\` / \`\${filePath}:\${parent}\`) 不是合法节点 ID,
+  // unresolved_refs 有 FK → nodes, 非 code: 前缀的锚点全部改为 file 节点 ID (code:...:<file>)
+  const fileNodeId = makeFileNodeId(file.path);
+  const normalizedRefs: NonNullable<ExtractionResult['references']> = normalizeReferenceAnchors(
+    extracted.references ?? [], file.path,
+  );
 
-  if (isGeneratedFile(filePath)) {
+  const edges: UnifiedEdge[] = [];
+  for (const e of extracted.edges) {
+    if (e.source.startsWith('code:')) {
+      edges.push({
+        source: e.source,
+        target: e.target,
+        kind: e.kind as UnifiedEdge['kind'],
+        line: e.line,
+        column: e.col,
+        provenance: 'tree-sitter' as UnifiedEdge['provenance'],
+      });
+    } else if (e.kind === 'contains') {
+      // 裸名 contains (父级符号未用节点 ID) → 转当前文件节点 ID
+      edges.push({
+        source: makeCodeNodeId(file.path, e.source),
+        target: makeCodeNodeId(file.path, e.target),
+        kind: 'contains',
+        line: e.line,
+        provenance: 'tree-sitter' as UnifiedEdge['provenance'],
+      });
+    } else if (e.kind === 'extends' || e.kind === 'implements') {
+      // java/rust/cpp 继承边端点用裸名 (跨文件无法本地解析) → 转 extends/implements 引用,
+      // 由 code-resolution 阶段按名匹配库内符号 (匹配不到则自然过滤)
+      normalizedRefs.push({
+        fromSymbolName: '<file>',
+        fromSymbolId: fileNodeId,
+        referenceName: e.target,
+        referenceKind: e.kind,
+        line: e.line ?? 0,
+        col: e.col ?? 0,
+        filePath: file.path,
+        language: file.language,
+      });
+    }
+  }
+
+  // 为每个文件创建 file 节点 — 作为 imports 边的锚点与 contains 层级根
+  // (id 用绝对路径 makeFileNodeId(file.path), 与符号节点 filePath 命名空间一致)
+  const fileNode = createFileNode(file);
+  nodes.push(fileNode);
+
+  // file → 顶层符号 contains 边
+  for (const s of extracted.symbols) {
+    if (!s.qualifiedName.includes('.')) {
+      edges.push({
+        source: fileNodeId,
+        target: makeCodeNodeId(s.filePath, s.qualifiedName),
+        kind: 'contains',
+        line: s.startLine,
+        provenance: 'tree-sitter',
+      });
+    }
+  }
+
+  // 通用 contains 边 — 按 qualifiedName 层级推导 (覆盖所有语言),
+  // 与提取器手动产出的 contains 边去重 (保留先出现的带 line 版本)
+  const containsByKey = new Map<string, UnifiedEdge>();
+  for (const e of edges) {
+    if (e.kind === 'contains') containsByKey.set(`${e.source}\u0000${e.target}`, e);
+  }
+  for (const s of extracted.symbols) {
+    const parts = s.qualifiedName.split('.');
+    for (let i = 1; i < parts.length; i++) {
+      const parent = parts.slice(0, i).join('.');
+      const child = parts.slice(0, i + 1).join('.');
+      const src = makeCodeNodeId(s.filePath, parent);
+      const tgt = makeCodeNodeId(s.filePath, child);
+      const key = `${src}\u0000${tgt}`;
+      if (!containsByKey.has(key)) {
+        const e: UnifiedEdge = { source: src, target: tgt, kind: 'contains', provenance: 'tree-sitter' };
+        containsByKey.set(key, e);
+        edges.push(e);
+      }
+    }
+  }
+
+  if (isGeneratedFile(file.path)) {
     for (const node of nodes) {
       node.metadata = { ...node.metadata, generated: true };
     }
   }
 
-  return { nodes, edges };
+  return { nodes, edges, normalizedRefs };
+}
+
+// 统一引用锚点 — 所有语言提取器的 fromSymbolId 若非合法节点 ID (code: 前缀)
+// 一律改写为 file 节点 ID, 保证 unresolved_refs FK 与 code-resolution JOIN 可用
+function normalizeReferenceAnchors(
+  refs: ExtractionResult['references'],
+  filePath: string,
+): NonNullable<ExtractionResult['references']> {
+  const fileNodeId = makeFileNodeId(filePath);
+  return (refs ?? []).map(ref => ({
+    ...ref,
+    fromSymbolId: ref.fromSymbolId.startsWith('code:') ? ref.fromSymbolId : fileNodeId,
+  }));
+}
+
+// 创建 file 节点 (与符号节点共享 code: 命名空间, id = code:<abs-path>:<file>)
+function createFileNode(file: ScannedFile): UnifiedNode {
+  return {
+    id: makeFileNodeId(file.path),
+    kind: 'file',
+    name: file.path.split(/[\\/]/).pop() ?? file.path,
+    qualifiedName: file.path.replace(/\\/g, '/'),
+    filePath: file.path,
+    language: file.language,
+    startLine: 1,
+    endLine: 0,
+    startColumn: 1,
+    endColumn: 1,
+    docstring: '',
+    signature: '',
+    visibility: '',
+    isExported: false,
+    isAsync: false,
+    isStatic: false,
+    isAbstract: false,
+    decorators: [],
+    typeParameters: [],
+    sourceType: 'codegraph',
+    definition: '',
+    aliases: [],
+    keywords: [],
+    category: '',
+    roles: [],
+    priority: '',
+    status: 'active',
+    body: '',
+    metadata: {},
+    updatedAt: Date.now(),
+  };
 }
 
 function createFileLevelNode(file: ScannedFile, relPath: string): UnifiedNode {
+  // id 用绝对路径命名空间 (与符号节点 filePath 一致), 保证 imports/contains 边可 JOIN
   return {
-    id: makeFileNodeId(relPath),
+    id: makeFileNodeId(file.path),
     kind: 'file',
     name: relPath.split('/').pop() ?? relPath,
     qualifiedName: relPath,

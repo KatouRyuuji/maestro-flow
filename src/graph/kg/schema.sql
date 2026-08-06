@@ -152,6 +152,8 @@ CREATE INDEX IF NOT EXISTS idx_unresolved_from_name ON unresolved_refs(from_node
 -- ============================================================================
 
 -- 代码 FTS5 (keywords 列存放 camelCase 分词，unicode61 自动按 JSON 标点拆分)
+-- 注意: 必须为内部存储表 (不带 content=), 外部内容表会忽略触发器 WHERE 过滤,
+--       导致 code_fts/knowledge_fts 各索引全部节点 (v5 迁移修复)。
 CREATE VIRTUAL TABLE IF NOT EXISTS code_fts USING fts5(
     id,
     name,
@@ -159,9 +161,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS code_fts USING fts5(
     docstring,
     signature,
     keywords,
-    tokenize = 'unicode61 remove_diacritics 2',
-    content = 'nodes',
-    content_rowid = 'rowid'
+    tokenize = 'unicode61 remove_diacritics 2'
 );
 
 -- 知识 FTS5
@@ -172,12 +172,14 @@ CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
     body,
     aliases,
     keywords,
-    tokenize = 'trigram',
-    content = 'nodes',
-    content_rowid = 'rowid'
+    tokenize = 'trigram'
 );
 
 -- FTS5 同步触发器 — 按 source_type 路由到不同索引 (D3.4: 移除 NULL 分支)
+-- 注意: 仅 INSERT 触发器保留 (内部表模式下 WHERE 过滤生效)。
+-- DELETE/UPDATE 不在此处直接删 FTS 索引: FTS5 delete 命令不支持触发器内
+-- INSERT...SELECT 形式, VALUES 形式又无法按 source_type 过滤 (rowid 跨表冲突会误删)。
+-- FTS 删除/更新一致性由同步末尾 ensureFtsConsistency 全量重建保证。
 CREATE TRIGGER IF NOT EXISTS nodes_ai AFTER INSERT ON nodes BEGIN
     INSERT INTO code_fts(rowid, id, name, qualified_name, docstring, signature, keywords)
     SELECT NEW.rowid, NEW.id, NEW.name, NEW.qualified_name, NEW.docstring, NEW.signature, NEW.keywords
@@ -189,27 +191,9 @@ CREATE TRIGGER IF NOT EXISTS nodes_ai AFTER INSERT ON nodes BEGIN
 END;
 
 CREATE TRIGGER IF NOT EXISTS nodes_ad AFTER DELETE ON nodes BEGIN
-    INSERT INTO code_fts(code_fts, rowid, id, name, qualified_name, docstring, signature, keywords)
-    SELECT 'delete', OLD.rowid, OLD.id, OLD.name, OLD.qualified_name, OLD.docstring, OLD.signature, OLD.keywords
-    WHERE OLD.source_type = 'codegraph';
-
-    INSERT INTO knowledge_fts(knowledge_fts, rowid, id, name, definition, body, aliases, keywords)
-    SELECT 'delete', OLD.rowid, OLD.id, OLD.name, OLD.definition, OLD.body, OLD.aliases, OLD.keywords
-    WHERE OLD.source_type != 'codegraph';
+    SELECT 1;
 END;
 
 CREATE TRIGGER IF NOT EXISTS nodes_au AFTER UPDATE ON nodes BEGIN
-    INSERT INTO code_fts(code_fts, rowid, id, name, qualified_name, docstring, signature, keywords)
-    SELECT 'delete', OLD.rowid, OLD.id, OLD.name, OLD.qualified_name, OLD.docstring, OLD.signature, OLD.keywords
-    WHERE OLD.source_type = 'codegraph';
-    INSERT INTO code_fts(rowid, id, name, qualified_name, docstring, signature, keywords)
-    SELECT NEW.rowid, NEW.id, NEW.name, NEW.qualified_name, NEW.docstring, NEW.signature, NEW.keywords
-    WHERE NEW.source_type = 'codegraph';
-
-    INSERT INTO knowledge_fts(knowledge_fts, rowid, id, name, definition, body, aliases, keywords)
-    SELECT 'delete', OLD.rowid, OLD.id, OLD.name, OLD.definition, OLD.body, OLD.aliases, OLD.keywords
-    WHERE OLD.source_type != 'codegraph';
-    INSERT INTO knowledge_fts(rowid, id, name, definition, body, aliases, keywords)
-    SELECT NEW.rowid, NEW.id, NEW.name, NEW.definition, NEW.body, NEW.aliases, NEW.keywords
-    WHERE NEW.source_type != 'codegraph';
+    SELECT 1;
 END;

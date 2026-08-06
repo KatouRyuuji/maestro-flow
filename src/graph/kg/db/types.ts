@@ -110,6 +110,7 @@ export type EdgeProvenance =
   | 'knowhow'             // 知识: wiki/knowhow
   | 'harvest'             // 知识: harvest 提取
   | 'knowledge-resolver'  // 知识: 跨源自动边解析
+  | 'code-resolution'     // 代码: unresolved_refs → edges 解析
   | 'manual';             // 手动添加
 
 // ---------------------------------------------------------------------------
@@ -223,6 +224,17 @@ export interface FileRecord {
 export interface ExtractionResult {
   nodes: UnifiedNode[];
   edges: UnifiedEdge[];
+  /** 未解析引用 (imports/calls) — 由提取器收集, 编排层写入 unresolved_refs 供后续解析 */
+  references?: Array<{
+    fromSymbolName: string;
+    fromSymbolId: string;
+    referenceName: string;
+    referenceKind: string;
+    line: number;
+    col: number;
+    filePath: string;
+    language: Language;
+  }>;
   fileRecord: FileRecord;
 }
 

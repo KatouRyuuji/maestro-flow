@@ -610,8 +610,7 @@ export class KgQueryBuilder {
           DROP TABLE IF EXISTS code_fts;
           CREATE VIRTUAL TABLE code_fts USING fts5(
             id, name, qualified_name, docstring, signature, keywords,
-            tokenize = 'unicode61 remove_diacritics 2',
-            content = 'nodes', content_rowid = 'rowid'
+            tokenize = 'unicode61 remove_diacritics 2'
           );
           INSERT INTO code_fts(rowid, id, name, qualified_name, docstring, signature, keywords)
           SELECT rowid, id, name, qualified_name, docstring, signature, keywords
@@ -698,8 +697,7 @@ export class KgQueryBuilder {
           DROP TABLE IF EXISTS knowledge_fts;
           CREATE VIRTUAL TABLE knowledge_fts USING fts5(
             id, name, definition, body, aliases, keywords,
-            tokenize = 'trigram',
-            content = 'nodes', content_rowid = 'rowid'
+            tokenize = 'trigram'
           );
           INSERT INTO knowledge_fts(rowid, id, name, definition, body, aliases, keywords)
           SELECT rowid, id, name, definition, body, aliases, keywords

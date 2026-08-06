@@ -179,6 +179,7 @@ export function registerKgCommands(program: Command): void {
     .option('--no-create-maestro-ignore', 'Do not create .maestroignore when missing')
     .option('--allow-extractor-scripts', 'Allow execution of .mjs extractor plugins')
     .option('--json', 'Output as JSON')
+    .option('--incremental', 'Incremental sync (compatibility alias — sync is already hash-aware)')
     .action(async (opts) => syncProject(opts));
 
   kg

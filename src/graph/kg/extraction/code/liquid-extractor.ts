@@ -6,7 +6,9 @@
 
 import type { LanguageExtractionResult, ExtractedSymbol, ExtractedReference } from './tree-sitter-types.js';
 import type { Language } from '../../db/types.js';
+import { makeFileNodeId } from './tree-sitter-types.js';
 
+const LIQUID_KEYWORDS = new Set(['if','unless','for','case','when','else','elsif','end','new','return','and','or','not','in','contains','true','false','nil','blank','empty','assign','render','include','section','echo','cycle']);
 export function extractLiquid(
   source: string,
   filePath: string,
@@ -90,6 +92,30 @@ export function extractLiquid(
       });
     }
 
+    // 输出表达式/过滤器 → calls: {{ fn(...) }} / {{ x | upcase }} / {{ x | default: 5 }}
+    const outMatch = line.match(/\{\{(.*?)\}\}/);
+    if (outMatch) {
+      const expr = outMatch[1];
+      const emitCall = (name: string): void => {
+        if (LIQUID_KEYWORDS.has(name)) return;
+        references.push({
+          fromSymbolName: '<file>',
+          fromSymbolId: makeFileNodeId(filePath),
+          referenceName: name,
+          referenceKind: 'calls',
+          line: lineNum,
+          col: (outMatch.index ?? 0) + 1,
+          filePath,
+          language: 'liquid' as Language,
+        });
+      };
+      const fnRe = /([A-Za-z_]\w*)\s*\(/g;
+      let fm: RegExpExecArray | null;
+      while ((fm = fnRe.exec(expr)) !== null) emitCall(fm[1]);
+      const filterRe = /\|\s*([A-Za-z_]\w*)/g;
+      while ((fm = filterRe.exec(expr)) !== null) emitCall(fm[1]);
+    }
+
     // schema 块 → JSON schema 定义
     if (line.includes('{% schema %}')) {
       const schemaStart = i;
@@ -122,6 +148,26 @@ export function extractLiquid(
           isAbstract: false,
           decorators: [],
           typeParameters: [],
+        });
+      }
+    }
+
+    // {% ... %} 标签体内的函数调用: {% assign y = fn() %} / {% if fn() %}
+    const tagBodyMatch = line.match(/\{%[-]?\s*\w+\b([\s\S]*?)%\}/);
+    if (tagBodyMatch && tagBodyMatch[1]) {
+      const fnRe = /([A-Za-z_]\w*)\s*\(/g;
+      let fm: RegExpExecArray | null;
+      while ((fm = fnRe.exec(tagBodyMatch[1])) !== null) {
+        if (LIQUID_KEYWORDS.has(fm[1])) continue;
+        references.push({
+          fromSymbolName: '<file>',
+          fromSymbolId: makeFileNodeId(filePath),
+          referenceName: fm[1],
+          referenceKind: 'calls',
+          line: lineNum,
+          col: (tagBodyMatch.index ?? 0) + 1,
+          filePath,
+          language: 'liquid' as Language,
         });
       }
     }
