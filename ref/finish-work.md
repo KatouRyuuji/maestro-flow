@@ -10,7 +10,7 @@ Caller passes: `SESSION_DIR`, `SESSION_TYPE` (grill | brainstorm | analyze | blu
 
 ### 1. Detect outputs
 
-Scan `SESSION_DIR` for any of these files; if absent: log W0xx "<file> missing" and continue; flag harvest as [LOW CONFIDENCE] (partial fragments):
+Scan basis: when `LINKED_RUN` is present, scan that Run's `{run_dir}/outputs/` (run-mode contracts declare artifacts there); otherwise scan `SESSION_DIR` (standalone grill/brainstorm sessions). In either case look for these files; if absent: log W0xx "<file> missing" and continue; flag harvest as [LOW CONFIDENCE] (partial fragments):
 
 | File | Source | Used for |
 |------|--------|----------|
@@ -109,7 +109,7 @@ Skip conditions:
 
 ### 4. Write `archive.json`
 
-Overwrites; idempotent. Schema `session-archive/1.1`:
+Overwrites; idempotent. Schema `session-archive/1.1`. `archive.json` is session-level metadata owned by this workflow (not a run artifact): it lives in `SESSION_DIR`, is never registered in `artifacts.json`, and is not consumed by the CLI.
 
 ```jsonc
 {

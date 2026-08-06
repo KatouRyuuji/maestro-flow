@@ -126,7 +126,7 @@ Compatibility: `maestro session start` is an alias for `maestro run create` (see
 **Session**: `{run_dir}/outputs/`
 **Output**: `session.json` | `evidence.ndjson` | `understanding.md` | `explore.json` (debug/review only)
 
-**Output boundary**: ALL session artifacts MUST target the session directory (`{run_dir}/outputs/`) or `.workflow/state.json` only. Source code modifications during fix/execute phases are in-scope but MUST be committed per action. NEVER write session artifacts outside these paths.
+**Output boundary**: ALL session artifacts MUST target the run outputs directory (`{run_dir}/outputs/`) only. `.workflow/state.json` and all `sessions/<sid>/` protocol files are runtime-owned — a workflow never writes them. Source code modifications during fix/execute phases are in-scope but MUST be committed per action. NEVER write session artifacts outside `{run_dir}/outputs/`.
 
 **session.json — shared core + mode fields:**
 ```json

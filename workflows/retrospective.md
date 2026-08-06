@@ -343,18 +343,17 @@ After all routings complete, re-write `retrospective.json` with the `routed_id` 
 
 Append every distilled insight (including `routed_to: "none"`) to the knowhow store. Require user confirmation (or `-y` flag) before writing to external stores.
 
-### Bootstrap
+### Stage candidates (never direct-write the corpus)
 
+`.workflow/specs/` (including `learnings.md`) is **governed corpus**: it is scanned, injected, indexed, and written exclusively by `maestro knowledge promote`. This workflow MUST NOT create or append spec files directly — every insight is staged as a candidate and reaches the corpus only via post-seal `review --refresh → promote`.
+
+Governed corpus persistence: for each insight in `distilled_insights`, write the entry body (template below) to a temp file and stage it:
+
+```bash
+maestro knowledge stage spec "{insight.title}" --content-file <tmpfile> --run <run-id> --category learning --evidence "{insight.evidence_refs}"
 ```
-Ensure .workflow/specs/ exists and learnings.md exists.
-Create learnings.md with frontmatter (title, type: spec, roles: [implement]) if new.
-```
 
-### Append entries
-
-Governed corpus persistence: each insight that should become project knowledge is staged as a candidate — `maestro knowledge stage spec "<title>" --content-file <path|-> --run <run-id> --category learning` — and reaches the corpus only via post-seal `review --refresh → promote`. The `learnings.md` file below is the session-local distillation draft.
-
-For each insight in `distilled_insights`, append a `<spec-entry>` to `.workflow/specs/learnings.md`:
+Candidate content template (the promoted corpus entry will take this shape):
 
 ```html
 <spec-entry category="{insight.category}" keywords="{insight.tags joined by comma}" date="{YYYY-MM-DD}" id="{insight.id}" source="retrospective">
@@ -372,7 +371,7 @@ For each insight in `distilled_insights`, append a `<spec-entry>` to `.workflow/
 </spec-entry>
 ```
 
-Also append each insight to `.workflow/specs/learnings.md` as `<spec-entry>` with `category="learning"`.
+Insights routed to `category="learning"` follow the same stage pipeline (they land in `learnings.md` only via promote).
 
 ---
 
@@ -478,7 +477,7 @@ Refresh-on-use prevents replay attacks. Implemented in src/auth/refresh.ts; shou
 - [ ] If routing enabled: every recommendation either created an artifact or was explicitly skipped by user
 - [ ] Spec entries (if any) appended as `<spec-entry>` to matching `.workflow/specs/{category-file}.md`
 - [ ] Issue rows (if any) match canonical issues.jsonl schema (status "open", full issue_history)
-- [ ] `.workflow/specs/learnings.md` appended with one `<spec-entry>` per insight regardless of routing target
+- [ ] every insight staged as a knowledge candidate (corpus writes happen only via post-seal promote; no direct `.workflow/specs/` appends)
 - [ ] No existing phase artifacts modified (verification.json, review.json, plan.json untouched)
 
 ---
