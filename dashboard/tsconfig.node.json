@@ -13,7 +13,8 @@
     "declaration": true,
     "sourceMap": true,
     "paths": {
-      "#async/*": ["../src/async/*"]
+      "#async/*": ["../src/async/*"],
+      "#maestro-transformers": ["./vendor/transformers/types/transformers.d.ts"]
     }
   },
   "include": ["src/server/**/*", "src/shared/**/*"],

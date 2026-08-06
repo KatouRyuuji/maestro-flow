@@ -15,7 +15,8 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"],
-      "react-router-dom": ["src/client/router.tsx"]
+      "react-router-dom": ["src/client/router.tsx"],
+      "#maestro-transformers": ["./vendor/transformers/types/transformers.d.ts"]
     }
   },
   "include": ["src/**/*", "vite-env.d.ts"],

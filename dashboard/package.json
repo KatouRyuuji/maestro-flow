@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "Linear-style kanban board dashboard for Maestro",
   "type": "module",
+  "imports": {
+    "#maestro-transformers": "./vendor/transformers/dist/transformers.node.mjs"
+  },
   "private": true,
   "scripts": {
     "dev": "concurrently \"vite\" \"tsx --watch src/server/index.ts\"",

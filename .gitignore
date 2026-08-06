@@ -1,6 +1,11 @@
 node_modules/
 dist/
 dist-server/
+# Vendored Transformers.js runtime model cache (downloaded at runtime, regenerated on demand)
+dashboard/vendor/transformers/.cache/
+# The vendored Transformers.js runtime bundle must be committed (exemption from the generic dist/ rule above)
+!dashboard/vendor/transformers/dist/
+!dashboard/vendor/transformers/dist/**
 # Compiled TS artifacts must not live in src/ — source is .ts, build → dist/.
 # (Leaked .js/.d.ts/.js.map break tooling and make runners resolve stale code.)
 src/**/*.js

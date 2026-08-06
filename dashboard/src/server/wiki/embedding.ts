@@ -548,12 +548,12 @@ export function isModelCached(): boolean {
     } catch { /* ignore */ }
   }
 
-  // Check transformers.js cache (node_modules/@huggingface/transformers/.cache/)
+  // Check the cache next to the vendored Transformers.js runtime.
   try {
     const localRequire = createRequire(import.meta.url);
-    const tjsMainPath = localRequire.resolve('@huggingface/transformers');
+    const tjsMainPath = localRequire.resolve('#maestro-transformers');
     const normalized = tjsMainPath.replace(/\\/g, '/');
-    const marker = '@huggingface/transformers';
+    const marker = 'vendor/transformers';
     const idx = normalized.indexOf(marker);
     if (idx >= 0) {
       const tjsRoot = tjsMainPath.slice(0, idx + marker.length);
@@ -579,7 +579,7 @@ async function configureProxy(): Promise<void> {
 }
 
 async function loadTransformers(): Promise<{ pipeline: any; env: any }> {
-  return await import('@huggingface/transformers');
+  return await import('#maestro-transformers');
 }
 
 export type ModelProgressCallback = (info: { status: string; file?: string; progress?: number; loaded?: number; total?: number }) => void;

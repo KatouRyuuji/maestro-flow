@@ -1,10 +1,11 @@
 {
   "name": "maestro-flow",
-  "version": "0.5.62",
+  "version": "0.5.63",
   "description": "Intent-driven workflow orchestration for multi-agent AI development with adaptive lifecycle engine and self-reinforcing knowledge graph",
   "type": "module",
   "imports": {
     "#built-search-adapter-contract": "./shared/built-search-adapter-contract.mjs",
+    "#maestro-transformers": "./dashboard/vendor/transformers/dist/transformers.node.mjs",
     "#maestro-dashboard/agents/*": "./dashboard/dist-server/dashboard/src/server/agents/*",
     "#maestro-dashboard/shared/*": "./dashboard/dist-server/dashboard/src/shared/*",
     "#maestro-dashboard/wiki/*": "./dashboard/dist-server/dashboard/src/server/wiki/*",
@@ -41,7 +42,8 @@
     ".agents/agents",
     ".agents/skills",
     "dashboard/dist-server",
-    "dashboard/package.json"
+    "dashboard/package.json",
+    "dashboard/vendor"
   ],
   "scripts": {
     "build": "npm run native:lifecycle:verify && cd dashboard && npx tsc -p tsconfig.node.json && cd .. && tsc && node -e \"const fs=require('fs');const p=require('path');const s='src/tools/impeccable/live/static',d='dist/src/tools/impeccable/live/static';if(fs.existsSync(s)){fs.mkdirSync(d,{recursive:true});for(const f of fs.readdirSync(s)){fs.copyFileSync(p.join(s,f),p.join(d,f))}}\" && node -e \"const fs=require('fs');const p=require('path');for(const [s,d] of [['src/graph/db/schema.sql','dist/src/graph/db/schema.sql'],['src/graph/kg/schema.sql','dist/src/graph/kg/schema.sql']]){if(fs.existsSync(s)){fs.mkdirSync(p.dirname(d),{recursive:true});fs.copyFileSync(s,d)}}\"",
@@ -80,7 +82,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.77",
     "@hono/node-server": "^2.0.12",
-    "@huggingface/transformers": "^3.8.1",
+    "@huggingface/jinja": "^0.5.3",
     "@inkjs/ui": "^2.0.0",
     "@inquirer/prompts": "^8.3.2",
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -97,8 +99,11 @@
     "marked": "^15.0.0",
     "node-cron": "^4.2.1",
     "openai": "^6.44.0",
+    "onnxruntime-node": "1.21.0",
+    "onnxruntime-web": "1.22.0-dev.20250409-89f8206ba4",
     "pg": "^8.20.0",
     "react": "^19.0.0",
+    "sharp": "^0.35.3",
     "tree-sitter-wasms": "^0.1.13",
     "undici": "^8.5.0",
     "web-tree-sitter": "^0.25.3",

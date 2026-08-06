@@ -35,11 +35,11 @@ function isEmbeddingReady(): boolean {
   try {
     const { createRequire } = require('node:module');
     const localRequire = createRequire(import.meta.url);
-    const tjsMain = localRequire.resolve('@huggingface/transformers');
+    const tjsMain = localRequire.resolve('#maestro-transformers');
     const normalized = tjsMain.replace(/\\/g, '/');
-    const idx = normalized.indexOf('@huggingface/transformers');
+    const idx = normalized.indexOf('vendor/transformers');
     if (idx >= 0) {
-      const root = tjsMain.slice(0, idx + '@huggingface/transformers'.length);
+      const root = tjsMain.slice(0, idx + 'vendor/transformers'.length);
       return existsSync(join(root, '.cache', 'Xenova', 'multilingual-e5-small', 'onnx', 'model.onnx'));
     }
   } catch { /* ignore */ }

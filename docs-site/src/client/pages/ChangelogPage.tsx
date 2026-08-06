@@ -17,6 +17,13 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    version: '0.5.63',
+    date: '2026-08',
+    changes: [
+      { type: 'fix', text_en: 'Resolve the sharp <0.35.0 vulnerability chain (GHSA-f88m-g3jw-g9cj: CVE-2026-33327/33328/35590/35591) by vendoring the unmodified Transformers.js 3.8.1 runtime and declaring its production dependencies directly with sharp ^0.35.3, removing the vulnerable transformers→sharp edge for all consumers', text_zh: '修复 sharp <0.35.0 漏洞链（GHSA-f88m-g3jw-g9cj：CVE-2026-33327/33328/35590/35591）：内置未修改的 Transformers.js 3.8.1 运行时并直接声明其生产依赖（sharp ^0.35.3），为所有消费者移除 transformers→sharp 漏洞依赖边' },
+    ],
+  },
+  {
     version: '0.5.60',
     date: '2026-08',
     changes: [
