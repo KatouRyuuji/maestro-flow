@@ -1020,7 +1020,7 @@ export function promoteSessionKnowledge(
     if (blocked?.policy) {
       throw new Error(
         `Candidate ${blocked.candidate.candidate_id} promotion is ${blocked.policy.promotion_eligibility} `
-        + `(${blocked.policy.disposition}); resolve it with 'maestro knowledge resolve' first`,
+        + `(${blocked.policy.disposition}); resolve it with 'maestro knowledge review <session-id> --resolve <candidate-id> --as <choice> --reason "<reason>"' first`,
       );
     }
   }
