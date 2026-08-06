@@ -46,6 +46,8 @@ Iterate detected files; build a `fragments[]` array. Each fragment: `{ kind, cat
 - +0.2 if content length 50-2000 chars (not too thin, not too verbose)
 - +0.1 if explicit `ref` to source file
 
+**Quality-bar exclusions (drop regardless of score)**: process notes ("did X", "produced document Y"); re-descriptions of existing project patterns that code/config already documents; trivial or obvious operations; run-state narration (read-only declarations, worktree observations); raw traces (tool outputs, log or error fragments) that were not distilled into a reusable lesson. A harvest that stages zero fragments is a legitimate outcome — never pad the candidate list.
+
 **Keyword extraction**: take 3-5 lowercased domain terms (filter stop words, take frequency-ranked nouns/identifiers from content).
 
 **Duplicate pre-check** (cheap, advisory): `maestro search "<title keywords>" --json` per fragment; if an entry with the same title already exists in the corpus, skip staging that fragment (`skipped_count++`, reason `duplicate-in-corpus`). Fine-grained duplicate/related/conflict disposition happens later at `maestro knowledge review --resolve` time — do not block staging on fuzzy matches here.
