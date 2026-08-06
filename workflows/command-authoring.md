@@ -330,11 +330,11 @@ maestro session done --session <session-id> --verdict {verdict} \
   [--chain-proposal outputs/chain-proposal.json] [--evidence <path>] [--note "..."]
 ```
 
-Status verdicts:
-- **DONE** — Normal completion
-- **DONE_WITH_CONCERNS** — Completed with caveats; pass `--concerns`
-- **NEEDS_RETRY** — Tooling error / transient issue; the orchestrator may retry
-- **BLOCKED** — External hard blocker; pass `--reason`
+Status verdicts (chain-advance vocabulary; ready-vocabulary aliases ready→done / ready_with_concerns→done-with-concerns / failed→needs-retry are also accepted and mapped):
+- **done** — Normal completion
+- **done-with-concerns** — Completed with caveats; pass `--note`
+- **needs-retry** — Tooling error / transient issue; the orchestrator may retry
+- **blocked** — External hard blocker; pass `--reason`
 
 ### Next-step routing
 

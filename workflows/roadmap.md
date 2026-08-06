@@ -109,7 +109,7 @@ Skip in auto mode (`-y`) — select the first root session automatically. The ch
 
 ## Completion
 
-Report session count, root sessions, strategy, and output path. Verdict `DONE` on normal completion, `DONE_WITH_CONCERNS` if concerns surfaced (e.g. unmapped requirement, low-confidence research).
+Report session count, root sessions, strategy, and output path. Verdict `done` on normal completion, `done-with-concerns` if concerns surfaced (e.g. unmapped requirement, low-confidence research).
 
 ## Error Codes
 

@@ -231,7 +231,7 @@ Write outputs/review-findings.json:
 
 ## report.md
 
-Write `report.md` with standard frontmatter + fixed five sections. frontmatter records scope, level, verdict, severity_distribution, findings_count, issue_candidate_count. Body contains a review results summary and handoff.
+Write `report.md` with standard frontmatter + fixed five sections. frontmatter records scope, level, verdict, severity_distribution, findings_count, issue_candidate_count. report.md frontmatter `verdict` 使用 report 层 ready 词表：BLOCK→blocked、WARN→ready_with_concerns、PASS→ready；BLOCK/WARN/PASS 仅写进 review-findings 产物与正文。 Body contains a review results summary and handoff.
 
 ```
 === CODE REVIEW RESULTS ===

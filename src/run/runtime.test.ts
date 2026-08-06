@@ -142,7 +142,9 @@ describe('Session/Run runtime', () => {
   it('parses every migrated core command contract', () => {
     for (const [command, step] of Object.entries(migratedStepAssociations)) {
       const source = resolveCommandSource(process.cwd(), command);
-      expect(source.path.replaceAll('\\', '/')).toMatch(new RegExp(`/prepare/${step}\\.md$`));
+      // Pin the PROJECT source: a migrated command must resolve to the repo's
+      // own prepare file, never a user-global ~/.maestro mirror.
+      expect(source.relativePath).toBe(`prepare/${step}.md`);
       expect(source.contract.produces.length).toBeGreaterThan(0);
     }
   });
@@ -414,8 +416,8 @@ gates:
   it('resolves every migrated command through workflow YAML associations', () => {
     for (const [command, step] of Object.entries(migratedStepAssociations)) {
       const prepared = prepareStep(process.cwd(), command);
-      expect(prepared.prepare?.path.replaceAll('\\', '/')).toMatch(new RegExp(`/prepare/${step}\\.md$`));
-      expect(prepared.workflow?.path.replaceAll('\\', '/')).toMatch(new RegExp(`/workflows/${step}\\.md$`));
+      expect(prepared.prepare?.path).toBe(join(process.cwd(), 'prepare', `${step}.md`));
+      expect(prepared.workflow?.path).toBe(join(process.cwd(), 'workflows', `${step}.md`));
     }
   });
 

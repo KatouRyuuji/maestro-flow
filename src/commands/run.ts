@@ -842,7 +842,7 @@ Compatibility boundary:
         // Backward-compatible fast path: an explicit run-id with no verbs stays on
         // the plain seal path (identical to the pre-M2 behaviour). Any verdict, or
         // 免参 (no run-id), routes through the chain-driving verdict path.
-        const verbless = !opts.verdict && (opts.decision?.length ?? 0) === 0
+        const verbless = opts.verdict === undefined && (opts.decision?.length ?? 0) === 0
           && (opts.evidence?.length ?? 0) === 0 && !opts.reason
           && !opts.chainProposal
           && !opts.applyProposal

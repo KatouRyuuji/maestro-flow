@@ -301,6 +301,7 @@ Write `report.md` with standard frontmatter + fixed sections. frontmatter verdic
 | all tasks succeeded | ready |
 | some non-critical blocked | ready_with_concerns |
 | critical dependency failed | blocked |
+| execution itself errored (no outputs) | failed |
 
 next explicitly routes to a separate verify:
 
@@ -318,10 +319,10 @@ Body contains an execution status summary (completed/failed task counts, blocked
 After execution completes, inline-record one entry per declared gate. **GATE: execution-complete**
 
 ```json
-{ "gate": "execution-complete", "verdict": "ready|ready_with_concerns|blocked", "checked_at": now(),
+{ "gate": "execution-complete", "verdict": "ready|ready_with_concerns|blocked|failed", "checked_at": now(),
   "evidence": { "completed": N, "blocked": N },
   "artifact": "outputs/execution.json" }
-{ "gate": "self-check-passed", "verdict": "ready|ready_with_concerns|blocked", "checked_at": now(),
+{ "gate": "self-check-passed", "verdict": "ready|ready_with_concerns|blocked|failed", "checked_at": now(),
   "evidence": { "smoke_ran": true, "self_check": "passed|gaps_found", "critical_violations": N },
   "artifact": "outputs/self-check.json" }
 ```

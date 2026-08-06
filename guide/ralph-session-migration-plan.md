@@ -91,7 +91,7 @@ ledger 专用文件),M6 独立为 `verification-ledger.json` 并切换 cmd-ledge
 | `maestro session meta update --session <id> [--position-file <path\|->] [--decomposition-file <path\|->]` | position/decomposition 整块替换(schema 校验)— goal-audit / task_decomposition 状态翻转 / goal_changelog 追加的唯一 CLI 写入口,prompt 层重建整块提交 | ralph-meta 隐式写 |
 
 **verdict 词汇正交性(关键决策)**:`--verdict` 是**链推进指令**(step 怎么走),与 `handoff.verdict`
-(产物质量:ready/blocked/failed)正交,不合并 — DONE_WITH_CONCERNS 完全可能配 handoff.ready。
+(产物质量:ready/ready_with_concerns/blocked/failed)正交,不合并 — done-with-concerns 完全可能配 handoff.ready。
 
 ### 1.3 `run next` 多候选推荐(分两档)
 

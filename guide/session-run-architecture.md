@@ -212,7 +212,7 @@ store.update(sessionId) ← 事务写入
 | **Prepare** | `prepare/*.md` | 预任务思考提示（只读阶段注入） | `prepare/odyssey-planex.md` |
 | **Workflow** | `workflows/*.md` | 执行时工作流内容（create 阶段注入） | `workflows/odyssey-planex.md` |
 
-### 3.2 resolveCommandSource（`contract.ts:91`）
+### 3.2 resolveCommandSource（`contract.ts:379`）
 
 将 command 名解析为 prepare 文件 + contract：
 
@@ -223,13 +223,13 @@ store.update(sessionId) ← 事务写入
   │
   ▼ 生成候选名: [normalized, maestro-prefixed/unprefixed]
   │
-  ▼ 搜索优先级（第一个命中的文件）:
+  ▼ 搜索优先级（第一个命中的文件;项目本地定义恒优先于用户全局库）:
   │   1. .workflow/prepare/{name}.md         （项目级 prepare）
-  │   2. ~/.maestro/prepare/{name}.md        （全局 prepare）
-  │   3. {projectRoot}/prepare/{name}.md     （仓库内 prepare）
-  │   4. .claude/commands/{name}.md          （项目级 command）
-  │   5. .claude/skills/{name}/SKILL.md      （项目级 skill）
-  │   6. resolveStepContent().prepare        （workflow association 回溯）
+  │   2. {projectRoot}/prepare/{name}.md     （仓库内 prepare）
+  │   3. .claude/commands/{name}.md          （项目级 command）
+  │   4. .claude/skills/{name}/SKILL.md      （项目级 skill）
+  │   5. resolveStepContent().prepare        （workflow association 回溯）
+  │   6. ~/.maestro/prepare/{name}.md        （全局 prepare，不再遮蔽项目命令）
   │   7. ~/.claude/commands/{name}.md        （全局 command）
   │   8. ~/.claude/skills/{name}/SKILL.md    （全局 skill）
   │
@@ -238,7 +238,7 @@ store.update(sessionId) ← 事务写入
   ▼ 返回: { path, raw, contentHash, contract }
 ```
 
-### 3.3 resolveStepContent（`contract.ts:233`）
+### 3.3 resolveStepContent（`contract.ts:567`）
 
 将 step 名解析为 prepare + workflow + runMode + refs 四件套：
 

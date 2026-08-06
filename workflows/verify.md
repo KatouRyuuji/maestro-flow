@@ -207,7 +207,7 @@ Every criterion must have method + status + evidence, and the verdict must be re
 
 ## report.md
 
-Write `report.md` with standard frontmatter + fixed sections. frontmatter records scope, verdict, criteria counts, gap counts, coverage_score. Body references verification values via aref, does not copy content.
+Write `report.md` with standard frontmatter + fixed sections. frontmatter records scope, verdict, criteria counts, gap counts, coverage_score. report.md frontmatter `verdict` 使用 report 层 ready 词表（pass→ready、warn→ready_with_concerns、fail/blocked→blocked/failed）；pass|warn|fail|blocked 仅用于 verification.json 与正文。 Body references verification values via aref, does not copy content.
 
 ```
 === VERIFICATION RESULTS ===
