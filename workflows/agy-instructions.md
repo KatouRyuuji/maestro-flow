@@ -244,6 +244,7 @@ Outside a Run, governed staging remains available (see item 3); direct `maestro 
 Use commands supplied by the current `knowledge_context`, completion receipt, and `run check` output; those Runtime surfaces override static examples here.
 
 - `maestro knowledge review <session-id> --refresh` refreshes reconciliation; `--resolve` records human disposition.
+- Review Presentation Protocol: when candidates need a disposition, the agent runs `review --json` itself, presents each candidate (title, content summary, evidence anchors, evidence-backed matches, recommended disposition + one-line rationale), collects the user's decisions, and only then executes the `--resolve` commands. The user decides; the agent never hands over the raw review command as the whole task. Under `-y`, only verified clearly-unique candidates may be auto-resolved as `unique`.
 - Promotion requires eligible candidates with fresh receipts and sealed sources: sealed Runs for run-source candidates; sealed Session + fresh session receipt (+ non-empty `--evidence` at stage) for session-source candidates. Normal completion never implies approval.
 - Session seal may report a pending backlog but never silently promotes or discards candidates.
 - Deprecated/superseded knowledge remains auditable and is excluded from normal search and injection.
