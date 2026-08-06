@@ -1,21 +1,47 @@
 ---
 name: brainstorm
 description: Multi-role brainstorming with cross-role conflict resolution, providing multi-perspective analysis before implementation
-argument-hint: "[topic|role-name] [--yes] [--count N] [--session ID] [--update] [--skip-questions] [--include-questions] [--style-skill PKG] [--review-only] [--from <source>]"
+argument-hint: '[topic|role-name] [--yes] [--count N] [--session ID] [--update] [--skip-questions] [--include-questions] [--style-skill PKG] [--review-only] [--from <source>]'
 contract:
   consumes:
-    - { kind: context-package, alias: upstream-context, required: false }
+  - kind: context-package
+    alias: upstream-context
+    required: false
   produces:
-    - { path: outputs/guidance-specification.md, kind: guidance, alias: current-guidance, role: primary }
-    - { path: outputs/design-research.md, kind: design-research, role: attachment, required: false }
-    - { path: "outputs/{role}/analysis.md", kind: analysis, role: attachment }
-    - { path: outputs/context-package.json, kind: context-package, alias: brainstorm-context, role: attachment }
+  - path: outputs/guidance-specification.md
+    kind: guidance
+    alias: current-guidance
+    role: primary
+    required: true
+    schema: guidance/1.0
+  - path: outputs/design-research.md
+    kind: design-research
+    role: attachment
+    required: false
+    schema: design-research/1.0
+  - path: outputs/{role}/analysis.md
+    kind: analysis
+    role: attachment
+    required: false
+    schema: analysis/1.0
+  - path: outputs/context-package.json
+    kind: context-package
+    alias: brainstorm-context
+    role: attachment
+    required: false
+    schema: context-package/1.0
   gates:
-    exit: [guidance-generated, roles-converged]
+    exit:
+    - guidance-generated
+    - roles-converged
+  contract_version: 2.1
 refs:
-  - { path: ref/interview-mechanics.md, when: Entering the menu Q&A of interactive framework generation }
-  - { path: ref/boundary-grill.md, when: The cross-role re-review detects a boundary conflict }
-  - { path: ref/finish-work.md, when: The wrap-up phase (auto mode) }
+- path: ref/interview-mechanics.md
+  when: Entering the menu Q&A of interactive framework generation
+- path: ref/boundary-grill.md
+  when: The cross-role re-review detects a boundary conflict
+- path: ref/finish-work.md
+  when: The wrap-up phase (auto mode)
 ---
 
 # Pre-task Thinking: brainstorm

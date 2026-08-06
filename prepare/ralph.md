@@ -1,13 +1,15 @@
 ---
 name: ralph
-description: "Closed-loop policy over the canonical Session/Run chain — retry, confidence, drift, goal-audit and stopping policy"
-goal: true
-argument-hint: "<intent> [-y] [-c] [--amend]"
+description: Closed-loop policy over the canonical Session/Run chain — retry, confidence, drift, goal-audit and stopping policy
+argument-hint: <intent> [-y] [-c] [--amend]
 contract:
   consumes: []
   produces: []
+  contract_version: 2.1
 refs:
-  - { path: workflows/ralph-amend-goal.md, when: "--amend flag is present" }
+- path: workflows/ralph-amend-goal.md
+  when: --amend flag is present
+goal: true
 ---
 
 # Prepare: Ralph

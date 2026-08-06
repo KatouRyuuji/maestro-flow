@@ -1,27 +1,72 @@
 ---
 name: test
 description: Run conversational UAT, coverage, and optional browser acceptance on verified deliverables, inferring severity per scenario and closing gaps
-argument-hint: "[scope] [--smoke] [--auto-fix] [--frontend-verify]"
+argument-hint: '[scope] [--smoke] [--auto-fix] [--frontend-verify]'
 contract:
   consumes:
-    - { kind: verification, alias: latest-verification, required: false }
-    - { kind: plan, alias: current-plan, required: false }
-    - { kind: execution, alias: current-execution, required: false }
-    - { kind: review-findings, alias: latest-review, required: false }
-    - { kind: diagnosis, alias: latest-debug, required: false }
+  - kind: verification
+    alias: latest-verification
+    required: false
+  - kind: plan
+    alias: current-plan
+    required: false
+  - kind: execution
+    alias: current-execution
+    required: false
+  - kind: review-findings
+    alias: latest-review
+    required: false
+  - kind: diagnosis
+    alias: latest-debug
+    required: false
   produces:
-    - { path: outputs/test-plan.json, kind: test-plan, role: attachment }
-    - { path: outputs/test-results.json, kind: test-results, alias: latest-test, role: primary }
-    - { path: outputs/acceptance.json, kind: acceptance, role: evidence }
-    - { path: outputs/coverage.json, kind: coverage, role: evidence }
-    - { path: outputs/uat.md, kind: uat-log, role: attachment }
-    - { path: outputs/issue-candidates.json, kind: issue-candidates, role: attachment, required: false }
-    - { path: outputs/e2e-results.json, kind: e2e-results, role: evidence, required: false }
+  - path: outputs/test-plan.json
+    kind: test-plan
+    role: attachment
+    required: false
+    schema: test-plan/1.0
+  - path: outputs/test-results.json
+    kind: test-results
+    alias: latest-test
+    role: primary
+    required: true
+    schema: test-results/1.0
+  - path: outputs/acceptance.json
+    kind: acceptance
+    role: evidence
+    required: false
+    schema: acceptance/1.0
+  - path: outputs/coverage.json
+    kind: coverage
+    role: evidence
+    required: false
+    schema: coverage/1.0
+  - path: outputs/uat.md
+    kind: uat-log
+    role: attachment
+    required: false
+    schema: uat-log/1.0
+  - path: outputs/issue-candidates.json
+    kind: issue-candidates
+    role: attachment
+    required: false
+    schema: issue-candidates/1.0
+  - path: outputs/e2e-results.json
+    kind: e2e-results
+    role: evidence
+    required: false
+    schema: e2e-results/1.0
   gates:
-    exit: [coverage-met, pass-rate-met]
+    exit:
+    - coverage-met
+    - pass-rate-met
+  contract_version: 2.1
 refs:
-  - { path: ref/frontend-verify.md, when: --frontend-verify is passed, taking the deterministic browser acceptance path }
-  - { path: ref/severity-inference.md, when: Inferring issue severity from the user's natural language }
+- path: ref/frontend-verify.md
+  when: --frontend-verify is passed
+  taking the deterministic browser acceptance path: null
+- path: ref/severity-inference.md
+  when: Inferring issue severity from the user's natural language
 ---
 
 # Pre-task Thinking: test

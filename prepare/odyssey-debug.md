@@ -1,22 +1,51 @@
 ---
 name: odyssey-debug
-description: "Odyssey debug mode — symptom-driven investigation through archaeology, exploration, hypothesis testing, fix, and confirmation, producing diagnosis with full evidence trail"
-goal: true
-argument-hint: "<issue> [--template performance|memory-leak|race-condition|regression|crash] [--skip-fix] [--skip-generalize] [-y] [-c]"
+description: Odyssey debug mode — symptom-driven investigation through archaeology, exploration, hypothesis testing, fix, and confirmation, producing diagnosis with full evidence trail
+argument-hint: <issue> [--template performance|memory-leak|race-condition|regression|crash] [--skip-fix] [--skip-generalize] [-y] [-c]
 contract:
   consumes:
-    - { kind: session, alias: prior-session, required: false }
+  - kind: session
+    alias: prior-session
+    required: false
   produces:
-    - { path: outputs/session.json, kind: session, alias: debug-session, role: primary }
-    - { path: outputs/evidence.ndjson, kind: evidence, alias: debug-evidence, role: evidence }
-    - { path: outputs/explore.json, kind: exploration, alias: debug-explore, role: evidence }
-    - { path: outputs/understanding.md, kind: diagnosis-report, alias: debug-understanding, role: primary }
+  - path: outputs/session.json
+    kind: session
+    alias: debug-session
+    role: primary
+    required: true
+    schema: session/1.0
+  - path: outputs/evidence.ndjson
+    kind: evidence
+    alias: debug-evidence
+    role: evidence
+    required: false
+    schema: evidence/1.0
+  - path: outputs/explore.json
+    kind: exploration
+    alias: debug-explore
+    role: evidence
+    required: false
+    schema: exploration/1.0
+  - path: outputs/understanding.md
+    kind: diagnosis-report
+    alias: debug-understanding
+    role: primary
+    required: false
+    schema: diagnosis-report/1.0
   gates:
-    exit: [discovery-complete, diagnosis-confirmed, fix-confirmed]
+    exit:
+    - discovery-complete
+    - diagnosis-confirmed
+    - fix-confirmed
+  contract_version: 2.1
 refs:
-  - { path: ref/scientific-debug.md, when: Hypothesis testing and backward tracing discipline is needed }
-  - { path: ref/cli-supplementary.md, when: CLI supplementary evidence collection is needed }
-  - { path: ref/finish-work.md, when: Entering the RECORD phase for wrap-up }
+- path: ref/scientific-debug.md
+  when: Hypothesis testing and backward tracing discipline is needed
+- path: ref/cli-supplementary.md
+  when: CLI supplementary evidence collection is needed
+- path: ref/finish-work.md
+  when: Entering the RECORD phase for wrap-up
+goal: true
 ---
 
 # Pre-task Thinking: odyssey-debug

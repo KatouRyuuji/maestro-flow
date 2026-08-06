@@ -1,20 +1,41 @@
 ---
 name: odyssey-improve
 description: 6-dimension runtime quality audit → diagnose → fix → verify cycle with baseline metrics tracking and zero-residual enforcement
-goal: true
-argument-hint: "<target> [--dimensions <list>] [--fix-threshold <severity>] [--skip-fix] [--skip-generalize] [-y] [-c]"
+argument-hint: <target> [--dimensions <list>] [--fix-threshold <severity>] [--skip-fix] [--skip-generalize] [-y] [-c]
 contract:
   consumes:
-    - { kind: session, alias: prior-session, required: false }
+  - kind: session
+    alias: prior-session
+    required: false
   produces:
-    - { path: outputs/session.json, kind: audit-result, alias: latest-audit, role: primary }
-    - { path: outputs/evidence.ndjson, kind: evidence, role: evidence }
-    - { path: outputs/understanding.md, kind: improvement-metrics, alias: improvement-report, role: attachment }
+  - path: outputs/session.json
+    kind: audit-result
+    alias: latest-audit
+    role: primary
+    required: true
+    schema: audit-result/1.0
+  - path: outputs/evidence.ndjson
+    kind: evidence
+    role: evidence
+    required: false
+    schema: evidence/1.0
+  - path: outputs/understanding.md
+    kind: improvement-metrics
+    alias: improvement-report
+    role: attachment
+    required: false
+    schema: improvement-metrics/1.0
   gates:
-    exit: [all-dimensions-audited, zero-remaining-verified]
+    exit:
+    - all-dimensions-audited
+    - zero-remaining-verified
+  contract_version: 2.1
 refs:
-  - { path: workflows/odyssey-base.md, when: Shared back-half (GENERALIZE → DISCOVER → RECORD → END) needed }
-  - { path: ref/cli-supplementary.md, when: CLI-assisted survey or verification is needed }
+- path: workflows/odyssey-base.md
+  when: Shared back-half (GENERALIZE → DISCOVER → RECORD → END) needed
+- path: ref/cli-supplementary.md
+  when: CLI-assisted survey or verification is needed
+goal: true
 ---
 
 # Pre-task Thinking: odyssey-improve

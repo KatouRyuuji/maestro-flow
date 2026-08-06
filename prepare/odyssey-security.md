@@ -1,20 +1,44 @@
 ---
 name: odyssey-security
-description: "Odyssey security mode — read-only tiered security audit (OWASP Top 10, dependency supply chain, secrets, CI/CD, STRIDE, git history) producing severity matrix report with file:line evidence. No fix loop."
-goal: true
-argument-hint: "<target> [--tier quick|standard|deep] [--skip-generalize] [-y] [-c]"
+description: Odyssey security mode — read-only tiered security audit (OWASP Top 10, dependency supply chain, secrets, CI/CD, STRIDE, git history) producing severity matrix report with file:line evidence.
+  No fix loop.
+argument-hint: <target> [--tier quick|standard|deep] [--skip-generalize] [-y] [-c]
 contract:
   consumes:
-    - { kind: session, alias: prior-session, required: false }
+  - kind: session
+    alias: prior-session
+    required: false
   produces:
-    - { path: outputs/session.json, kind: security-audit-result, alias: security-session, role: primary }
-    - { path: outputs/evidence.ndjson, kind: evidence, alias: security-evidence, role: evidence }
-    - { path: outputs/understanding.md, kind: security-report, alias: security-understanding, role: primary }
+  - path: outputs/session.json
+    kind: security-audit-result
+    alias: security-session
+    role: primary
+    required: true
+    schema: security-audit-result/1.0
+  - path: outputs/evidence.ndjson
+    kind: evidence
+    alias: security-evidence
+    role: evidence
+    required: false
+    schema: evidence/1.0
+  - path: outputs/understanding.md
+    kind: security-report
+    alias: security-understanding
+    role: primary
+    required: false
+    schema: security-report/1.0
   gates:
-    exit: [recon-complete, scan-complete, report-produced]
+    exit:
+    - recon-complete
+    - scan-complete
+    - report-produced
+  contract_version: 2.1
 refs:
-  - { path: workflows/odyssey-base.md, when: Shared back-half (GENERALIZE → DISCOVER → RECORD → END) needed }
-  - { path: ref/cli-supplementary.md, when: CLI-assisted survey or verification is needed }
+- path: workflows/odyssey-base.md
+  when: Shared back-half (GENERALIZE → DISCOVER → RECORD → END) needed
+- path: ref/cli-supplementary.md
+  when: CLI-assisted survey or verification is needed
+goal: true
 ---
 
 # Pre-task Thinking: odyssey-security

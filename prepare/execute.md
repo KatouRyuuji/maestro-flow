@@ -1,23 +1,56 @@
 ---
 name: execute
 description: Implement code changes following the DAG and waves of current-plan, producing implementation results and a local smoke self-check
-argument-hint: "[scope] [-y] [--task TASK-ID] [--method agent|cli|auto] [--executor <tool>] [--auto-commit]"
+argument-hint: '[scope] [-y] [--task TASK-ID] [--method agent|cli|auto] [--executor <tool>] [--auto-commit]'
 contract:
   consumes:
-    - { kind: plan, alias: current-plan, required: false }
-    - { kind: review-findings, alias: latest-review, required: false }
-    - { kind: fix-directions, alias: latest-fix-directions, required: false }
-    - { kind: diagnosis, alias: latest-debug, required: false }
-    - { kind: priors, alias: session-priors, required: false }
+  - kind: plan
+    alias: current-plan
+    required: false
+  - kind: review-findings
+    alias: latest-review
+    required: false
+  - kind: fix-directions
+    alias: latest-fix-directions
+    required: false
+  - kind: diagnosis
+    alias: latest-debug
+    required: false
+  - kind: priors
+    alias: session-priors
+    required: false
   produces:
-    - { path: outputs/execution.json, kind: execution, alias: current-execution, role: primary }
-    - { path: outputs/task-results.json, kind: task-results, role: attachment }
-    - { path: outputs/self-check.json, kind: self-check, role: evidence }
-    - { path: outputs/change-manifest.json, kind: change-manifest, role: evidence }
+  - path: outputs/execution.json
+    kind: execution
+    alias: current-execution
+    role: primary
+    required: true
+    schema: execution/1.0
+  - path: outputs/task-results.json
+    kind: task-results
+    role: attachment
+    required: false
+    schema: task-results/1.0
+  - path: outputs/self-check.json
+    kind: self-check
+    role: evidence
+    required: false
+    schema: self-check/1.0
+  - path: outputs/change-manifest.json
+    kind: change-manifest
+    role: evidence
+    required: false
+    schema: change-manifest/1.0
   gates:
-    exit: [execution-complete, self-check-passed]
+    exit:
+    - execution-complete
+    - self-check-passed
+  contract_version: 2.1
 refs:
-  - { path: ref/finish-work.md, when: Wrapping up, archiving, and extracting incremental learnings }
+- path: ref/finish-work.md
+  when: Wrapping up
+  archiving: null
+  and extracting incremental learnings: null
 ---
 
 # Pre-task Thinking: execute

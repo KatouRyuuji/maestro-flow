@@ -1,19 +1,40 @@
 ---
 name: verify
 description: Independently verify current-execution's requirement coverage, behavioral correctness, and anti-pattern risk against current-plan
-argument-hint: "[scope] [--strict] [--skip-tests] [--skip-antipattern]"
+argument-hint: '[scope] [--strict] [--skip-tests] [--skip-antipattern]'
 contract:
   consumes:
-    - { kind: plan, alias: current-plan, required: true }
-    - { kind: execution, alias: current-execution, required: true }
+  - kind: plan
+    alias: current-plan
+    required: true
+  - kind: execution
+    alias: current-execution
+    required: true
   produces:
-    - { path: outputs/verification.json, kind: verification, alias: latest-verification, role: primary }
-    - { path: outputs/requirement-coverage.json, kind: requirement-coverage, role: evidence }
-    - { path: outputs/antipattern-report.json, kind: antipattern-report, role: evidence }
+  - path: outputs/verification.json
+    kind: verification
+    alias: latest-verification
+    role: primary
+    required: true
+    schema: verification/1.0
+  - path: outputs/requirement-coverage.json
+    kind: requirement-coverage
+    role: evidence
+    required: false
+    schema: requirement-coverage/1.0
+  - path: outputs/antipattern-report.json
+    kind: antipattern-report
+    role: evidence
+    required: false
+    schema: antipattern-report/1.0
   gates:
-    exit: [goal-backward-verified, nyquist-covered]
+    exit:
+    - goal-backward-verified
+    - nyquist-covered
+  contract_version: 2.1
 refs:
-  - { path: ref/finish-work.md, when: Wrapping up and archiving the verification }
+- path: ref/finish-work.md
+  when: Wrapping up and archiving the verification
 ---
 
 # Pre-task Thinking: verify

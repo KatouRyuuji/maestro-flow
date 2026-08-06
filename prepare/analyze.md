@@ -1,22 +1,53 @@
 ---
 name: analyze
 description: Perform multi-dimensional analysis of a topic or existing implementation, producing findings and a risk-matrix consumable by plan
-argument-hint: "[topic] [-y] [-q] [--from <artifact-alias>] [--gaps [ISS-ID]]"
+argument-hint: '[topic] [-y] [-q] [--from <artifact-alias>] [--gaps [ISS-ID]]'
 contract:
   consumes:
-    - { kind: guidance, alias: current-guidance, required: false }
-    - { kind: blueprint, alias: current-blueprint, required: false }
-    - { kind: diagnosis, alias: latest-debug, required: false }
+  - kind: guidance
+    alias: current-guidance
+    required: false
+  - kind: blueprint
+    alias: current-blueprint
+    required: false
+  - kind: diagnosis
+    alias: latest-debug
+    required: false
   produces:
-    - { path: outputs/findings.json, kind: findings, alias: current-analysis, role: primary }
-    - { path: outputs/risk-matrix.json, kind: risk-matrix, role: evidence }
-    - { path: outputs/priors.json, kind: priors, alias: session-priors, role: evidence, required: false }
+  - path: outputs/findings.json
+    kind: findings
+    alias: current-analysis
+    role: primary
+    required: true
+    schema: findings/1.0
+  - path: outputs/risk-matrix.json
+    kind: risk-matrix
+    role: evidence
+    required: false
+    schema: risk-matrix/1.0
+  - path: outputs/priors.json
+    kind: priors
+    alias: session-priors
+    role: evidence
+    required: false
+    schema: priors/1.0
   gates:
-    exit: [exploration-done, discussion-round, scoring-complete, intent-covered]
+    exit:
+    - exploration-done
+    - discussion-round
+    - scoring-complete
+    - intent-covered
+  contract_version: 2.1
 refs:
-  - { path: ref/boundary-grill.md, when: A boundary/responsibility conflict is detected during exploration and discussion }
-  - { path: ref/issue-gaps-analyze.md, when: --gaps mode triggers, taking the issue root-cause analysis branch }
-  - { path: ref/finish-work.md, when: Wrapping up, archiving, and extracting spec/knowhow }
+- path: ref/boundary-grill.md
+  when: A boundary/responsibility conflict is detected during exploration and discussion
+- path: ref/issue-gaps-analyze.md
+  when: --gaps mode triggers
+  taking the issue root-cause analysis branch: null
+- path: ref/finish-work.md
+  when: Wrapping up
+  archiving: null
+  and extracting spec/knowhow: null
 ---
 
 # Pre-task Thinking: analyze

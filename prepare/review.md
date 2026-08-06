@@ -1,21 +1,45 @@
 ---
 name: review
 description: Perform layered multi-dimensional code review of executed changes, producing traceable review-findings
-argument-hint: "[scope] [--level quick|standard|deep] [--dimensions <list>] [--skip-specs]"
+argument-hint: '[scope] [--level quick|standard|deep] [--dimensions <list>] [--skip-specs]'
 contract:
   consumes:
-    - { kind: execution, alias: current-execution, required: true }
-    - { kind: verification, alias: latest-verification, required: false }
-    - { kind: review-findings, alias: prior-review, required: false }
+  - kind: execution
+    alias: current-execution
+    required: true
+  - kind: verification
+    alias: latest-verification
+    required: false
+  - kind: review-findings
+    alias: prior-review
+    required: false
   produces:
-    - { path: outputs/review-findings.json, kind: review-findings, alias: latest-review, role: primary }
-    - { path: outputs/spec-conflicts.json, kind: spec-conflicts, role: evidence }
-    - { path: outputs/issue-candidates.json, kind: issue-candidates, role: attachment }
+  - path: outputs/review-findings.json
+    kind: review-findings
+    alias: latest-review
+    role: primary
+    required: true
+    schema: review-findings/1.0
+  - path: outputs/spec-conflicts.json
+    kind: spec-conflicts
+    role: evidence
+    required: false
+    schema: spec-conflicts/1.0
+  - path: outputs/issue-candidates.json
+    kind: issue-candidates
+    role: attachment
+    required: false
+    schema: issue-candidates/1.0
   gates:
-    exit: [dimension-coverage, severity-triaged]
+    exit:
+    - dimension-coverage
+    - severity-triaged
+  contract_version: 2.1
 refs:
-  - { path: ref/spec-conflict.md, when: A contradiction between code and a spec entry is found }
-  - { path: ref/cli-supplementary.md, when: standard/deep needs CLI cross-validation }
+- path: ref/spec-conflict.md
+  when: A contradiction between code and a spec entry is found
+- path: ref/cli-supplementary.md
+  when: standard/deep needs CLI cross-validation
 ---
 
 # Pre-task Thinking: review

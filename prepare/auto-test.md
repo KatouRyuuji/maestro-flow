@@ -1,18 +1,38 @@
 ---
 name: auto-test
 description: Unified automated testing via a CSV layered pipeline, auto-selecting scenario sources from project state and iterating to convergence
-argument-hint: "<phase> [-y] [-c N] [--max-iter N] [--layer L0|L1|L2|L3] [--dry-run] [--re-run]"
+argument-hint: <phase> [-y] [-c N] [--max-iter N] [--layer L0|L1|L2|L3] [--dry-run] [--re-run]
 contract:
   consumes:
-    - { kind: verification, alias: latest-verification, required: false }
-    - { kind: execution, alias: current-execution, required: false }
-    - { kind: review-findings, alias: latest-review, required: false }
-    - { kind: diagnosis, alias: latest-debug, required: false }
+  - kind: verification
+    alias: latest-verification
+    required: false
+  - kind: execution
+    alias: current-execution
+    required: false
+  - kind: review-findings
+    alias: latest-review
+    required: false
+  - kind: diagnosis
+    alias: latest-debug
+    required: false
   produces:
-    - { path: outputs/auto-test-report.json, kind: auto-test-report, alias: latest-auto-test, role: primary }
-    - { path: outputs/traceability.md, kind: traceability, role: evidence, required: false }
+  - path: outputs/auto-test-report.json
+    kind: auto-test-report
+    alias: latest-auto-test
+    role: primary
+    required: true
+    schema: auto-test-report/1.0
+  - path: outputs/traceability.md
+    kind: traceability
+    role: evidence
+    required: false
+    schema: traceability/1.0
   gates:
-    exit: [tests-generated, execution-converged]
+    exit:
+    - tests-generated
+    - execution-converged
+  contract_version: 2.1
 refs: []
 ---
 

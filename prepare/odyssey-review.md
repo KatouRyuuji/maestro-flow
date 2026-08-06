@@ -1,21 +1,50 @@
 ---
 name: odyssey-review
-description: "Odyssey review mode — multi-dimensional deep code review through archaeology, exploration, 4-dimension audit, exhaustive severity-tiered fix, and zero-residual confirmation, producing review findings with full evidence trail"
-goal: true
-argument-hint: "<target: file|dir|HEAD|staged|phase#|PR#> [--skip-fix] [--skip-generalize] [-y] [-c]"
+description: Odyssey review mode — multi-dimensional deep code review through archaeology, exploration, 4-dimension audit, exhaustive severity-tiered fix, and zero-residual confirmation, producing review
+  findings with full evidence trail
+argument-hint: '<target: file|dir|HEAD|staged|phase#|PR#> [--skip-fix] [--skip-generalize] [-y] [-c]'
 contract:
   consumes:
-    - { kind: session, alias: prior-session, required: false }
+  - kind: session
+    alias: prior-session
+    required: false
   produces:
-    - { path: outputs/session.json, kind: session, alias: review-session, role: primary }
-    - { path: outputs/evidence.ndjson, kind: evidence, alias: review-evidence, role: evidence }
-    - { path: outputs/explore.json, kind: exploration, alias: review-explore, role: evidence }
-    - { path: outputs/understanding.md, kind: review-report, alias: review-understanding, role: primary }
+  - path: outputs/session.json
+    kind: session
+    alias: review-session
+    role: primary
+    required: true
+    schema: session/1.0
+  - path: outputs/evidence.ndjson
+    kind: evidence
+    alias: review-evidence
+    role: evidence
+    required: false
+    schema: evidence/1.0
+  - path: outputs/explore.json
+    kind: exploration
+    alias: review-explore
+    role: evidence
+    required: false
+    schema: exploration/1.0
+  - path: outputs/understanding.md
+    kind: review-report
+    alias: review-understanding
+    role: primary
+    required: false
+    schema: review-report/1.0
   gates:
-    exit: [discovery-complete, all-dimensions-reviewed, zero-remaining]
+    exit:
+    - discovery-complete
+    - all-dimensions-reviewed
+    - zero-remaining
+  contract_version: 2.1
 refs:
-  - { path: ref/cli-supplementary.md, when: CLI supplementary evidence collection is needed }
-  - { path: ref/finish-work.md, when: Entering the RECORD phase for wrap-up }
+- path: ref/cli-supplementary.md
+  when: CLI supplementary evidence collection is needed
+- path: ref/finish-work.md
+  when: Entering the RECORD phase for wrap-up
+goal: true
 ---
 
 # Pre-task Thinking: odyssey-review

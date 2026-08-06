@@ -1,14 +1,17 @@
 ---
 name: maestro
-description: "Intent-to-chain planner over the canonical Session/Run lifecycle"
-goal: true
-argument-hint: "<intent> [-y] [-c] [--amend] [--dry-run]"
+description: Intent-to-chain planner over the canonical Session/Run lifecycle
+argument-hint: <intent> [-y] [-c] [--amend] [--dry-run]
 contract:
   consumes: []
   produces: []
+  contract_version: 2.1
 refs:
-  - { path: workflows/maestro.md, when: "initial intent classification (A_CLASSIFY)" }
-  - { path: workflows/ralph-amend-goal.md, when: "--amend flag is present" }
+- path: workflows/maestro.md
+  when: initial intent classification (A_CLASSIFY)
+- path: workflows/ralph-amend-goal.md
+  when: --amend flag is present
+goal: true
 ---
 
 # Prepare: Maestro

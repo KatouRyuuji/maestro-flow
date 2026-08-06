@@ -1,22 +1,50 @@
 ---
 name: debug
 description: Locate root cause via scientific method — reproduction, hypothesis testing, and backward tracing — producing only diagnosis and fix directions
-argument-hint: "[issue] [-c] [--from-test <scope>] [--parallel]"
+argument-hint: '[issue] [-c] [--from-test <scope>] [--parallel]'
 contract:
   consumes:
-    - { kind: test-results, alias: latest-test, required: false }
-    - { kind: review-findings, alias: latest-review, required: false }
-    - { kind: execution, alias: current-execution, required: false }
+  - kind: test-results
+    alias: latest-test
+    required: false
+  - kind: review-findings
+    alias: latest-review
+    required: false
+  - kind: execution
+    alias: current-execution
+    required: false
   produces:
-    - { path: outputs/diagnosis.json, kind: diagnosis, alias: latest-debug, role: primary }
-    - { path: outputs/hypotheses.json, kind: hypotheses, role: evidence }
-    - { path: outputs/reproduction.json, kind: reproduction, role: evidence }
-    - { path: outputs/fix-directions.json, kind: fix-directions, role: attachment }
+  - path: outputs/diagnosis.json
+    kind: diagnosis
+    alias: latest-debug
+    role: primary
+    required: true
+    schema: diagnosis/1.0
+  - path: outputs/hypotheses.json
+    kind: hypotheses
+    role: evidence
+    required: false
+    schema: hypotheses/1.0
+  - path: outputs/reproduction.json
+    kind: reproduction
+    role: evidence
+    required: false
+    schema: reproduction/1.0
+  - path: outputs/fix-directions.json
+    kind: fix-directions
+    role: attachment
+    required: false
+    schema: fix-directions/1.0
   gates:
-    exit: [hypothesis-tested, evidence-grounded]
+    exit:
+    - hypothesis-tested
+    - evidence-grounded
+  contract_version: 2.1
 refs:
-  - { path: ref/scientific-debug.md, when: The full Iron Law / 3-strike / backward tracing discipline is needed }
-  - { path: ref/cli-supplementary.md, when: CLI supplementary evidence collection is needed }
+- path: ref/scientific-debug.md
+  when: The full Iron Law / 3-strike / backward tracing discipline is needed
+- path: ref/cli-supplementary.md
+  when: CLI supplementary evidence collection is needed
 ---
 
 # Pre-task Thinking: debug

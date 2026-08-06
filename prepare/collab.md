@@ -1,17 +1,35 @@
 ---
 name: collab
 description: Fan out a requirement to multiple CLI tools in parallel, cross-verify findings for consensus and conflicts, and synthesize a unified conclusion consumable by plan
-argument-hint: "<requirement> [--tools agy,qwen,claude] [--mode analysis|write] [--rule <template>] [-y]"
+argument-hint: <requirement> [--tools agy,qwen,claude] [--mode analysis|write] [--rule <template>] [-y]
 contract:
   consumes: []
   produces:
-    - { path: outputs/collab-report.md, kind: collab-report, alias: current-collab, role: primary }
-    - { path: outputs/context.md, kind: context, role: attachment }
-    - { path: outputs/conclusions.json, kind: conclusions, alias: collab-conclusions, role: attachment }
+  - path: outputs/collab-report.md
+    kind: collab-report
+    alias: current-collab
+    role: primary
+    required: true
+    schema: collab-report/1.0
+  - path: outputs/context.md
+    kind: context
+    role: attachment
+    required: false
+    schema: context/1.0
+  - path: outputs/conclusions.json
+    kind: conclusions
+    alias: collab-conclusions
+    role: attachment
+    required: false
+    schema: conclusions/1.0
   gates:
-    exit: [cross-verified, outputs-complete]
+    exit:
+    - cross-verified
+    - outputs-complete
+  contract_version: 2.1
 refs:
-  - { path: ref/boundary-grill.md, when: CONFLICT findings include a boundary/responsibility dispute }
+- path: ref/boundary-grill.md
+  when: CONFLICT findings include a boundary/responsibility dispute
 ---
 
 # Pre-task Thinking: collab

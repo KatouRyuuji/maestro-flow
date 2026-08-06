@@ -1,19 +1,40 @@
 ---
 name: grill
 description: Socratic pressure-test a plan/idea/requirement against codebase reality to surface holes and terminology conflicts
-argument-hint: "<topic|plan> [-y] [-c] [--from <source>] [--depth shallow|standard|deep]"
+argument-hint: <topic|plan> [-y] [-c] [--from <source>] [--depth shallow|standard|deep]
 contract:
   consumes:
-    - { kind: context-package, alias: upstream-context, required: false }
+  - kind: context-package
+    alias: upstream-context
+    required: false
   produces:
-    - { path: outputs/grill-report.md, kind: grill-report, alias: current-grill, role: primary }
-    - { path: outputs/terminology.md, kind: terminology, role: attachment }
-    - { path: outputs/context-package.json, kind: context-package, alias: grill-context, role: attachment }
+  - path: outputs/grill-report.md
+    kind: grill-report
+    alias: current-grill
+    role: primary
+    required: true
+    schema: grill-report/1.0
+  - path: outputs/terminology.md
+    kind: terminology
+    role: attachment
+    required: false
+    schema: terminology/1.0
+  - path: outputs/context-package.json
+    kind: context-package
+    alias: grill-context
+    role: attachment
+    required: false
+    schema: context-package/1.0
   gates:
-    exit: [terminology-aligned, branches-walked]
+    exit:
+    - terminology-aligned
+    - branches-walked
+  contract_version: 2.1
 refs:
-  - { path: ref/interview-mechanics.md, when: Entering the Q&A loop of branch walking }
-  - { path: ref/finish-work.md, when: The wrap-up phase }
+- path: ref/interview-mechanics.md
+  when: Entering the Q&A loop of branch walking
+- path: ref/finish-work.md
+  when: The wrap-up phase
 ---
 
 # Pre-task Thinking: grill

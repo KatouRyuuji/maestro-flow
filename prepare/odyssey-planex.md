@@ -1,21 +1,45 @@
 ---
 name: odyssey-planex
-description: "Odyssey planex mode — single requirement delivery loop through acceptance criteria definition, task planning, execution, verification, and fix iteration until all criteria pass"
-goal: true
-argument-hint: "<requirement> [--template feature|bugfix|refactor|migration|api-endpoint] [--method auto|agent|<cli>] [--skip-verify] [--skip-generalize] [--max-iterations N] [-y] [-c]"
+description: Odyssey planex mode — single requirement delivery loop through acceptance criteria definition, task planning, execution, verification, and fix iteration until all criteria pass
+argument-hint: <requirement> [--template feature|bugfix|refactor|migration|api-endpoint] [--method auto|agent|<cli>] [--skip-verify] [--skip-generalize] [--max-iterations N] [-y] [-c]
 contract:
   consumes:
-    - { kind: session, alias: prior-session, required: false }
+  - kind: session
+    alias: prior-session
+    required: false
   produces:
-    - { path: outputs/session.json, kind: session, alias: planex-session, role: primary }
-    - { path: outputs/evidence.ndjson, kind: evidence, alias: planex-evidence, role: evidence }
-    - { path: outputs/understanding.md, kind: delivery-report, alias: planex-understanding, role: primary }
+  - path: outputs/session.json
+    kind: session
+    alias: planex-session
+    role: primary
+    required: true
+    schema: session/1.0
+  - path: outputs/evidence.ndjson
+    kind: evidence
+    alias: planex-evidence
+    role: evidence
+    required: false
+    schema: evidence/1.0
+  - path: outputs/understanding.md
+    kind: delivery-report
+    alias: planex-understanding
+    role: primary
+    required: false
+    schema: delivery-report/1.0
   gates:
-    exit: [criteria-defined, all-criteria-passed, plan-executed]
+    exit:
+    - criteria-defined
+    - all-criteria-passed
+    - plan-executed
+  contract_version: 2.1
 refs:
-  - { path: workflows/odyssey-base.md, when: Shared back-half (GENERALIZE → DISCOVER → RECORD → END) needed }
-  - { path: ref/cli-supplementary.md, when: CLI-assisted planning or verification is needed }
-  - { path: ref/finish-work.md, when: Entering the RECORD phase for wrap-up }
+- path: workflows/odyssey-base.md
+  when: Shared back-half (GENERALIZE → DISCOVER → RECORD → END) needed
+- path: ref/cli-supplementary.md
+  when: CLI-assisted planning or verification is needed
+- path: ref/finish-work.md
+  when: Entering the RECORD phase for wrap-up
+goal: true
 ---
 
 # Pre-task Thinking: odyssey-planex

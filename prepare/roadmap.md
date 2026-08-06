@@ -1,18 +1,34 @@
 ---
 name: roadmap
 description: Decompose requirements into a session DAG where each session is an atomic work unit with scope, success criteria, and dependency edges
-argument-hint: "<requirement> [-y] [-c] [-m progressive|direct|auto] [--from <source>] [--from-brainstorm SESSION-ID] [--revise [instructions]] [--review]"
+argument-hint: <requirement> [-y] [-c] [-m progressive|direct|auto] [--from <source>] [--from-brainstorm SESSION-ID] [--revise [instructions]] [--review]
 contract:
   consumes:
-    - { kind: context-package, alias: upstream-context, required: false }
+  - kind: context-package
+    alias: upstream-context
+    required: false
   produces:
-    - { path: outputs/roadmap.json, kind: roadmap, role: primary, alias: current-roadmap }
-    - { path: outputs/roadmap.md, kind: roadmap-doc, role: attachment }
+  - path: outputs/roadmap.json
+    kind: roadmap
+    role: primary
+    alias: current-roadmap
+    required: true
+    schema: roadmap/1.0
+  - path: outputs/roadmap.md
+    kind: roadmap-doc
+    role: attachment
+    required: false
+    schema: roadmap-doc/1.0
   gates:
-    exit: [dag-valid, sessions-registered]
+    exit:
+    - dag-valid
+    - sessions-registered
+  contract_version: 2.1
 refs:
-  - { path: ref/interview-mechanics.md, when: Entering the interactive interview Q&A loop }
-  - { path: ref/roadmap-template.md, when: Generating the roadmap.md artifact }
+- path: ref/interview-mechanics.md
+  when: Entering the interactive interview Q&A loop
+- path: ref/roadmap-template.md
+  when: Generating the roadmap.md artifact
 ---
 
 # Pre-task Thinking: roadmap

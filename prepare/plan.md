@@ -1,28 +1,75 @@
 ---
 name: plan
 description: Decompose confirmed analysis or requirements into an executable DAG, waves, and collision-free tasks
-argument-hint: "[scope] [--gaps] [--tdd] [--revise [instructions]] [--check <plan-dir>] [-y]"
+argument-hint: '[scope] [--gaps] [--tdd] [--revise [instructions]] [--check <plan-dir>] [-y]'
 contract:
   consumes:
-    - { kind: findings, alias: current-analysis, required: false }
-    - { kind: diagnosis, alias: latest-debug, required: false }
-    - { kind: blueprint, alias: current-blueprint, required: false }
-    - { kind: roadmap, alias: current-roadmap, required: false }
-    - { kind: plan, alias: current-plan, required: false }
-    - { kind: priors, alias: session-priors, required: false }
+  - kind: findings
+    alias: current-analysis
+    required: false
+  - kind: diagnosis
+    alias: latest-debug
+    required: false
+  - kind: blueprint
+    alias: current-blueprint
+    required: false
+  - kind: roadmap
+    alias: current-roadmap
+    required: false
+  - kind: plan
+    required: false
+  - kind: priors
+    alias: session-priors
+    required: false
   produces:
-    - { path: outputs/plan.json, kind: plan, alias: current-plan, role: primary }
-    - { path: "outputs/tasks/TASK-{NNN}.json", kind: plan-task, role: attachment }
-    - { path: outputs/waves.json, kind: execution-waves, role: attachment }
-    - { path: outputs/dependency-graph.json, kind: dependency-graph, role: evidence }
-    - { path: outputs/collision-report.json, kind: collision-report, role: evidence }
-    - { path: outputs/plan-check.json, kind: plan-check, role: evidence, required: false }
+  - path: outputs/plan.json
+    kind: plan
+    alias: current-plan
+    role: primary
+    required: true
+    schema: plan/1.0
+  - path: outputs/tasks/TASK-{NNN}.json
+    kind: plan-task
+    role: attachment
+    required: false
+    schema: plan-task/1.0
+  - path: outputs/waves.json
+    kind: execution-waves
+    role: attachment
+    required: false
+    schema: execution-waves/1.0
+  - path: outputs/dependency-graph.json
+    kind: dependency-graph
+    role: evidence
+    required: false
+    schema: dependency-graph/1.0
+  - path: outputs/collision-report.json
+    kind: collision-report
+    role: evidence
+    required: false
+    schema: collision-report/1.0
+  - path: outputs/plan-check.json
+    kind: plan-check
+    role: evidence
+    required: false
+    schema: plan-check/1.0
   gates:
-    exit: [context-collected, plan-generated, plan-checked, plan-confirmed]
+    exit:
+    - context-collected
+    - plan-generated
+    - plan-checked
+    - plan-confirmed
+  contract_version: 2.1
 refs:
-  - { path: ref/boundary-grill.md, when: Task boundary / file write conflicts need arbitration }
-  - { path: ref/tdd.md, when: --tdd mode, generating a RED-GREEN-REFACTOR task chain }
-  - { path: ref/finish-work.md, when: Wrapping up, archiving, and extracting spec/knowhow }
+- path: ref/boundary-grill.md
+  when: Task boundary / file write conflicts need arbitration
+- path: ref/tdd.md
+  when: --tdd mode
+  generating a RED-GREEN-REFACTOR task chain: null
+- path: ref/finish-work.md
+  when: Wrapping up
+  archiving: null
+  and extracting spec/knowhow: null
 ---
 
 # Pre-task Thinking: plan

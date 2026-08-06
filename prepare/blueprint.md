@@ -1,27 +1,80 @@
 ---
 name: blueprint
 description: Generate a formal specification package (Product Brief, PRD, Architecture, Epics) via a 6-phase document chain
-argument-hint: "<idea or @file> [-y] [-c] [--from <source>]"
+argument-hint: <idea or @file> [-y] [-c] [--from <source>]
 contract:
   consumes:
-    - { kind: context-package, alias: upstream-context, required: false }
+  - kind: context-package
+    alias: upstream-context
+    required: false
   produces:
-    - { path: outputs/product-brief.md, kind: blueprint, alias: current-blueprint, role: primary }
-    - { path: outputs/blueprint-config.json, kind: blueprint-config, role: evidence }
-    - { path: outputs/discovery-context.json, kind: discovery-context, role: evidence, required: false }
-    - { path: outputs/refined-requirements.json, kind: refined-requirements, role: evidence }
-    - { path: outputs/glossary.json, kind: glossary, role: attachment }
-    - { path: outputs/requirements/, kind: requirements-spec, role: attachment }
-    - { path: outputs/architecture/, kind: architecture-spec, role: attachment }
-    - { path: outputs/epics/, kind: epics-spec, role: attachment }
-    - { path: outputs/readiness-report.md, kind: readiness-report, role: evidence }
-    - { path: outputs/blueprint-summary.md, kind: blueprint-summary, role: attachment }
-    - { path: outputs/context-package.json, kind: context-package, alias: blueprint-context, role: attachment }
+  - path: outputs/product-brief.md
+    kind: blueprint
+    alias: current-blueprint
+    role: primary
+    required: true
+    schema: blueprint/1.0
+  - path: outputs/blueprint-config.json
+    kind: blueprint-config
+    role: evidence
+    required: false
+    schema: blueprint-config/1.0
+  - path: outputs/discovery-context.json
+    kind: discovery-context
+    role: evidence
+    required: false
+    schema: discovery-context/1.0
+  - path: outputs/refined-requirements.json
+    kind: refined-requirements
+    role: evidence
+    required: false
+    schema: refined-requirements/1.0
+  - path: outputs/glossary.json
+    kind: glossary
+    role: attachment
+    required: false
+    schema: glossary/1.0
+  - path: outputs/requirements/
+    kind: requirements-spec
+    role: attachment
+    required: false
+    schema: requirements-spec/1.0
+  - path: outputs/architecture/
+    kind: architecture-spec
+    role: attachment
+    required: false
+    schema: architecture-spec/1.0
+  - path: outputs/epics/
+    kind: epics-spec
+    role: attachment
+    required: false
+    schema: epics-spec/1.0
+  - path: outputs/readiness-report.md
+    kind: readiness-report
+    role: evidence
+    required: false
+    schema: readiness-report/1.0
+  - path: outputs/blueprint-summary.md
+    kind: blueprint-summary
+    role: attachment
+    required: false
+    schema: blueprint-summary/1.0
+  - path: outputs/context-package.json
+    kind: context-package
+    alias: blueprint-context
+    role: attachment
+    required: false
+    schema: context-package/1.0
   gates:
-    exit: [phases-complete, readiness-passed]
+    exit:
+    - phases-complete
+    - readiness-passed
+  contract_version: 2.1
 refs:
-  - { path: ref/interview-mechanics.md, when: Entering the depth-first menu Q&A of each phase }
-  - { path: ref/finish-work.md, when: The wrap-up phase (at gate Pass/Review) }
+- path: ref/interview-mechanics.md
+  when: Entering the depth-first menu Q&A of each phase
+- path: ref/finish-work.md
+  when: The wrap-up phase (at gate Pass/Review)
 ---
 
 # Pre-task Thinking: blueprint

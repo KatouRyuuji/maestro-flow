@@ -1,17 +1,35 @@
 ---
 name: retrospective
 description: Post-phase retrospective — four parallel lenses (technical/process/quality/decision) distill insights, routed to spec/knowhow/issue storage
-argument-hint: "[phase|N..M] [--lens technical|process|quality|decision] [--all] [--no-route] [--compare N] [-y]"
+argument-hint: '[phase|N..M] [--lens technical|process|quality|decision] [--all] [--no-route] [--compare N] [-y]'
 contract:
   consumes:
-    - { kind: execution, alias: current-execution, required: false }
-    - { kind: verification, alias: latest-verification, required: false }
-    - { kind: review-findings, alias: latest-review, required: false }
+  - kind: execution
+    alias: current-execution
+    required: false
+  - kind: verification
+    alias: latest-verification
+    required: false
+  - kind: review-findings
+    alias: latest-review
+    required: false
   produces:
-    - { path: outputs/retrospective.json, kind: retrospective, alias: latest-retrospective, role: primary }
-    - { path: outputs/retrospective.md, kind: retrospective-doc, role: attachment }
+  - path: outputs/retrospective.json
+    kind: retrospective
+    alias: latest-retrospective
+    role: primary
+    required: true
+    schema: retrospective/1.0
+  - path: outputs/retrospective.md
+    kind: retrospective-doc
+    role: attachment
+    required: false
+    schema: retrospective-doc/1.0
   gates:
-    exit: [lenses-complete, insights-routed]
+    exit:
+    - lenses-complete
+    - insights-routed
+  contract_version: 2.1
 refs: []
 ---
 
