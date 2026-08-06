@@ -231,9 +231,9 @@ interface Handoff {
 |------|------|
 | `schema_version` `producer_run_id` `command` | 宿主 `run.json` 全部持有，内嵌对象不重复 |
 | `caveats` + `open_questions` → `concerns` | 两者消费方式相同（人读 + 下游提示），区分无收益 |
-| `constraints[].id` `decisions[].id` | ID 由 CLI 按序派生（C1/C2、D1/D2），LLM 不写 |
+| `constraints[].id` `decisions[].id` | ID 改为可选：运行时在 check/complete 时按序自动补（C-001/D-001），LLM 可不写；显式写了保留 |
 | `evidence_refs[]` | evidence.json 已废 |
-| `details` | 开放 `Record<string, unknown>` 与 typed 原则矛盾；领域扩展应进 `outputs/*.json` |
+| `details` | 保留（默认 {}）供轻量扩展；领域数值仍应进 `outputs/*.json` |
 | `next[].required_artifact_refs` → `needs` | 缩短高频键名 |
 
 ### 3.7 命令 contract 的门禁声明精简

@@ -61,6 +61,27 @@ maestro run create odyssey --session 20260715-odyssey-planex-todo -- --mode plan
 - A legacy JSON artifact with no `_meta` remains readable through contract/filename inference. Never write a partial, null, or non-object `_meta`; strict validation rejects the artifact and blocks Run completion.
 - Human-readable synthesis and handoff MUST be written to `{run_dir}/report.md`.
 - report.md frontmatter keys are a fixed whitelist (`verdict`, `summary`, `constraints`, `decisions`, `concerns`, `next`, `details`); every risk, caveat, or open question MUST go into `concerns`. Keys outside the whitelist are silently dropped and never reach the handoff, the next brief's signals, or a `done-with-concerns` verdict.
+- `constraints`/`decisions` items are `{ text, status }` objects — `id` is optional and auto-derived by the runtime (`C-001`/`D-001`…), never write it yourself. `next` items are `{ command, reason, needs }` (reason/needs optional). Block-style YAML is preferred; quote text values containing commas:
+
+```yaml
+---
+verdict: ready
+summary: "one-line outcome"
+constraints:
+  - text: "adopted constraint"
+    status: locked
+decisions:
+  - text: "accepted decision"
+    status: accepted
+concerns:
+  - "risk or caveat"
+next:
+  - command: <next-command>
+    reason: "why next"
+    needs: [<artifact-ref>]
+details: {}
+---
+```
 - Informal worker traces and intermediate logs may use `{run_dir}/evidence/` (lazily created, not gate-checked).
 - Temporary computation may use `{run_dir}/work/`; it is never an artifact and is never indexed.
 - `.workflow/sessions/{session_id}/` is the only Session authority. Do not create private command Session directories or a second status/manifest truth source. Team message buses may exist only as transient coordination and never contain formal artifacts.

@@ -32,7 +32,29 @@ Lightweight Session/Run lifecycle for team skills. Only two actions: **start** a
 
 > **Who completes?** When the Run was dispatched via a birth packet (an orchestrator already created it, see Create), `session done` belongs to the dispatching orchestrator — the skill only writes `outputs/` + `report.md` and does NOT self-complete. Only a self-started Run (the skill called `run create` itself) is completed by the skill via the steps below.
 
-1. Optionally write `{run_dir}/report.md` with frontmatter (`verdict`, `summary`, `constraints`, `decisions`, `concerns`). Accepted decisions and locked constraints become pending knowledge candidates at completion; omitting report.md is legal.
+1. Optionally write `{run_dir}/report.md` with YAML frontmatter keys `verdict`, `summary`, `constraints`, `decisions`, `concerns`, `next`, `details` (whitelist; extra keys are ignored). Constraints/decisions items are `{ text, status }` objects — `id` is auto-derived by the runtime (`C-001`/`D-001`…), never write it yourself. `next` items are `{ command, reason, needs }`. Accepted decisions and locked constraints become pending knowledge candidates at completion; omitting report.md is legal.
+
+```yaml
+---
+verdict: ready
+summary: "one-line outcome"
+constraints:
+  - text: "adopted constraint"
+    status: locked
+  - text: "open constraint"
+    status: open
+decisions:
+  - text: "accepted decision"
+    status: accepted
+concerns:
+  - "risk or caveat"
+next:
+  - command: <next-command>
+    reason: "why next"
+    needs: [<artifact-ref>]
+---
+```
+
 2. Before completion, stage reusable recipes/pitfalls with `maestro knowledge stage knowhow "<title>" --content-file <path|-> --run <run_id>`; write content to a temp file, never inline. Search/injection is exposure only; use `--signal cited|validated|contradicted --signal-ids <comma-separated ids>` on the same stage command for explicit relations.
 3. Run `maestro session done <run_id>`. The `check` step is optional — done includes the same evaluation through the completion engine. Completion returns candidate IDs but never promotes project knowledge.
 4. Completion is fail-closed: if `session done` fails, fix the blocking gate (missing or malformed `outputs/` artifacts) and retry. While it keeps failing, do not archive/clean the team or claim success — keep the team active (status=paused) and surface the blocking gate to the user.

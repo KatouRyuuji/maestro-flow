@@ -430,12 +430,12 @@ complete → Builder ├─ 扫描 outputs/ → artifacts.json（hash/alias）
 interface Handoff {
   verdict: 'ready' | 'ready_with_concerns' | 'blocked' | 'failed';
   summary: string;                                         // 一句话；展开在 report.md
-  constraints: Array<{ text: string; status: 'locked' | 'open' | 'deferred' }>;   // locked 条目派生 session 级门（简化规划 §3.8）
-  decisions: Array<{ text: string; status: 'proposed' | 'accepted' | 'rejected' }>;  // id 由 CLI 按序派生（C1/D1…），LLM 不写
+  constraints: Array<{ id: string; text: string; status: 'locked' | 'open' | 'deferred' }>;   // locked 条目派生 session 级门（简化规划 §3.8）
+  decisions: Array<{ id: string; text: string; status: 'proposed' | 'accepted' | 'rejected' }>;  // id 可选：LLM 可不写，运行时按序自动补 C-{n}/D-{n}
   concerns: string[];                                      // 合并原 caveats + open_questions（消费侧从未区分）
   artifact_refs: string[];                                 // CLI 从 outputs 扫描自动填充
   next: Array<{ command: string; reason: string; needs: string[] }>;   // needs 接线为下游动态 entry gate
-  // details 已删：开放 Record 与 typed 原则矛盾，领域扩展进 outputs/*.json
+  details: Record<string, unknown>;                        // 保留（默认 {}），供轻量扩展；领域数值仍应进 outputs/*.json
 }
 ```
 
@@ -479,7 +479,7 @@ LLM 不接触任何协议 JSON——运行时"结构化"的活收敛到 `report.
 
 **report.md 的双相定位**：complete **前**它是权威输入（frontmatter + 叙述正文，LLM 书写源，create 时 CLI 可按 prep YAML 预生成骨架——摘要预填 approach、concerns 预填 risks）；complete **后**定格为不可变产物（注册 `role: report`），修订须生成新 report Artifact 保审计链。
 
-**LLM 写作目标**（必学键 5 个：`verdict` `summary` `decisions` `concerns` `next`；可选键：`constraints`（grill/analyze 类）、`gates`（动态门追加提议）。**一律块式 YAML，text 值加引号**——流式映射 `{ text: 含逗号即碎 }`）：
+**LLM 写作目标**（必学键 5 个：`verdict` `summary` `decisions` `concerns` `next`；可选键：`constraints`（grill/analyze 类）、`details`（默认 {}）。**一律块式 YAML，text 值加引号**——流式映射 `{ text: 含逗号即碎 }`。**不写 id**：constraints/decisions 只写 `{ text, status }`，运行时在 check/complete 时按序自动补 `C-{n}` / `D-{n}`（显式写了也保留）：
 
 ```md
 ---
@@ -504,8 +504,8 @@ next:
 
 | frontmatter 字段 | 派生 | 目标 |
 |-----------------|---------|------|
-| `verdict` `summary` `next` `constraints` `decisions` `concerns` | 直映射（id 由 CLI 按序生成） | `run.json.handoff` |
-| `gates[]`（可选） | 每条 → GateRecord（`source: handoff`），complete 求值 | `run.json.gates[]` |
+| `verdict` `summary` `next` `constraints` `decisions` `concerns` | 直映射；缺失 id 由运行时按序自动补 `C-{n}`/`D-{n}` | `run.json.handoff` |
+| `details`（可选，默认 {}） | 直映射 | `run.json.handoff` |
 | `constraints[]` 中 `status: locked` | 派生 session 级门（manual 型） | `session.json.gates[]` |
 | `outputs/` 扫描结果（自动） | `artifact_refs[]` | `run.json.handoff` |
 

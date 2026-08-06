@@ -223,7 +223,7 @@ Pipeline complete. Execute completion action based on session configuration.
 All tasks completed (no pending, no in_progress)
   +- Run lifecycle completion:
   |   - Read run_id from team-session.json.run.run_id
-  |   - Write {run_dir}/report.md with frontmatter (verdict/summary/concerns)
+  |   - Write {run_dir}/report.md with frontmatter per run-mode-lite.md Complete §1 (verdict/summary/constraints/decisions/concerns; constraints/decisions = {text,status} objects, id auto-derived)
   |   - Run `maestro session done <run_id>`
   |   - If complete fails: fix the blocking gate and retry once; still failing -> do NOT archive/clean - keep the team active (status=paused) and report the blocking gate
   |

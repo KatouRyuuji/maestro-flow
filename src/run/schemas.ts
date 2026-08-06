@@ -562,27 +562,66 @@ export const artifactMetaSchema = z.object({
   alias: z.string().min(1).optional(),
 }).strict();
 
-export const reportFrontmatterSchema = z.object({
-  verdict: z.enum(['ready', 'ready_with_concerns', 'blocked', 'failed']).default('ready'),
-  summary: z.string().default(''),
-  constraints: z.array(z.object({
-    id: nonEmptyString,
+// report.md frontmatter contract — the LLM's half-structured exit.
+// `id` is CLI-derived: the schema accepts items with or without an explicit
+// id (and even legacy plain-string shorthand) and stamps deterministic
+// C-{n} / D-{n} ids on parse, so a Run check never rejects a report whose
+// author followed the documented {text, status} / {command, reason, needs}
+// examples.
+const reportConstraintItemSchema = z.union([
+  z.string(),
+  z.object({
+    id: nonEmptyString.optional(),
     text: z.string(),
     status: z.enum(['locked', 'open', 'deferred']),
-  }).strict()).default([]),
-  decisions: z.array(z.object({
-    id: nonEmptyString,
+  }).strict(),
+]);
+
+const reportDecisionItemSchema = z.union([
+  z.string(),
+  z.object({
+    id: nonEmptyString.optional(),
     text: z.string(),
     status: z.enum(['proposed', 'accepted', 'rejected']),
-  }).strict()).default([]),
-  concerns: z.array(z.string()).default([]),
-  next: z.array(z.object({
+  }).strict(),
+]);
+
+const reportNextItemSchema = z.union([
+  z.string(),
+  z.object({
     command: nonEmptyString,
     reason: z.string().default(''),
     needs: z.array(z.string()).default([]),
-  }).strict()).default([]),
+  }).strict(),
+]);
+
+export const reportFrontmatterSchema = z.object({
+  verdict: z.enum(['ready', 'ready_with_concerns', 'blocked', 'failed']).default('ready'),
+  summary: z.string().default(''),
+  constraints: z.array(reportConstraintItemSchema).default([]),
+  decisions: z.array(reportDecisionItemSchema).default([]),
+  concerns: z.array(z.string()).default([]),
+  next: z.array(reportNextItemSchema).default([]),
   details: z.record(z.string(), z.unknown()).default({}),
-}).passthrough();
+}).passthrough().transform((fm) => ({
+  ...fm,
+  constraints: fm.constraints.map((item, index) => {
+    if (typeof item === 'string') {
+      return { id: `C-${String(index + 1).padStart(3, '0')}`, text: item, status: 'open' as const };
+    }
+    return { ...item, id: item.id ?? `C-${String(index + 1).padStart(3, '0')}` };
+  }),
+  decisions: fm.decisions.map((item, index) => {
+    if (typeof item === 'string') {
+      return { id: `D-${String(index + 1).padStart(3, '0')}`, text: item, status: 'proposed' as const };
+    }
+    return { ...item, id: item.id ?? `D-${String(index + 1).padStart(3, '0')}` };
+  }),
+  next: fm.next.map((item) => {
+    if (typeof item === 'string') return { command: item, reason: '', needs: [] as string[] };
+    return item;
+  }),
+}));
 
 export type SessionState = z.infer<typeof sessionStateV13Schema>;
 export type OrchestrationStep = z.infer<typeof orchestrationStepSchema>;
