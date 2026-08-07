@@ -508,6 +508,7 @@ export function registerKnowledgeCommand(program: Command): void {
           : `${result.session_id} (session source)`;
         console.log(
           `Staged ${result.candidate_id} on ${where}`
+          + ('reused' in result && result.reused ? ' (identical content already staged; existing candidate kept — title/evidence unchanged)' : '')
           + (signalResult ? `; recorded ${signalResult.recorded} signal(s) as ${opts.signal}` : '')
           + `; review after completion with "maestro knowledge review ${result.session_id}".`,
         );

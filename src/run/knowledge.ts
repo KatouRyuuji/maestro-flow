@@ -505,7 +505,7 @@ export function stageRunKnowledgeCandidate(
     evidenceRefs?: string[];
   },
   sessionId?: string,
-): { session_id: string; run_id: string; candidate_id: string } {
+): { session_id: string; run_id: string; candidate_id: string; reused: boolean } {
   const title = input.title.trim();
   const content = input.content.trim();
   if (!title || !content) throw new Error('Knowledge candidate title and content are required');
@@ -523,6 +523,7 @@ export function stageRunKnowledgeCandidate(
       + `${input.action ?? 'propose'}`,
     );
   }
+  const reused = Boolean(prior);
   const now = nowIso();
   const path = runKnowledgeDeltaPath(store, located.sessionId, runId);
   return store.updateActiveRunSidecar(
@@ -546,7 +547,7 @@ export function stageRunKnowledgeCandidate(
       }, now);
       draft.revision++;
       draft.updated_at = now;
-      return { session_id: located.sessionId, run_id: runId, candidate_id: candidateId };
+      return { session_id: located.sessionId, run_id: runId, candidate_id: candidateId, reused };
     },
   );
 }
@@ -1085,7 +1086,8 @@ export function promoteSessionKnowledge(
   );
   if (unsealedSources.length > 0) {
     throw new Error(
-      `Knowledge candidates require sealed source Runs before promotion: ${unsealedSources.join(', ')}`,
+      `Knowledge candidates require sealed source Runs before promotion: ${unsealedSources.join(', ')}; `
+      + 'complete and seal each source Run first: maestro run check <run-id> && maestro session done',
     );
   }
   // Session-origin gate (K5, equivalent strength): the Session must be sealed

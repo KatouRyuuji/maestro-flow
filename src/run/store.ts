@@ -602,7 +602,10 @@ export class SessionStore {
     return this.withLock(() => {
       const bundle = this.readBundleUnlocked(sessionId);
       if (bundle.session.status !== 'running' || bundle.session.active_run_id !== runId) {
-        throw new Error(`Run ${runId} is not the active Run for Session ${sessionId}`);
+        throw new Error(
+          `Run ${runId} is not the active Run for Session ${sessionId} `
+          + '(completed/sealed runs are immutable; stage/record must happen before the Run completes)',
+        );
       }
       const run = this.readRunUnlocked(sessionId, runId);
       if (run.status === 'sealed' || run.status === 'completed') {
@@ -631,7 +634,10 @@ export class SessionStore {
     this.withLock(() => {
       const bundle = this.readBundleUnlocked(sessionId);
       if (bundle.session.status !== 'running' || bundle.session.active_run_id !== runId) {
-        throw new Error(`Run ${runId} is not the active Run for Session ${sessionId}`);
+        throw new Error(
+          `Run ${runId} is not the active Run for Session ${sessionId} `
+          + '(completed/sealed runs are immutable; stage/record must happen before the Run completes)',
+        );
       }
       const run = this.readRunUnlocked(sessionId, runId);
       if (run.status === 'sealed' || run.status === 'completed') {

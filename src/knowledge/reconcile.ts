@@ -1099,7 +1099,16 @@ export function resolveKnowledgeCandidate(
     candidate: item.receipt!.candidates.find(entry => entry.candidate_id === candidateId),
   }));
   if (existingCandidates.some(item => !item.candidate)) {
-    throw new Error(`Candidate ${candidateId} is missing from a reconciliation receipt`);
+    if (matches[0].status === 'promoted' || matches[0].promoted_id) {
+      throw new Error(
+        `Candidate ${candidateId} is already promoted (${matches[0].promoted_id ?? 'promoted'}); `
+        + 'nothing to resolve — it is already live in the knowledge corpus',
+      );
+    }
+    throw new Error(
+      `Candidate ${candidateId} is missing from a reconciliation receipt; `
+      + `refresh receipts with: maestro knowledge review ${sessionId} --refresh`,
+    );
   }
   if (choice === 'unique' && options.targetId?.trim()) {
     throw new Error('--target is not valid for unique resolution');
