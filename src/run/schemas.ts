@@ -568,23 +568,43 @@ export const artifactMetaSchema = z.object({
 // C-{n} / D-{n} ids on parse, so a Run check never rejects a report whose
 // author followed the documented {text, status} / {command, reason, needs}
 // examples.
-const reportConstraintItemSchema = z.union([
-  z.string(),
-  z.object({
-    id: nonEmptyString.optional(),
-    text: z.string(),
-    status: z.enum(['locked', 'open', 'deferred']),
-  }).strict(),
-]);
+const reportConstraintItemSchema = z
+  .union([
+    z.string(),
+    z.object({
+      id: nonEmptyString.optional(),
+      text: z.string(),
+      status: z.enum(['locked', 'open', 'deferred']),
+    }).strict(),
+    z.object({ locked: z.string() }).strict(),
+    z.object({ open: z.string() }).strict(),
+    z.object({ deferred: z.string() }).strict(),
+  ])
+  .transform((item) => {
+    if (typeof item === 'string') return { text: item, status: 'open' as const };
+    if ('text' in item) return item;
+    const entry = Object.entries(item)[0] as [keyof typeof item, string];
+    return { text: entry[1], status: entry[0] };
+  });
 
-const reportDecisionItemSchema = z.union([
-  z.string(),
-  z.object({
-    id: nonEmptyString.optional(),
-    text: z.string(),
-    status: z.enum(['proposed', 'accepted', 'rejected']),
-  }).strict(),
-]);
+const reportDecisionItemSchema = z
+  .union([
+    z.string(),
+    z.object({
+      id: nonEmptyString.optional(),
+      text: z.string(),
+      status: z.enum(['proposed', 'accepted', 'rejected']),
+    }).strict(),
+    z.object({ proposed: z.string() }).strict(),
+    z.object({ accepted: z.string() }).strict(),
+    z.object({ rejected: z.string() }).strict(),
+  ])
+  .transform((item) => {
+    if (typeof item === 'string') return { text: item, status: 'proposed' as const };
+    if ('text' in item) return item;
+    const entry = Object.entries(item)[0] as [keyof typeof item, string];
+    return { text: entry[1], status: entry[0] };
+  });
 
 const reportNextItemSchema = z.union([
   z.string(),
