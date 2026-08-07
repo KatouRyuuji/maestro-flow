@@ -17,6 +17,18 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    version: '0.5.64',
+    date: '2026-08',
+    changes: [
+      { type: 'feat', text_en: 'Polish session/run lifecycle ergonomics and knowledge-flow UX from dual-model (gpt + qwen) and E2E walkthroughs: 16 friction points covering session done no-arg resolution, verbless fast-path verdicts, inline adjudication promotion, and reporting shorthand', text_zh: '基于双模型（gpt + qwen）与 E2E 演练打磨会话/运行生命周期易用性与知识流 UX，修复 16 个摩擦点：session done 无参解析、无动词快速路径的 verdict 尊重、内联裁决晋升与报告简写' },
+      { type: 'feat', text_en: 'Add prompt-facing quality gates: Staging Quality Bar, frontmatter quality gate blocking execution-state narration, Review Presentation Protocol (agent presents candidates, user decides), plus session-level knowledge governance', text_zh: '新增 prompt 质量门禁：Staging Quality Bar、阻断执行状态叙述的 frontmatter 质量门禁、Review Presentation Protocol（代理呈现候选、用户决策），以及会话级知识治理' },
+      { type: 'fix', text_en: 'Restore knowledge-graph code relation edges, FTS integrity, and multi-language extractors (TS/JS, Swift, Lua family) with a code-resolver for unresolved refs', text_zh: '修复知识图谱代码关系边、FTS 完整性与多语言抽取器（TS/JS、Swift、Lua 系列），并新增 unresolved refs 的 code-resolver' },
+      { type: 'fix', text_en: 'Accept legacy report.md frontmatter shorthand with auto-derived ids and actionable validation errors; bound explicit --verdict in verbless fast-path; harden ownership/governance boundaries', text_zh: '接受旧版 report.md 前置元数据简写并自动派生 id、给出可执行的校验错误；无动词快速路径尊重显式 --verdict；强化所有权与治理边界' },
+      { type: 'fix', text_en: 'Repair the broken wasm-copy step in the build script (missing closing quote introduced by the kg fix)', text_zh: '修复 build 脚本中损坏的 wasm 拷贝步骤（kg 修复引入的缺失引号）' },
+      { type: 'refactor', text_en: 'Migrate 22 command contracts to contract_version 2.1', text_zh: '将 22 个 command 契约迁移到 contract_version 2.1' },
+    ],
+  },
+  {
     version: '0.5.63',
     date: '2026-08',
     changes: [
