@@ -16,7 +16,7 @@ import {
   type CompletionVerdict,
 } from '../run/runtime.js';
 import { runNextStep } from '../run/next.js';
-import { resolveRunningRun } from '../run/resolve.js';
+import { resolveActiveRunTarget, resolveRunningRun } from '../run/resolve.js';
 import {
   chainDefinitionSchema,
   createChainSession,
@@ -121,22 +121,6 @@ function summarizeChain(definition: ChainDefinition): { total: number; steps: Ar
   };
 }
 
-function resolveActiveRunTarget(store: SessionStore, sessionId?: string): { sessionId: string; runId: string } | null {
-  if (sessionId) {
-    if (!store.sessionExists(sessionId)) throw new Error(`session not found: ${sessionId}`);
-    const session = store.readBundle(sessionId).session;
-    return session.active_run_id ? { sessionId, runId: session.active_run_id } : null;
-  }
-  const active = store.listSessions({ statuses: ['running'] }).candidates
-    .filter(candidate => candidate.session.active_run_id)
-    .map(candidate => ({ sessionId: candidate.sessionId, runId: candidate.session.active_run_id! }));
-  if (active.length === 1) return active[0];
-  if (active.length > 1) {
-    const list = active.map(candidate => `  - ${candidate.sessionId} (${candidate.runId})`).join('\n');
-    throw new Error(`[run done] ambiguous: ${active.length} running Sessions have active Runs. Pass --session <id>:\n${list}`);
-  }
-  return null;
-}
 
 function mutationTransitionOptions(opts: any): any {
   return {

@@ -9,7 +9,7 @@ import { runNextStep } from '../run/next.js';
 import { runDecide, type DecisionConfidence, type DecisionVerdict } from '../run/decide.js';
 import { continuationAfterDecide, inspectSessionContinuation } from '../run/continuation.js';
 import { buildGraph, renderGraphHuman } from '../run/graph.js';
-import { resolveRunningRun } from '../run/resolve.js';
+import { resolveActiveRunTarget, resolveRunningRun } from '../run/resolve.js';
 import { targetPlatformSchema, type SessionState } from '../run/schemas.js';
 import {
   chainDefinitionSchema,
@@ -864,9 +864,15 @@ export function registerSessionCommand(program: Command): void {
           runId = runIdArg;
         } else {
           const resolved = resolveRunningRun(projectRoot, store, opts.session, 'session done');
-          if (resolved.kind !== 'ok') throw new Error(resolved.message);
-          sessionId = resolved.sessionId;
-          runId = resolved.step.run_id;
+          if (resolved.kind === 'ok') {
+            sessionId = resolved.sessionId;
+            runId = resolved.step.run_id;
+          } else {
+            const active = resolveActiveRunTarget(store, opts.session, 'session done');
+            if (!active) throw new Error(resolved.message);
+            sessionId = active.sessionId;
+            runId = active.runId;
+          }
         }
         const result = completeRunWithVerdict(projectRoot, runId, sessionId, {
           verdict,

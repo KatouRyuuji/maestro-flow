@@ -126,3 +126,34 @@ export function resolveRunningRun(
     message: `[${verb}] ambiguous: ${withRunning.length} running sessions have an active step. Pass --session <id>:\n${list}`,
   };
 }
+
+export interface ActiveRunTarget {
+  sessionId: string;
+  runId: string;
+}
+
+/**
+ * Resolve the active Run (single-Run sessions without a chain step) when no
+ * run-id is supplied. Falls back after resolveRunningRun for commands whose
+ * no-arg form also covers single-Run sessions.
+ */
+export function resolveActiveRunTarget(
+  store: SessionStore,
+  sessionId?: string,
+  verb = 'run done',
+): ActiveRunTarget | null {
+  if (sessionId) {
+    if (!store.sessionExists(sessionId)) throw new Error(`session not found: ${sessionId}`);
+    const session = store.readBundle(sessionId).session;
+    return session.active_run_id ? { sessionId, runId: session.active_run_id } : null;
+  }
+  const active = store.listSessions({ statuses: ['running'] }).candidates
+    .filter(candidate => candidate.session.active_run_id)
+    .map(candidate => ({ sessionId: candidate.sessionId, runId: candidate.session.active_run_id! }));
+  if (active.length === 1) return active[0];
+  if (active.length > 1) {
+    const list = active.map(candidate => `  - ${candidate.sessionId} (${candidate.runId})`).join('\n');
+    throw new Error(`[${verb}] ambiguous: ${active.length} running Sessions have active Runs. Pass --session <id>:\n${list}`);
+  }
+  return null;
+}
