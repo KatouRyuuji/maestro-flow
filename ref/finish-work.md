@@ -50,7 +50,7 @@ Iterate detected files; build a `fragments[]` array. Each fragment: `{ kind, cat
 
 **Keyword extraction**: take 3-5 lowercased domain terms (filter stop words, take frequency-ranked nouns/identifiers from content).
 
-**Duplicate pre-check** (cheap, advisory): `maestro search "<title keywords>" --json` per fragment; if an entry with the same title already exists in the corpus, skip staging that fragment (`skipped_count++`, reason `duplicate-in-corpus`). Fine-grained duplicate/related/conflict disposition happens later at `maestro knowledge review --resolve` time — do not block staging on fuzzy matches here.
+**Duplicate pre-check** (cheap, advisory): `maestro search "<title keywords>" --json` per fragment; if an entry with the same title already exists in the corpus, skip staging that fragment (`skipped_count++`, reason `duplicate-in-corpus`). Fine-grained duplicate/related/conflict disposition happens later at `maestro knowledge promote --resolve` (or the deprecated `review --resolve` fallback) — do not block staging on fuzzy matches here.
 
 ### 3. Stage fragments as candidates
 
