@@ -445,7 +445,7 @@ export function registerRunCommand(program: Command): void {
           sessionId = located.sessionId;
           runId = runIdArg;
         } else {
-          const resolved = resolveRunningRun(projectRoot, store, opts.session);
+          const resolved = resolveRunningRun(projectRoot, store, opts.session, 'run done');
           if (resolved.kind === 'ok') {
             sessionId = resolved.sessionId;
             runId = resolved.step.run_id;
@@ -515,7 +515,7 @@ export function registerRunCommand(program: Command): void {
             if (!store.sessionExists(opts.session)) throw new Error(`session not found: ${opts.session}`);
             return opts.session;
           }
-          const resolved = resolveRunningRun(projectRoot, store);
+          const resolved = resolveRunningRun(projectRoot, store, undefined, 'run edit');
           if (resolved.kind === 'ok') return resolved.sessionId;
           throw new Error(`${resolved.message}; pass --session <id>`);
         };
@@ -731,15 +731,29 @@ export function registerRunCommand(program: Command): void {
     });
 
   run
-    .command('check <run-id>')
+    .command('check [run-id]')
     .description('Scan outputs, evaluate Run gates, and refresh the knowledge reconciliation receipt')
     .option('--session <id>', 'explicit Session ID')
     .option('--json', 'emit one run-response/1.0 envelope on stdout')
     .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
-    .action((runId: string, opts: { session?: string; json?: boolean; workflowRoot: string }) => {
+    .action((runId: string | undefined, opts: { session?: string; json?: boolean; workflowRoot: string }) => {
       const projectRoot = resolve(opts.workflowRoot);
       try {
-        const result = checkRun(projectRoot, runId, opts.session);
+        const store = new SessionStore(projectRoot);
+        let sessionId: string | undefined;
+        if (!runId) {
+          const resolved = resolveRunningRun(projectRoot, store, opts.session, 'run check');
+          if (resolved.kind === 'ok') {
+            sessionId = resolved.sessionId;
+            runId = resolved.step.run_id;
+          } else {
+            const active = resolveActiveRunTarget(store, opts.session);
+            if (!active) throw new Error(resolved.message);
+            sessionId = active.sessionId;
+            runId = active.runId;
+          }
+        }
+        const result = checkRun(projectRoot, runId, sessionId ?? opts.session);
         if (opts.json) {
           const next = result.next
             ? { suggest_only: true as const, command: result.next.command, reason: result.next.reason }
@@ -766,7 +780,7 @@ export function registerRunCommand(program: Command): void {
         }
       } catch (error) {
         if (opts.json) {
-          machineError('check', error, { locator: { session_id: opts.session ?? null, run_id: runId } });
+          machineError('check', error, { locator: { session_id: opts.session ?? null, run_id: runId ?? null } });
         } else {
           reportError(error);
         }
@@ -898,7 +912,7 @@ Compatibility boundary:
           sessionId = located.sessionId;
           runId = runIdArg;
         } else {
-          const resolved = resolveRunningRun(projectRoot, store, opts.session);
+          const resolved = resolveRunningRun(projectRoot, store, opts.session, 'run complete');
           if (resolved.kind === 'error') {
             if (opts.json) machineError('complete', new Error(resolved.message));
             else { console.error(resolved.message); process.exitCode = 1; }

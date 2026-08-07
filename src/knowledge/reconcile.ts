@@ -1090,7 +1090,7 @@ export function resolveKnowledgeCandidate(
   if (staleRuns.length > 0) {
     throw new Error(
       `Candidate ${candidateId} has stale reconciliation on Run(s): ${staleRuns.join(', ')}; `
-      + 'run maestro knowledge reconcile for each Run before resolving',
+      + 'refresh all receipts in one step with: maestro knowledge review <session-id> --refresh',
     );
   }
   const existingCandidates = receipts.map(item => ({

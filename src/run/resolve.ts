@@ -74,17 +74,18 @@ export function resolveRunningRun(
   projectRoot: string,
   store: SessionStore,
   sessionId?: string,
+  verb = 'run complete',
 ): ResolveRunResult {
   if (sessionId) {
     if (!store.sessionExists(sessionId)) {
-      return { kind: 'error', message: `[run complete] session not found: ${sessionId}` };
+      return { kind: 'error', message: `[${verb}] session not found: ${sessionId}` };
     }
     const session = store.readBundle(sessionId).session;
     const step = runningChainStep(session);
     if (!step) {
       return {
         kind: 'error',
-        message: `[run complete] session ${sessionId} has no running chain step; pass a run-id explicitly`,
+        message: `[${verb}] session ${sessionId} has no running chain step; pass a run-id explicitly`,
       };
     }
     return { kind: 'ok', sessionId, session, step };
@@ -116,12 +117,12 @@ export function resolveRunningRun(
   if (withRunning.length === 0) {
     return {
       kind: 'error',
-      message: '[run complete] no running session with a running chain step; pass a run-id or --session <id>',
+      message: `[${verb}] no running session with a running chain step; pass a run-id or --session <id>`,
     };
   }
   const list = withRunning.map(c => `  - ${c.sessionId} (${c.session.intent})`).join('\n');
   return {
     kind: 'error',
-    message: `[run complete] ambiguous: ${withRunning.length} running sessions have an active step. Pass --session <id>:\n${list}`,
+    message: `[${verb}] ambiguous: ${withRunning.length} running sessions have an active step. Pass --session <id>:\n${list}`,
   };
 }

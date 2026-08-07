@@ -1003,7 +1003,9 @@ export function promoteSessionKnowledge(
   const store = new SessionStore(projectRoot);
   const requested = new Set(options.candidateIds ?? []);
   const unknown = [...requested].filter(id => !summary.candidates.some(candidate => candidate.candidate_id === id));
-  if (unknown.length > 0) throw new Error(`Unknown candidate IDs: ${unknown.join(', ')}`);
+  if (unknown.length > 0) {
+    throw new Error(`Unknown candidate IDs: ${unknown.join(', ')}; list candidates with: maestro knowledge review <session-id>`);
+  }
 
   const policyByCandidate = new Map(summary.candidates.map(candidate => [
     candidate.candidate_id,
@@ -1097,9 +1099,12 @@ export function promoteSessionKnowledge(
   if (sessionSourceSelected.length > 0) {
     const sessionStatus = store.readBundle(sessionId).session.status;
     if (sessionStatus !== 'sealed') {
+      const sealHint = sessionStatus === 'paused'
+        ? ` (it is paused; resume it with \`maestro session resume ${sessionId}\` first, then seal)`
+        : ' with: `maestro session seal <session-id>`';
       throw new Error(
         `Session-source candidates require Session ${sessionId} to be sealed before promotion `
-        + `(current status: ${sessionStatus})`,
+        + `(current status: ${sessionStatus}); seal it${sealHint}. Run-source candidates are not affected by this gate.`,
       );
     }
     const sessionReceipt = readSessionKnowledgeReconciliation(store, sessionId, true);

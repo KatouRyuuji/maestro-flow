@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { Command } from 'commander';
@@ -129,7 +130,27 @@ function parseJsonText(raw: string, label: string): unknown {
 /** Load + validate a chain definition from a file path, or `-` for stdin. */
 async function loadChainDefinition(chainFile: string): Promise<ChainDefinition> {
   const raw = chainFile === '-' ? await readStdin() : readFileSync(resolve(chainFile), 'utf-8');
-  return chainDefinitionSchema.parse(parseJsonText(raw, 'chain-file'));
+  return parseChainDefinition(raw, 'chain-file');
+}
+
+/** Parse JSON + validate against chainDefinitionSchema; wraps both error layers with the file label and allowed shapes. */
+function parseChainDefinition(raw: string, label: string): ChainDefinition {
+  const parsed = parseJsonText(raw, label);
+  try {
+    return chainDefinitionSchema.parse(parsed);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      const issues = error.issues
+        .map(issue => `${issue.path.length ? issue.path.join('.') : '(root)'}: ${issue.message}`)
+        .join('; ');
+      throw new Error(
+        `invalid ${label} (${issues}). Allowed shapes — `
+        + `{ intent?, engine?: ralph|coordinator|manual, quality_mode?: quick|standard|full, auto_mode?: boolean, `
+        + `steps: [{ command: string, ... }] (min 1), decision_points?, boundary_contract?, position?, decomposition?, executor? }`,
+      );
+    }
+    throw error;
+  }
 }
 
 /** Read + JSON-parse a file path (or `-` for stdin). Throws on malformed JSON. */
@@ -554,6 +575,9 @@ export function registerSessionCommand(program: Command): void {
         if (opts.chainFile && (opts.chain?.length ?? 0) > 0) {
           throw new Error('use either --chain or --chain-file, not both');
         }
+        if (opts.session && ((opts.chain?.length ?? 0) > 0 || opts.chainFile)) {
+          throw new Error('--session is for single Run start; use `maestro session chain insert` or `maestro run edit` to add steps to an existing Session');
+        }
         if (opts.engine && !['ralph', 'coordinator', 'manual'].includes(opts.engine)) {
           throw new Error(`invalid --engine "${opts.engine}" (ralph|coordinator|manual)`);
         }
@@ -561,8 +585,9 @@ export function registerSessionCommand(program: Command): void {
           throw new Error(`invalid --quality "${opts.quality}" (quick|standard|full)`);
         }
         const definition = opts.chainFile
-          ? chainDefinitionSchema.parse(
-              opts.chainFile === '-' ? JSON.parse(readFileSync(0, 'utf8')) : JSON.parse(readFileSync(resolve(opts.chainFile), 'utf8')),
+          ? parseChainDefinition(
+              opts.chainFile === '-' ? readFileSync(0, 'utf8') : readFileSync(resolve(opts.chainFile), 'utf8'),
+              'chain-file',
             )
           : simpleChainDefinition(intent, opts.chain);
         const fallbackSlug = opts.chain?.length ? opts.chain.join('-') : 'session';
@@ -838,7 +863,7 @@ export function registerSessionCommand(program: Command): void {
           sessionId = located.sessionId;
           runId = runIdArg;
         } else {
-          const resolved = resolveRunningRun(projectRoot, store, opts.session);
+          const resolved = resolveRunningRun(projectRoot, store, opts.session, 'session done');
           if (resolved.kind !== 'ok') throw new Error(resolved.message);
           sessionId = resolved.sessionId;
           runId = resolved.step.run_id;

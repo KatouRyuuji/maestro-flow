@@ -703,8 +703,8 @@ export function registerKnowledgeCommand(program: Command): void {
               '--resolve is mutually exclusive with --all; resolve a single candidate inline with --resolve, then promote (or combine with --candidate)',
             );
           }
-          if (!opts.as) throw new Error('--resolve requires --as');
-          if (!opts.reason?.trim()) throw new Error('--resolve requires a non-empty --reason');
+          if (!opts.as) throw new Error('--resolve requires --as (duplicate|related|conflict|supersede|unique); example: maestro knowledge promote <session-id> --resolve <candidate-id> --as unique --reason "<reason>"');
+          if (!opts.reason?.trim()) throw new Error('--resolve requires a non-empty --reason; example: maestro knowledge promote <session-id> --resolve <candidate-id> --as unique --reason "<reason>"');
           if (!KNOWLEDGE_RESOLUTIONS.includes(opts.as as KnowledgeResolutionChoice)) {
             throw new Error(`--as must be one of ${KNOWLEDGE_RESOLUTIONS.join(', ')}`);
           }
