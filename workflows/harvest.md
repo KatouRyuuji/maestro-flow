@@ -225,6 +225,8 @@ New knowledge created here must flow through the candidate pipeline, not direct 
 
 Spec-class fragments flow through the same candidate pipeline as 6a (never direct corpus writes): `maestro knowledge stage spec "<title>" --content-file <path|-> --run <run-id> --category <mapping>`. Mapping: pattern→`coding`, decision→`arch`, bug→`debug`, knowhow→`review`. Promotion happens post-seal via `review --refresh → promote`.
 
+When a harvested fragment originates from a window transcript (Pi/Codex/Claude conversation), attach the raw record as untrusted evidence with `--transcript-quote <descriptor.json>` (K13). Transcript-backed candidates auto-gate to `review_required` (K17): `--all` never promotes them — promote explicitly with `--resolve --as unique --reason "..."` after human review. Never paste raw quote text into candidate content (iron rule 10).
+
 ### 6c. Issue routing
 
 Append to `.workflow/issues/issues.jsonl`:

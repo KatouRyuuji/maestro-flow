@@ -242,6 +242,8 @@ else {
     '--signal-ids',
     'maestro knowledge stage',
     'maestro knowledge record',
+    '--transcript-quote',
+    'review_required',
     'knowledge-candidate-receipt/1.0',
     'maestro knowledge promote',
   ]) {
