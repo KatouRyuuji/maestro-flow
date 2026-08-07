@@ -20,7 +20,7 @@ allowed-tools:
   - spawn_agents_on_csv
   - wait_agent
 session-mode: run
-version: 0.5.64
+version: 0.5.65
 contract:
   discovery: self-described
   consumes: []

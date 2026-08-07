@@ -17,6 +17,13 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    version: '0.5.65',
+    date: '2026-08',
+    changes: [
+      { type: 'feat', text_en: 'Capture transcript evidence snapshots in the knowledge lifecycle: harvest the K12–K17 window evidence flow and teach run-mode about it, recording exact source transcript evidence for promotion decisions', text_zh: '在知识生命周期中采集对话记录证据快照：收获 K12–K17 窗口证据流并教会 run-mode，为晋升决策记录精确的源对话记录证据' },
+    ],
+  },
+  {
     version: '0.5.64',
     date: '2026-08',
     changes: [
