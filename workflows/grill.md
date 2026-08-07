@@ -54,7 +54,7 @@ output_dir = {run_dir}/outputs/
 2. Read .workflow/state.json (if exists) → accumulated_context, artifacts[]
 3. Read .workflow/roadmap.md (if exists) → phase structure
 4. specs_content = maestro spec load --category arch  # MANDATORY, NOT SUBSTITUTABLE by manual Read/Grep
-5. wiki_hits = maestro wiki search "{topic keywords}"  # MANDATORY, NOT SUBSTITUTABLE by manual Read/Grep
+5. wiki_hits = maestro search "{topic keywords}"  # MANDATORY, NOT SUBSTITUTABLE by manual Read/Grep
 ```
 
 ### 2.2: Load Upstream Material

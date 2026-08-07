@@ -22,6 +22,7 @@ import {
   persistSessionKnowledgeReconciliation,
   promoteReconciledSessionKnowledge,
   currentKnowledgeCorpusFingerprint,
+  ensureKnowledgeReconciliation,
   ensureSessionKnowledgeReconciliation,
   isKnowledgeReconciliationFresh,
   isSessionKnowledgeReconciliationFresh,
@@ -104,7 +105,10 @@ function resolutionChoices(
 ): string[] {
   if (policy.promotion_eligibility !== 'review_required') return [];
   const target = policy.canonical_id ?? policy.matches[0]?.knowledge_id;
-  const base = `maestro knowledge review ${sessionId} --resolve ${candidateId}`;
+  // Happy path (§11): inline adjudication + promotion is a single promote
+  // --resolve call (TOCTOU fence + resolve + promote). review --resolve stays
+  // available as a compatible fallback but is deprecated.
+  const base = `maestro knowledge promote ${sessionId} --resolve ${candidateId}`;
   const withTarget = (choice: string): string =>
     `${base} --as ${choice}${target ? ` --target ${target}` : ''} --reason "<reason>"`;
   switch (policy.disposition) {
@@ -189,13 +193,16 @@ function buildKnowledgeSessionView(projectRoot: string, sessionId: string) {
       : reconciliation.every(item => item.fresh)
         ? 'fresh' as const
         : 'stale' as const;
-    const reconcileCommands = candidate.run_ids
-      .filter(runId => {
-        const state = receiptByRun.get(runId);
-        return !state?.receipt || !state.fresh
-          || !state.receipt.candidates.some(item => item.candidate_id === candidate.candidate_id);
-      })
-      .map(runId => `maestro knowledge reconcile --run ${runId} --session ${sessionId}`);
+    // §11: reconcile is internal (auto-run by check); stale/missing run-source
+    // receipts are repaired through review --refresh, mirroring the session
+    // source branch above.
+    const reconcileCommands = candidate.run_ids.some(runId => {
+      const state = receiptByRun.get(runId);
+      return !state?.receipt || !state.fresh
+        || !state.receipt.candidates.some(item => item.candidate_id === candidate.candidate_id);
+    })
+      ? [`maestro knowledge review ${sessionId} --refresh`]
+      : [];
     return {
       ...candidate,
       reconciliation: selected
@@ -250,6 +257,53 @@ function printKnowledgeReview(view: KnowledgeSessionView): void {
         `  promote: maestro knowledge promote ${view.session_id} --candidate ${candidate.candidate_id}`,
       );
     }
+  }
+}
+
+/**
+ * TOCTOU fence for inline resolution: refresh every run receipt and the
+ * session receipt backing a candidate so resolution is never made against
+ * stale evidence (mirrors promoteReconciledSessionKnowledge's ensure+persist
+ * refresh in src/knowledge/reconcile.ts). Resolution and promotion happen in
+ * the same promote --resolve invocation, so this fence closes the
+ * "validated-against-old-corpus" window before the human decision is written.
+ */
+function refreshResolutionReceipts(
+  projectRoot: string,
+  sessionId: string,
+  candidateIds: string[],
+): void {
+  const store = new SessionStore(projectRoot);
+  const summary = summarizeSessionKnowledge(projectRoot, sessionId, {
+    readOnly: true,
+    strict: true,
+  });
+  const requested = new Set(candidateIds);
+  const relevant = summary.candidates.filter(candidate =>
+    requested.has(candidate.candidate_id)
+  );
+  const runIds = [...new Set(relevant.flatMap(candidate => candidate.run_ids))].sort();
+  const expectedCorpusFingerprint = currentKnowledgeCorpusFingerprint(projectRoot);
+  for (const runId of runIds) {
+    const frontmatter = readReportFrontmatter(store.runDir(sessionId, runId));
+    const receipt = ensureKnowledgeReconciliation(
+      projectRoot,
+      sessionId,
+      runId,
+      frontmatter,
+      expectedCorpusFingerprint,
+    );
+    persistKnowledgeReconciliation(projectRoot, receipt);
+  }
+  // K7a: refresh the session receipt for session-origin candidates (same
+  // TOCTOU fence position as the run refresh above).
+  if (relevant.some(candidate => (candidate.origin ?? 'run') === 'session')) {
+    const sessionReceipt = ensureSessionKnowledgeReconciliation(
+      projectRoot,
+      sessionId,
+      expectedCorpusFingerprint,
+    );
+    persistSessionKnowledgeReconciliation(projectRoot, sessionReceipt);
   }
 }
 
@@ -610,18 +664,22 @@ export function registerKnowledgeCommand(program: Command): void {
 
   knowledge
     .command('promote')
-    .description('Promote selected pending Session knowledge with durable receipts')
+    .description('Promote selected pending Session knowledge with durable receipts (--resolve performs inline adjudication first)')
     .argument('<session-id>', 'Session identifier')
     .option(
       '--candidate <id>',
-      'Candidate ID; repeatable and comma-compatible',
+      'Candidate ID; repeatable and comma-compatible (with --resolve, promotion follows this set after resolving the --resolve candidate)',
       (value: string, previous: string[] = []) => [
         ...previous,
         ...value.split(',').map(id => id.trim()).filter(Boolean),
       ],
       [],
     )
-    .option('--all', 'Promote all eligible pending candidates (observed-only emits a warning)')
+    .option('--all', 'Promote all eligible pending candidates (observed-only emits a warning); mutually exclusive with --resolve')
+    .option('--resolve <candidate-id>', 'Inline-resolve a candidate before promotion (TOCTOU fence + resolve + promote in one step); implies the single promote target unless --candidate is given')
+    .option('--as <resolution>', `Resolution for --resolve: ${KNOWLEDGE_RESOLUTIONS.join('|')}`)
+    .option('--target <knowledge-id>', 'Evidence-backed canonical knowledge ID for --resolve (forbidden for unique)')
+    .option('--reason <reason>', 'Human review reason for --resolve (required, non-empty)')
     .option('--json', 'Output as JSON')
     .option('--workflow-root <path>', 'Project root containing .workflow', process.cwd())
     .action((
@@ -629,13 +687,53 @@ export function registerKnowledgeCommand(program: Command): void {
       opts: {
         candidate: string[];
         all?: boolean;
+        resolve?: string;
+        as?: string;
+        target?: string;
+        reason?: string;
         json?: boolean;
         workflowRoot: string;
       },
     ) => {
       try {
-        const result = promoteReconciledSessionKnowledge(resolve(opts.workflowRoot), sessionId, {
-          candidateIds: opts.candidate,
+        const projectRoot = resolve(opts.workflowRoot);
+        if (opts.resolve) {
+          if (opts.all) {
+            throw new Error(
+              '--resolve is mutually exclusive with --all; resolve a single candidate inline with --resolve, then promote (or combine with --candidate)',
+            );
+          }
+          if (!opts.as) throw new Error('--resolve requires --as');
+          if (!opts.reason?.trim()) throw new Error('--resolve requires a non-empty --reason');
+          if (!KNOWLEDGE_RESOLUTIONS.includes(opts.as as KnowledgeResolutionChoice)) {
+            throw new Error(`--as must be one of ${KNOWLEDGE_RESOLUTIONS.join(', ')}`);
+          }
+          // §11 happy path: TOCTOU fence (refresh run/session receipts) →
+          // resolve → promote, all inside this single invocation.
+          refreshResolutionReceipts(projectRoot, sessionId, [opts.resolve]);
+          const resolved = resolveKnowledgeCandidate(
+            projectRoot,
+            sessionId,
+            opts.resolve,
+            opts.as as KnowledgeResolutionChoice,
+            { targetId: opts.target, reason: opts.reason },
+          );
+          if (!opts.json) {
+            console.log(
+              `Resolved ${resolved.candidate_id} as ${resolved.disposition}; `
+              + `promotion ${resolved.promotion_eligibility}; `
+              + `canonical ${resolved.canonical_id ?? 'new knowledge'}.`,
+            );
+          }
+        }
+        // --resolve implies the single candidate to promote when --candidate is
+        // not given; when both are given, the --resolve candidate is resolved
+        // inline and promotion follows the --candidate set.
+        const candidateIds = opts.resolve && opts.candidate.length === 0
+          ? [opts.resolve]
+          : opts.candidate;
+        const result = promoteReconciledSessionKnowledge(projectRoot, sessionId, {
+          candidateIds,
           all: opts.all,
         });
         if (opts.json) {
@@ -671,13 +769,13 @@ export function registerKnowledgeCommand(program: Command): void {
 
   knowledge
     .command('review')
-    .description('Review Session candidates with evidence-backed matches and next commands')
+    .description('Review Session candidates with evidence-backed matches and next commands (fallback surface; inline adjudication lives on promote --resolve)')
     .argument('<session-id>', 'Session identifier')
     .option('--refresh', 'Refresh every candidate source Run before review')
-    .option('--resolve <candidate-id>', 'Resolve a candidate before review')
-    .option('--as <resolution>', `Resolution for --resolve: ${KNOWLEDGE_RESOLUTIONS.join('|')}`)
-    .option('--target <knowledge-id>', 'Evidence-backed canonical knowledge ID for --resolve')
-    .option('--reason <reason>', 'Human review reason for --resolve')
+    .option('--resolve <candidate-id>', '[deprecated] Resolve a candidate before review — prefer "promote --resolve" for inline adjudication + promotion')
+    .option('--as <resolution>', `[deprecated] Resolution for --resolve: ${KNOWLEDGE_RESOLUTIONS.join('|')} — prefer promote --resolve`)
+    .option('--target <knowledge-id>', '[deprecated] Evidence-backed canonical knowledge ID for --resolve — prefer promote --resolve')
+    .option('--reason <reason>', '[deprecated] Human review reason for --resolve — prefer promote --resolve')
     .option('--json', 'Output as JSON')
     .option('--workflow-root <path>', 'Project root containing .workflow', process.cwd())
     .action(async (
@@ -695,6 +793,13 @@ export function registerKnowledgeCommand(program: Command): void {
       try {
         const projectRoot = resolve(opts.workflowRoot);
         if (opts.resolve) {
+          if (!opts.json) {
+            console.error(
+              'Deprecation: "review --resolve" is deprecated; use '
+              + '"maestro knowledge promote <session-id> --resolve <candidate-id> --as <choice> [--target <knowledge-id>] --reason \"<reason>\"" '
+              + 'for inline adjudication + promotion. review --resolve remains functional as a compatible fallback.',
+            );
+          }
           if (!opts.as) throw new Error('--resolve requires --as');
           if (!opts.reason) throw new Error('--resolve requires --reason');
           if (!KNOWLEDGE_RESOLUTIONS.includes(opts.as as KnowledgeResolutionChoice)) {

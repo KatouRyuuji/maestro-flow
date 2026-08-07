@@ -419,72 +419,12 @@ export function registerSpecCommand(program: Command): void {
     .option('--knowhow-type <type>', 'Knowhow type for --ref (asset, blueprint, document, template, etc.)')
     .option('--scope <scope>', 'Spec scope: project|global|team|personal (default: project)')
     .option('--uid <uid>', 'User id for personal scope')
-    .option('--stdin', 'Read JSON array from stdin: [{category,title,content,keywords}]')
     .option('--json', 'Output result as JSON')
     .action(async (category: string, title: string, content: string | undefined, opts: Record<string, unknown>) => {
       const { logCliEndpoint } = await import('../hooks/spec-analytics.js');
-      logCliEndpoint(process.cwd(), 'spec add', { category, scope: opts.scope, keywords: opts.keywords, stdin: !!opts.stdin });
+      logCliEndpoint(process.cwd(), 'spec add', { category, scope: opts.scope, keywords: opts.keywords });
       const { appendSpecEntry } = await import('../tools/spec-writer.js');
       const { VALID_CATEGORIES } = await import('../tools/spec-entry-parser.js');
-
-      // ── stdin batch mode ───────────────────────────────────────────
-      if (opts.stdin) {
-        const raw = await readStdin();
-        if (!raw) {
-          console.error('Error: --stdin specified but no input received.');
-          process.exit(1);
-        }
-
-        let items: Array<{ category: string; title: string; content: string; keywords?: string[] | string; source?: string }>;
-        try {
-          items = JSON.parse(raw);
-        } catch {
-          console.error('Error: invalid JSON on stdin.');
-          process.exit(1);
-        }
-
-        if (!Array.isArray(items)) {
-          console.error('Error: stdin must be a JSON array.');
-          process.exit(1);
-        }
-
-        const scope = validateScope(opts.scope as string | undefined);
-        const uid = await resolveUid(opts as { uid?: string });
-
-        if (scope === 'personal' && !uid) {
-          console.error('Error: personal scope requires --uid or team membership.');
-          process.exit(1);
-        }
-
-        const results = items.map(item => {
-          const kw = Array.isArray(item.keywords)
-            ? item.keywords
-            : typeof item.keywords === 'string'
-              ? item.keywords.split(',').map((k: string) => k.trim()).filter(Boolean)
-              : [];
-          return appendSpecEntry(process.cwd(), item.category as import('../tools/spec-loader.js').SpecCategory, item.title, item.content || '', kw, item.source, scope, uid);
-        });
-
-        if (opts.json) {
-          console.log(JSON.stringify(results, null, 2));
-        } else {
-          for (const r of results) {
-            if (r.duplicate) {
-              console.log(`\u26A0 Skipped duplicate: "${r.title}" already exists in ${r.file}`);
-            } else if (r.ok) {
-              console.log(`\u2713 Added to ${r.file} [${r.category}] "${r.title}"`);
-            } else {
-              console.error(`Error: failed to add "${r.title}"`);
-            }
-          }
-        }
-        if (results.some(r => r.ok && !r.duplicate)) {
-          const { resolve: pathResolve } = await import('node:path');
-          const { invalidateSearchIndex } = await import('../search/daemon-client.js');
-          invalidateSearchIndex(pathResolve(process.cwd(), '.workflow')).catch(() => {});
-        }
-        return;
-      }
 
       // ── single entry mode ─────────────────────────────────────────
       if (!VALID_CATEGORIES.includes(category as typeof VALID_CATEGORIES[number])) {
@@ -946,15 +886,9 @@ export function registerSpecCommand(program: Command): void {
     .command('list')
     .alias('ls')
     .description('List all entries with conflict markers or degraded confidence')
-    .option('--json', 'Output as JSON')
-    .action(async (opts: { json?: boolean }) => {
+    .action(async () => {
       const { listConflicts } = await import('../tools/spec-conflict-marker.js');
       const conflicts = listConflicts(process.cwd());
-
-      if (opts.json) {
-        console.log(JSON.stringify(conflicts, null, 2));
-        return;
-      }
 
       if (conflicts.length === 0) {
         console.log('No conflicts or degraded entries found.');
@@ -978,14 +912,10 @@ export function registerSpecCommand(program: Command): void {
     .argument('<file>', 'Spec filename (e.g. coding-conventions.md)')
     .argument('<line>', 'Line number of the <spec-entry> tag')
     .requiredOption('--note <text>', 'Conflict description')
-    .option('--marker <id>', 'Conflict marker ID (auto-generated if omitted)')
-    .option('--confidence <level>', 'Confidence level: high|medium|low|contested (default: contested)')
-    .action(async (file: string, line: string, opts: { note: string; marker?: string; confidence?: string }) => {
+    .action(async (file: string, line: string, opts: { note: string }) => {
       const { markConflict } = await import('../tools/spec-conflict-marker.js');
       const result = markConflict(process.cwd(), file, parseInt(line, 10), {
         note: opts.note,
-        marker: opts.marker,
-        confidence: (opts.confidence as 'contested') || 'contested',
       });
 
       if (result.success) {
@@ -1004,14 +934,12 @@ export function registerSpecCommand(program: Command): void {
     .description('Clear conflict markers from a spec entry')
     .argument('<file>', 'Spec filename')
     .argument('<line>', 'Line number of the <spec-entry> tag')
-    .option('--confidence <level>', 'Set new confidence level after clearing (default: remove)')
-    .action(async (file: string, line: string, opts: { confidence?: string }) => {
+    .action(async (file: string, line: string) => {
       const { clearConflict } = await import('../tools/spec-conflict-marker.js');
       const result = clearConflict(
         process.cwd(),
         file,
         parseInt(line, 10),
-        opts.confidence as 'high' | undefined,
       );
 
       if (result.success) {
@@ -1055,13 +983,11 @@ export function registerSpecCommand(program: Command): void {
     .command('clear-all')
     .description('Clear all conflict markers in a spec file')
     .argument('<file>', 'Spec filename')
-    .option('--confidence <level>', 'Set new confidence level after clearing')
-    .action(async (file: string, opts: { confidence?: string }) => {
+    .action(async (file: string) => {
       const { clearAllConflicts } = await import('../tools/spec-conflict-marker.js');
       const result = clearAllConflicts(
         process.cwd(),
         file,
-        opts.confidence as 'high' | undefined,
       );
 
       console.log(`Cleared ${result.cleared} conflict markers from ${file}.`);
@@ -1110,15 +1036,10 @@ export function registerSpecCommand(program: Command): void {
     .command('history')
     .description('Show the evolution chain for a spec entry (oldest → newest)')
     .argument('<sid>', 'Any sid belonging to the chain')
-    .option('--json', 'Output as JSON')
-    .action(async (sid: string, opts: { json?: boolean }) => {
+    .action(async (sid: string) => {
       const { getEvolutionChain } = await import('../tools/spec-conflict-marker.js');
       const chain = getEvolutionChain(process.cwd(), sid);
 
-      if (opts.json) {
-        console.log(JSON.stringify(chain, null, 2));
-        return;
-      }
       if (chain.length === 0) {
         console.log(`No entry found with sid ${sid}.`);
         return;

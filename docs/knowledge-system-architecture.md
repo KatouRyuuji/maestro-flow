@@ -133,11 +133,10 @@ Candidate ID 为 `KDC-{16 hex}`，由 `target + NFKC/小写/空白归一化后�
 - 默认：Wiki/知识搜索；
 - `--code`：仅 codegraph；
 - `--kg`：MaestroGraph full-source；
-- `--type`、`--category`、`--tag`、`--keyword`、`--workspace`：通过 daemon 协议下推，
+- `--type`、`--category`、`--tag`、`--workspace`：通过 daemon 协议下推，
   在 BM25 和向量候选截断前执行约束；CLI 仍保留后过滤作为防御。若正在运行的旧 daemon
   未返回 `filtersApplied`，客户端自动回退到本地预过滤搜索；
 - `--include-deprecated`：显式请求历史条目；
-- `--diversity balanced|off`：控制多样性选择，默认 `balanced`。
 
 `--type knowhow --kg` 不得泄漏 codegraph 或 Spec 节点。KG 返回的 canonical `id`
 必须可被 `maestro load` 回读。
@@ -156,8 +155,7 @@ Balanced 模式不是把低相关结果随机插入，而是在相关候选池�
 
 - 不进入基础 relevance score；
 - 不影响 conflict/duplicate 判断；
-- 没有计数或计数损坏时自动关闭 exploration，不影响搜索本身；
-- 显式 `--diversity off` 返回纯相关性顺序。
+- 没有计数或计数损坏时自动关闭 exploration，不影响搜索本身。
 
 Exposure 读路径只在候选池足够且 balanced 模式启用时按需打开。缺少计数、数据库损坏或
 read-only probe 会关闭 exploration slot，但不会影响基础搜索、MMR 或 family/source caps。

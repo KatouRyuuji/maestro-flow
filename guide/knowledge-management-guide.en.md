@@ -236,7 +236,7 @@ When `maestro kg index` generates `knowledge-graph.json`, WikiIndexer automatica
 
 ```bash
 # View KG index
-maestro wiki list --keyword kg
+maestro wiki list --query kg
 
 # Search code entities
 maestro wiki search "AuthMiddleware"
@@ -259,7 +259,7 @@ The Domain system manages the project domain glossary, providing domain context 
 | Subcommand | Responsibility |
 |--------|------|
 | `domain init` | Initialize `.workflow/domain/` with empty `glossary.json` |
-| `domain add <canonical> <definition>` | Add a domain term (supports aliases, keywords, relationships, tier) |
+| `domain add <canonical> <definition>` | Add a domain term (supports tier) |
 | `domain list` | List all terms, supports `--status active\|deprecated` filtering |
 | `domain show <id>` | Show term details (including concept_ref document content) |
 | `domain update <id>` | Update term (definition, aliases, relationships, keywords, tier) |

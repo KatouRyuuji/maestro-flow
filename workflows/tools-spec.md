@@ -63,8 +63,8 @@ Agents discover tool specs via:
 ## CLI Commands
 
 ```bash
-# Register new tool as knowhow document
-maestro knowhow add "knowhow/RCP-<slug>.md" --type recipe --tool
+# Register new tool as knowhow document (knowhow add takes options, no positional arg)
+maestro knowhow add --type recipe --title "<title>" --body "<body>" --tool
 
 # Promote existing knowhow to tool (in place)
 maestro wiki update <id> --frontmatter '{"tool": true, "category": "<cat>", "summary": "..."}'

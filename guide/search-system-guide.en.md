@@ -31,7 +31,7 @@ maestro search "jwt token" --type spec
 maestro search --category coding
 
 # Combined query
-maestro search "oauth pkce" --type spec --category arch --limit 10
+maestro search "oauth pkce" --type spec --category arch
 
 # Code search (requires MaestroGraph enabled)
 maestro search "UserService" --code
@@ -40,7 +40,7 @@ maestro search "UserService" --code
 maestro search "UserService" --kg
 
 # Search all sources (wiki + code), unified normalized ranking
-maestro search "UserService" --all
+maestro search "UserService"
 
 # Skip embedding, use BM25 only (avoid ONNX cold start)
 maestro search "jwt token" --no-emb
@@ -452,11 +452,11 @@ If an entry has abnormally high score, it may be due to:
 
 ```bash
 # Unified search (recommended)
-maestro search <query> [--type <type>] [--category <cat>] [--kind <kind>] [--code] [--kg] [--diversity balanced|off] [--all] [--no-emb] [--json]
+maestro search <query> [--type <type>] [--category <cat>] [--kind <kind>] [--code] [--kg] [--no-emb] [--json]
 
 # Wiki system search
 maestro wiki search <query> [--json]
-maestro wiki list [--type <type>] [--category <cat>] [--keyword <kw>]
+maestro wiki list [--type <type>] [--category <cat>] [-q <query>]
 
 # Knowledge graph search (deprecated, use maestro search --kg instead)
 maestro kg search <symbol>   # [deprecated] Use "maestro search --kg" instead

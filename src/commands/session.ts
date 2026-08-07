@@ -6,7 +6,7 @@ import { SessionStore } from '../run/store.js';
 import { completeRunWithVerdict, createRun, sealSession, type CompletionVerdict } from '../run/runtime.js';
 import { runNextStep } from '../run/next.js';
 import { runDecide, type DecisionConfidence, type DecisionVerdict } from '../run/decide.js';
-import { continuationAfterDecide } from '../run/continuation.js';
+import { continuationAfterDecide, inspectSessionContinuation } from '../run/continuation.js';
 import { buildGraph, renderGraphHuman } from '../run/graph.js';
 import { resolveRunningRun } from '../run/resolve.js';
 import { targetPlatformSchema, type SessionState } from '../run/schemas.js';
@@ -853,11 +853,53 @@ export function registerSessionCommand(program: Command): void {
           chainProposal: opts.chainProposal,
           applyChainProposal: opts.applyProposal,
         });
-        print(result);
-        process.stderr.write(`next: ${result.next.command}\n      ${result.next.reason}\n`);
-        if (!result.run_sealed) process.exitCode = 1;
+        if (opts.json) {
+          if (result.run_sealed) {
+            emitRunResponse(createRunResponseSuccess({
+              operation: 'complete',
+              result,
+              request_id: result.seal.transition.request_id,
+              locator: { session_id: result.session_id, run_id: result.run_id },
+              replay: {
+                status: result.seal.transition.status,
+                transition_id: result.seal.transition.transition_id,
+              },
+              next: {
+                suggest_only: true,
+                command: result.next.command,
+                reason: result.next.reason,
+              },
+              continuation: inspectSessionContinuation(projectRoot, result.session_id),
+            }));
+          } else {
+            emitRunResponse(createRunResponseError({
+              operation: 'complete',
+              exit_code: 1,
+              code: 'RUN_GATES_BLOCKING',
+              message: 'Run gates are blocking completion',
+              details: { result },
+              next: { suggest_only: true, command: result.next.command, reason: result.next.reason },
+              continuation: inspectSessionContinuation(projectRoot, result.session_id, { runId: result.run_id }),
+            }));
+          }
+        } else {
+          print(result);
+          process.stderr.write(`next: ${result.next.command}\n      ${result.next.reason}\n`);
+          if (!result.run_sealed) process.exitCode = 1;
+        }
       } catch (error) {
-        reportError(error);
+        if (opts.json) {
+          emitRunResponse(createRunResponseError({
+            operation: 'complete',
+            exit_code: 1,
+            code: stableRunResponseErrorCode(error),
+            message: error instanceof Error ? error.message : String(error),
+            request_id: null,
+            locator: { session_id: opts.session ?? null, run_id: runIdArg ?? null },
+          }));
+        } else {
+          reportError(error);
+        }
       }
     });
 

@@ -21,10 +21,6 @@ import type { WikiWriter } from '#maestro-dashboard/wiki/writer.js';
 import type { WikiEntry, WikiFilters, WikiNodeType } from '#maestro-dashboard/wiki/wiki-types.js';
 import { loadWorkspaceConfig, resolveWorkspaceLinks } from '../config/index.js';
 
-// Inline type to avoid cross-build dependency on dashboard dist-server.
-// Must match WikiScope in dashboard/src/server/wiki/wiki-types.ts.
-type WikiScope = 'project' | 'global' | 'team' | 'personal' | 'linked';
-
 const DEFAULT_BASE = process.env.MAESTRO_DASHBOARD_URL ?? 'http://127.0.0.1:3001';
 
 // ── Lazy offline clients ───────────────────────────────────────────────
@@ -62,14 +58,10 @@ export function registerWikiCommand(program: Command): void {
     .alias('ls')
     .description('List wiki entries with optional filters')
     .option('--type <type>', 'Filter by type: project|roadmap|spec|issue|knowhow|note|domain')
-    .option('--scope <scope>', 'Filter by spec scope: project|global|team|personal')
     .option('--status <status>', 'Filter by status')
     .option('--category <cat>', 'Filter by category: coding|arch|debug|test|review|learning')
     .option('--keyword <word>', 'Filter by keyword')
-    .option('--tool', 'Filter tool documents only')
-    .option('--created-by <cmd>', 'Filter by creating command/skill')
     .option('-q, --query <q>', 'BM25 full-text query')
-    .option('--group', 'Return results grouped by type')
     .option('--json', 'Output as JSON')
     .action(async (opts, cmd) => {
       const live = cmd.parent!.opts().live as boolean | undefined;
@@ -78,79 +70,44 @@ export function registerWikiCommand(program: Command): void {
         const base = cmd.parent!.opts().base as string;
         const qs = new URLSearchParams();
         if (opts.type) qs.set('type', opts.type);
-        if (opts.scope) qs.set('scope', opts.scope);
         if (opts.status) qs.set('status', opts.status);
         if (opts.category) qs.set('category', opts.category);
         if (opts.keyword) qs.set('tag', opts.keyword);
-        if (opts.createdBy) qs.set('createdBy', opts.createdBy);
         if (opts.query) qs.set('q', opts.query);
-        if (opts.tool) qs.set('tool', 'true');
-        if (opts.group) qs.set('group', 'true');
         const data = await apiGet(base, `/api/wiki?${qs.toString()}`);
         if (opts.json) {
           console.log(JSON.stringify(data, null, 2));
           return;
         }
-        if (opts.group) {
-          const groups = (data.groups ?? {}) as Record<string, Array<{ id: string; title: string; summary?: string }>>;
-          for (const [type, items] of Object.entries(groups)) {
-            if (items.length === 0) continue;
-            console.log(`\n[${type}] (${items.length})`);
-            for (const e of items) {
-              const desc = e.summary ? `  ${truncate(e.summary, 50)}` : '';
-              console.log(`  ${e.id}  ${e.title}${desc}`);
-            }
-          }
-        } else {
-          const entries = (data.entries ?? []) as Array<{ id: string; type: string; title: string; summary?: string }>;
-          console.log(`Found ${entries.length} entries`);
-          for (const e of entries) {
-            const desc = e.summary ? `  ${truncate(e.summary, 50)}` : '';
-            console.log(`  [${e.type}] ${e.id}  ${e.title}${desc}`);
-          }
+        const entries = (data.entries ?? []) as Array<{ id: string; type: string; title: string; summary?: string }>;
+        console.log(`Found ${entries.length} entries`);
+        for (const e of entries) {
+          const desc = e.summary ? `  ${truncate(e.summary, 50)}` : '';
+          console.log(`  [${e.type}] ${e.id}  ${e.title}${desc}`);
         }
         return;
       }
 
       // Offline mode
       const { indexer } = await getOfflineClients();
-      const filters: WikiFilters & { scope?: WikiScope } = {};
+      const filters: WikiFilters = {};
       if (opts.type) filters.type = opts.type as WikiNodeType;
-      if (opts.scope) filters.scope = opts.scope as WikiScope;
       if (opts.status) filters.status = opts.status;
       if (opts.category) filters.category = opts.category;
       if (opts.keyword) filters.tag = opts.keyword;
-      if (opts.createdBy) filters.createdBy = opts.createdBy;
       if (opts.query) filters.q = opts.query;
-      if (opts.tool) filters.tool = true;
 
-      if (opts.group) {
-        const groups = await indexer.groups(Object.keys(filters).length ? filters : undefined);
-        if (opts.json) {
-          console.log(JSON.stringify({ groups }, null, 2));
-          return;
-        }
-        for (const [type, items] of Object.entries(groups)) {
-          if (items.length === 0) continue;
-          console.log(`\n[${type}] (${items.length})`);
-          for (const e of items) {
-            const desc = e.summary ? `  ${truncate(e.summary, 50)}` : '';
-            console.log(`  ${e.id}  ${e.title}${desc}`);
-          }
-        }
-      } else {
-        const entries = await indexer.query(filters);
-        if (opts.json) {
-          console.log(JSON.stringify({ entries }, null, 2));
-          return;
-        }
-        console.log(`Found ${entries.length} entries`);
-        for (const e of entries) {
-          console.log(`  [${e.type}] ${e.id}  ${e.title}`);
-          if (opts.query) {
-            const snippet = extractSnippet(e.body, opts.query);
-            if (snippet) console.log(`    ${snippet}`);
-          }
+      const entries = await indexer.query(filters);
+      if (opts.json) {
+        console.log(JSON.stringify({ entries }, null, 2));
+        return;
+      }
+      console.log(`Found ${entries.length} entries`);
+      for (const e of entries) {
+        console.log(`  [${e.type}] ${e.id}  ${e.title}`);
+        if (opts.query) {
+          const snippet = extractSnippet(e.body, opts.query);
+          if (snippet) console.log(`    ${snippet}`);
         }
       }
     });
@@ -322,17 +279,12 @@ export function registerWikiCommand(program: Command): void {
   wiki
     .command('health')
     .description('Show wiki graph health score')
-    .option('--json', 'Output as JSON')
-    .action(async (opts, cmd) => {
+    .action(async (_opts, cmd) => {
       const live = cmd.parent!.opts().live as boolean | undefined;
 
       if (live) {
         const base = cmd.parent!.opts().base as string;
         const data = await apiGet(base, '/api/wiki/health');
-        if (opts.json) {
-          console.log(JSON.stringify(data, null, 2));
-          return;
-        }
         console.log(`Health Score: ${data.score}/100`);
         if (data.totals) {
           console.log(`  Entries:       ${data.totals.entries ?? 0}`);
@@ -355,10 +307,6 @@ export function registerWikiCommand(program: Command): void {
       const graph = await indexer.getGraph();
       const { computeHealth } = await import('#maestro-dashboard/wiki/graph-analysis.js');
       const data = computeHealth(index, graph);
-      if (opts.json) {
-        console.log(JSON.stringify(data, null, 2));
-        return;
-      }
       console.log(`Health Score: ${data.score}/100`);
       console.log(`  Entries:       ${data.totals.entries}`);
       console.log(`  Broken links:  ${data.totals.brokenLinks}`);
@@ -433,17 +381,12 @@ export function registerWikiCommand(program: Command): void {
     .command('hubs')
     .description('Top-N hubs ranked by in-degree')
     .option('--limit <n>', 'Max entries', '10')
-    .option('--json', 'Output as JSON')
     .action(async (opts, cmd) => {
       const live = cmd.parent!.opts().live as boolean | undefined;
 
       if (live) {
         const base = cmd.parent!.opts().base as string;
         const data = await apiGet(base, `/api/wiki/hubs?limit=${encodeURIComponent(opts.limit)}`);
-        if (opts.json) {
-          console.log(JSON.stringify(data, null, 2));
-          return;
-        }
         const hubs = (data.hubs ?? []) as Array<{ id: string; inDegree: number }>;
         console.log(`Top ${hubs.length} hubs`);
         for (const h of hubs) console.log(`  ${h.id}  (in: ${h.inDegree})`);
@@ -455,10 +398,6 @@ export function registerWikiCommand(program: Command): void {
       const graph = await indexer.getGraph();
       const { detectHubs } = await import('#maestro-dashboard/wiki/graph-analysis.js');
       const hubs = detectHubs(graph, Number(opts.limit) || 10);
-      if (opts.json) {
-        console.log(JSON.stringify({ hubs }, null, 2));
-        return;
-      }
       console.log(`Top ${hubs.length} hubs`);
       for (const h of hubs) console.log(`  ${h.id}  (in: ${h.inDegree})`);
     });

@@ -43,9 +43,9 @@ Complements `wiki-connect.md` (link discovery) and `wiki-digest.md` (synthesis) 
 
 ### Step 1: Gather Data
 
-Run in parallel: `maestro wiki health`, `list --json`, `orphans`, `hubs --top 5`.
+Run in parallel: `maestro wiki health`, `list --json`, `orphans`, `hubs --limit 5`.
 
-MANDATORY, NOT SUBSTITUTABLE by manual Read/Grep: graph operations (`orphans`, `hubs --top 5`) — use the `maestro wiki` CLI to compute orphan sets and hub in-degree.
+MANDATORY, NOT SUBSTITUTABLE by manual Read/Grep: graph operations (`orphans`, `hubs --limit 5`) — use the `maestro wiki` CLI to compute orphan sets and hub in-degree.
 
 ### Step 2: Render Dashboard
 

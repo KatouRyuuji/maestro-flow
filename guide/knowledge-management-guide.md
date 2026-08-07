@@ -272,7 +272,7 @@ Session 级去重：同一条目不会重复注入。
 
 ```bash
 # 查看 KG 索引
-maestro wiki list --keyword kg
+maestro wiki list --query kg
 
 # 搜索代码实体
 maestro wiki search "AuthMiddleware"
@@ -295,7 +295,7 @@ Domain 系统管理项目领域术语表（glossary），为 spec 注入和代�
 | 子命令 | 职责 |
 |--------|------|
 | `domain init` | 初始化 `.workflow/domain/` 和空 `glossary.yaml` |
-| `domain add <canonical> <definition>` | 添加领域术语（支持 aliases、keywords、relationships、tier） |
+| `domain add <canonical> <definition>` | 添加领域术语（支持 tier） |
 | `domain list` | 列出所有术语，支持 `--status active\|deprecated` 过滤 |
 | `domain show <id>` | 查看术语详情（含 concept_ref 文档内容） |
 | `domain update <id>` | 更新术语（definition、aliases、relationships、keywords、tier） |

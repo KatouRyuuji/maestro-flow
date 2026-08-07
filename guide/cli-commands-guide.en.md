@@ -288,7 +288,7 @@ maestro spec list                              # List files
 maestro spec status                            # Status
 maestro spec add <category> "<title>" "<content>" --json  # --json returns sid
 maestro spec supersede <old-sid> --by <new-sid>          # Supersede (old → deprecated)
-maestro spec history <sid> [--json]                      # View evolution chain
+maestro spec history <sid>                          # View evolution chain
 maestro spec health [--json]                             # Knowledge health report
 maestro spec backfill-sid                                # Backfill legacy entries without sid
 ```

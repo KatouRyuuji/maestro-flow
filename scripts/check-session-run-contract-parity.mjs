@@ -215,7 +215,7 @@ const knowledgeCompletionContract = {
   finishStage: runtime?.includes('maestro knowledge stage knowhow') ?? false,
   freshnessFence: runtime?.includes('knowledge candidates or project corpus changed after reconciliation') ?? false,
   reconciliationReceipt: runtime?.includes('reconciliation: reconciliationSummary(prepared.knowledgeReconciliation)') ?? false,
-  finishReviewResolve: runtime?.includes('maestro knowledge review <session-id> --resolve <candidate-id>') ?? false,
+  finishReviewResolve: (runtime?.includes('maestro knowledge promote') && runtime?.includes('--resolve')) ?? false,
   promptReceipt: runMode?.includes('knowledge-candidate-receipt/1.0') ?? false,
   promptReconciliation: runMode?.includes('knowledge-reconciliation/1.0') ?? false,
   promptNoDirectWrite: runMode?.includes('Routine Run completion MUST NOT call `maestro spec add`') ?? false,

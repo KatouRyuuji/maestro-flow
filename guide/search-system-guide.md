@@ -31,7 +31,7 @@ maestro search "jwt token" --type spec
 maestro search --category coding
 
 # 组合查询
-maestro search "oauth pkce" --type spec --category arch --limit 10
+maestro search "oauth pkce" --type spec --category arch
 
 # 代码搜索（需启用 MaestroGraph）
 maestro search "UserService" --code
@@ -40,7 +40,7 @@ maestro search "UserService" --code
 maestro search "UserService" --kg
 
 # 搜索所有来源（wiki + code），统一归一化排名
-maestro search "UserService" --all
+maestro search "UserService"
 
 # 跳过 embedding，仅用 BM25（避免 ONNX 冷启动）
 maestro search "jwt token" --no-emb
@@ -454,11 +454,11 @@ CJK 分词为 bigram + trigram 级别，短查询（2 字以下）可能匹配�
 
 ```bash
 # 统一搜索（推荐）
-maestro search <query> [--type <type>] [--category <cat>] [--kind <kind>] [--code] [--kg] [--diversity balanced|off] [--all] [--no-emb] [--json]
+maestro search <query> [--type <type>] [--category <cat>] [--kind <kind>] [--code] [--kg] [--no-emb] [--json]
 
 # Wiki 系统搜索
 maestro wiki search <query> [--json]
-maestro wiki list [--type <type>] [--category <cat>] [--keyword <kw>]
+maestro wiki list [--type <type>] [--category <cat>] [-q <query>]
 
 # 知识图谱搜索（已废弃，使用 maestro search --kg 替代）
 maestro kg search <symbol>   # [deprecated] Use "maestro search --kg" instead

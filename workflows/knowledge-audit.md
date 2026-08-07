@@ -19,32 +19,24 @@
 ## Argument Shape
 
 ```
-/maestro-knowledge audit --scope all                       → 全量审查三存储（交互式）
-/maestro-knowledge audit --scope spec --level P0           → 仅扫 spec 的 P0 问题
-/maestro-knowledge audit --scope artifact --timeline T2,T3 → 仅查 milestone 失效与时间倒挂
-/maestro-knowledge audit --scope all --since 2026-03-01    → 增量审查
-/maestro-knowledge audit --scope spec --milestone M2       → 限定 milestone 上下文
-/maestro-knowledge audit --scope all --report              → 仅出报告不动盘
-/maestro-knowledge audit --scope all --dry-run             → 完整预演含交互
-/maestro-knowledge audit --scope artifact --purge          → 物理擦除（需双重确认）
+/maestro-knowledge audit --scope all                   → 全量审查 spec + knowhow（默认，只读）
+/maestro-knowledge audit --scope spec                  → 仅审查 spec 存储
+/maestro-knowledge audit --scope knowhow               → 仅审查 knowhow 存储
+/maestro-knowledge audit --scope all --prune           → 附带确定性软清理计划（不写盘）
+/maestro-knowledge audit --scope all --prune --apply   → 备份后应用软清理计划
+/maestro-knowledge audit --scope all --json            → JSON 输出
+/maestro-knowledge audit --scope spec --workflow-root <path> → 指定 .workflow 项目根
 ```
 
 | Flag | Effect |
 |------|--------|
-| `--scope <type>` | **必选** spec / knowhow / artifact / all |
-| `--level <P0\|P1\|P2>` | 仅展示该优先级（默认 all）|
-| `--timeline <T1..T6>` | 仅运行指定时间线检测（逗号分隔）|
-| `--since <YYYY-MM-DD>` | 仅审查该日期后修改的条目（增量模式）|
-| `--milestone <name>` | 限定到某 milestone 上下文 |
-| `--include-archive` | 把 `artifact_archive[]` 也纳入扫描 |
-| `--interactive` | 三态决策交互（默认开启，除非 `--report`）|
-| `--mark` | 非交互：仅注入 warning 标记，不删 |
-| `--delete` | 非交互：自动软删（移 `.trash/`）|
-| `--purge` | **危险** 物理擦除 artifact，需 `[y/N]` 二次确认 |
-| `--dry-run` | 全流程预演，不写盘 |
-| `--report` | 仅生成报告到 `.workflow/.knowledge-audit/` |
+| `--scope <type>` | spec / knowhow / all（默认 all）|
+| `--prune` | 附带确定性软清理计划（soft-prune plan，不写盘）|
+| `--apply` | 备份后应用清理计划（仅与 `--prune` 同用）|
+| `--json` | JSON 输出 |
+| `--workflow-root <path>` | 指定 `.workflow` 项目根（默认当前目录）|
 
-互斥规则：`--purge` 不可与 `--dry-run` 同用；`--purge` 仅对 `--scope artifact|all` 生效。
+约束规则：`--apply` 依赖 `--prune`；未带 `--prune` 时 `--apply` 不生效（E003）。
 
 ---
 
@@ -52,15 +44,12 @@
 
 ```
 验证 .workflow/ 存在（否则 E001）。解析参数：
-  scope: spec | knowhow | artifact | all （E002 若缺失/非法）
-  level: P0 | P1 | P2 | all（默认 all）
-  mode: interactive（默认）| mark | delete | purge | dry-run | report
-  filters: timeline[], since, milestone, include_archive
+  scope: spec | knowhow | all（默认 all；E002 若非法）
+  prune: boolean（默认 false）
+  apply: boolean（默认 false）
 
-互斥校验：
-  --purge + --dry-run → E003
-  --purge + scope != artifact|all → E004
-  --report → 强制覆盖 mode 为 read-only
+约束校验：
+  --apply 无 --prune → E003（忽略 --apply 并警告）
 初始化 .workflow/.knowledge-audit/ 目录。
 ```
 
@@ -91,15 +80,11 @@ maestro wiki list --json → entries[]
 ### 2c. Artifact 加载
 
 ```
-读 .workflow/state.json → artifacts[], artifact_archive[](若 --include-archive), milestones[]
+读 .workflow/state.json → artifacts[], artifact_archive[], milestones[]
 glob .workflow/.{analysis,brainstorm,debug,lite-plan,lite-fix}/*/
 合并: Artifact { id, type, path, milestone?, created_at, completed_at?, mtime, harvested? }
 harvested 通过 join .workflow/harvest/harvest-log.jsonl 的 source_id 字段确定
 ```
-
-### 2d. since/milestone 过滤
-
-应用 `--since` 与 `--milestone` 收敛集合。
 
 ---
 
@@ -211,15 +196,14 @@ AuditFinding {
 }
 ```
 
-按 P0 → P1 → P2 排序，过滤 `--level`。
+按 P0 → P1 → P2 排序。
 
 ---
 
 ## Stage 5: interactive_triage
 
-若 `--report` → 跳过。
-若 `--mark|--delete|--purge` → 非交互应用 recommended_action。
-否则按 finding 顺序展示三态面板：
+CLI 无交互/非交互动作参数；自动应用仅通过 `--prune --apply`（见 Stage 7）。
+默认按 finding 顺序展示三态面板供 agent 与用户确认：
 
 ```
 [!] Conflict Detected (P0 - Ghost Code Reference)
@@ -237,7 +221,6 @@ Action?  [k]eep / [d]eprecate / [D]elete / [s]kip / [a]ll-keep / [q]uit
 | 条件 | 二次确认 |
 |---|---|
 | `[D]elete` 一个 artifact 且 harvest-log 无该 artifact | `This artifact has NO harvest records. Run /maestro-knowledge harvest first? [Y/n]` |
-| `--purge` 任意 artifact | `WARNING: --purge will permanently destroy {path} from disk. Type the artifact id to confirm:` |
 | `[D]elete` 一个被其他 spec `supersedes` 引用的条目 | `This spec is referenced by N supersedes chains. Deleting will dangle them. Continue? [y/N]` |
 
 `[a]ll-keep` 仅作用于当前 finding 的 subtype（不跨子类型）。
@@ -282,8 +265,8 @@ for finding in actionable_findings:
 # Knowledge Audit Report — {date}
 
 ## Scope
-- Scope: {spec|knowhow|artifact|all}
-- Filters: {level, timeline, since, milestone}
+- Scope: {spec|knowhow|all}
+- Params: {prune, apply}
 
 ## Detection Summary
 - Total findings: {N}  ({P0_count} P0 / {P1_count} P1 / {P2_count} P2)
@@ -341,7 +324,7 @@ Next:
   → 抢救未抽取 artifact:   /maestro-knowledge harvest <ids>
   → 验证现状:              maestro spec load --category coding
   → 复审 wiki 状态:        maestro wiki list --status deprecated
-  → 周期巡检 (建议):       milestone 结束时跑 --scope all --report
+  → 周期巡检 (建议):       定期跑 --scope all --prune
 ```
 
 ---
@@ -350,9 +333,9 @@ Next:
 
 1. **Deprecate over delete** — 文本存储默认注入 `status=deprecated` 而非物理移除，保留历史上下文
 2. **Backup before mutate** — Stage 6 失败则禁止 Stage 7；state.json 原子写（备份 → 写新 → re-read 校验）
-3. **Purge restricted** — `--purge` 仅限 artifact scope；spec/knowhow 永不物理删除（最多 delete 到 `.trash/`）
-4. **Double confirmation** — `--purge` 需 flag + 交互输入 artifact id 双重确认
+3. **Delete restricted** — 物理删除仅限 artifact（内部动作）；spec/knowhow 永不物理删除（最多 delete 到 `.trash/`）
+4. **Double confirmation** — 删除 artifact 需交互输入 artifact id 二次确认
 5. **Rescue before delete** — 删 artifact 前若 harvest-log 无记录，强制提示先跑 `/maestro-knowledge harvest`
 6. **No dedup re-run** — audit 不做"是否重复"判断（harvest 负责），只做"是否矛盾/失效/老化"
 7. **Graceful degradation** — LLM detector 不可用时跳过 B/G 类语义场景，A/D/F 类正则+图算法仍可执行; Stage 8 报告加 partial_audit: true, skipped: [B,G] 并标 [LOW CONFIDENCE]
-8. **Idempotent** — 同一存储状态下重跑 `--dry-run` 必须输出一致的 finding 集
+8. **Idempotent** — 同一存储状态下重跑（不带 `--apply`）必须输出一致的 finding 集

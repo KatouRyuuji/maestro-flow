@@ -734,7 +734,6 @@ export function registerRunCommand(program: Command): void {
     .command('check <run-id>')
     .description('Scan outputs, evaluate Run gates, and refresh the knowledge reconciliation receipt')
     .option('--session <id>', 'explicit Session ID')
-    .option('--stage <stage>', 'compatibility hint: entry or exit', 'exit')
     .option('--json', 'emit one run-response/1.0 envelope on stdout')
     .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
     .action((runId: string, opts: { session?: string; json?: boolean; workflowRoot: string }) => {

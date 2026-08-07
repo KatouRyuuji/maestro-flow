@@ -65,10 +65,10 @@ Write via `maestro domain add`:
 maestro domain add "<canonical>" "<definition>" --tier <tier>
 ```
 
-If aliases or relationships identified, update immediately:
+If aliases or relationships identified, update immediately (id = kebab-case term id from `maestro domain add`):
 
 ```bash
-maestro domain update "<canonical>" --aliases "alias1,alias2" --keywords "kw1,kw2,kw3" --relationships "related-term-1,related-term-2"
+maestro domain update <id> --add-alias "alias1,alias2" --add-keyword "kw1,kw2,kw3" --add-relationship "related-term-1,related-term-2"
 ```
 
 Records `source.kind = 'manual'`, `source.registered_at = now`.

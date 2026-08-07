@@ -65,7 +65,7 @@ v2→v3 迁移后的环境配置。验证并引导用户完成知识系统、Cod
 ## Step 4: 验证
 
 ```
-1. 验证统一搜索：maestro search "test" --limit 1
+1. 验证统一搜索：maestro search "test"
 2. 验证 KG（如已安装）：maestro kg stats
 3. 验证 Hooks：maestro hooks status
 4. 显示最终状态：

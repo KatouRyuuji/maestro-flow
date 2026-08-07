@@ -221,7 +221,6 @@ maestro wiki append <containerId> --category <cat> --body <text>
 maestro wiki remove-entry <subEntryId>
 
 maestro knowhow add --type <type> --title <title> --body <text>
-maestro knowhow add --type asset --asset-type api-contract --code-paths "src/api/"
 maestro knowhow list [--type <type>] | search <query>
 
 maestro wiki health | graph | orphans | hubs
@@ -307,7 +306,7 @@ maestro spec add <category> "<title>" "<content>" [--keywords kw1,kw2] [--source
 maestro spec list [--scope <scope>] | status [--scope <scope>]
 
 # -- Wiki -----------------------------------------------------------------
-maestro wiki list [--type <type>] [--category <category>] [--category <cat>] [--tag <tag>] [-q <query>] [--group] [--json]
+maestro wiki list [--type <type>] [--category <category>] [--category <cat>] [--tag <tag>] [-q <query>] [--json]
 maestro wiki load <id1> [id2...] [--json]
 maestro wiki get <id> [--json]
 maestro wiki search <query> [--json]
@@ -317,7 +316,6 @@ maestro wiki remove-entry <subEntryId> | update <id> [--title <title>] [--frontm
 
 # -- Knowhow --------------------------------------------------------------
 maestro knowhow add --type <type> --title <title> --body <text> [--tags <csv>]
-maestro knowhow add --type asset --asset-type <type> --code-paths <paths>
 maestro knowhow list [--type <type>] [--json] | search <query> [--json] | get <id> [--json]
 
 # -- Graph ----------------------------------------------------------------

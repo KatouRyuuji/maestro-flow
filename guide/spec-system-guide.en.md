@@ -271,8 +271,7 @@ Wiki entries support `category` annotation aligned with spec categories. Each ca
 
 ```bash
 maestro wiki list --category coding    # Browse by category
-maestro wiki list --keyword auth       # Filter by keyword
-maestro wiki list --tool               # List all tools
+maestro wiki list --query auth         # Filter by keyword
 maestro wiki load <id1> [id2...]       # Load selected documents
 ```
 
@@ -287,7 +286,7 @@ maestro wiki load <id1> [id2...]       # Load selected documents
 ### Wiki Commands
 
 ```bash
-maestro wiki list [--type <type>] [--category <cat>] [--keyword <kw>] [--tool] [-q <query>]
+maestro wiki list [--type <type>] [--category <cat>] [-q <query>]
 maestro wiki load <id1> [id2...] [--json]
 maestro wiki get <id> | search <query>
 maestro wiki create --type knowhow --slug <slug> --title <title>
@@ -295,7 +294,6 @@ maestro wiki append <containerId> --body <text> [--category <cat>] [--keywords <
 maestro wiki remove-entry <subEntryId>
 
 maestro knowhow add --type <type> --title <title> --body <text>
-maestro knowhow add --type asset --asset-type api-contract --code-paths "src/api/"
 maestro knowhow list [--type <type>] | search <query>
 
 maestro wiki health | graph | orphans | hubs
@@ -376,7 +374,7 @@ All write operations share unified WikiWriter: detect container type -> append e
 # -- Spec -----------------------------------------------------------------
 maestro spec init [--scope <scope>] [--uid <uid>]
 maestro spec load [--category <cat>] [--keyword <kw>] [--scope <scope>] [--json] [--uid <uid>] [--stdin]
-maestro spec add <category> "<title>" "<content>" [--keywords kw1,kw2] [--description <desc>] [--source <src>] [--ref <path>] [--knowhow-type <type>] [--uid <uid>] [--stdin] [--json]
+maestro spec add <category> "<title>" "<content>" [--keywords kw1,kw2] [--description <desc>] [--source <src>] [--ref <path>] [--knowhow-type <type>] [--uid <uid>] [--json]
 maestro spec list [--scope <scope>] [--uid <uid>]
 maestro spec status [--scope <scope>] [--uid <uid>]
 
@@ -393,19 +391,19 @@ maestro spec analytics [--json] [--recent <n>] [--summary] [--clear] [--tui]
 
 # -- Supersession (Evolution) -----------------------------------------------
 maestro spec supersede <old-sid> --by <new-sid>                            # Supersede (old entry deprecated)
-maestro spec history <sid> [--json]                                        # View evolution chain (oldest → newest)
+maestro spec history <sid>                                            # View evolution chain (oldest → newest)
 maestro spec health [--json]                                               # Knowledge health report (stats + integrity)
 maestro spec backfill-sid                                                  # Backfill legacy entries without sid (idempotent)
 
 # -- Conflict Confidence & Markers ----------------------------------------
-maestro spec conflict list [--json]                                       # List all conflict/degraded entries
-maestro spec conflict mark <file> <line> --note "<reason>" [--marker <id>] [--confidence <level>]
-maestro spec conflict clear <file> <line> [--confidence <level>]          # Clear conflict markers
+maestro spec conflict list                                       # List all conflict/degraded entries
+maestro spec conflict mark <file> <line> --note "<reason>"
+maestro spec conflict clear <file> <line>                                # Clear conflict markers
 maestro spec conflict set-confidence <file> <line> <level>                # Set confidence level
-maestro spec conflict clear-all <file> [--confidence <level>]             # Clear all conflicts in file
+maestro spec conflict clear-all <file>                                   # Clear all conflicts in file
 
 # -- Wiki -----------------------------------------------------------------
-maestro wiki list [--type <type>] [--category <cat>] [--keyword <kw>] [--tool] [-q <query>] [--group] [--json]
+maestro wiki list [--type <type>] [--category <cat>] [-q <query>] [--json]
 maestro wiki load <id1> [id2...] [--json]
 maestro wiki get <id> [--json]
 maestro wiki search <query> [--json]                                       # [deprecated] Use "maestro search" instead
@@ -414,8 +412,7 @@ maestro wiki append <containerId> --body <text> [--category <cat>] [--keywords <
 maestro wiki remove-entry <subEntryId> | update <id> [--title <title>] [--frontmatter <json>] | delete <id>
 
 # -- Knowhow --------------------------------------------------------------
-maestro knowhow add --type <type> --title <title> --body <text> [--keywords <csv>]
-maestro knowhow add --type asset --asset-type <type> --code-paths <paths>
+maestro knowhow add --type <type> --title <title> --body <text>
 maestro knowhow list [--type <type>] [--json] | search <query> [--json] | get <id> [--json]
 
 # -- Graph ----------------------------------------------------------------

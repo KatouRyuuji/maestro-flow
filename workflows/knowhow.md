@@ -63,7 +63,7 @@ Verify stores exist. Neither → E001.
 
 ### Step 3: List
 
-Workflow: `maestro wiki list --type knowhow --json`, filter by `--keywords`, `--type`, `--role`.
+Workflow: `maestro wiki list --type knowhow --json`, filter by `--keyword`, `--type`, `--category`.
 System: Glob `*.md` files, extract titles.
 
 Display: ID/File, Type, Category, Date, Tags, Summary with navigation hints.
@@ -359,7 +359,7 @@ maestro knowhow search "deploy auth"    # full-text
 maestro knowhow get knowhow-{slug}      # view one
 
 maestro wiki list --type knowhow --json # programmatic
-maestro wiki list --type knowhow --role plan  # decisions only
+maestro knowhow list --type decision  # decisions only
 ```
 
 ### MCP
@@ -441,6 +441,6 @@ Multiple workflows append `<spec-entry>` blocks to this container:
 ### Retrieval
 
 ```bash
-maestro wiki list --type knowhow --role implement    # list all insights
+maestro wiki list --type spec --category learning # list learning insights
 maestro wiki search "<query>"                           # full-text search
 ```

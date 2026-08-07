@@ -119,7 +119,7 @@ If `.workflow/specs/` does not exist:
 If `.workflow/domain/` does not exist:
 
 1. MANDATORY, NOT SUBSTITUTABLE by manual Read/Grep: Run `Bash("maestro domain init")` — creates `.workflow/domain/glossary.yaml` with empty terms array
-2. If brownfield project (has source files): MANDATORY, NOT SUBSTITUTABLE by manual Read/Grep: run `maestro domain discover --auto` to scan codebase for initial term candidates, present top 5 for confirmation
+2. If brownfield project (has source files): MANDATORY, NOT SUBSTITUTABLE by manual Read/Grep: run `maestro domain discover` to scan codebase for initial term candidates, present top candidates for confirmation
 3. If greenfield project: skip discovery (no codebase to scan); domain terms will be populated by grill/brainstorm sessions via finish-work extraction
 
 

@@ -91,7 +91,7 @@ User selects "记录经验" → prompt for title/insight, then recommend `/maest
 
 | Condition | Suggestion |
 |-----------|-----------|
-| Next dep-ready session | step `analyze` for session (`maestro run prepare --platform codex analyze --session {next-dep-ready-slug}` + `maestro run create analyze --session {next-dep-ready-slug} --intent "{goal}"`) |
+| Next dep-ready session | step `analyze` for session (`maestro run prepare --platform codex analyze --session {next-dep-ready-slug}` + `maestro run create analyze --session {next-dep-ready-slug} --intent "{goal}" --arg "{goal}"`) |
 </completion>
 
 <error_codes>

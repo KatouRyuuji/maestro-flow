@@ -436,7 +436,7 @@ Wiki knowledge graph queries and mutations. Offline by default; `--live` uses th
 
 ```bash
 # 列表与搜索
-maestro wiki list --type spec --tag security --status active --group --json
+maestro wiki list --type spec --tag security --status active --json
 maestro wiki list -q "authentication"                # BM25 内联搜索
 maestro wiki search "auth token"                     # 全文搜索
 maestro wiki get <id>                                # 获取单条

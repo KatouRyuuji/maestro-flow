@@ -211,7 +211,7 @@ maestro search "jwt token" --type spec
 maestro search --category coding
 
 # 组合查询
-maestro search "oauth pkce" --type spec --category arch --limit 10
+maestro search "oauth pkce" --type spec --category arch
 
 # 代码搜索（需启用 MaestroGraph）
 maestro search "UserService" --code
@@ -267,7 +267,7 @@ maestro search "jwt token" --json
 
 ```bash
 # 基础搜索
-maestro search "<query>" [--type <type>] [--category <cat>] [--limit N]
+maestro search "<query>" [--type <type>] [--category <cat>]
 
 # 代码搜索
 maestro search "<symbol>" --code

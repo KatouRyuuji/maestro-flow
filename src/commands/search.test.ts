@@ -74,7 +74,7 @@ describe('search tag facet', () => {
     const search = program.commands.find(command => command.name() === 'search');
     expect(search?.options.some(option => option.long === '--tag')).toBe(true);
     expect(search?.options.some(option => option.long === '--kind')).toBe(true);
-    expect(search?.options.some(option => option.long === '--diversity')).toBe(true);
+    expect(search?.options.some(option => option.long === '--wiki-only')).toBe(true);
   });
 });
 

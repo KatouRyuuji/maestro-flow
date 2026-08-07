@@ -44,17 +44,7 @@ export function registerKnowhowCommand(program: Command): void {
     .option('--body <text>', 'Entry body (markdown)')
     .option('--body-file <path>', 'Read body from file')
     .option('--id <stable-stem>', 'Stable explicit id (<prefix>-YYYYMMDD-<kebab-slug>)')
-    .option('--description <text>', 'One-line description')
-    .option('--keywords <csv>', 'Comma-separated keywords')
-    .option('--lang <lang>', '[template] Programming language')
-    .option('--source <url>', '[reference] Original URL')
-    .option('--status <status>', '[decision] proposed|accepted|superseded')
-    .option('--asset-type <type>', '[asset] Asset type (e.g. api-contract, data-model, prompt, config)')
-    .option('--code-paths <paths>', '[asset/blueprint] Comma-separated code paths')
-    .option('--category <category>', 'Spec category for agent discovery (coding, arch, test, debug, review, learning)')
-    .option('--spec-category <cat>', 'Spec category for agent injection (coding|arch|debug|test|review|learning|ui)')
     .option('--tool', 'Mark this knowhow entry as a tool')
-    .option('--json', 'Output as JSON')
     .action(async (opts) => {
       const hasBody = opts.body !== undefined;
       const hasBodyFile = opts.bodyFile !== undefined;
@@ -71,61 +61,13 @@ export function registerKnowhowCommand(program: Command): void {
         return;
       }
 
-      // Validate type-specific flags
-      if (opts.lang && type !== 'template') {
-        console.error('--lang is only valid for type "template"');
-        process.exitCode = 1;
-        return;
-      }
-      if (opts.source && type !== 'reference') {
-        console.error('--source is only valid for type "reference"');
-        process.exitCode = 1;
-        return;
-      }
-      if (opts.status && type !== 'decision') {
-        console.error('--status is only valid for type "decision"');
-        process.exitCode = 1;
-        return;
-      }
-      if (opts.assetType && type !== 'asset') {
-        console.error('--asset-type is only valid for type "asset"');
-        process.exitCode = 1;
-        return;
-      }
-      if (opts.codePaths && type !== 'blueprint' && type !== 'asset') {
-        console.error('--code-paths is only valid for type "asset" or "blueprint"');
-        process.exitCode = 1;
-        return;
-      }
-      const validSpecCategories = ['coding', 'arch', 'debug', 'test', 'review', 'learning', 'ui'];
-      if (opts.specCategory && !validSpecCategories.includes(opts.specCategory)) {
-        console.error(`Invalid --spec-category: ${opts.specCategory}. Must be one of: ${validSpecCategories.join(', ')}`);
-        process.exitCode = 1;
-        return;
-      }
-
       const body = opts.bodyFile ? readFileSync(opts.bodyFile, 'utf-8') : opts.body;
-      const keywords = opts.keywords
-        ? opts.keywords.split(',').map((item: string) => item.trim()).filter(Boolean)
-        : undefined;
-      const codePaths = opts.codePaths
-        ? opts.codePaths.split(',').map((item: string) => item.trim()).filter(Boolean)
-        : undefined;
       const response = await storeKnowhow({
         operation: 'add',
         id: opts.id,
         type,
         title: opts.title,
-        description: opts.description,
         body,
-        keywords,
-        lang: opts.lang,
-        source: opts.source,
-        status: opts.status,
-        assetType: opts.assetType,
-        codePaths,
-        category: opts.category,
-        specCategory: opts.specCategory,
         tool: opts.tool,
       });
       if (!response.success) {
@@ -134,10 +76,6 @@ export function registerKnowhowCommand(program: Command): void {
         return;
       }
       const result = response.result as Record<string, unknown>;
-      if (opts.json) {
-        console.log(JSON.stringify(result, null, 2));
-        return;
-      }
       console.log(`${result.replayed ? 'Replayed' : 'Created'}: ${result.id}`);
       console.log(`  Type: ${result.type}`);
       console.log(`  File: ${result.path}`);

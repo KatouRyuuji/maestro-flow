@@ -1080,33 +1080,25 @@ export function registerSearchCommand(program: Command): void {
     .option('--category <cat>', 'Filter by category (e.g. coding, arch, debug, test, review, learning)')
     .option('--tag <tag>', 'Filter wiki entries by exact tag match (wiki only)')
     .option('--kind <kind>', 'Alias for --tag (deprecated)')
-    .option('--keyword <word>', 'Filter wiki entries by keyword in title/body (wiki only)')
     .option('--code', 'Code graph results only (no wiki)')
     .option('--kg', 'KG unified search (MaestroGraph full-source)')
-    .option('--all', 'Alias for default mixed mode (backward compat)')
     .option('--wiki-only', 'Search wiki only, skip code results')
     .option('--workspace <name>', 'Filter results to a specific linked workspace')
     .option('--include-linked-code', 'Include explicitly shared linked CodeGraph results')
     .option('--read-only-probe', 'Run a hermetic no-daemon, no-persistence search probe')
     .option('--include-deprecated', 'Include superseded/deprecated knowledge entries (hidden by default)')
-    .option('--diversity <mode>', 'Wiki diversity policy: balanced|off', 'balanced')
     .option('--no-emb', 'Skip embedding, use BM25 only')
-    .option('--limit <n>', 'Max results', '20')
     .option('--json', 'Output as JSON')
     .action(async (queryParts: string[], opts) => {
       const q = queryParts.join(' ');
-      const limit = Math.min(500, Math.max(1, parseInt(opts.limit, 10) || 20));
+      const limit = 20;
       const resolvedTag = opts.tag ?? opts.kind;
-      const wikiOnly = opts.wikiOnly === true || typeof resolvedTag === 'string' || typeof opts.keyword === 'string';
-      const codeOnly = opts.code === true && !opts.all;
+      const wikiOnly = opts.wikiOnly === true || typeof resolvedTag === 'string';
+      const codeOnly = opts.code === true;
       const kgMode = opts.kg === true;
 
       if (opts.type && !VALID_TYPES.includes(opts.type)) {
         console.error(`Error: --type must be one of ${VALID_TYPES.join(', ')} (got "${opts.type}")`);
-        process.exit(1);
-      }
-      if (!['balanced', 'off'].includes(opts.diversity)) {
-        console.error('Error: --diversity must be one of balanced, off');
         process.exit(1);
       }
       if (resolvedTag && opts.code) {
@@ -1115,14 +1107,6 @@ export function registerSearchCommand(program: Command): void {
       }
       if (resolvedTag && kgMode) {
         console.error('Error: --tag is a wiki facet and cannot be combined with --kg');
-        process.exit(1);
-      }
-      if (opts.keyword && opts.code) {
-        console.error('Error: --keyword is a wiki facet and cannot be combined with --code');
-        process.exit(1);
-      }
-      if (opts.keyword && kgMode) {
-        console.error('Error: --keyword is a wiki facet and cannot be combined with --kg');
         process.exit(1);
       }
       if (opts.workspace && kgMode) {
@@ -1146,7 +1130,6 @@ export function registerSearchCommand(program: Command): void {
             codeOnly: opts.code === true,
             category: opts.category,
             includeDeprecated: opts.includeDeprecated === true,
-            diversity: opts.diversity as 'balanced' | 'off',
           },
         );
         if (opts.json) {
@@ -1177,7 +1160,6 @@ export function registerSearchCommand(program: Command): void {
         type: opts.type,
         category: opts.category,
         tag: resolvedTag,
-        keyword: opts.keyword,
         workspace: opts.workspace,
         limit,
         skipEmbedding,
@@ -1186,7 +1168,6 @@ export function registerSearchCommand(program: Command): void {
           ? 'read-only-probe' as const
           : 'default' as const,
         includeDeprecated: opts.includeDeprecated === true,
-        diversity: opts.diversity as 'balanced' | 'off',
       };
       let wikiResults: SearchResult[];
       let codeOutcome: CodeSearchOutcome;

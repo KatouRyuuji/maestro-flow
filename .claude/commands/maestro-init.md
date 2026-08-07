@@ -130,11 +130,11 @@ Verdicts:
 
 | Condition | Suggestion |
 |-----------|-----------|
-| Roadmap needed (default light) | step `roadmap` (`maestro run prepare roadmap` + `maestro run create roadmap --session YYYYMMDD-roadmap-{topic} --intent "{goal}"`) |
+| Roadmap needed (default light) | step `roadmap` (`maestro run prepare roadmap` + `maestro run create roadmap --session YYYYMMDD-roadmap-{topic} --intent "{goal}" --arg "{goal}"`) |
 
 Note: roadmap step is responsible for creating `state.json.sessions[]` entries and setting the first `active_session_id`.
-| Full spec package | step `blueprint` (`maestro run prepare blueprint` + `maestro run create blueprint --session YYYYMMDD-blueprint-{topic} --intent "{goal}"`) |
-| Explore ideas first | step `brainstorm` (`maestro run prepare brainstorm` + `maestro run create brainstorm --session YYYYMMDD-brainstorm-{topic} --intent "{goal}"`) |
+| Full spec package | step `blueprint` (`maestro run prepare blueprint` + `maestro run create blueprint --session YYYYMMDD-blueprint-{topic} --intent "{goal}" --arg "{goal}"`) |
+| Explore ideas first | step `brainstorm` (`maestro run prepare brainstorm` + `maestro run create brainstorm --session YYYYMMDD-brainstorm-{topic} --intent "{goal}" --arg "{goal}"`) |
 | Quick ad-hoc task | `/maestro-companion "{goal}"` |
 </completion>
 

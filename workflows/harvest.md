@@ -464,7 +464,7 @@ Append prune results to harvest report:
     → /maestro-knowledge harvest ANL-003 BRN-002 WFS-005
 
   Next:
-    → Review graduated knowhow: maestro wiki list --type knowhow --tags graduated
+    → Review graduated knowhow: maestro wiki list --type knowhow --keyword graduated
     → Re-run prune after harvesting stale: /maestro-knowledge harvest --prune
 ```
 

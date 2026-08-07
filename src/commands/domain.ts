@@ -21,10 +21,9 @@ export function registerDomainCommand(program: Command): void {
   domain
     .command('init')
     .description('Initialize .workflow/domain/ with empty glossary.yaml')
-    .option('--project <name>', 'Project name for glossary metadata')
-    .action(async (opts) => {
+    .action(async () => {
       const { initDomain } = await import('../tools/domain-loader.js');
-      const path = initDomain(getWorkflowRoot(), opts.project);
+      const path = initDomain(getWorkflowRoot());
       console.log(`Initialized domain glossary: ${path}`);
     });
 
@@ -32,10 +31,6 @@ export function registerDomainCommand(program: Command): void {
   domain
     .command('add <canonical> <definition>')
     .description('Add a new domain term (requires confirmation)')
-    .option('--aliases <csv>', 'Comma-separated aliases')
-    .option('--keywords <csv>', 'Comma-separated trigger keywords')
-    .option('--relationships <csv>', 'Comma-separated related term ids')
-    .option('--concept-ref <path>', 'Path to detailed concept document')
     .option('--tier <tier>', 'Term tier: core|extended|peripheral', 'core')
     .action(async (canonical: string, definition: string, opts) => {
       const { addTerm } = await import('../tools/domain-loader.js');
@@ -48,11 +43,10 @@ export function registerDomainCommand(program: Command): void {
       const term = {
         id,
         canonical,
-        aliases: opts.aliases ? opts.aliases.split(',').map((a: string) => a.trim()) : [],
+        aliases: [],
         definition,
-        relationships: opts.relationships ? opts.relationships.split(',').map((r: string) => r.trim()) : [],
-        keywords: opts.keywords ? opts.keywords.split(',').map((k: string) => k.trim()) : [],
-        ...(opts.conceptRef ? { concept_ref: opts.conceptRef } : {}),
+        relationships: [],
+        keywords: [],
         tier: opts.tier as 'core' | 'extended' | 'peripheral',
         status: 'active' as const,
         source: {
@@ -65,9 +59,6 @@ export function registerDomainCommand(program: Command): void {
       console.log(`  ID:          ${id}`);
       console.log(`  Canonical:   ${canonical}`);
       console.log(`  Definition:  ${definition}`);
-      console.log(`  Aliases:     ${term.aliases.join(', ') || '(none)'}`);
-      console.log(`  Keywords:    ${term.keywords.join(', ') || '(none)'}`);
-      console.log(`  Relations:   ${term.relationships.join(', ') || '(none)'}`);
       console.log(`  Tier:        ${term.tier}`);
 
       try {
@@ -305,33 +296,16 @@ export function registerDomainCommand(program: Command): void {
   domain
     .command('discover')
     .description('Scan codebase for domain term candidates')
-    .option('--scope <dir>', 'Limit scan directory')
-    .option('--recent <days>', 'Only files modified in last N days', parseInt)
-    .option('--min-freq <n>', 'Minimum occurrence frequency', parseInt)
-    .option('--limit <n>', 'Maximum candidates to show', parseInt)
-    .option('--exclude <pattern>', 'Exclude file pattern')
-    .option('--json', 'Output as JSON')
-    .action(async (opts) => {
+    .action(async () => {
       const { scanForDomainTerms } = await import('../tools/domain-scanner.js');
       const projectRoot = process.cwd();
 
-      console.log(`Scanning ${opts.scope || projectRoot} for domain terms...`);
+      console.log(`Scanning ${projectRoot} for domain terms...`);
 
-      const candidates = scanForDomainTerms(projectRoot, getWorkflowRoot(), {
-        scope: opts.scope,
-        recentDays: opts.recent,
-        minFreq: opts.minFreq ?? 2,
-        limit: opts.limit ?? 20,
-        exclude: opts.exclude,
-      });
-
-      if (opts.json) {
-        console.log(JSON.stringify(candidates, null, 2));
-        return;
-      }
+      const candidates = scanForDomainTerms(projectRoot, getWorkflowRoot());
 
       if (candidates.length === 0) {
-        console.log('No domain term candidates found. Try lowering --min-freq or widening --scope.');
+        console.log('No domain term candidates found.');
         return;
       }
 

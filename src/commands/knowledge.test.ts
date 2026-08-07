@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Command } from 'commander';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -759,5 +759,211 @@ Full knowledge lifecycle verified.
     const candidate = summary.candidates.find(item => item.candidate_id === staged.candidate_id);
     expect(candidate?.origin).toBe('session');
     expect(candidate?.run_ids).toEqual([]);
+  });
+});
+
+describe('maestro knowledge promote --resolve inline adjudication', () => {
+  /** Stage a run-source spec candidate, then seal the Run via completeRun. */
+  async function stageAndSealSpecCandidate(options: {
+    sessionId: string;
+    intent: string;
+    title: string;
+    content: string;
+    action?: string;
+    category?: string;
+    evidence?: string;
+  }): Promise<{ session_id: string; run_id: string; candidate_id: string }> {
+    const created = createRun({
+      projectRoot,
+      command: 'knowledge-cli',
+      sessionId: options.sessionId,
+      intent: options.intent,
+    });
+    const args = ['stage', 'spec', options.title, options.content];
+    if (options.action) args.push('--action', options.action);
+    if (options.category) args.push('--category', options.category);
+    if (options.evidence) args.push('--evidence', options.evidence);
+    args.push('--run', created.run_id, '--session', created.session_id, '--json');
+    await run(...args);
+    const candidateId = (JSON.parse(logs.at(-1)!) as { candidate_id: string }).candidate_id;
+    const runDir = new SessionStore(projectRoot).runDir(created.session_id, created.run_id);
+    writeFileSync(join(runDir, 'report.md'), `---
+verdict: ready
+summary: ${options.intent}
+constraints: []
+decisions: []
+concerns: []
+next: []
+---
+${options.intent}.
+`, 'utf8');
+    completeRun(projectRoot, created.run_id, created.session_id);
+    return { session_id: created.session_id, run_id: created.run_id, candidate_id: candidateId };
+  }
+
+  it('promotes a unique candidate inline with --resolve without --target and writes the corpus', async () => {
+    const { session_id, candidate_id } = await stageAndSealSpecCandidate({
+      sessionId: 'promote-resolve-unique',
+      intent: 'inline unique resolution and promotion',
+      title: 'Inline unique rule',
+      content: 'Use one atomic inline resolution transaction for coordinated promotion.',
+      category: 'arch',
+    });
+
+    await run(
+      'promote',
+      session_id,
+      '--resolve',
+      candidate_id,
+      '--as',
+      'unique',
+      '--reason',
+      'Genuinely new rule with no corpus match',
+      '--json',
+    );
+    const promotion = JSON.parse(logs.at(-1)!) as {
+      promoted: Array<{ candidate_id: string; promoted_id: string; outcome: string }>;
+      skipped_review_required: string[];
+    };
+    expect(promotion.promoted).toEqual([
+      expect.objectContaining({
+        candidate_id,
+        promoted_id: expect.stringMatching(/^S-/),
+        outcome: 'created',
+      }),
+    ]);
+    expect(promotion.skipped_review_required).toEqual([]);
+    // Corpus write: the promoted content landed in the project spec corpus.
+    const specsDir = join(projectRoot, '.workflow', 'specs');
+    const corpus = readdirSync(specsDir).map(file => readFileSync(join(specsDir, file), 'utf8')).join('\n');
+    expect(corpus).toContain('Use one atomic inline resolution transaction for coordinated promotion.');
+    expect(errors).toEqual([]);
+  });
+
+  it('rejects a non-unique inline resolution without --target', async () => {
+    const { session_id, candidate_id } = await stageAndSealSpecCandidate({
+      sessionId: 'promote-resolve-no-target',
+      intent: 'inline resolution without target must fail closed',
+      title: 'Inline duplicate claim',
+      content: 'Claimed to duplicate knowledge that does not exist in the corpus.',
+    });
+
+    await run(
+      'promote',
+      session_id,
+      '--resolve',
+      candidate_id,
+      '--as',
+      'duplicate',
+      '--reason',
+      'claimed duplicate',
+      '--json',
+    );
+    expect(process.exitCode).toBe(1);
+    expect(errors.join('\n')).toContain('--target is required for duplicate resolution');
+  });
+
+  it('rejects an inline resolution with an empty --reason', async () => {
+    const { session_id, candidate_id } = await stageAndSealSpecCandidate({
+      sessionId: 'promote-resolve-empty-reason',
+      intent: 'inline resolution with empty reason must fail closed',
+      title: 'Inline reason rule',
+      content: 'A resolution without a human reason must never be accepted.',
+    });
+
+    await run(
+      'promote',
+      session_id,
+      '--resolve',
+      candidate_id,
+      '--as',
+      'unique',
+      '--reason',
+      '   ',
+      '--json',
+    );
+    expect(process.exitCode).toBe(1);
+    expect(errors.join('\n')).toContain('--resolve requires a non-empty --reason');
+  });
+
+  it('resolves a supersede candidate inline and promotes with a corpus write', async () => {
+    const specsDir = join(projectRoot, '.workflow', 'specs');
+    mkdirSync(specsDir, { recursive: true });
+    const specPath = join(specsDir, 'architecture-constraints.md');
+    writeFileSync(specPath, `---
+category: arch
+---
+
+<spec-entry category="arch" keywords="storage" date="2026-07-01" sid="S-old-storage" title="Canonical storage policy">
+
+### Canonical storage policy
+
+Use independent file writes for coordinated state.
+
+</spec-entry>
+`, 'utf8');
+    const { session_id, candidate_id } = await stageAndSealSpecCandidate({
+      sessionId: 'promote-resolve-supersede',
+      intent: 'inline supersede resolution and promotion',
+      title: 'Canonical storage policy',
+      content: 'Use one SessionStore transaction for coordinated state.',
+      action: 'supersede',
+      category: 'arch',
+      evidence: 'report.md#decision-storage',
+    });
+
+    await run(
+      'promote',
+      session_id,
+      '--resolve',
+      candidate_id,
+      '--as',
+      'supersede',
+      '--target',
+      'S-old-storage',
+      '--reason',
+      'Coordinated state now requires one atomic SessionStore transaction',
+      '--json',
+    );
+    const promotion = JSON.parse(logs.at(-1)!) as {
+      promoted: Array<{ candidate_id: string; promoted_id: string; outcome: string }>;
+    };
+    expect(promotion.promoted).toEqual([
+      expect.objectContaining({
+        candidate_id,
+        promoted_id: expect.stringMatching(/^S-/),
+        outcome: 'created',
+      }),
+    ]);
+    const promotedId = promotion.promoted[0].promoted_id;
+    const specContent = readFileSync(specPath, 'utf8');
+    expect(specContent).toContain('sid="S-old-storage" title="Canonical storage policy" status="deprecated"');
+    expect(specContent).toContain(`superseded-by="${promotedId}"`);
+    expect(specContent).toContain(`sid="${promotedId}"`);
+    expect(errors).toEqual([]);
+  });
+
+  it('rejects --resolve combined with --all', async () => {
+    const { session_id, candidate_id } = await stageAndSealSpecCandidate({
+      sessionId: 'promote-resolve-all-mutex',
+      intent: 'inline resolution must not combine with bulk promote',
+      title: 'Inline mutex rule',
+      content: 'Resolving a single candidate and bulk promotion are mutually exclusive intents.',
+    });
+
+    await run(
+      'promote',
+      session_id,
+      '--all',
+      '--resolve',
+      candidate_id,
+      '--as',
+      'unique',
+      '--reason',
+      'not combined',
+      '--json',
+    );
+    expect(process.exitCode).toBe(1);
+    expect(errors.join('\n')).toContain('mutually exclusive');
   });
 });

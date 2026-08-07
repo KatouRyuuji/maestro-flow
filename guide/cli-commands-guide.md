@@ -207,7 +207,7 @@ maestro search "auth" --type spec                 # 仅搜索 spec 类型
 maestro search "login" --code                     # 仅代码图搜索
 maestro search "api" --wiki-only                  # 仅 wiki 搜索
 maestro search "domain term" --kg                 # KG 全源统一搜索
-maestro search "hook" --category coding --limit 5 # 按类别过滤，限制 5 条
+maestro search "hook" --category coding # 按类别过滤
 ```
 
 | 选项 | 说明 |
@@ -280,7 +280,7 @@ maestro embedding rebuild   # 重建嵌入索引
 领域知识术语管理 — 项目术语表的增删改查。
 
 ```bash
-maestro domain init --project myapp              # 初始化术语表
+maestro domain init                          # 初始化术语表
 maestro domain add "API Gateway" "统一入口服务"   # 添加术语
 maestro domain list                              # 列出所有术语
 maestro domain show api-gateway                  # 查看术语详情
@@ -495,7 +495,7 @@ maestro spec list                              # 列出文件
 maestro spec status                            # 状态
 maestro spec add <category> "<title>" "<content>" --json  # --json 返回 sid
 maestro spec supersede <old-sid> --by <new-sid>          # 演化替代
-maestro spec history <sid> [--json]                      # 查看演化链
+maestro spec history <sid>                          # 查看演化链
 maestro spec health [--json]                             # 知识健康报告
 maestro spec backfill-sid                                # 回填存量无 sid 条目
 ```
@@ -532,7 +532,7 @@ maestro wiki health | orphans | hubs --limit 10 | backlinks <id> | forward <id> 
 
 > **写保护**：`specs/*.md` 的 body 通过 `wiki update` 禁止修改（403），需使用 `wiki append` / `wiki remove-entry`。`memory/*.md` 支持 CRUD。虚拟条目（issue、codebase、KG）完全只读。
 >
-> **KG 集成**：当 `.workflow/codebase/knowledge-graph.json` 存在时，KG 节点、架构层、代码导览自动作为虚拟条目索引到 wiki，可通过 `wiki search`、`wiki list --keyword kg` 发现。
+> **KG 集成**：当 `.workflow/codebase/knowledge-graph.json` 存在时，KG 节点、架构层、代码导览自动作为虚拟条目索引到 wiki，可通过 `wiki search`、`wiki list --query kg` 发现。
 
 </details>
 

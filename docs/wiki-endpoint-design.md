@@ -182,13 +182,13 @@ curl -X DELETE 'http://127.0.0.1:3001/api/wiki/spec-rate-limit'
 
 | 子命令 | 说明 | 常用选项 |
 |--------|------|---------|
-| `wiki list` / `ls` | 列表 + 过滤 | `--type --tag --status --category --created-by -q --group --json` |
+| `wiki list` / `ls` | 列表 + 过滤 | `--type --tag --status --category -q --json` |
 | `wiki get <id>` | 单个节点 | `--json` |
 | `wiki search <query...>` | BM25 搜索 | `--json` |
-| `wiki health` | 健康评分 + Top hubs | `--json` |
+| `wiki health` | 健康评分 + Top hubs | — |
 | `wiki graph` | 完整图谱（JSON） | — |
 | `wiki orphans` | 孤立节点列表 | `--json` |
-| `wiki hubs` | Top-N 中心节点 | `--limit <n> --json` |
+| `wiki hubs` | Top-N 中心节点 | `--limit <n>` |
 | `wiki backlinks <id>` | 反向链接 | — |
 | `wiki forward <id>` | 前向链接 | — |
 
