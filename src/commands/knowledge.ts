@@ -13,6 +13,13 @@ import {
   recordSessionKnowledgeInputs,
   stageSessionKnowledgeCandidate,
 } from '../run/session-knowledge.js';
+import {
+  buildTranscriptUri,
+  quoteSha256,
+  renderTranscriptEvidence,
+  storeTranscriptEvidence,
+  transcriptQuoteInputSchema,
+} from '../run/transcript-evidence.js';
 import { resolveWriteAuthority } from '../run/knowledge-identity.js';
 import { auditKnowledge, type KnowledgeAuditScope } from '../knowledge/audit.js';
 import { SessionStore } from '../run/store.js';
@@ -223,7 +230,7 @@ function buildKnowledgeSessionView(projectRoot: string, sessionId: string) {
   return { ...summary, candidates };
 }
 
-function printKnowledgeReview(view: KnowledgeSessionView): void {
+function printKnowledgeReview(view: KnowledgeSessionView, projectRoot: string): void {
   console.log(`Knowledge review: ${view.session_id}`);
   console.log(
     `${view.candidates.length} candidate(s) · `
@@ -243,7 +250,14 @@ function printKnowledgeReview(view: KnowledgeSessionView): void {
     const snippet = body.replace(/\s+/g, ' ').trim();
     if (snippet) console.log(`  content: ${snippet.slice(0, 140)}${snippet.length > 140 ? '…' : ''}`);
     if (candidate.evidence_refs?.length) {
-      console.log(`  evidence: ${candidate.evidence_refs.slice(0, 5).join(', ')}${candidate.evidence_refs.length > 5 ? ' …' : ''}`);
+      // K16 — transcript anchor URIs render as snapshot-present/absent with a
+      // desensitized preview and the [untrusted] marker; other refs stay raw.
+      const visible = candidate.evidence_refs.slice(0, 5).map(ref =>
+        ref.startsWith('transcript:')
+          ? renderTranscriptEvidence(ref, projectRoot, view.session_id).summary
+          : ref,
+      );
+      console.log(`  evidence: ${visible.join(', ')}${candidate.evidence_refs.length > 5 ? ' …' : ''}`);
     }
     console.log(
       `  reconciliation: ${policy?.disposition ?? 'missing'}/`
@@ -387,6 +401,7 @@ export function registerKnowledgeCommand(program: Command): void {
     .option('--action <action>', `Candidate intent: ${KNOWLEDGE_CANDIDATE_ACTIONS.join('|')}`, 'propose')
     .option('--category <category>', 'Spec/knowhow category')
     .option('--evidence <refs>', 'Comma-separated evidence references (required for session-source candidates)')
+    .option('--transcript-quote <path>', 'Transcript quote JSON descriptor file: {host_kind, host_session_id, entry_id, quote}; captures a content-addressed snapshot and appends its transcript: URI to the evidence refs')
     .option('--signal <signal>', `Also record a knowledge signal: ${KNOWLEDGE_INPUT_SIGNALS.join('|')}`)
     .option('--signal-ids <ids>', 'Comma-separated knowledge IDs for --signal')
     .option('--run <run-id>', 'Explicit Run ID (run-source staging)')
@@ -404,6 +419,7 @@ export function registerKnowledgeCommand(program: Command): void {
         action?: string;
         contentFile?: string;
         evidence?: string;
+        transcriptQuote?: string;
         signal?: string;
         signalIds?: string;
         run?: string;
@@ -459,7 +475,53 @@ export function registerKnowledgeCommand(program: Command): void {
         }
         await validateKnowledgeSignalIds(projectRoot, signalIds, opts.allowUnknown);
 
-        const evidenceRefs = opts.evidence?.split(',');
+        const evidenceRefs = opts.evidence?.split(',').map(ref => ref.trim()).filter(Boolean) ?? [];
+        if (opts.transcriptQuote) {
+          // K13 — snapshot the quoted fragment before staging and append its
+          // K12 anchor URI. The raw quote never enters the process argv: the
+          // descriptor arrives via a private file path.
+          const raw = readFileSync(
+            resolve(opts.workflowRoot, opts.transcriptQuote),
+            'utf8',
+          );
+          let descriptorJson: unknown;
+          try {
+            descriptorJson = JSON.parse(raw);
+          } catch {
+            throw new Error('Invalid --transcript-quote descriptor: not valid JSON');
+          }
+          const descriptor = transcriptQuoteInputSchema.safeParse(descriptorJson);
+          if (!descriptor.success) {
+            throw new Error(
+              'Invalid --transcript-quote descriptor: expected '
+              + '{host_kind, host_session_id, entry_id, quote}; missing or invalid: '
+              + descriptor.error.issues.map(issue => issue.path.join('.') || 'root').join(', '),
+            );
+          }
+          const host = {
+            host_kind: descriptor.data.host_kind,
+            host_session_id: descriptor.data.host_session_id,
+            entry_id: descriptor.data.entry_id,
+          };
+          // Validate every deterministic URI field before persisting raw quote
+          // bytes; invalid locators must leave no orphan snapshot behind.
+          const transcriptUri = buildTranscriptUri(
+            host.host_kind,
+            host.host_session_id,
+            host.entry_id,
+            quoteSha256(descriptor.data.quote),
+          );
+          const snapshot = storeTranscriptEvidence(
+            projectRoot,
+            authority.sessionId,
+            descriptor.data.quote,
+            host,
+          );
+          if (!snapshot.sha256.startsWith(transcriptUri.split(':').at(-1)!)) {
+            throw new Error('Transcript evidence snapshot hash does not match its URI');
+          }
+          evidenceRefs.push(transcriptUri);
+        }
         let result: { session_id: string; candidate_id: string; run_id?: string; origin?: 'session' };
         let signalResult: { recorded: number } | null = null;
         if (authority.kind === 'run') {
@@ -861,7 +923,7 @@ export function registerKnowledgeCommand(program: Command): void {
           console.log(JSON.stringify(view, null, 2));
           return;
         }
-        printKnowledgeReview(view);
+        printKnowledgeReview(view, projectRoot);
       } catch (error) {
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
         process.exitCode = 1;

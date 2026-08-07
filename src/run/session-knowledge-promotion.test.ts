@@ -137,6 +137,59 @@ describe('session-source promotion gate matrix (K5)', () => {
     expect(promoted?.status).toBe('promoted');
     expect(promoted?.promotion_receipt?.outcome).toBe('created');
   });
+
+  it('resolves transcript-only copies across Run and Session origins with one decision', () => {
+    const projectRoot = root();
+    installCommand(projectRoot);
+    const content = 'Shared transcript-only cross-origin insight';
+    const created = createRun({
+      projectRoot,
+      command: 'knowledge-demo',
+      sessionId: 'mixed-origin-transcript-session',
+      intent: 'mixed origin transcript resolution',
+    });
+    const runStaged = stageRunKnowledgeCandidate(projectRoot, created.run_id, {
+      target: 'knowhow',
+      title: 'Shared transcript-only insight',
+      content,
+      evidenceRefs: ['transcript:pi:host-1:entry-1:aaaaaaaaaaaaaaaa'],
+    }, created.session_id);
+    const sessionStaged = stageSessionKnowledgeCandidate(projectRoot, created.session_id, {
+      target: 'knowhow',
+      title: 'Shared transcript-only insight',
+      content,
+      evidenceRefs: ['transcript:pi:host-2:entry-2:bbbbbbbbbbbbbbbb'],
+    });
+    expect(sessionStaged.candidate_id).toBe(runStaged.candidate_id);
+
+    completeRun(projectRoot, created.run_id, created.session_id);
+    sealSession(projectRoot, created.session_id, 'mixed transcript origins sealed');
+    const resolved = resolveKnowledgeCandidate(
+      projectRoot,
+      created.session_id,
+      runStaged.candidate_id,
+      'unique',
+      { reason: 'Human reviewed both cross-origin transcript references' },
+    );
+    expect(resolved.affected_runs).toContain(created.run_id);
+
+    const result = promoteReconciledSessionKnowledge(projectRoot, created.session_id, {
+      candidateIds: [runStaged.candidate_id],
+    });
+    expect(result.promoted.map(item => item.candidate_id)).toContain(runStaged.candidate_id);
+
+    const store = new SessionStore(projectRoot);
+    const sessionDelta = readSessionKnowledgeDelta(store, created.session_id, true);
+    expect(sessionDelta.candidates.find(item => item.candidate_id === runStaged.candidate_id)?.status)
+      .toBe('promoted');
+    const runDelta = JSON.parse(readFileSync(
+      join(store.runDir(created.session_id, created.run_id), 'knowledge-delta.json'),
+      'utf8',
+    ));
+    expect(runDelta.candidates.find(
+      (item: { candidate_id: string }) => item.candidate_id === runStaged.candidate_id,
+    )?.status).toBe('promoted');
+  });
 });
 
 describe('mixed-origin accounting (K7)', () => {

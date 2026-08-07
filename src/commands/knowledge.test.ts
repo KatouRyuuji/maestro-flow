@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Command } from 'commander';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -102,6 +102,73 @@ describe('maestro knowledge Run lifecycle CLI', () => {
       }),
     ]);
     expect(errors).toEqual([]);
+  });
+
+  it('stages a transcript descriptor from a file and keeps quote out of review output', async () => {
+    const created = createRun({
+      projectRoot,
+      command: 'knowledge-cli',
+      sessionId: 'knowledge-transcript-session',
+      intent: 'exercise transcript evidence CLI',
+    });
+    const descriptorPath = join(projectRoot, 'quote.json');
+    const rawQuote = 'sensitive raw transcript text';
+    writeFileSync(descriptorPath, JSON.stringify({
+      host_kind: 'pi',
+      host_session_id: 'host-session-1',
+      entry_id: 'entry-1',
+      quote: rawQuote,
+    }), 'utf8');
+
+    await run(
+      'stage', 'knowhow', 'Distilled transcript rule', 'Use a distilled and verified rule.',
+      '--run', created.run_id,
+      '--session', created.session_id,
+      '--transcript-quote', descriptorPath,
+      '--json',
+    );
+    const delta = readRunKnowledgeDelta(new SessionStore(projectRoot), created.session_id, created.run_id);
+    expect(delta.candidates).toHaveLength(1);
+    expect(delta.candidates[0].content).toBe('Use a distilled and verified rule.');
+    expect(delta.candidates[0].evidence_refs.some(ref => ref.startsWith('transcript:pi:host-session-1:entry-1:')))
+      .toBe(true);
+    const evidenceDir = join(projectRoot, '.workflow', 'sessions', created.session_id, 'transcript-evidence');
+    expect(readdirSync(evidenceDir)).toHaveLength(1);
+
+    logs = [];
+    await run('review', created.session_id);
+    expect(logs.join('\n')).toContain('[untrusted]');
+    expect(logs.join('\n')).not.toContain(rawQuote);
+    expect(errors).toEqual([]);
+  });
+
+  it('rejects invalid transcript locator fields before writing snapshot or candidate', async () => {
+    const created = createRun({
+      projectRoot,
+      command: 'knowledge-cli',
+      sessionId: 'knowledge-transcript-invalid-session',
+      intent: 'reject invalid transcript locator',
+    });
+    const descriptorPath = join(projectRoot, 'invalid-quote.json');
+    writeFileSync(descriptorPath, JSON.stringify({
+      host_kind: 'pi',
+      host_session_id: 'bad:session',
+      entry_id: 'entry-1',
+      quote: 'must not persist',
+    }), 'utf8');
+
+    await run(
+      'stage', 'knowhow', 'Invalid transcript', 'Distilled content.',
+      '--run', created.run_id,
+      '--session', created.session_id,
+      '--transcript-quote', descriptorPath,
+    );
+    expect(process.exitCode).toBe(1);
+    expect(errors.join('\n')).toContain('cannot round-trip');
+    const evidenceDir = join(projectRoot, '.workflow', 'sessions', created.session_id, 'transcript-evidence');
+    expect(existsSync(evidenceDir)).toBe(false);
+    const delta = readRunKnowledgeDelta(new SessionStore(projectRoot), created.session_id, created.run_id);
+    expect(delta.candidates).toEqual([]);
   });
 
   it('rejects invalid signal options before staging a candidate', async () => {

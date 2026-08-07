@@ -4,6 +4,7 @@ import { basename, join, relative } from 'node:path';
 
 import { tryDaemonSearch } from '../search/daemon-client.js';
 import {
+  isTranscriptOnlyEvidenceRefs,
   knowledgeCandidateId,
   promoteSessionKnowledge,
   readRunKnowledgeDelta,
@@ -78,6 +79,8 @@ interface CandidateView {
   content: string;
   category: string | null;
   source_kind: KnowledgeCandidate['source_kind'];
+  /** Evidence anchors as recorded in the ledger (K17 trust-gate input). */
+  evidence_refs: string[];
 }
 
 interface ReconcileOptions {
@@ -253,6 +256,7 @@ function candidateViews(
       content: candidate.content,
       category: candidate.category,
       source_kind: candidate.source_kind,
+      evidence_refs: [...candidate.evidence_refs],
     });
   }
   for (const draft of reportKnowledgeCandidateDrafts(frontmatter, runId)) {
@@ -272,6 +276,7 @@ function candidateViewFromDraft(draft: KnowledgeCandidateDraft): CandidateView {
     content: draft.content,
     category: draft.category,
     source_kind: draft.source_kind,
+    evidence_refs: [...draft.evidence_refs],
   };
 }
 
@@ -579,12 +584,22 @@ function reconcileCandidate(
     )
     .slice(0, MATCH_LIMIT);
   const disposition = candidateDisposition(candidate, matches);
+  const baseEligibility = eligibility(disposition);
+  // K17 trust gate: a candidate supported only by transcript anchors (iron
+  // rule 10 — untrusted) defaults to review_required so promote --all can never
+  // auto-promote raw conversation quotes. Suppressed dispositions (exact
+  // duplicates) keep their automatic outcome; explicit human resolution with
+  // --reason upgrades the candidate afterwards (docs/knowledge-window-evidence-plan.md §4.4).
+  const promotionEligibility = baseEligibility === 'eligible'
+    && isTranscriptOnlyEvidenceRefs(candidate.evidence_refs)
+    ? 'review_required'
+    : baseEligibility;
   const canonical = matches.find(match => match.relation === disposition) ?? matches[0] ?? null;
   return {
     result: knowledgeCandidateReconciliationSchema.parse({
       candidate_id: candidate.candidate_id,
       disposition,
-      promotion_eligibility: eligibility(disposition),
+      promotion_eligibility: promotionEligibility,
       canonical_id: canonical?.knowledge_id ?? null,
       matches,
       resolution: disposition === 'exact_duplicate'
@@ -839,6 +854,7 @@ function sessionCandidateViews(delta: SessionKnowledgeDelta): CandidateView[] {
       content: candidate.content,
       category: candidate.category,
       source_kind: candidate.source_kind,
+      evidence_refs: [...candidate.evidence_refs],
     }))
     .sort((left, right) => left.candidate_id.localeCompare(right.candidate_id));
 }
@@ -1049,21 +1065,55 @@ function resolutionState(
   }
 }
 
+export interface ResolveKnowledgeCandidateOptions {
+  targetId?: string;
+  reason: string;
+  /** Internal origin selector used to fan a bare candidate ID across K7 origins. */
+  _origin?: 'run' | 'session';
+  /** Avoid marking the same corpus conflict twice during cross-origin fan-out. */
+  _skipConflictMark?: boolean;
+}
+
 export function resolveKnowledgeCandidate(
   projectRoot: string,
   sessionId: string,
   candidateId: string,
   choice: KnowledgeResolutionChoice,
-  options: { targetId?: string; reason: string },
+  options: ResolveKnowledgeCandidateOptions,
 ): ResolveKnowledgeCandidateResult {
   const reason = options.reason.trim();
   if (!reason) throw new Error('Knowledge resolution requires a non-empty reason');
   const summary = summarizeSessionKnowledge(projectRoot, sessionId, { readOnly: true, strict: true });
   const matches = summary.candidates.filter(item => item.candidate_id === candidateId);
   if (matches.length === 0) throw new Error(`Unknown candidate ID: ${candidateId}`);
-  // Cross-origin same-ID candidates are separately accounted (K7); resolution
-  // targets the run-origin copy first, deterministically.
-  const candidate = matches.find(item => (item.origin ?? 'run') === 'run') ?? matches[0];
+
+  const origins = new Set(matches.map(item => item.origin ?? 'run'));
+  if (!options._origin && origins.has('run') && origins.has('session')) {
+    // Bare candidate IDs are the public API. When the same deterministic ID
+    // exists in both K7 origins, one human decision must update both receipts;
+    // otherwise resolve always targets Run first while promotion may read the
+    // unresolved Session policy. Retries are safe: promotion stays fail-closed
+    // until both origin receipts are confirmed.
+    const runResult = resolveKnowledgeCandidate(projectRoot, sessionId, candidateId, choice, {
+      ...options,
+      _origin: 'run',
+    });
+    const sessionResult = resolveKnowledgeCandidate(projectRoot, sessionId, candidateId, choice, {
+      ...options,
+      _origin: 'session',
+      _skipConflictMark: true,
+    });
+    return {
+      ...runResult,
+      affected_runs: [...new Set([...runResult.affected_runs, ...sessionResult.affected_runs])],
+      conflict_marked: runResult.conflict_marked || sessionResult.conflict_marked,
+    };
+  }
+
+  const candidate = options._origin
+    ? matches.find(item => (item.origin ?? 'run') === options._origin)
+    : matches.find(item => (item.origin ?? 'run') === 'run') ?? matches[0];
+  if (!candidate) throw new Error(`Candidate ${candidateId} has no ${options._origin} origin`);
   // K7b: session-origin candidates resolve through the session receipt/delta.
   if ((candidate.origin ?? 'run') === 'session') {
     return resolveSessionKnowledgeCandidate(projectRoot, sessionId, candidate, choice, options, reason);
@@ -1133,7 +1183,10 @@ export function resolveKnowledgeCandidate(
   }
 
   let conflictMarked = false;
-  if (choice === 'conflict' && targetMatch?.target === 'spec' && targetMatch.source_line !== null) {
+  if (!options._skipConflictMark
+    && choice === 'conflict'
+    && targetMatch?.target === 'spec'
+    && targetMatch.source_line !== null) {
     const file = basename(targetMatch.source_path);
     const marked = markConflict(projectRoot, file, targetMatch.source_line, {
       note: `Knowledge candidate ${candidateId}: ${reason}`,
@@ -1203,7 +1256,7 @@ function resolveSessionKnowledgeCandidate(
   sessionId: string,
   candidate: SessionKnowledgeSummary['candidates'][number],
   choice: KnowledgeResolutionChoice,
-  options: { targetId?: string; reason: string },
+  options: ResolveKnowledgeCandidateOptions,
   reason: string,
 ): ResolveKnowledgeCandidateResult {
   const store = new SessionStore(projectRoot);
@@ -1243,7 +1296,10 @@ function resolveSessionKnowledgeCandidate(
   }
 
   let conflictMarked = false;
-  if (choice === 'conflict' && targetMatch?.target === 'spec' && targetMatch.source_line !== null) {
+  if (!options._skipConflictMark
+    && choice === 'conflict'
+    && targetMatch?.target === 'spec'
+    && targetMatch.source_line !== null) {
     const file = basename(targetMatch.source_path);
     const marked = markConflict(projectRoot, file, targetMatch.source_line, {
       note: `Knowledge candidate ${candidate.candidate_id}: ${reason}`,

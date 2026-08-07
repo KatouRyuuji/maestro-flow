@@ -972,6 +972,44 @@ function blockingCandidatePolicy(
     ?? null;
 }
 
+/**
+ * K17 trust-gate predicate (shared with reconcile.ts): a candidate is
+ * transcript-only when its evidence set is non-empty and, after dropping the
+ * automatic origin markers (session:<sid> / run:<runId>), every remaining ref
+ * is a transcript: anchor. Only-assistant/tool/transcript-supported candidates
+ * default to review_required and are excluded from promote --all until a human
+ * --reason resolution or an independent verifier upgrades them
+ * (docs/knowledge-window-evidence-plan.md §4.4).
+ */
+const ORIGIN_EVIDENCE_PREFIX = /^(session|run):/;
+
+export function isTranscriptOnlyEvidenceRefs(refs: readonly string[]): boolean {
+  const meaningful = refs
+    .map(ref => ref.trim())
+    .filter(ref => ref.length > 0 && !ORIGIN_EVIDENCE_PREFIX.test(ref));
+  return meaningful.length > 0 && meaningful.every(ref => ref.startsWith('transcript:'));
+}
+
+/**
+ * A confirmed human resolution (--reason) upgrades a candidate past the gate.
+ * Defensive hardening (GPT final review): the resolution is only trusted when
+ * it is structurally complete (schema already requires reason/resolved_at); a
+ * partial or stale resolution never counts. Note: this defends against
+ * accidental/partial state, not against a local attacker with write access to
+ * the receipt file — that actor can rewrite the corpus directly (same trust
+ * boundary, documented in knowledge-window-evidence-plan.md §10.4).
+ */
+function hasConfirmedHumanResolution(policies: KnowledgeCandidateReconciliation[]): boolean {
+  return policies.some(policy => {
+    const r = policy.resolution;
+    return r?.status === 'confirmed'
+      && typeof r.reason === 'string'
+      && r.reason.trim().length > 0
+      && typeof r.resolved_at === 'string'
+      && r.resolved_at.length > 0;
+  });
+}
+
 function confirmedSupersessionTarget(
   policies: KnowledgeCandidateReconciliation[],
 ): string | null {
@@ -1017,13 +1055,26 @@ export function promoteSessionKnowledge(
       .filter(candidate => requested.has(candidate.candidate_id))
       .map(candidate => ({
         candidate,
-        policy: blockingCandidatePolicy(policyByCandidate.get(candidate.candidate_id) ?? []),
+        policies: policyByCandidate.get(candidate.candidate_id) ?? [],
       }))
-      .find(item => item.policy);
-    if (blocked?.policy) {
+      .find(item =>
+        blockingCandidatePolicy(item.policies)
+        || (
+          // K17 — transcript-only candidates need a human --reason resolution
+          // (or an independent verifier upgrade) before explicit promotion.
+          isTranscriptOnlyEvidenceRefs(item.candidate.evidence_refs)
+          && !hasConfirmedHumanResolution(item.policies)
+        )
+      );
+    const blocking = blocked && blockingCandidatePolicy(blocked.policies);
+    if (blocked) {
       throw new Error(
-        `Candidate ${blocked.candidate.candidate_id} promotion is ${blocked.policy.promotion_eligibility} `
-        + `(${blocked.policy.disposition}); resolve it with 'maestro knowledge promote <session-id> --resolve <candidate-id> --as <choice> [--target <knowledge-id>] --reason "<reason>"' (or the deprecated review --resolve) first`,
+        blocking
+          ? `Candidate ${blocked.candidate.candidate_id} promotion is ${blocking.promotion_eligibility} `
+            + `(${blocking.disposition}); resolve it with 'maestro knowledge promote <session-id> --resolve <candidate-id> --as <choice> [--target <knowledge-id>] --reason "<reason>"' (or the deprecated review --resolve) first`
+          : `Candidate ${blocked.candidate.candidate_id} is backed only by transcript evidence; `
+            + `resolve it with 'maestro knowledge promote <session-id> --resolve <candidate-id> --as unique --reason "<reason>"' `
+            + 'before promotion (untrusted quotes require human review)',
       );
     }
   }
@@ -1046,9 +1097,16 @@ export function promoteSessionKnowledge(
     : pending.filter(candidate => requested.has(candidate.candidate_id));
   const skippedReviewRequired = options.all
     ? eligiblePending
-      .filter(candidate => blockingCandidatePolicy(
-        policyByCandidate.get(candidate.candidate_id) ?? [],
-      )?.promotion_eligibility === 'review_required')
+      .filter(candidate => {
+        const policies = policyByCandidate.get(candidate.candidate_id) ?? [];
+        return blockingCandidatePolicy(policies)?.promotion_eligibility === 'review_required'
+          || (
+            // K17 — transcript-only candidates are excluded from --all
+            // auto-promotion until a human --reason resolution upgrades them.
+            isTranscriptOnlyEvidenceRefs(candidate.evidence_refs)
+            && !hasConfirmedHumanResolution(policies)
+          );
+      })
       .map(candidate => candidate.candidate_id)
     : [];
   const skippedSuppressed = options.all
