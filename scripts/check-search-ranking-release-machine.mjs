@@ -762,10 +762,10 @@ function validateActualPackageBuildControls(graph) {
       && edge.provenance?.role === 'source'
     ))
   ));
-  if (!buildRoot || !bareTsc || inlineNodes.length !== 2 || !inlineEdgesValid) {
+  if (!buildRoot || !bareTsc || inlineNodes.length !== 3 || !inlineEdgesValid) {
     fail(
       'INVALID_PACKAGE_BUILD_GRAPH',
-      'source graph must resolve the actual build root, bare tsc, and both node -e controls',
+      'source graph must resolve the actual build root, bare tsc, and all node -e controls',
       {
         buildRoot,
         bareTsc,
