@@ -202,6 +202,7 @@ export interface CreateRunResult {
   argument_requirements: ArgumentRequirement[];
   entry_gates: GateSummary;
   entry_blockers: NamedGateBlocker[];
+  session_created: boolean;
   next: { command: string; reason: string };
 }
 
@@ -2055,6 +2056,7 @@ export function createRun(options: CreateRunOptions): CreateRunResult {
       argument_requirements: argumentRequirements,
       entry_gates: entrySummary,
       entry_blockers: entryBlockers,
+      session_created: !sessionExisted && Boolean(options.sessionId),
       next: {
         command: `maestro run brief ${runId}`,
         reason: entrySummary.blocking.length > 0

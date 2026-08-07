@@ -65,7 +65,7 @@ async function validateKnowledgeSignalIds(
   const unique = [...new Set(ids.map(id => id.trim()).filter(Boolean))];
   if (unique.length === 0) return;
   const { getWikiIndexer, findEntry } = await import('./load.js');
-  const indexer = await getWikiIndexer();
+  const indexer = await getWikiIndexer(projectRoot);
   const index = await indexer.get();
   const unknown = unique.filter(id => !findEntry(index, id));
   if (unknown.length === 0) return;
@@ -239,6 +239,12 @@ function printKnowledgeReview(view: KnowledgeSessionView): void {
       `\n${candidate.candidate_id} [${candidate.stage}/${candidate.status}] `
       + `${candidate.target}:${candidate.category ?? 'uncategorized'} · ${candidate.title}`,
     );
+    const body = candidate.content ?? '';
+    const snippet = body.replace(/\s+/g, ' ').trim();
+    if (snippet) console.log(`  content: ${snippet.slice(0, 140)}${snippet.length > 140 ? '…' : ''}`);
+    if (candidate.evidence_refs?.length) {
+      console.log(`  evidence: ${candidate.evidence_refs.slice(0, 5).join(', ')}${candidate.evidence_refs.length > 5 ? ' …' : ''}`);
+    }
     console.log(
       `  reconciliation: ${policy?.disposition ?? 'missing'}/`
       + `${policy?.promotion_eligibility ?? 'unavailable'} · ${candidate.review.freshness}`,
@@ -506,6 +512,24 @@ export function registerKnowledgeCommand(program: Command): void {
         const where = authority.kind === 'run'
           ? `${result.session_id}/${result.run_id}`
           : `${result.session_id} (session source)`;
+        if (!opts.json && !('reused' in result && result.reused)) {
+          const summary = summarizeSessionKnowledge(projectRoot, result.session_id, {
+            readOnly: true,
+            strict: true,
+          });
+          const normalizedTitle = title.trim().toLowerCase();
+          const siblings = summary.candidates.filter(candidate =>
+            candidate.candidate_id !== result.candidate_id
+            && candidate.title.trim().toLowerCase() === normalizedTitle
+            && candidate.status === 'pending'
+          );
+          if (siblings.length > 0) {
+            console.error(
+              `Note: same title already staged as ${siblings.map(sibling => sibling.candidate_id).join(', ')} `
+              + '(different content creates a new candidate; review may group them as related/duplicate)',
+            );
+          }
+        }
         console.log(
           `Staged ${result.candidate_id} on ${where}`
           + ('reused' in result && result.reused ? ' (identical content already staged; existing candidate kept — title/evidence unchanged)' : '')

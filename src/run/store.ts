@@ -649,7 +649,21 @@ export class SessionStore {
   }
 
   findRun(runId: string, sessionId?: string): { sessionId: string; run: CommandRun } {
-    if (sessionId) return { sessionId, run: this.readRun(sessionId, runId) };
+    if (sessionId) {
+      if (!this.sessionExists(sessionId)) {
+        throw new Error(
+          `Session not found: ${sessionId} (looking for Run ${runId}); `
+          + 'list sessions with: maestro session list',
+        );
+      }
+      if (!existsSync(join(this.runDir(sessionId, runId), 'run.json'))) {
+        throw new Error(
+          `Run not found: ${runId} in Session ${sessionId}; `
+          + `check the run id with: maestro run list --session ${sessionId}`,
+        );
+      }
+      return { sessionId, run: this.readRun(sessionId, runId) };
+    }
     if (!existsSync(this.sessionsRoot)) throw new Error(`Run not found: ${runId}`);
     const matches: string[] = [];
     for (const candidate of readdirSync(this.sessionsRoot)) {

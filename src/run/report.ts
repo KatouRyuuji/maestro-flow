@@ -14,7 +14,17 @@ export function readReportFrontmatter(runDir: string): ReportFrontmatter {
   const raw = readFileSync(path, 'utf8');
   const match = raw.match(/^---\s*\r?\n([\s\S]*?)\r?\n---/);
   if (!match) return reportFrontmatterSchema.parse({});
-  const parsed = YAML.parse(match[1]);
+  let parsed: unknown;
+  try {
+    parsed = YAML.parse(match[1], { prettyErrors: true });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message.split('\n')[0] : String(error);
+    throw new Error(
+      'report.md frontmatter YAML is invalid: ' + detail + '. '
+      + 'Check the --- delimiters, indentation, and that quotes/brackets are closed; '
+      + 'values containing colons or special characters should be quoted.',
+    );
+  }
   try {
     return reportFrontmatterSchema.parse(parsed ?? {});
   } catch (err) {

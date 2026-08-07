@@ -21,25 +21,30 @@ const VALID_TYPES = ['spec', 'knowhow', 'note', 'domain', 'issue', 'project', 'r
 type LoadType = (typeof VALID_TYPES)[number];
 
 let _indexer: WikiIndexer | null = null;
+let _indexerRoot: string | null = null;
 
-async function getIndexer(): Promise<WikiIndexer> {
-  if (!_indexer) {
-    const { WikiIndexer: Cls } = await import('#maestro-dashboard/wiki/wiki-indexer.js');
-    const workflowRoot = resolve('.workflow');
-    const projectPath = process.cwd();
-    const wsConfig = loadWorkspaceConfig(projectPath);
-    const resolved = resolveWorkspaceLinks(projectPath, wsConfig);
-    const linkedWorkspaces = resolved
-      .filter(lw => lw.valid)
-      .map(lw => ({ name: lw.name, workflowRoot: lw.workflowRoot, shareTypes: lw.share }));
-    _indexer = new Cls({ workflowRoot, linkedWorkspaces });
+async function getIndexer(projectRoot?: string): Promise<WikiIndexer> {
+  const root = resolve(projectRoot ?? '.');
+  if (_indexer && _indexerRoot === root) return _indexer;
+  if (_indexerRoot !== root) {
+    _indexer = null;
+    _indexerRoot = root;
   }
+  const { WikiIndexer: Cls } = await import('#maestro-dashboard/wiki/wiki-indexer.js');
+  const workflowRoot = resolve(root, '.workflow');
+  const projectPath = root;
+  const wsConfig = loadWorkspaceConfig(projectPath);
+  const resolved = resolveWorkspaceLinks(projectPath, wsConfig);
+  const linkedWorkspaces = resolved
+    .filter(lw => lw.valid)
+    .map(lw => ({ name: lw.name, workflowRoot: lw.workflowRoot, shareTypes: lw.share }));
+  _indexer = new Cls({ workflowRoot, linkedWorkspaces });
   return _indexer;
 }
 
 /** Shared indexer accessor for knowledge signal-id validation (K8). */
-export async function getWikiIndexer(): Promise<WikiIndexer> {
-  return getIndexer();
+export async function getWikiIndexer(projectRoot?: string): Promise<WikiIndexer> {
+  return getIndexer(projectRoot);
 }
 
 function matchesType(entry: WikiEntry, type: LoadType): boolean {

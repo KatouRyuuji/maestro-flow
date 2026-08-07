@@ -577,7 +577,7 @@ export function stageHandoffKnowledgeCandidates(
       content: decision.text.trim(),
       category: 'arch',
       source_kind: 'decision',
-      evidence_refs: evidence,
+      evidence_refs: [...evidence, `report.md#decision:${decision.id ?? '?'}`],
     }, now);
   }
   for (const constraint of run.handoff.constraints) {
@@ -589,7 +589,7 @@ export function stageHandoffKnowledgeCandidates(
       content: constraint.text.trim(),
       category: 'arch',
       source_kind: 'constraint',
-      evidence_refs: evidence,
+      evidence_refs: [...evidence, `report.md#constraint:${constraint.id ?? '?'}`],
     }, now);
   }
 

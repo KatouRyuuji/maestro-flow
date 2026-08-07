@@ -1089,8 +1089,12 @@ export function registerSearchCommand(program: Command): void {
     .option('--include-deprecated', 'Include superseded/deprecated knowledge entries (hidden by default)')
     .option('--no-emb', 'Skip embedding, use BM25 only')
     .option('--json', 'Output as JSON')
+    .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
     .action(async (queryParts: string[], opts) => {
       const q = queryParts.join(' ');
+      if (opts.workflowRoot && resolve(opts.workflowRoot) !== process.cwd()) {
+        process.chdir(resolve(opts.workflowRoot));
+      }
       const limit = 20;
       const resolvedTag = opts.tag ?? opts.kind;
       const wikiOnly = opts.wikiOnly === true || typeof resolvedTag === 'string';

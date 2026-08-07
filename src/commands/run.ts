@@ -306,6 +306,12 @@ export function registerRunCommand(program: Command): void {
           platform,
           args: opts.arg,
         });
+        if (result.session_created && opts.session) {
+          console.error(
+            `Warning: Session "${opts.session}" did not exist; created it for this Run. `
+            + `If you meant an existing Session, use its exact ID (see "maestro session list").`,
+          );
+        }
         print(result);
       } catch (error) {
         reportError(error);
@@ -708,6 +714,12 @@ export function registerRunCommand(program: Command): void {
           platform,
           args: [...opts.arg, ...positionalArgs],
         });
+        if (!opts.json && result.session_created && opts.session) {
+          console.error(
+            `Warning: Session "${opts.session}" did not exist; created it for this Run. `
+            + `If you meant an existing Session, use its exact ID (see "maestro session list").`,
+          );
+        }
         if (opts.json) machineSuccess('create', result, { session_id: result.session_id, run_id: result.run_id }); else print(result);
       } catch (error) {
         if (opts.json) machineError('create', error); else reportError(error);
