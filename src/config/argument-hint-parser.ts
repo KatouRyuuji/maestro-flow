@@ -191,9 +191,9 @@ function parseToken(token: string): SkillParamDef[] {
     const paramName = inner.slice(0, spaceIdx);
     const valueSpec = inner.slice(spaceIdx + 1).trim();
 
-    // Enum: val1|val2|val3 (no angle brackets, no N)
+    // Enum: val1|val2|val3 (no angle brackets, no N); strip <> like the positional enum branch
     if (valueSpec.includes('|') && !valueSpec.startsWith('<')) {
-      const choices = valueSpec.split('|').map(c => c.trim());
+      const choices = valueSpec.split('|').map(c => c.trim().replace(/[<>\[\]]/g, ''));
       return [{ name: paramName, type: 'enum', choices, required: isRequired }];
     }
 

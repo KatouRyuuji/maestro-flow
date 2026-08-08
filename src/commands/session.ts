@@ -594,6 +594,7 @@ export function registerSessionCommand(program: Command): void {
         const slug = opts.id ?? slugifySessionTopic(intent, slugifySessionTopic(fallbackSlug));
         const created = createChainSession(root, slug, {
           intent,
+          topic: opts.topic,
           engine: opts.engine as 'ralph' | 'coordinator' | 'manual' | undefined,
           qualityMode: opts.quality as 'quick' | 'standard' | 'full' | undefined,
           autoMode: opts.auto,
@@ -608,7 +609,7 @@ export function registerSessionCommand(program: Command): void {
           next: `maestro session next --session ${created.sessionId}`,
         };
         if (opts.dispatch) {
-          const next = runNextStep(root, { sessionId: created.sessionId, args: opts.arg });
+          const next = runNextStep(root, { sessionId: created.sessionId, args: opts.arg.length > 0 ? opts.arg : undefined });
           result.dispatched = next.result;
           result.message = next.message;
           if (next.exitCode !== 0) process.exitCode = next.exitCode;

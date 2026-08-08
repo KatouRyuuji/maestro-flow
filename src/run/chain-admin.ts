@@ -22,6 +22,7 @@ import type {
   SessionState,
 } from './schemas.js';
 import { validateSessionId } from './ids.js';
+import { createTopicIdentity } from './topic-identity.js';
 import { checkLease } from './lease.js';
 import {
   assertTransitionMutationRevisions,
@@ -126,6 +127,8 @@ const DEFAULT_DECISION_MAX_RETRIES = 2;
 
 export interface CreateChainSessionOpts {
   intent?: string;
+  /** Optional explicit topic identity; without it topic_identity stays null. */
+  topic?: string;
   engine?: 'ralph' | 'coordinator' | 'manual';
   qualityMode?: 'quick' | 'standard' | 'full';
   autoMode?: boolean;
@@ -267,6 +270,9 @@ export function createChainSession(
     const boundaryContract = opts.boundaryContract ?? def?.boundary_contract;
     if (boundaryContract) {
       draft.session.boundary_contract = boundaryContract;
+    }
+    if (opts.topic) {
+      draft.session.topic_identity = createTopicIdentity(projectRoot, opts.topic);
     }
     if (materialized) {
       o.chain = materialized.chain;

@@ -274,6 +274,7 @@ export function registerRunCommand(program: Command): void {
           const sessionSlug = opts.id ?? slugifySessionTopic(intent, fallbackSlug);
           const created = createChainSession(projectRoot, sessionSlug, {
             intent,
+            topic: opts.topic,
             definition,
             engine: definition.engine,
             qualityMode: definition.quality_mode,
@@ -288,7 +289,7 @@ export function registerRunCommand(program: Command): void {
             next: `maestro session next --session ${created.sessionId}`,
           };
           if (opts.dispatch) {
-            const next = runNextStep(projectRoot, { sessionId: created.sessionId, args: opts.arg });
+            const next = runNextStep(projectRoot, { sessionId: created.sessionId, args: opts.arg.length > 0 ? opts.arg : undefined });
             result.dispatched = next.result;
             result.message = next.message;
             if (next.exitCode !== 0) process.exitCode = next.exitCode;
