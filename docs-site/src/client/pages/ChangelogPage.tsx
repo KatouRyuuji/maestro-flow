@@ -17,6 +17,13 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    version: '0.5.66',
+    date: '2026-08',
+    changes: [
+      { type: 'fix', text_en: 'Support line-delimited artifact metadata: run check/done now reads _meta from the first line of .ndjson/.jsonl outputs, strips UTF-8 BOM from metadata-bearing files, registers application/x-ndjson media type, and adds skipArtifactMetadataValidation to downgrade contract metadata mismatches to warnings', text_zh: '支持行分隔的产物元数据：run check/done 可从 .ndjson/.jsonl 输出的首行读取 _meta，去除元数据文件的 UTF-8 BOM，新增 application/x-ndjson 媒体类型，并提供 skipArtifactMetadataValidation 将契约元数据不匹配降级为警告' },
+    ],
+  },
+  {
     version: '0.5.65',
     date: '2026-08',
     changes: [
