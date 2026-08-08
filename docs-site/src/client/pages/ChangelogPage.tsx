@@ -17,6 +17,13 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    version: '0.5.67',
+    date: '2026-08',
+    changes: [
+      { type: 'fix', text_en: 'Chain dispatch fixes: pass --arg through chain dispatch while keeping failed sessions canonical-reachable, preserve chain-file step args and explicit topic in chain start, and register projections on all session creation paths with enum argument validation plus session prune', text_zh: '链式调度修复：--arg 穿透链式调度且失败会话保持 canonical 可达，chain 启动时保留 chain-file 步骤参数与显式 topic，并在所有会话创建路径注册 projections、校验枚举参数并新增 session prune' },
+    ],
+  },
+  {
     version: '0.5.66',
     date: '2026-08',
     changes: [
