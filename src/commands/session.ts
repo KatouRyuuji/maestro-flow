@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import type { Command } from 'commander';
 import { migrateAllSessions, migrateSession } from '../run/migrate.js';
 import { SessionStore } from '../run/store.js';
-import { completeRunWithVerdict, createRun, sealSession, type CompletionVerdict } from '../run/runtime.js';
+import { completeRunWithVerdict, createRun, ensureSessionProjectionOnDisk, pruneOrphanSessions, sealSession, type CompletionVerdict } from '../run/runtime.js';
 import { runNextStep } from '../run/next.js';
 import { runDecide, type DecisionConfidence, type DecisionVerdict } from '../run/decide.js';
 import { continuationAfterDecide, inspectSessionContinuation } from '../run/continuation.js';
@@ -509,12 +509,14 @@ export function registerSessionCommand(program: Command): void {
           executor: platform ? { platform, cli_tool: platform } : undefined,
           definition,
         });
+        const projectionWarning = ensureSessionProjectionOnDisk(root, result.sessionId);
         print({
           session_id: result.sessionId,
           session_dir: result.sessionDir,
           engine: result.session.orchestration.engine,
           chain: definition ? chainSummary(definition.steps) : persistedChainSummary(result.session),
           next: `maestro session next --session ${result.sessionId}`,
+          ...(projectionWarning ? { warning: projectionWarning } : {}),
         });
       } catch (error) {
         reportError(error);
@@ -613,6 +615,9 @@ export function registerSessionCommand(program: Command): void {
           result.dispatched = next.result;
           result.message = next.message;
           if (next.exitCode !== 0) process.exitCode = next.exitCode;
+        } else {
+          const projectionWarning = ensureSessionProjectionOnDisk(root, created.sessionId);
+          if (projectionWarning) result.warning = projectionWarning;
         }
         print(result);
       } catch (error) {
@@ -994,6 +999,19 @@ export function registerSessionCommand(program: Command): void {
         }
       } catch (error) {
         if (opts.json) machineError('decide' as never, error, opts); else reportError(error);
+      }
+    });
+
+  session
+    .command('prune')
+    .description('List or remove orphan Session directories (on disk, no state.json projection, no Runs); dry-run by default')
+    .option('--apply', 'delete orphan directories and prune dangling projections')
+    .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
+    .action((opts: { apply?: boolean; workflowRoot: string }) => {
+      try {
+        print(pruneOrphanSessions(resolve(opts.workflowRoot), Boolean(opts.apply)));
+      } catch (error) {
+        reportError(error);
       }
     });
 

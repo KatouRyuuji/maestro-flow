@@ -38,7 +38,7 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveStepContent } from './contract.js';
-import { briefRun, createRun, projectSessionEntry, resolveArgumentRequirements, type CreateRunResult, type NamedGateBlocker, type PrevHandoff, type RunUpstream } from './runtime.js';
+import { briefRun, createRun, projectSessionEntry, resolveArgumentRequirements, resolveUnknownFlags, type CreateRunResult, type NamedGateBlocker, type PrevHandoff, type RunUpstream } from './runtime.js';
 import {
   activeStepIndex,
   nextPendingIndex,
@@ -144,6 +144,7 @@ export type NextReasonCode =
   | 'PICK_DECISION_NODE'
   | 'COMMAND_CONTENT_MISSING'
   | 'ARGUMENT_REQUIRED'
+  | 'ARGUMENT_INVALID'
   | 'INTERNAL_ERROR';
 
 export interface NextOutcome {
@@ -660,7 +661,8 @@ export function runNextStep(projectRoot: string, opts: NextCmdOptions = {}): Nex
   const args = opts.args ?? (chainStep.args ? [chainStep.args] : []);
   const argumentRequirements = resolveArgumentRequirements(projectRoot, chainStep.command, args);
   const missingArguments = argumentRequirements.filter(item => item.required && item.missing);
-  if (missingArguments.length > 0) {
+  const invalidArguments = argumentRequirements.filter(item => item.invalid !== undefined);
+  if (missingArguments.length > 0 || invalidArguments.length > 0) {
     // A failed first dispatch still leaves the Session directory on disk but
     // state.json carries no projection (ensureSessionProjection is written only
     // by a successful createRun / seal). Without a projection the Pi-side
@@ -668,20 +670,31 @@ export function runNextStep(projectRoot: string, opts: NextCmdOptions = {}): Nex
     // mutation command (`run edit`, `session chain replace`, `session next`)
     // against it. Best-effort write the projection so the orphan stays
     // canonical-reachable and repairable via `session chain replace --args`.
+    // Persistence failure is surfaced as a warning, never silently dropped.
+    let projectionWarning: string | null = null;
     try {
       const state = readStateJson(projectRoot);
       if (state) {
         writeStateJson(projectRoot, ensureSessionProjection(state, projectSessionEntry(session)));
+      } else {
+        projectionWarning = 'state.json missing; session projection not registered';
       }
-    } catch {
-      // Projection is a repair convenience; the ARGUMENT_REQUIRED error stays authoritative.
+    } catch (error) {
+      projectionWarning = `session projection registration failed: ${(error as Error).message}`;
     }
+    const unknownFlags = resolveUnknownFlags(projectRoot, chainStep.command, args);
+    const unknownNote = unknownFlags.length > 0 ? ` Unknown flags: ${unknownFlags.join(', ')}.` : '';
+    const warningNote = projectionWarning ? `\n[warn] ${projectionWarning}` : '';
+    const detail = missingArguments.length > 0
+      ? 'missing required arguments for ' + chainStep.command + ': '
+        + missingArguments.map(item => `${item.name}: ${item.question}`).join('; ')
+      : 'invalid values for ' + chainStep.command + ': '
+        + invalidArguments.map(item => `${item.name}="${item.invalid}" (expected one of: ${(item.choices ?? []).join(', ')} or an explicit definition)`).join('; ');
     return {
       exitCode: 1,
-      reasonCode: 'ARGUMENT_REQUIRED',
+      reasonCode: missingArguments.length > 0 ? 'ARGUMENT_REQUIRED' : 'ARGUMENT_INVALID',
       result: null,
-      message: `[run next] missing required arguments for ${chainStep.command}: `
-        + missingArguments.map(item => `${item.name}: ${item.question}`).join('; '),
+      message: `[run next] ${detail}${unknownNote}${warningNote}`,
     };
   }
 

@@ -8,6 +8,7 @@ import {
   completeRun,
   completeRunWithVerdict,
   createRun,
+  ensureSessionProjectionOnDisk,
   prepareStep,
   rebindRunCommand,
   resolveTopicSessionId,
@@ -293,6 +294,9 @@ export function registerRunCommand(program: Command): void {
             result.dispatched = next.result;
             result.message = next.message;
             if (next.exitCode !== 0) process.exitCode = next.exitCode;
+          } else {
+            const projectionWarning = ensureSessionProjectionOnDisk(projectRoot, created.sessionId);
+            if (projectionWarning) result.warning = projectionWarning;
           }
           print(result);
           return;

@@ -43,6 +43,9 @@ export const argumentRequirementSchema = z.object({
   source: z.enum(['actual-arg', 'contract-default', 'unresolved']),
   default: z.union([z.string(), z.number(), z.boolean()]).optional(),
   question: z.string().min(1).optional(),
+  /** Present when an enum-typed argument received a value outside its choices. */
+  invalid: z.string().optional(),
+  choices: z.array(z.string()).optional(),
 }).strict();
 
 export const reuseAssessmentSchema = z.object({

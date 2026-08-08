@@ -5,6 +5,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
@@ -1213,6 +1214,16 @@ export function resolveArgumentRequirements(
     const required = definition.required === true;
     const missing = required && value === undefined && fallback === undefined;
     const strict = source.contract.arguments.find(item => item.name === definition.name);
+    // Positional enums in argument-hints are type/format hints (`<target:
+    // file|dir|HEAD>` means the value may be any of those kinds, not a literal
+    // enum), and choices containing `<...>` placeholders are open-ended — only
+    // literal named enums (e.g. `--mode quick|standard|deep`) are validated.
+    const invalid = definition.type === 'enum'
+      && definition.positional !== true
+      && value !== undefined
+      && definition.choices !== undefined
+      && !definition.choices.some(c => c.includes('<'))
+      && !definition.choices.includes(String(value));
     return {
       name: definition.name,
       required,
@@ -1220,9 +1231,27 @@ export function resolveArgumentRequirements(
       type: definition.type,
       source: sourceKind,
       ...(fallback !== undefined ? { default: fallback } : {}),
+      ...(invalid ? { invalid: String(value), choices: definition.choices } : {}),
       ...(missing ? { question: strict?.question ?? `Provide required argument ${definition.name}` } : {}),
     };
   });
+}
+
+/**
+ * Flag-like arguments that match no declared definition. Used to enrich
+ * missing/invalid-argument errors so a typo is not silently swallowed.
+ */
+export function resolveUnknownFlags(projectRoot: string, command: string, args: string[]): string[] {
+  const source = resolveCommandSource(projectRoot, command);
+  const definitions = argumentDefinitions(source);
+  const byName = new Map(definitions.map(item => [item.name, item]));
+  const flags: string[] = [];
+  for (const value of args) {
+    if (!value.startsWith('-')) continue;
+    const name = value.indexOf('=') === -1 ? value : value.slice(0, value.indexOf('='));
+    if (!byName.has(name)) flags.push(name);
+  }
+  return flags;
 }
 
 function assertDispatchableCommand(projectRoot: string, command: string, args: string[]): void {
@@ -1230,11 +1259,20 @@ function assertDispatchableCommand(projectRoot: string, command: string, args: s
   if (!content.prepare && !content.workflow) {
     throw new Error('no prepare or workflow content');
   }
-  const missing = resolveArgumentRequirements(projectRoot, command, args)
-    .filter(item => item.required && item.missing);
-  if (missing.length > 0) {
+  const requirements = resolveArgumentRequirements(projectRoot, command, args);
+  const missing = requirements.filter(item => item.required && item.missing);
+  const invalid = requirements.filter(item => item.invalid !== undefined);
+  const unknown = resolveUnknownFlags(projectRoot, command, args);
+  if (missing.length > 0 || invalid.length > 0) {
+    const unknownNote = unknown.length > 0 ? ` Unknown flags: ${unknown.join(', ')}.` : '';
     throw new Error(
-      `missing required arguments: ${missing.map(item => `${item.name}: ${item.question}`).join('; ')}`,
+      (missing.length > 0
+        ? `missing required arguments: ${missing.map(item => `${item.name}: ${item.question}`).join('; ')}`
+        : '')
+      + (invalid.length > 0
+        ? `invalid values: ${invalid.map(item => `${item.name}="${item.invalid}" (expected one of: ${(item.choices ?? []).join(', ')} or an explicit definition)`).join('; ')}`
+        : '')
+      + unknownNote,
     );
   }
 }
@@ -1778,11 +1816,20 @@ export function createRun(options: CreateRunOptions): CreateRunResult {
   }
   const argumentRequirements = resolveArgumentRequirements(options.projectRoot, options.command, options.args ?? []);
   const missingArguments = argumentRequirements.filter(item => item.required && item.missing);
-  if (missingArguments.length > 0) {
+  const invalidArguments = argumentRequirements.filter(item => item.invalid !== undefined);
+  const unknownFlags = resolveUnknownFlags(options.projectRoot, options.command, options.args ?? []);
+  if (missingArguments.length > 0 || invalidArguments.length > 0) {
+    const unknownNote = unknownFlags.length > 0 ? ` Unknown flags: ${unknownFlags.join(', ')}.` : '';
     throw new Error(
-      `Missing required arguments: ${missingArguments.map(item => `${item.name} (${item.question})`).join(', ')}. `
+      (missingArguments.length > 0
+        ? `Missing required arguments: ${missingArguments.map(item => `${item.name} (${item.question})`).join(', ')}. `
+        : '')
+      + (invalidArguments.length > 0
+        ? `Invalid values: ${invalidArguments.map(item => `${item.name}="${item.invalid}" (expected one of: ${(item.choices ?? []).join(', ')} or an explicit definition)`).join(', ')}. `
+        : '')
       + '--intent is Session metadata only and does not fill command arguments; '
-      + 'pass required inputs with --arg <value> or -- <args...>.',
+      + 'pass required inputs with --arg <value> or -- <args...>.'
+      + unknownNote,
     );
   }
 
@@ -3804,4 +3851,85 @@ function briefNext(
     command: `maestro run check ${runId}`,
     reason: `pre-completion gate check (does not seal); when clean it emits the finish checklist — work through it, then run: maestro run complete ${runId}`,
   };
+}
+
+/**
+ * Register a Session in state.json's projections (sessions[] + active_session_id)
+ * for creation paths that do not go through a successful createRun (`session
+ * create`, `session start --no-dispatch`). Reads the freshest committed state and
+ * upserts, so concurrent registrations do not clobber each other's entries
+ * (the read-modify-write window stays tiny; there is no cross-process CAS).
+ * Returns a warning string when the registration could not be persisted, or null.
+ */
+export function ensureSessionProjectionOnDisk(
+  projectRoot: string,
+  sessionId: string,
+  makeActive = true,
+): string | null {
+  try {
+    const store = new SessionStore(projectRoot);
+    const bundle = store.readBundle(sessionId);
+    const state = readStateJson(projectRoot);
+    if (!state) return 'state.json missing; session projection not registered';
+    writeStateJson(projectRoot, ensureSessionProjection(state, projectSessionEntry(bundle.session), makeActive));
+    return null;
+  } catch (error) {
+    return `session projection registration failed: ${(error as Error).message}`;
+  }
+}
+
+/**
+ * Find (and optionally remove) orphan Session directories — directories under
+ * .workflow/sessions/ that have no state.json projection and no Runs. These are
+ * the shells left behind by failed first dispatches or manual copies; they are
+ * invisible to canonical resolution and accumulate silently. `apply` deletes
+ * them; otherwise the call is a dry-run. Dangling projections (registered in
+ * state.json but missing on disk) are also reported and, with `apply`, pruned,
+ * since they make canonical resolution fail with a dead-lock.
+ */
+export function pruneOrphanSessions(
+  projectRoot: string,
+  apply: boolean,
+): { orphans: string[]; removed: string[]; dangling: string[]; pruned: string[] } {
+  const state = readStateJson(projectRoot);
+  const registered = new Set((state?.sessions ?? []).map(entry => entry.session_id));
+  const active = state?.active_session_id ?? null;
+  const sessionsDir = join(projectRoot, '.workflow', 'sessions');
+  const orphans: string[] = [];
+  const removed: string[] = [];
+  if (existsSync(sessionsDir)) {
+    for (const entry of readdirSync(sessionsDir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || registered.has(entry.name) || entry.name === active) continue;
+      const runsDir = join(sessionsDir, entry.name, 'runs');
+      let hasRuns = true;
+      try {
+        hasRuns = readdirSync(runsDir).length > 0;
+      } catch {
+        // No readable runs/ directory — conservatively treat as non-prunable.
+      }
+      if (hasRuns) continue;
+      orphans.push(entry.name);
+      if (apply) {
+        rmSync(join(sessionsDir, entry.name), { recursive: true, force: true });
+        removed.push(entry.name);
+      }
+    }
+  }
+  const dangling: string[] = [];
+  const pruned: string[] = [];
+  if (state) {
+    for (const entry of state.sessions ?? []) {
+      if (!existsSync(join(sessionsDir, entry.session_id))) dangling.push(entry.session_id);
+    }
+    if (apply && dangling.length > 0) {
+      const next = {
+        ...state,
+        sessions: (state.sessions ?? []).filter(entry => existsSync(join(sessionsDir, entry.session_id))),
+        active_session_id: active && existsSync(join(sessionsDir, active)) ? active : null,
+      };
+      writeStateJson(projectRoot, next);
+      pruned.push(...dangling);
+    }
+  }
+  return { orphans, removed, dangling, pruned };
 }

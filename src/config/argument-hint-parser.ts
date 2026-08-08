@@ -210,14 +210,11 @@ function parseToken(token: string): SkillParamDef[] {
   if (inner.includes('|') && !inner.startsWith('-')) {
     // Positional enum, optionally with an explicit parameter name prefix:
     // `<target: file|dir|HEAD>` → name='target', choices=['file','dir','HEAD'].
-    // Without the name prefix, fall back to the historical name derivation.
+    // Without the prefix the first alternative is the name (stable, unlike the
+    // historical length-thresholded whole-expression name).
     const enumMatch = inner.match(/^([A-Za-z][\w-]*)\s*:\s*(.+)$/);
     const choices = (enumMatch?.[2] ?? inner).split('|').map(c => c.trim().replace(/[<>\[\]]/g, ''));
-    const name = enumMatch
-      ? enumMatch[1]
-      : choices.join('|').length > 30
-        ? choices[0]
-        : inner.replace(/[<>\[\]]/g, '');
+    const name = enumMatch ? enumMatch[1] : choices[0] ?? 'arg';
     return [{ name, type: 'enum', choices, positional: true, required: isRequired }];
   }
 
@@ -230,7 +227,9 @@ function parseToken(token: string): SkillParamDef[] {
     return [{ name: first, type: 'string', positional: true, required: isRequired }];
   }
 
-  return [{ name: cleaned, type: 'string', positional: true, required: isRequired }];
+  // <idea or @file> — keep only the first word as the parameter name so error
+  // messages and fallback keys do not carry prose.
+  return [{ name: cleaned.split(/\s+/)[0] || cleaned, type: 'string', positional: true, required: isRequired }];
 }
 
 // ---------------------------------------------------------------------------
