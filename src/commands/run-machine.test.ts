@@ -83,6 +83,47 @@ describe('built-bin run-response/1.0', () => {
     expect(missing.stderr).toBe(''); expect(platform.stderr).toBe('');
   });
 
+  it('exposes an auditable artifact metadata validation bypass on run check', () => {
+    const { root } = fixture();
+    writeFileSync(join(root, '.claude', 'commands', 'demo.md'), `<contract>
+contract_version: 2
+consumes: []
+produces:
+  - kind: result
+    path: outputs/result.json
+    role: primary
+    required: true
+    schema: result/2.0
+gates:
+  entry: []
+  exit: []
+</contract>
+`);
+    const created = invoke(root, ['run', 'create', 'demo', '--json']);
+    const locator = (created.body as any).result as { session_id: string; run_id: string };
+    const outputDir = join(root, '.workflow', 'sessions', locator.session_id, 'runs', locator.run_id, 'outputs');
+    mkdirSync(outputDir, { recursive: true });
+    writeFileSync(join(outputDir, 'result.json'), JSON.stringify({
+      _meta: { kind: 'result', schema: 'result/1.0', role: 'attachment' },
+    }));
+
+    const strict = invoke(root, ['run', 'check', locator.run_id, '--session', locator.session_id, '--json']);
+    const bypassed = invoke(root, [
+      'run', 'check', locator.run_id, '--session', locator.session_id,
+      '--skip-artifact-metadata-validation', '--json',
+    ]);
+
+    expect((strict.body as any).result.errors).toEqual(expect.arrayContaining([
+      expect.stringContaining('_meta.schema result/1.0 does not match contract result/2.0'),
+      expect.stringContaining('_meta.role attachment does not match contract primary'),
+    ]));
+    expect((bypassed.body as any).result.errors).toEqual([]);
+    expect((bypassed.body as any).result.warnings).toEqual(expect.arrayContaining([
+      expect.stringContaining('artifact metadata validation skipped'),
+    ]));
+    expect((bypassed.body as any).next.command).toBe(`maestro run complete ${locator.run_id}`);
+  });
+
   it('emits a strict brief-result and one canonical next pointer', () => {
     const { root } = fixture();
     const created = invoke(root, ['run', 'create', 'demo', '--session', 'brief-machine', '--json']);

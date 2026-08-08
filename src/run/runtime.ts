@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { basename, extname, join, relative, resolve as resolvePath, sep } from 'node:path';
-import { hashDirectory, hashFile, scanOutputs, type ArtifactScanResult, type DiscoveredArtifact } from './artifacts.js';
+import { declaredPathMatches, hashDirectory, hashFile, scanOutputs, type ArtifactScanResult, type DiscoveredArtifact } from './artifacts.js';
 import { parseArgumentHint, type SkillParamDef } from '../config/argument-hint-parser.js';
 import {
   hashCommandContract,
@@ -401,6 +401,14 @@ export interface CompleteNextSuggestion {
   preconditions: string[];
 }
 
+export interface CheckRunOptions {
+  /**
+   * Downgrade contract kind/schema/role/alias mismatches to warnings. Required outputs,
+   * artifact syntax, safe-path checks, and gates remain blocking.
+   */
+  skipArtifactMetadataValidation?: boolean;
+}
+
 export interface CompleteRunOptions {
   /**
    * When true, the caller asserts that `run check` already passed clean and
@@ -409,6 +417,11 @@ export interface CompleteRunOptions {
    * TODO: implement skip logic in prepareCompleteInputs.
    */
   checkClean?: boolean;
+  /**
+   * Downgrade contract kind/schema/role/alias mismatches to warnings. Required outputs,
+   * artifact syntax, safe-path checks, and gates remain blocking.
+   */
+  skipArtifactMetadataValidation?: boolean;
   /** Extra concerns merged (append + dedupe) into the derived handoff. */
   notes?: string[];
   /** Run-relative paths registered as evidence artifacts beyond the outputs scan. */
@@ -2119,31 +2132,57 @@ function validateStrictArtifactContract(
   runDir: string,
   contract: CommandContract,
   scan: ArtifactScanResult,
+  options: CheckRunOptions = {},
 ): void {
   if (contract.contract_version !== 2 && contract.contract_version !== 2.1) return;
+  const reportMismatch = (message: string): void => {
+    if (options.skipArtifactMetadataValidation) {
+      scan.warnings.push(`artifact metadata validation skipped: ${message}`);
+    } else {
+      scan.errors.push(message);
+    }
+  };
   for (const expected of contract.produces) {
     const expectedPath = expected.path?.replaceAll('\\', '/').replace(/^\.\//, '');
-    const actual = expectedPath
-      ? scan.artifacts.find(item => relative(runDir, item.absolutePath).replaceAll('\\', '/') === expectedPath)
-      : undefined;
-    if (!actual) {
+    const actuals = expectedPath
+      ? scan.artifacts.filter(item => declaredPathMatches(
+          expectedPath,
+          relative(runDir, item.absolutePath).replaceAll('\\', '/'),
+        ))
+      : [];
+    if (actuals.length === 0) {
       if (expected.required) scan.errors.push(`Missing required contract v2 output: ${expectedPath ?? expected.kind}`);
       continue;
     }
-    if (actual.kind !== expected.kind) {
-      scan.errors.push(`${expectedPath}: _meta.kind ${actual.kind} does not match contract ${expected.kind}`);
-    }
-    if (expected.schema && actual.schemaVersion !== expected.schema) {
-      scan.errors.push(`${expectedPath}: _meta.schema ${actual.schemaVersion} does not match contract ${expected.schema}`);
-    }
-    const expectedRole = expected.role ?? (expected.primary ? 'primary' : 'attachment');
-    if (actual.role !== expectedRole) {
-      scan.errors.push(`${expectedPath}: _meta.role ${actual.role} does not match contract ${expectedRole}`);
+    for (const actual of actuals) {
+      const actualPath = relative(runDir, actual.absolutePath).replaceAll('\\', '/');
+      if (actual.kind !== expected.kind) {
+        reportMismatch(`${actualPath}: _meta.kind ${actual.kind} does not match contract ${expected.kind}`);
+        if (options.skipArtifactMetadataValidation) actual.kind = expected.kind;
+      }
+      if (expected.schema && actual.schemaVersion !== expected.schema) {
+        reportMismatch(`${actualPath}: _meta.schema ${actual.schemaVersion} does not match contract ${expected.schema}`);
+        if (options.skipArtifactMetadataValidation) actual.schemaVersion = expected.schema;
+      }
+      const expectedRole = expected.role ?? (expected.primary ? 'primary' : 'attachment');
+      if (actual.role !== expectedRole) {
+        reportMismatch(`${actualPath}: _meta.role ${actual.role} does not match contract ${expectedRole}`);
+        if (options.skipArtifactMetadataValidation) actual.role = expectedRole;
+      }
+      if (expected.alias && actual.alias !== expected.alias) {
+        reportMismatch(`${actualPath}: _meta.alias ${actual.alias ?? '(missing)'} does not match contract ${expected.alias}`);
+        if (options.skipArtifactMetadataValidation) actual.alias = expected.alias;
+      }
     }
   }
 }
 
-export function checkRun(projectRoot: string, runId: string, sessionId?: string): CheckRunResult {
+export function checkRun(
+  projectRoot: string,
+  runId: string,
+  sessionId?: string,
+  options: CheckRunOptions = {},
+): CheckRunResult {
   const store = new SessionStore(projectRoot);
   const located = store.findRun(runId, sessionId);
   const initialBundle = store.readBundle(located.sessionId);
@@ -2154,7 +2193,12 @@ export function checkRun(projectRoot: string, runId: string, sessionId?: string)
     store.sessionDir(located.sessionId),
     resolvedContract.contract,
   );
-  validateStrictArtifactContract(store.runDir(located.sessionId, runId), resolvedContract.contract, scan);
+  validateStrictArtifactContract(
+    store.runDir(located.sessionId, runId),
+    resolvedContract.contract,
+    scan,
+    options,
+  );
   validateChainProposalArtifacts(
     store.runDir(located.sessionId, runId),
     initialBundle,
@@ -2519,6 +2563,8 @@ function recordCompletionEvidence(
 function inferExtraMediaType(path: string): string {
   switch (extname(path).toLowerCase()) {
     case '.json': return 'application/json';
+    case '.ndjson':
+    case '.jsonl': return 'application/x-ndjson';
     case '.md': return 'text/markdown';
     case '.yaml':
     case '.yml': return 'application/yaml';
@@ -2754,7 +2800,7 @@ export function prepareCompleteInputs(
   const scan = scanOutputs(runDir, sessionDir, resolved.contract);
   let chainProposal: ValidatedChainProposal | null = null;
   if (!isFailureVerdict(options.chainVerdict)) {
-    validateStrictArtifactContract(runDir, resolved.contract, scan);
+    validateStrictArtifactContract(runDir, resolved.contract, scan, options);
     const proposals = validateChainProposalArtifacts(
       runDir,
       store.readBundle(located.sessionId),
@@ -2992,6 +3038,7 @@ export function completeRun(
       summary_fallback: options.summaryFallback ?? null,
       decisions: options.decisions ?? [],
       chain_verdict: options.chainVerdict ?? null,
+      skip_artifact_metadata_validation: options.skipArtifactMetadataValidation ?? false,
       chain_proposal: preparedInputs.chainProposal
         ? {
             path: preparedInputs.chainProposal.path,
@@ -3160,6 +3207,7 @@ export function completeRunWithVerdict(
     decisions: options.decisions,
     leaseClaim: options.leaseClaim,
     chainVerdict: verdict,
+    skipArtifactMetadataValidation: options.skipArtifactMetadataValidation,
     chainProposal: options.chainProposal,
     applyChainProposal: options.applyChainProposal,
     transition: options.transition,

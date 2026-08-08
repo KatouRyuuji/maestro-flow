@@ -826,6 +826,7 @@ export function registerSessionCommand(program: Command): void {
     .command('done [run-id]')
     .description('Complete a Run step and advance the chain (returns continuation)')
     .option('--session <id>', 'explicit Session ID')
+    .option('--skip-artifact-metadata-validation', 'downgrade artifact kind/schema/role/alias contract mismatches to warnings')
     .option('--verdict <verdict>', `completion verdict: ${VALID_VERDICTS.join('|')} (default done; ${VERDICT_ALIAS_LABEL})`)
     .option('--summary <text>', 'handoff.summary fallback when the report frontmatter left it empty')
     .option('--reason <text>', 'blocker reason (blocked) merged into handoff concerns')
@@ -839,6 +840,7 @@ export function registerSessionCommand(program: Command): void {
     .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
     .action((runIdArg: string | undefined, opts: {
       session?: string;
+      skipArtifactMetadataValidation?: boolean;
       verdict?: string;
       summary?: string;
       reason?: string;
@@ -883,6 +885,7 @@ export function registerSessionCommand(program: Command): void {
           reason: opts.reason,
           chainProposal: opts.chainProposal,
           applyChainProposal: opts.applyProposal,
+          skipArtifactMetadataValidation: opts.skipArtifactMetadataValidation,
         });
         if (opts.json) {
           if (result.run_sealed) {

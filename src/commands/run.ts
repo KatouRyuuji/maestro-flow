@@ -399,6 +399,7 @@ export function registerRunCommand(program: Command): void {
     .command('done [run-id]')
     .description('Check and complete the current Run (friendly alias for run complete --verdict)')
     .option('--session <id>', 'explicit Session ID')
+    .option('--skip-artifact-metadata-validation', 'downgrade artifact kind/schema/role/alias contract mismatches to warnings')
     .option('--verdict <verdict>', `completion verdict: ${VALID_VERDICTS.join('|')} (default done; ${VERDICT_ALIAS_LABEL})`)
     .option('--summary <text>', 'handoff.summary fallback when the report frontmatter left it empty')
     .option('--reason <text>', 'blocker reason (blocked) merged into handoff concerns')
@@ -411,6 +412,7 @@ export function registerRunCommand(program: Command): void {
     .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
     .action((runIdArg: string | undefined, opts: {
       session?: string;
+      skipArtifactMetadataValidation?: boolean;
       verdict?: string;
       summary?: string;
       reason?: string;
@@ -455,6 +457,7 @@ export function registerRunCommand(program: Command): void {
           reason: opts.reason,
           chainProposal: opts.chainProposal,
           applyChainProposal: opts.applyProposal,
+          skipArtifactMetadataValidation: opts.skipArtifactMetadataValidation,
         });
         print(result);
         process.stderr.write(`next: ${result.next.command}\n      ${result.next.reason}\n`);
@@ -730,9 +733,15 @@ export function registerRunCommand(program: Command): void {
     .command('check [run-id]')
     .description('Scan outputs, evaluate Run gates, and refresh the knowledge reconciliation receipt')
     .option('--session <id>', 'explicit Session ID')
+    .option('--skip-artifact-metadata-validation', 'downgrade artifact kind/schema/role/alias contract mismatches to warnings')
     .option('--json', 'emit one run-response/1.0 envelope on stdout')
     .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
-    .action((runId: string | undefined, opts: { session?: string; json?: boolean; workflowRoot: string }) => {
+    .action((runId: string | undefined, opts: {
+      session?: string;
+      skipArtifactMetadataValidation?: boolean;
+      json?: boolean;
+      workflowRoot: string;
+    }) => {
       const projectRoot = resolve(opts.workflowRoot);
       try {
         const store = new SessionStore(projectRoot);
@@ -749,7 +758,9 @@ export function registerRunCommand(program: Command): void {
             runId = active.runId;
           }
         }
-        const result = checkRun(projectRoot, runId, sessionId ?? opts.session);
+        const result = checkRun(projectRoot, runId, sessionId ?? opts.session, {
+          skipArtifactMetadataValidation: opts.skipArtifactMetadataValidation,
+        });
         if (opts.json) {
           const next = result.next
             ? { suggest_only: true as const, command: result.next.command, reason: result.next.reason }
@@ -810,6 +821,7 @@ Compatibility boundary:
     .command('complete [run-id]')
     .description('Seal a Run and advance its chain step by verdict (免参: resolves the active step)')
     .option('--session <id>', 'explicit Session ID')
+    .option('--skip-artifact-metadata-validation', 'downgrade artifact kind/schema/role/alias contract mismatches to warnings')
     .option('--verdict <verdict>', `chain-advance verdict: ${VALID_VERDICTS.join('|')} (default done; ${VERDICT_ALIAS_LABEL})`)
     .option('--summary <text>', 'handoff.summary fallback when the report frontmatter left it empty')
     .option('--reason <text>', 'blocker reason (blocked) merged into handoff concerns')
@@ -829,6 +841,7 @@ Compatibility boundary:
     .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
     .action((runIdArg: string | undefined, opts: {
       session?: string;
+      skipArtifactMetadataValidation?: boolean;
       verdict?: string;
       summary?: string;
       reason?: string;
@@ -861,6 +874,7 @@ Compatibility boundary:
             notes: opts.note,
             extraArtifacts: opts.artifact,
             summaryFallback: opts.summary,
+            skipArtifactMetadataValidation: opts.skipArtifactMetadataValidation,
             transition: mutationTransitionOptions(opts),
           });
           if (opts.json) {
@@ -940,6 +954,7 @@ Compatibility boundary:
           reason: opts.reason,
           chainProposal: opts.chainProposal,
           applyChainProposal: opts.applyProposal,
+          skipArtifactMetadataValidation: opts.skipArtifactMetadataValidation,
           leaseClaim: {
             executionOwner: opts.executionOwner,
             ownerEpoch: opts.ownerEpoch,

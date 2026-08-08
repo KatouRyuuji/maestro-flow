@@ -285,6 +285,8 @@ export function hashDirectory(path: string): { hash: string; size: number } {
 function inferMediaType(path: string): string {
   switch (extname(path).toLowerCase()) {
     case '.json': return 'application/json';
+    case '.ndjson':
+    case '.jsonl': return 'application/x-ndjson';
     case '.md': return 'text/markdown';
     case '.yaml':
     case '.yml': return 'application/yaml';
@@ -294,8 +296,27 @@ function inferMediaType(path: string): string {
   }
 }
 
+function jsonArtifactMeta(parsed: unknown): ArtifactMeta | null {
+  const hasMeta = typeof parsed === 'object' && parsed !== null && Object.hasOwn(parsed, '_meta');
+  if (!hasMeta) return null;
+
+  const rawMeta = (parsed as { _meta: unknown })._meta;
+  const result = artifactMetaSchema.safeParse(rawMeta);
+  if (!result.success) {
+    const detail = result.error.issues
+      .map(issue => `${issue.path.join('.') || '_meta'}: ${issue.message}`)
+      .join('; ');
+    throw new Error(`invalid _meta; expected non-empty kind and schema${detail ? ` (${detail})` : ''}`);
+  }
+  return result.data;
+}
+
+function stripUtf8Bom(raw: string): string {
+  return raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+}
+
 function markdownMeta(raw: string): ArtifactMeta | null {
-  const match = raw.match(/^---\s*\r?\n([\s\S]*?)\r?\n---/);
+  const match = stripUtf8Bom(raw).match(/^---\s*\r?\n([\s\S]*?)\r?\n---/);
   if (!match) return null;
   const parsed = YAML.parse(match[1]);
   if (!parsed || typeof parsed !== 'object' || typeof parsed.kind !== 'string') return null;
@@ -315,7 +336,7 @@ function normalizeOutputPath(value: string): string {
   return value.replaceAll('\\', '/').replace(/^\.\//, '').replace(/\/$/, '');
 }
 
-function declaredPathMatches(declaredPath: string, outputRelative: string): boolean {
+export function declaredPathMatches(declaredPath: string, outputRelative: string): boolean {
   const declared = normalizeOutputPath(declaredPath);
   const actual = normalizeOutputPath(outputRelative);
   if (!declared.includes('{')) return declared === actual;
@@ -449,25 +470,19 @@ export function scanOutputs(
           hooks,
         );
         const extension = extname(name).toLowerCase();
-        if (extension === '.json') {
-          const parsed = JSON.parse(data.toString('utf8')) as unknown;
-          const hasMeta = typeof parsed === 'object' && parsed !== null && Object.hasOwn(parsed, '_meta');
-          if (hasMeta) {
-            const rawMeta = (parsed as { _meta: unknown })._meta;
-            const result = artifactMetaSchema.safeParse(rawMeta);
-            if (!result.success) {
-              const detail = result.error.issues
-                .map(issue => `${issue.path.join('.') || '_meta'}: ${issue.message}`)
-                .join('; ');
-              throw new Error(`invalid _meta; expected non-empty kind and schema${detail ? ` (${detail})` : ''}`);
-            }
-            const meta = result.data;
+        if (extension === '.json' || extension === '.ndjson' || extension === '.jsonl') {
+          const raw = stripUtf8Bom(data.toString('utf8'));
+          const lineDelimited = extension === '.ndjson' || extension === '.jsonl';
+          const selfDescription = lineDelimited ? raw.split(/\r?\n/, 1)[0] : raw;
+          const parsed = selfDescription ? JSON.parse(selfDescription) as unknown : null;
+          const meta = jsonArtifactMeta(parsed);
+          if (meta) {
             kind = meta.kind;
             schemaVersion = meta.schema;
-            role = meta.role ?? (directJsonCount === 1 ? 'primary' : role);
+            role = meta.role ?? (extension === '.json' && directJsonCount === 1 ? 'primary' : role);
             alias = meta.alias ?? alias;
           } else {
-            role = directJsonCount === 1 ? 'primary' : role;
+            role = extension === '.json' && directJsonCount === 1 ? 'primary' : role;
             warning = `${outputRelative}: missing _meta; inferred kind=${kind}`;
           }
         } else if (extension === '.md') {

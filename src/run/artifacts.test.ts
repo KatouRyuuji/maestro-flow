@@ -144,12 +144,12 @@ describe('scanOutputs JSON metadata', () => {
     expect(result.warnings).toContain('outputs/review-analysis.json: missing _meta; inferred kind=review-analysis');
   });
 
-  it('registers a complete _meta kind and schema', () => {
+  it('registers complete metadata from BOM-prefixed JSON', () => {
     const { runDir, sessionDir } = createRun();
-    writeFileSync(join(runDir, 'outputs', 'result.json'), JSON.stringify({
+    writeFileSync(join(runDir, 'outputs', 'result.json'), `\uFEFF${JSON.stringify({
       _meta: { kind: 'review-analysis', schema: 'review-analysis/2.0', role: 'primary' },
       findings: [],
-    }));
+    })}`);
 
     const result = scanOutputs(runDir, sessionDir, contract);
 
@@ -159,6 +159,40 @@ describe('scanOutputs JSON metadata', () => {
       kind: 'review-analysis',
       schemaVersion: 'review-analysis/2.0',
       role: 'primary',
+    });
+  });
+
+  it.each(['ndjson', 'jsonl'])('registers BOM-prefixed metadata from the first .%s record', extension => {
+    const { runDir, sessionDir } = createRun();
+    const name = `evidence.${extension}`;
+    writeFileSync(join(runDir, 'outputs', name), `\uFEFF${[
+      JSON.stringify({
+        _meta: { kind: 'evidence', schema: 'evidence/1.0', role: 'evidence', alias: 'run-evidence' },
+      }),
+      JSON.stringify({ ts: '2026-08-08T00:41:00+08:00', type: 'criteria-defined' }),
+    ].join('\n')}`);
+    const evidenceContract: CommandContract = {
+      consumes: [],
+      produces: [{
+        path: `outputs/${name}`,
+        kind: 'evidence',
+        primary: false,
+        role: 'evidence',
+        schema: 'evidence/1.0',
+      }],
+      gates: { entry: [], exit: [] },
+    };
+
+    const result = scanOutputs(runDir, sessionDir, evidenceContract);
+
+    expect(result.errors).toEqual([]);
+    expect(result.warnings).toEqual([]);
+    expect(result.artifacts[0]).toMatchObject({
+      kind: 'evidence',
+      schemaVersion: 'evidence/1.0',
+      role: 'evidence',
+      alias: 'run-evidence',
+      mediaType: 'application/x-ndjson',
     });
   });
 

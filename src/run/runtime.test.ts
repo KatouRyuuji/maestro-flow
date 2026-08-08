@@ -1015,11 +1015,99 @@ gates:
       expect.stringContaining('_meta.role attachment does not match contract primary'),
     ]));
 
+    const bypassed = checkRun(projectRoot, created.run_id, created.session_id, {
+      skipArtifactMetadataValidation: true,
+    });
+    expect(bypassed.errors).toEqual([]);
+    expect(bypassed.warnings).toEqual(expect.arrayContaining([
+      expect.stringContaining('artifact metadata validation skipped: outputs/result.json: _meta.schema'),
+      expect.stringContaining('artifact metadata validation skipped: outputs/result.json: _meta.role'),
+    ]));
+
+    rmSync(join(runDir, 'outputs', 'result.json'));
+    const missingRequired = checkRun(projectRoot, created.run_id, created.session_id, {
+      skipArtifactMetadataValidation: true,
+    });
+    expect(missingRequired.errors).toContain('Missing required contract v2 output: outputs/result.json');
+
     writeFileSync(join(runDir, 'outputs', 'result.json'), JSON.stringify({
       _meta: { kind: 'result', schema: 'result/2.0', role: 'primary', alias: 'strict-result' },
       ok: true,
     }, null, 2));
     expect(checkRun(projectRoot, created.run_id, created.session_id).errors).toEqual([]);
+  });
+
+  it('applies the artifact metadata bypass during completion', () => {
+    const projectRoot = root();
+    commandFile(projectRoot, 'strict-complete', `contract_version: 2
+consumes: []
+produces:
+  - kind: result
+    path: outputs/result.json
+    alias: strict-result
+    role: primary
+    required: true
+    schema: result/2.0
+gates:
+  entry: []
+  exit: []`);
+    const created = createRun({ projectRoot, command: 'strict-complete', intent: 'strict completion' });
+    const runDir = join(projectRoot, '.workflow', 'sessions', created.session_id, 'runs', created.run_id);
+    writeFileSync(join(runDir, 'outputs', 'result.json'), JSON.stringify({
+      _meta: { kind: 'result', schema: 'result/1.0', role: 'attachment', alias: 'wrong-result' },
+    }));
+
+    const strict = completeRun(projectRoot, created.run_id, created.session_id);
+    expect(strict.sealed).toBe(false);
+    expect(strict.errors).not.toEqual([]);
+
+    const bypassed = completeRun(projectRoot, created.run_id, created.session_id, {
+      skipArtifactMetadataValidation: true,
+    });
+    expect(bypassed.errors).toEqual([]);
+    expect(bypassed.sealed, JSON.stringify(bypassed, null, 2)).toBe(true);
+    expect(bypassed.warnings).toEqual(expect.arrayContaining([
+      expect.stringContaining('artifact metadata validation skipped'),
+      expect.stringContaining('_meta.alias wrong-result does not match contract strict-result'),
+    ]));
+  });
+
+  it('matches required contract path templates against produced artifacts', () => {
+    const projectRoot = root();
+    commandFile(projectRoot, 'templated-output', `contract_version: 2
+consumes: []
+produces:
+  - kind: plan-task
+    path: outputs/tasks/TASK-{NNN}.json
+    role: attachment
+    required: true
+    schema: plan-task/1.0
+gates:
+  entry: []
+  exit: []`);
+    const created = createRun({ projectRoot, command: 'templated-output', intent: 'templated output' });
+    const runDir = join(projectRoot, '.workflow', 'sessions', created.session_id, 'runs', created.run_id);
+    mkdirSync(join(runDir, 'outputs', 'tasks'), { recursive: true });
+    writeFileSync(join(runDir, 'outputs', 'tasks', 'TASK-001.json'), JSON.stringify({
+      _meta: { kind: 'plan-task', schema: 'plan-task/1.0', role: 'attachment' },
+    }));
+    const secondTaskPath = join(runDir, 'outputs', 'tasks', 'TASK-002.json');
+    writeFileSync(secondTaskPath, JSON.stringify({
+      _meta: { kind: 'plan-task', schema: 'plan-task/2.0', role: 'attachment' },
+    }));
+
+    const rejected = checkRun(projectRoot, created.run_id, created.session_id);
+    expect(rejected.errors).toContain(
+      'outputs/tasks/TASK-002.json: _meta.schema plan-task/2.0 does not match contract plan-task/1.0',
+    );
+
+    writeFileSync(secondTaskPath, JSON.stringify({
+      _meta: { kind: 'plan-task', schema: 'plan-task/1.0', role: 'attachment' },
+    }));
+    const checked = checkRun(projectRoot, created.run_id, created.session_id);
+
+    expect(checked.errors).toEqual([]);
+    expect(checked.artifacts.filter(item => item.kind === 'plan-task')).toHaveLength(2);
   });
 
   it('brief of a sealed Run points next at run next to advance the chain (G4)', () => {
