@@ -288,7 +288,7 @@ export function registerRunCommand(program: Command): void {
             next: `maestro session next --session ${created.sessionId}`,
           };
           if (opts.dispatch) {
-            const next = runNextStep(projectRoot, { sessionId: created.sessionId });
+            const next = runNextStep(projectRoot, { sessionId: created.sessionId, args: opts.arg });
             result.dispatched = next.result;
             result.message = next.message;
             if (next.exitCode !== 0) process.exitCode = next.exitCode;

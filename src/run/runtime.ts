@@ -598,7 +598,7 @@ function projectState(projectRoot: string): StateJsonV2 {
   };
 }
 
-function projectSessionEntry(session: SessionState): ProjectSessionEntry {
+export function projectSessionEntry(session: SessionState): ProjectSessionEntry {
   return {
     session_id: session.session_id,
     intent: session.intent,

@@ -38,7 +38,7 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveStepContent } from './contract.js';
-import { briefRun, createRun, resolveArgumentRequirements, type CreateRunResult, type NamedGateBlocker, type PrevHandoff, type RunUpstream } from './runtime.js';
+import { briefRun, createRun, projectSessionEntry, resolveArgumentRequirements, type CreateRunResult, type NamedGateBlocker, type PrevHandoff, type RunUpstream } from './runtime.js';
 import {
   activeStepIndex,
   nextPendingIndex,
@@ -46,7 +46,7 @@ import {
 } from './chain.js';
 import { checkLease } from './lease.js';
 import { SessionStore } from './store.js';
-import { readStateJson } from '../utils/state-schema.js';
+import { readStateJson, writeStateJson, ensureSessionProjection } from '../utils/state-schema.js';
 import type { SessionState, Handoff } from './schemas.js';
 import type { TargetPlatform } from '../core/skill-converter.js';
 
@@ -661,6 +661,21 @@ export function runNextStep(projectRoot: string, opts: NextCmdOptions = {}): Nex
   const argumentRequirements = resolveArgumentRequirements(projectRoot, chainStep.command, args);
   const missingArguments = argumentRequirements.filter(item => item.required && item.missing);
   if (missingArguments.length > 0) {
+    // A failed first dispatch still leaves the Session directory on disk but
+    // state.json carries no projection (ensureSessionProjection is written only
+    // by a successful createRun / seal). Without a projection the Pi-side
+    // canonical resolution cannot see the Session, which dead-locks every
+    // mutation command (`run edit`, `session chain replace`, `session next`)
+    // against it. Best-effort write the projection so the orphan stays
+    // canonical-reachable and repairable via `session chain replace --args`.
+    try {
+      const state = readStateJson(projectRoot);
+      if (state) {
+        writeStateJson(projectRoot, ensureSessionProjection(state, projectSessionEntry(session)));
+      }
+    } catch {
+      // Projection is a repair convenience; the ARGUMENT_REQUIRED error stays authoritative.
+    }
     return {
       exitCode: 1,
       reasonCode: 'ARGUMENT_REQUIRED',

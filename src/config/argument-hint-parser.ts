@@ -208,11 +208,16 @@ function parseToken(token: string): SkillParamDef[] {
 
   // Handle special: nested brackets like <create|list|status|...>
   if (inner.includes('|') && !inner.startsWith('-')) {
-    // Positional enum
-    const choices = inner.split('|').map(c => c.trim().replace(/[<>\[\]]/g, ''));
-    const name = choices.join('|').length > 30
-      ? choices[0]
-      : inner.replace(/[<>\[\]]/g, '');
+    // Positional enum, optionally with an explicit parameter name prefix:
+    // `<target: file|dir|HEAD>` → name='target', choices=['file','dir','HEAD'].
+    // Without the name prefix, fall back to the historical name derivation.
+    const enumMatch = inner.match(/^([A-Za-z][\w-]*)\s*:\s*(.+)$/);
+    const choices = (enumMatch?.[2] ?? inner).split('|').map(c => c.trim().replace(/[<>\[\]]/g, ''));
+    const name = enumMatch
+      ? enumMatch[1]
+      : choices.join('|').length > 30
+        ? choices[0]
+        : inner.replace(/[<>\[\]]/g, '');
     return [{ name, type: 'enum', choices, positional: true, required: isRequired }];
   }
 
