@@ -43,9 +43,11 @@ refs:
 
 verify is the iron-gate of an independent run; the output is a verification conclusion where "every criterion has an objective pass/fail/blocked + evidence," not "it looks fine." Establish verification discipline before you start.
 
-## Iron law: no conclusion without fresh evidence
+## Iron law: no conclusion without grounded evidence
 
-Before any "pass/done" declaration: IDENTIFY (which command proves it) → RUN (run it live this round, never cite historical results) → READ (read the full output, check the exit code, count failures) → VERIFY (does the output truly support the claim) → only then conclude and inline the evidence.
+Before any "pass/done" declaration: IDENTIFY (which narrowest command proves it) → EVIDENCE (a live run this round, or a still-valid live-run result produced for the same revision) → READ (read the full output, check the exit code, count failures) → VERIFY (does the output truly support the claim) → only then conclude and inline the evidence.
+
+A prior result is still-valid only when it was actually executed (never a claim or memory), its target and outcome are recorded, and no material invalidator occurred since: a change to code the target exercises, its tests, test data, configuration, dependencies, lockfile, or generated inputs. Elapsed time, phase or gate transitions, agent switches, and unrelated edits are not invalidators — name the specific invalidator before rerunning. When a criterion lacks still-valid evidence, run the narrowest target that proves it (a single test file or narrowed suite first); repository-wide scope is reserved for criteria that themselves demand repository-wide coverage.
 
 Forbidden phrasings: `should run now` / `probably passes` / `looks right` / `I'm confident` / `based on my review this is done` — all replaced with evidence: `Tests pass: 42/42 green (exit 0)` / `All 5 truths VERIFIED, with file:line`.
 
@@ -59,7 +61,8 @@ Forbidden phrasings: `should run now` / `probably passes` / `looks right` / `I'm
 ## Boundaries and Invariants
 
 - This run **reads source only** by default — gaps found are not fixed here; fixing belongs to the plan→execute loop.
-- No conclusion without fresh evidence run this round; self-check from execute is supporting evidence only, never the final verdict.
+- No conclusion without grounded evidence: a live run this round or a still-valid live-run result under the Iron law; self-check from execute is supporting evidence only, never the final verdict.
+- Verification scope follows the criteria: run the narrowest targets covering each criterion; do not rerun unchanged passing targets or sweep unrelated suites to be safe.
 
 ## Red-flag thinking — stop the moment one appears and run verification first
 
@@ -72,7 +75,7 @@ The moment you catch any of these thoughts, stop, run the verification command a
 - "You can tell it's correct just by reading the code"
 - "Mark it done and move on first"
 
-Table of invalid reasons: a one-line change most easily buries an insidious bug; once the code changes, historical results are stale; reading ≠ running; build success ≠ functional correctness; happy path passing ≠ boundary/error path passing; an agent's self-report is a claim, not evidence.
+Table of invalid reasons: a one-line change most easily buries an insidious bug; once the code changes, historical results are stale; reading ≠ running; build success ≠ functional correctness; happy path passing ≠ boundary/error path passing; an agent's self-report is a claim, not evidence. Red flags forbid concluding from memory or claims; they do not forbid citing a still-valid live-run result per the Iron law.
 
 ## Required Context
 
@@ -92,6 +95,6 @@ Table of invalid reasons: a one-line change most easily buries an insidious bug;
 
 ## Gate Intent
 
-- `goal-backward-verified`: every success criterion and per-task convergence.criterion is checked across the three layers (existence L1, substance L2, wiring L3), each with method + status + fresh evidence; every failure has an actionable gap and coverage has no silent omission.
-- `nyquist-covered`: test coverage is computed from a live run this round (skipped only under `--skip-tests`); regression risk on changed files' direct importers is assessed.
+- `goal-backward-verified`: every success criterion and per-task convergence.criterion is checked across the three layers (existence L1, substance L2, wiring L3), each with method + status + grounded evidence (live run this round or still-valid live-run result); every failure has an actionable gap and coverage has no silent omission.
+- `nyquist-covered`: test coverage is computed from a live run of the suites covering the changed surface this round (skipped only under `--skip-tests`); regression risk on changed files' direct importers is assessed.
 - verdict mapping: pass → all VERIFIED with no blocker; warn → only medium/low gaps; fail/blocked → has a critical gap or a key path unverified.

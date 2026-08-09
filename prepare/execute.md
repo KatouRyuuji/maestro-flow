@@ -93,7 +93,7 @@ Degradation seal: `maestro session done <run_id> --verdict needs-retry` with rep
 
 ## Boundaries and Invariants
 
-- self-check is only a build/test smoke, **not** an acceptance conclusion — formal acceptance is in a separate verify run; never overstep to issue a verdict here.
+- self-check is only a scoped build/test smoke over this run's changes (narrowest suites covering changed behavior; never a repository-wide matrix), **not** an acceptance conclusion — formal acceptance is in a separate verify run; never overstep to issue a verdict here.
 - Write only source-code changes and this run's domain artifacts; protocol state (run completion, artifact registration) is handled by the CLI — do not manually edit state.
 - After each task completes, do knowledge extraction per trigger conditions: deviations → arch constraints; retry_count ≥ 2 → debug fix mode; design_rationale → learning knowhow.
 - Full knowledge extraction (constraints/decisions/terminology) and archiving go uniformly through `ref/finish-work.md`; execute only does incremental learnings.
@@ -111,4 +111,4 @@ Degradation seal: `maestro session done <run_id> --verdict needs-retry` with rep
 ## Gate Intent
 
 - `execution-complete`: every task in the plan reaches a terminal state (done / blocked with checkpoint); `execution.json` is written and completed tasks carry a summary + status.
-- `self-check-passed`: the gate fails only when the build/test smoke was not run this round or an unhandled critical tech-stack violation (allowed_languages / disallowed_imports) remains. A self-check result of `gaps_found` does **not** block run completion — gaps are recorded as concerns in the report for the separate verify run to consume (formal acceptance lives in verify, not here).
+- `self-check-passed`: the gate fails only when the scoped build/test smoke over this run's changes was not run this round or an unhandled critical tech-stack violation (allowed_languages / disallowed_imports) remains. A self-check result of `gaps_found` does **not** block run completion — gaps are recorded as concerns in the report for the separate verify run to consume (formal acceptance lives in verify, not here).
