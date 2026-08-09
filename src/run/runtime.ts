@@ -9,7 +9,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, extname, join, relative, resolve as resolvePath, sep } from 'node:path';
+import { basename, extname, isAbsolute, join, relative, resolve as resolvePath, sep } from 'node:path';
 import { declaredPathMatches, hashDirectory, hashFile, scanOutputs, type ArtifactScanResult, type DiscoveredArtifact } from './artifacts.js';
 import { parseArgumentHint, type SkillParamDef } from '../config/argument-hint-parser.js';
 import {
@@ -2633,15 +2633,26 @@ function discoverExtraArtifacts(
   paths: string[],
 ): DiscoveredArtifact[] {
   const runDirAbs = resolvePath(runDir);
+  const withinRun = (p: string) => p === runDirAbs || p.startsWith(runDirAbs + sep);
   const discovered: DiscoveredArtifact[] = [];
   for (const rel of paths) {
-    const abs = resolvePath(runDir, rel);
-    const within = abs === runDirAbs || abs.startsWith(runDirAbs + sep);
-    if (!within) {
-      throw new Error(`--artifact path escapes run directory: ${rel}`);
+    let abs = resolvePath(runDir, rel);
+    if (!existsSync(abs) && !isAbsolute(rel)) {
+      // Callers habitually pass shell-CWD-relative paths. Accept that reading
+      // unambiguously: only when the run-relative target is missing AND the
+      // CWD-relative target exists inside the run directory.
+      const cwdAbs = resolvePath(rel);
+      if (existsSync(cwdAbs) && withinRun(cwdAbs)) abs = cwdAbs;
+    }
+    if (!withinRun(abs)) {
+      throw new Error(
+        `--artifact path escapes run directory: ${rel} (resolved to ${abs}; relative paths resolve against the run directory ${runDirAbs} — pass a run-relative or absolute path inside it)`,
+      );
     }
     if (!existsSync(abs)) {
-      throw new Error(`--artifact path does not exist: ${rel}`);
+      throw new Error(
+        `--artifact path does not exist: ${rel} (resolved to ${abs}; relative paths resolve against the run directory ${runDirAbs}, not the shell CWD — pass a run-relative or absolute path)`,
+      );
     }
     const stat = statSync(abs);
     const data = stat.isDirectory() ? null : readFileSync(abs);

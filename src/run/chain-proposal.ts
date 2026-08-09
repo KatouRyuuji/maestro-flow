@@ -1,5 +1,5 @@
 import { lstatSync, readFileSync, realpathSync } from 'node:fs';
-import { relative, resolve } from 'node:path';
+import { isAbsolute, relative, resolve } from 'node:path';
 import { z } from 'zod';
 
 import type { ArtifactScanResult, DiscoveredArtifact } from './artifacts.js';
@@ -247,12 +247,28 @@ export function selectChainProposal(
   proposals: readonly ValidatedChainProposal[],
 ): ValidatedChainProposal {
   const outputsRoot = realpathSync(resolve(runDir, 'outputs'));
-  const requested = resolve(runDir, requestedPath);
-  const rel = relative(outputsRoot, requested);
-  if (!rel || rel.startsWith('..') || resolve(outputsRoot, rel) !== requested) {
-    throw new Error(`chain proposal path must remain under the current Run outputs/: ${requestedPath}`);
+  const underOutputs = (candidate: string) => {
+    const rel = relative(outputsRoot, candidate);
+    // isAbsolute(rel): cross-drive Windows paths yield an absolute rel instead of '..'
+    return Boolean(rel) && !isAbsolute(rel) && !rel.startsWith('..') && resolve(outputsRoot, rel) === candidate;
+  };
+  let requested = resolve(runDir, requestedPath);
+  if (!underOutputs(requested) && !isAbsolute(requestedPath)) {
+    // Callers habitually pass shell-CWD-relative paths; accept that reading
+    // unambiguously when it lands under the current Run outputs/.
+    const cwdCandidate = resolve(requestedPath);
+    if (underOutputs(cwdCandidate)) requested = cwdCandidate;
+  }
+  if (!underOutputs(requested)) {
+    throw new Error(
+      `chain proposal path must remain under the current Run outputs/: ${requestedPath} (resolved to ${requested}; relative paths resolve against the run directory ${resolve(runDir)} — pass a run-relative or absolute path under ${outputsRoot})`,
+    );
   }
   const selected = proposals.find(item => resolve(item.artifact.absolutePath) === requested);
-  if (!selected) throw new Error(`chain proposal is missing or invalid: ${requestedPath}`);
+  if (!selected) {
+    throw new Error(
+      `chain proposal is missing or invalid: ${requestedPath} (resolved to ${requested}; expected a validated proposal under ${outputsRoot})`,
+    );
+  }
   return selected;
 }

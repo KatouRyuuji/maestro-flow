@@ -1234,6 +1234,36 @@ gates:
     expect(extra.role).toBe('evidence');
   });
 
+  it('complete --artifact accepts a CWD-relative path that lands inside the run directory', () => {
+    const projectRoot = root();
+    commandFile(projectRoot, 'art-cwd', `consumes: []\nproduces: []\ngates:\n  entry: []\n  exit: []`);
+    const created = createRun({ projectRoot, command: 'art-cwd', intent: 'cwd relative evidence' });
+    const runDir = join(projectRoot, '.workflow', 'sessions', created.session_id, 'runs', created.run_id);
+    writeFileSync(join(runDir, 'evidence', 'trace.log'), 'trace lines\n', 'utf8');
+
+    // Callers pass shell-CWD-relative paths by habit; the run-relative reading
+    // misses, but the CWD reading reaches a file inside the run directory.
+    const prevCwd = process.cwd();
+    process.chdir(projectRoot);
+    try {
+      const completed = completeRun(projectRoot, created.run_id, undefined, {
+        extraArtifacts: [join('.workflow', 'sessions', created.session_id, 'runs', created.run_id, 'evidence', 'trace.log')],
+      });
+      expect(completed.sealed).toBe(true);
+    } finally {
+      process.chdir(prevCwd);
+    }
+  });
+
+  it('complete --artifact errors name the run-directory resolution base', () => {
+    const projectRoot = root();
+    commandFile(projectRoot, 'art-msg', `consumes: []\nproduces: []\ngates:\n  entry: []\n  exit: []`);
+    const created = createRun({ projectRoot, command: 'art-msg', intent: 'error message base' });
+    expect(() => completeRun(projectRoot, created.run_id, undefined, {
+      extraArtifacts: ['evidence/missing.log'],
+    })).toThrow(/relative paths resolve against the run directory/i);
+  });
+
   it('surfaces complete --note as a review assessment and in the next prev handoff', () => {
     const projectRoot = root();
     commandFile(projectRoot, 'demo-plan', `consumes: []

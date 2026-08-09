@@ -487,6 +487,51 @@ describe('run complete — completion gate integrity', () => {
     expect(chainOf(projectRoot, 's').map(step => step.command)).toEqual(['adaptive']);
   });
 
+  it('accepts a CWD-relative chain-proposal path that lands under the run outputs', () => {
+    const projectRoot = root();
+    proposalCommand(projectRoot, 'adaptive', ['insert']);
+    stepCommand(projectRoot, 'verify');
+    seedSession(projectRoot, 's', [{ command: 'adaptive' }]);
+    const runId = startStep(projectRoot, 's', 0);
+    writeChainProposal(projectRoot, 's', runId, 'adaptive', [
+      { op: 'insert', after: 'step-000-adaptive', command: 'verify' },
+    ]);
+    const store = new SessionStore(projectRoot);
+    const before = store.readBundle('s').session;
+
+    // Callers pass shell-CWD-relative paths by habit; the run-relative reading
+    // misses, but the CWD reading lands under the run outputs/.
+    const prevCwd = process.cwd();
+    process.chdir(projectRoot);
+    try {
+      const result = completeRunWithVerdict(projectRoot, runId, 's', {
+        verdict: 'done',
+        chainProposal: join('.workflow', 'sessions', 's', 'runs', runId, 'outputs', 'chain-proposal.json'),
+        transition: {
+          requestId: 'req-cwd-proposal',
+          expectedIdentityRevision: before.identity_revision,
+          expectedActivityRevision: before.activity_revision,
+        },
+      });
+      expect(result.run_sealed).toBe(true);
+      expect(chainOf(projectRoot, 's').map(step => step.command)).toEqual(['adaptive', 'verify']);
+    } finally {
+      process.chdir(prevCwd);
+    }
+  });
+
+  it('chain proposal path errors name the run-directory resolution base', () => {
+    const projectRoot = root();
+    proposalCommand(projectRoot, 'adaptive', ['insert']);
+    seedSession(projectRoot, 's', [{ command: 'adaptive' }]);
+    const runId = startStep(projectRoot, 's', 0);
+
+    expect(() => completeRunWithVerdict(projectRoot, runId, 's', {
+      verdict: 'done',
+      chainProposal: 'nowhere/proposal.json',
+    })).toThrow(/relative paths resolve against the run directory/);
+  });
+
   it('commits complete authority and receipt in one StoreTransaction', () => {
     const projectRoot = root();
     stepCommand(projectRoot, 'demo');
