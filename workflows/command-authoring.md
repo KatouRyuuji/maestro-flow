@@ -330,7 +330,7 @@ maestro session done --session <session-id> --verdict {verdict} \
   [--chain-proposal outputs/chain-proposal.json] [--evidence <path>] [--note "..."]
 ```
 
-`--evidence` / `--artifact` / `--chain-proposal` paths resolve relative to the **Run directory**, not the shell CWD, and must stay inside it — pass run-relative paths (e.g. `outputs/…`) or absolute paths within the Run directory.
+`--evidence` / `--artifact` / `--chain-proposal` paths resolve relative to the **Run directory**, not the shell CWD, and must stay inside it — pass run-relative paths (e.g. `outputs/…`) or absolute paths within the Run directory. A shell-CWD-relative reading is accepted only when it unambiguously reaches a file inside the Run directory (or its `outputs/` for chain proposals).
 
 Status verdicts (chain-advance vocabulary; ready-vocabulary aliases ready→done / ready_with_concerns→done-with-concerns / failed→needs-retry are also accepted and mapped):
 - **done** — Normal completion
