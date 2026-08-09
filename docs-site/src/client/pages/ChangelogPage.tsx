@@ -17,6 +17,14 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    version: '0.5.68',
+    date: '2026-08',
+    changes: [
+      { type: 'fix', text_en: 'Run-completion path resolution: --evidence/--artifact/--chain-proposal now accept shell-CWD-relative paths unambiguously when they land inside the Run directory (outputs/ for proposals), errors state the resolved path and the run-directory base, and a latent Windows cross-drive containment bypass is fixed', text_zh: 'Run 完成路径解析：--evidence/--artifact/--chain-proposal 在目标无歧义落在 Run 目录（proposal 为其 outputs/）内时接受 shell-CWD 相对路径，报错给出解析后路径与 Run 目录基准，并修复 Windows 跨盘符 containment 潜在绕过' },
+      { type: 'docs', text_en: 'Align skill-layer verification with evidence-reuse discipline: verify iron law becomes grounded evidence (live run or still-valid result under material invalidators), execute self-check scoped to changed surface, odyssey-review reuses test evidence across S_FIX/S_CONFIRM; evidence path base documented in run-mode and command-authoring', text_zh: '技能层验证与证据复用纪律对齐：verify 铁律改为 grounded evidence（本轮 live run 或失效条件内仍有效的结果），execute self-check 限定本次改动范围，odyssey-review 跨 S_FIX/S_CONFIRM 复用测试证据；run-mode 与 command-authoring 补充 evidence 路径基准文档' },
+    ],
+  },
+  {
     version: '0.5.67',
     date: '2026-08',
     changes: [
