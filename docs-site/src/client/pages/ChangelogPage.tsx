@@ -17,6 +17,14 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    version: '0.5.69',
+    date: '2026-08',
+    changes: [
+      { type: 'feat', text_en: 'Knowledge graph: deterministic Objective-C/Swift structural resolution — exact-only resolution of inheritance, protocol conformance, extension ownership and contains relationships (never fuzzy), generated Swift-header identity via SWIFT_CLASS, opt-in external-surface manifest with validated project-relative header allowlist, hierarchy/impact/path queries with structured ambiguity errors, schema v8 migration with replayable structural refs, and hardened background sync leases', text_zh: '知识图谱：确定性 Objective-C/Swift 结构解析——继承/协议遵循/扩展归属/包含关系仅做精确解析（绝不模糊匹配），通过 SWIFT_CLASS 识别生成式 Swift 头身份，可选的 external-surfaces 清单以项目相对路径白名单校验外部头文件，层次/影响/路径查询返回结构化歧义错误，schema v8 迁移支持可重放结构引用，后台同步租约加固' },
+      { type: 'fix', text_en: 'Windows canonical-path parity: external-surface canonical paths and kg identity-path test expectations are now posix-form on win32, fixing kg sync failures (Invalid StructuralReference) on Windows', text_zh: 'Windows 规范路径对齐：external-surface 规范路径与 kg 身份路径测试期望在 win32 统一为 posix 形式，修复 Windows 上 kg sync 的 Invalid StructuralReference 失败' },
+    ],
+  },
+  {
     version: '0.5.68',
     date: '2026-08',
     changes: [
