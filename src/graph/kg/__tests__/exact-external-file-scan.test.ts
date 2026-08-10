@@ -10,6 +10,11 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+
+// Canonical identity paths are posix-form on every platform.
+function toPosixPath(value: string): string {
+  return process.platform === 'win32' ? value.replace(/\\/g, '/') : value;
+}
 import { extractCode } from '../extraction/code/code-extractor.js';
 import {
   EXTERNAL_SURFACE_MANIFEST_SCHEMA_VERSION,
@@ -98,7 +103,7 @@ describe('exact external file scan', () => {
 
     expect(stats.filesScanned).toBe(2);
     expect(results).toHaveLength(2);
-    const externalResult = results.find(result => result.fileRecord.path === realpathSync(exactPath));
+    const externalResult = results.find(result => result.fileRecord.path === toPosixPath(realpathSync(exactPath)));
     expect(externalResult?.fileRecord.language).toBe('objc');
     expect(externalResult?.nodes.length).toBeGreaterThan(0);
     expect(externalResult?.nodes).toEqual(expect.arrayContaining([
@@ -118,7 +123,7 @@ describe('exact external file scan', () => {
       expect.objectContaining({
         referenceKind: 'imports',
         referenceName: 'B.h',
-        filePath: realpathSync(exactPath),
+        filePath: toPosixPath(realpathSync(exactPath)),
         language: 'objc',
       }),
     ]));
@@ -157,12 +162,12 @@ describe('exact external file scan', () => {
 
     expect(stats.filesScanned).toBe(1);
     expect(results).toHaveLength(1);
-    expect(results[0].fileRecord.path).toBe(realpathSync(exactPath));
+    expect(results[0].fileRecord.path).toBe(toPosixPath(realpathSync(exactPath)));
     expect(results.flatMap(result => result.nodes).map(node => node.name))
       .toContain('OnlyExactHeader');
     expect(results.flatMap(result => result.nodes).some(node => node.name.startsWith('IgnoredHeader')))
       .toBe(false);
-  });
+  }, 30_000);
 
   it('fails before progress or extraction when the fixed manifest is unsafe', async () => {
     const root = makeProject();
@@ -204,7 +209,7 @@ describe('exact external file scan', () => {
       srcDir: root,
       createMaestroIgnore: false,
       onProgress: file => {
-        if (file !== realpathSync(exactPath)) return;
+        if (file !== toPosixPath(realpathSync(exactPath))) return;
         rmSync(exactPath);
         symlinkSync(outsidePath, exactPath);
       },

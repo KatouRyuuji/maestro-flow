@@ -14,6 +14,11 @@ import { extractCode, forEachCodeExtractionResult } from '../extraction/code/cod
 import { getTreeSitterEngine } from '../extraction/code/tree-sitter.js';
 import type { ExtractionResult } from '../db/types.js';
 
+// Canonical identity paths are posix-form on every platform.
+function toPosixPath(value: string): string {
+  return process.platform === 'win32' ? value.replace(/\\/g, '/') : value;
+}
+
 describe('MaestroGraph code extractor streaming', () => {
   it('emits each extraction result without breaking extractCode compatibility', async () => {
     const root = mkdtempSync(join(tmpdir(), 'maestro-code-stream-'));
@@ -771,7 +776,7 @@ describe('MaestroGraph code extractor streaming', () => {
       });
 
       expect(extraction.results).toHaveLength(1);
-      expect(extraction.results[0].fileRecord.path).toBe(realpathSync(join(actualSrc, 'app.yml')));
+      expect(extraction.results[0].fileRecord.path).toBe(toPosixPath(realpathSync(join(actualSrc, 'app.yml'))));
     } finally {
       rmSync(container, { recursive: true, force: true });
       rmSync(actualSrc, { recursive: true, force: true });
@@ -789,7 +794,7 @@ describe('MaestroGraph code extractor streaming', () => {
       mkdirSync(join(actualRoot, 'src'), { recursive: true });
       symlinkSync(actualRoot, aliasRoot, 'dir');
       writeFileSync(actualFile, 'service:\n  name: demo\n');
-      const canonicalFile = realpathSync(actualFile);
+      const canonicalFile = toPosixPath(realpathSync(actualFile));
       const progressPaths: string[] = [];
       const streamed: ExtractionResult[] = [];
 

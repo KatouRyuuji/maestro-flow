@@ -11,6 +11,11 @@ import {
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
+
+// Canonical identity paths are posix-form on every platform.
+function toPosixPath(value: string): string {
+  return process.platform === 'win32' ? value.replace(/\\/g, '/') : value;
+}
 import { MaestroGraph } from '../engine.js';
 import {
   CodegraphSyncCommittedError,
@@ -205,7 +210,7 @@ describe('structural resolution integration', () => {
         "SELECT path, node_count, language FROM files WHERE source_type = 'codegraph' ORDER BY path"
       ).all() as unknown as Array<{ path: string; node_count: number; language: string }>;
       expect(files).toHaveLength(5);
-      expect(files.filter(file => file.path === fixture.podHeader)).toHaveLength(1);
+      expect(files.filter(file => file.path === toPosixPath(fixture.podHeader))).toHaveLength(1);
       expect(files.find(file => file.path.endsWith('/Empty.h'))).toMatchObject({
         // Every scanned source owns one file node even when it has no symbols.
         node_count: 1,
@@ -333,7 +338,7 @@ describe('structural resolution integration', () => {
     const unavailableChildPath = `${childPath}-unavailable`;
     let movedScheduledFile = false;
     await expect(syncFixture(fixture, undefined, (file) => {
-      if (file !== childPath || movedScheduledFile) return;
+      if (file !== toPosixPath(childPath) || movedScheduledFile) return;
       renameSync(childPath, unavailableChildPath);
       movedScheduledFile = true;
     })).rejects.toThrow();

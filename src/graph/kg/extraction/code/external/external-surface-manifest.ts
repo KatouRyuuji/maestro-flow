@@ -184,12 +184,16 @@ export function collectExactFile(
     );
   }
 
+  // Canonical identity paths are posix-form on every platform (matching
+  // canonicalizeCodeFilePath); realpathSync yields native separators on win32.
+  const identityPath = process.platform === 'win32' ? canonicalPath.replace(/\\/g, '/') : canonicalPath;
+
   return Object.freeze({
     module: entry.module,
     language: entry.language,
     path: configuredPath,
     configuredPath,
-    canonicalPath,
+    canonicalPath: identityPath,
     size: stat.size,
     modifiedAt: Math.floor(stat.mtimeMs),
     mtimeMs: stat.mtimeMs,

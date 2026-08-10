@@ -26,6 +26,11 @@ const FIXTURE_ROOT = resolve(
 );
 const roots: string[] = [];
 
+// Canonical identity paths are posix-form on every platform.
+function toPosixPath(value: string): string {
+  return process.platform === 'win32' ? value.replace(/\\/g, '/') : value;
+}
+
 interface CrossLanguageFixture {
   root: string;
   sources: string;
@@ -176,11 +181,11 @@ describe('Swift and Objective-C cross-language E2E', () => {
     ).get()).toEqual({ count: 0 });
     expect(graph.rawDb.prepare(
       'SELECT COUNT(*) AS count FROM files WHERE path = ?'
-    ).get(fixture.unlistedSibling)).toEqual({ count: 0 });
+    ).get(toPosixPath(fixture.unlistedSibling))).toEqual({ count: 0 });
     expect((graph.rawDb.prepare(`
       SELECT path FROM files WHERE path LIKE ? ORDER BY path
-    `).all(`${fixture.root}/Pods/%`) as unknown as Array<{ path: string }>).map(row => row.path))
-      .toEqual([...fixture.externalFiles].sort());
+    `).all(`${toPosixPath(fixture.root)}/Pods/%`) as unknown as Array<{ path: string }>).map(row => row.path))
+      .toEqual([...fixture.externalFiles].map(toPosixPath).sort());
 
     expect(graph.getTypeHierarchy(projectObjCChild, { direction: 'parents', depth: 1 })
       .parents.map(node => node.id)).toContain(projectObjCBase);

@@ -5,6 +5,11 @@ import { tmpdir } from 'node:os';
 import { MaestroGraph } from '../engine.js';
 import { syncKnowledgeGraph } from '../extraction/orchestrator.js';
 
+// Canonical identity paths are posix-form on every platform.
+function toPosixPath(value: string): string {
+  return process.platform === 'win32' ? value.replace(/\\/g, '/') : value;
+}
+
 describe('MaestroGraph extraction orchestrator', () => {
   it('indexes the project root by default and lets ignore rules exclude paths', async () => {
     const root = mkdtempSync(join(tmpdir(), 'maestro-orchestrator-'));
@@ -35,8 +40,8 @@ describe('MaestroGraph extraction orchestrator', () => {
           .sort();
 
         expect(files).toEqual([
-          join(canonicalRoot, 'src', 'app.yml'),
-          join(canonicalRoot, 'tauri', 'src-tauri', 'app.yml'),
+          toPosixPath(join(canonicalRoot, 'src', 'app.yml')),
+          toPosixPath(join(canonicalRoot, 'tauri', 'src-tauri', 'app.yml')),
         ]);
       } finally {
         graph.close();
@@ -80,8 +85,8 @@ describe('MaestroGraph extraction orchestrator', () => {
           .sort();
 
         expect(files).toEqual([
-          join(canonicalActualRoot, 'src', 'app.yml'),
-          join(canonicalActualRoot, 'tauri', 'src-tauri', 'app.yml'),
+          toPosixPath(join(canonicalActualRoot, 'src', 'app.yml')),
+          toPosixPath(join(canonicalActualRoot, 'tauri', 'src-tauri', 'app.yml')),
         ]);
       } finally {
         graph.close();

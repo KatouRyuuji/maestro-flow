@@ -10,6 +10,11 @@ import {
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+
+// Canonical identity paths are posix-form on every platform.
+function toPosixPath(value: string): string {
+  return process.platform === 'win32' ? value.replace(/\\/g, '/') : value;
+}
 import { Command } from 'commander';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -104,7 +109,7 @@ describe('external surface manifest', () => {
       module: 'Module',
       language: 'objc',
       configuredPath: 'Pods/Module/A.h',
-      canonicalPath: realpathSync(headerPath),
+      canonicalPath: toPosixPath(realpathSync(headerPath)),
     })]);
   });
 
