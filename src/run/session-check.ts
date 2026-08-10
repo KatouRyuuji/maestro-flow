@@ -23,7 +23,7 @@ export function checkResolvedSession(projectRoot: string, resolved: ResolvedSess
     }
     stepIds.add(step.step_id);
 
-    if (!step.decision_ref) {
+    if (!step.decision_ref && step.status !== 'skipped') {
       const content = resolveStepContent(projectRoot, step.command);
       if (!content.prepare && !content.workflow) {
         findings.push({

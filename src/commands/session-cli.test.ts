@@ -344,6 +344,32 @@ describe('maestro session chain', () => {
     expect(store.readBundle(id).session.orchestration.chain[1].status).toBe('skipped');
   });
 
+  it('does not require executable content for a deliberately skipped step', async () => {
+    const chainFile = join(root, 'invalid-step.json');
+    writeFileSync(chainFile, JSON.stringify({
+      intent: 'skip invalid', steps: [{ command: 'not-registered' }],
+    }));
+    await run('create', 'invalid-step', '--id', 'invalid-step', '--chain-file', chainFile, '--workflow-root', root);
+
+    await run('check', 'invalid-step', '--workflow-root', root);
+    expect(lastJson()).toMatchObject({
+      ok: false,
+      errors: 1,
+      findings: [expect.objectContaining({ code: 'E006', step_index: 0 })],
+    });
+
+    process.exitCode = undefined;
+    await run('chain', 'skip', '--session', 'invalid-step', '--step', 'step-000-not-registered', '--workflow-root', root);
+    await run('check', 'invalid-step', '--workflow-root', root);
+    expect(lastJson()).toEqual({
+      ok: true,
+      session_id: 'invalid-step',
+      errors: 0,
+      warnings: 0,
+      findings: [],
+    });
+  });
+
   it('replace updates a pending step and regenerates step_id', async () => {
     const id = await seed();
     await run('chain', 'replace', '--session', id, '--step', 'step-001-execute', '--command', 'test', '--args', '--fast', '--workflow-root', root);
