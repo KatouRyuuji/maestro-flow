@@ -247,6 +247,56 @@ export function verifyExactFileIdentity(file: ResolvedExternalSurfaceFile): void
   }
 }
 
+export interface PreparedExternalSurfaceFile {
+  file: ResolvedExternalSurfaceFile;
+  sourceCode: string;
+  contentDigest: string;
+}
+
+export interface PreparedExternalSurfaceScan {
+  manifest: LoadedExternalSurfaceManifest;
+  files: readonly PreparedExternalSurfaceFile[];
+  /** Manifest digest plus exact identity/content snapshot. */
+  externalFingerprint: string;
+}
+
+/**
+ * Captures the exact external bytes before a destructive transaction starts.
+ * Extraction reuses these bytes instead of reopening the path, binding the
+ * graph snapshot and sync watermark to one immutable input.
+ */
+export function prepareExternalSurfaceScan(projectRoot: string): PreparedExternalSurfaceScan {
+  const canonicalProjectRoot = realpathSync(resolve(projectRoot));
+  const manifest = loadExternalSurfaceManifest(canonicalProjectRoot);
+  const files = manifest.files.map((file) => {
+    const sourceCode = readExactFile(file);
+    return Object.freeze({
+      file,
+      sourceCode,
+      contentDigest: createHash('sha256').update(sourceCode).digest('hex'),
+    });
+  });
+  const externalFingerprint = createHash('sha256').update(JSON.stringify({
+    schemaVersion: manifest.schemaVersion,
+    manifestDigest: manifest.digest,
+    files: files.map(item => ({
+      path: item.file.canonicalPath,
+      module: item.file.module,
+      language: item.file.language,
+      size: item.file.size,
+      mtimeMs: item.file.mtimeMs,
+      device: item.file.device,
+      inode: item.file.inode,
+      contentDigest: item.contentDigest,
+    })),
+  })).digest('hex');
+  return Object.freeze({
+    manifest,
+    files: Object.freeze(files),
+    externalFingerprint,
+  });
+}
+
 /** Resolve an exact allowlist and reject canonical aliases of the same file. */
 export function collectExactFiles(
   projectRoot: string,

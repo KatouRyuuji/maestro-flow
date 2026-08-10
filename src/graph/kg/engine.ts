@@ -46,7 +46,7 @@ import type { CodeEmbeddingIndex } from './embedding/code-embedding.js';
 import { buildCodeEmbeddingIndex, saveCodeEmbeddingIndex } from './embedding/index.js';
 import { buildContext as buildContextImpl } from './query/context-builder.js';
 import type { BuiltContext } from './query/context-builder.js';
-import { prepareExternalSurfaceScan } from './extraction/code/code-extractor.js';
+import { prepareExternalSurfaceScan } from './extraction/code/external/external-surface-manifest.js';
 import { getGitHead, getSyncStateHealth, isSyncStateFresh } from './sync-state.js';
 import type { KgSyncAttempt, KgSyncWatermark } from './sync-state.js';
 

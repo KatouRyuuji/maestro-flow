@@ -330,7 +330,7 @@ function acquireOrAdoptWorkerToken(projectRoot: string): {
 
 async function captureFreshness(projectRoot: string): Promise<KgSyncFreshnessSnapshot> {
   const { prepareExternalSurfaceScan } = await import(
-    '../graph/kg/extraction/code/code-extractor.js'
+    '../graph/kg/extraction/code/external/external-surface-manifest.js'
   );
   const external = prepareExternalSurfaceScan(projectRoot);
   return {
