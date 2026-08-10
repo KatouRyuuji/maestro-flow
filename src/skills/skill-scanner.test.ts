@@ -2,7 +2,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { discoverPiSkillSources, scanAllSkills } from './skill-scanner.js';
+import {
+  diagnosePiSkillSources,
+  discoverPiSkillSources,
+  scanAllSkills,
+} from './skill-scanner.js';
 
 const tempRoots: string[] = [];
 
@@ -27,6 +31,53 @@ describe('Pi skill package discovery', () => {
       platform: 'pi',
       scope: 'project',
       filePath: join(packageRoot, '.pi', 'skills', 'package-skill', 'SKILL.md'),
+    });
+  });
+
+  it('reports a package manifest whose declared Pi skill directory is missing', () => {
+    const root = makeTempRoot();
+    const nodeModules = join(root, 'node_modules');
+    const packageRoot = join(nodeModules, 'pi-maestro-flow');
+    writePiPackage(packageRoot);
+    const runtimeModulePath = join(
+      nodeModules,
+      'maestro-flow',
+      'dist',
+      'src',
+      'skills',
+      'skill-scanner.js',
+    );
+
+    expect(diagnosePiSkillSources(join(root, 'workspace'), runtimeModulePath)).toEqual([{
+      code: 'PI_SKILL_DIR_MISSING',
+      dir: join(packageRoot, '.pi', 'skills'),
+      scope: 'global',
+    }]);
+  });
+
+  it('finds an explicitly advertised Pi package outside the Maestro install tree', () => {
+    const root = makeTempRoot();
+    const packageRoot = join(root, 'external', 'pi-maestro-flow');
+    writePiPackage(packageRoot);
+    writeSkill(join(packageRoot, '.pi', 'skills'), 'advertised-skill');
+    const runtimeModulePath = join(
+      root,
+      'global',
+      'node_modules',
+      'maestro-flow',
+      'dist',
+      'src',
+      'skills',
+      'skill-scanner.js',
+    );
+
+    expect(discoverPiSkillSources(
+      join(root, 'workspace'),
+      runtimeModulePath,
+      packageRoot,
+    )).toContainEqual({
+      dir: join(packageRoot, '.pi', 'skills'),
+      scope: 'global',
     });
   });
 

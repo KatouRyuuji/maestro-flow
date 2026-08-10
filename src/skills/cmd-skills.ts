@@ -6,7 +6,11 @@
 // `resolveStepContent`.
 // ---------------------------------------------------------------------------
 
-import { scanAllSkills, type SkillPlatform } from './skill-scanner.js';
+import {
+  diagnosePiSkillSources,
+  scanAllSkills,
+  type SkillPlatform,
+} from './skill-scanner.js';
 import { listResolvableSteps } from '../run/contract.js';
 
 export interface SkillsCmdOptions {
@@ -28,6 +32,13 @@ export async function runSkills(opts: SkillsCmdOptions): Promise<number> {
     console.error(`  Available: ${VALID_PLATFORMS.join(', ')}`);
     console.error(`  Usage: maestro skills --platform <claude|codex|agent|agy|pi>`);
     console.error('');
+  }
+  if (!opts.platform || opts.platform === 'pi') {
+    for (const diagnostic of diagnosePiSkillSources()) {
+      console.error(
+        `[maestro skills] WARNING ${diagnostic.code}: declared ${diagnostic.scope} Pi skill directory does not exist: ${diagnostic.dir}`,
+      );
+    }
   }
   const all = scanAllSkills(undefined, opts.platform ? { platform: opts.platform } : {});
   // Steps are platform-neutral: the same prepare/workflows registry serves every

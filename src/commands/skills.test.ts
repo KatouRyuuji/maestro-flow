@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { Command } from 'commander';
 import { registerSkillsCommand } from './skills.js';
@@ -23,6 +26,28 @@ describe('maestro skills CLI', () => {
     } finally {
       log.mockRestore();
       error.mockRestore();
+    }
+  });
+
+  it('warns when an installed package declares a missing Pi skill directory', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'maestro-skills-warning-'));
+    const packageRoot = join(root, 'node_modules', 'pi-maestro-flow');
+    const previousCwd = process.cwd();
+    mkdirSync(packageRoot, { recursive: true });
+    writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({
+      name: 'pi-maestro-flow',
+      pi: { skills: ['./.pi/skills'] },
+    }));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      process.chdir(root);
+      await expect(runSkills({ platform: 'pi', quiet: true })).resolves.toBe(0);
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('WARNING PI_SKILL_DIR_MISSING'));
+      expect(error).toHaveBeenCalledWith(expect.stringContaining(join(packageRoot, '.pi', 'skills')));
+    } finally {
+      process.chdir(previousCwd);
+      error.mockRestore();
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });

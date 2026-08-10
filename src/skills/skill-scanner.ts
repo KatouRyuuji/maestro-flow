@@ -112,6 +112,10 @@ export interface PiSkillSource {
   scope: 'global' | 'project';
 }
 
+export interface PiSkillSourceDiagnostic extends PiSkillSource {
+  code: 'PI_SKILL_DIR_MISSING';
+}
+
 /**
  * Locate Pi skills through the owning npm package.
  *
@@ -123,6 +127,7 @@ export interface PiSkillSource {
 export function discoverPiSkillSources(
   workflowRoot: string = resolve(process.cwd()),
   runtimeModulePath: string = fileURLToPath(import.meta.url),
+  advertisedPackageRoot: string | undefined = process.env.MAESTRO_PI_PACKAGE_ROOT,
 ): PiSkillSource[] {
   const discovered = new Map<string, PiSkillSource>();
 
@@ -136,6 +141,9 @@ export function discoverPiSkillSources(
     }
   };
 
+  if (advertisedPackageRoot?.trim()) {
+    addPackage(resolve(advertisedPackageRoot), 'global');
+  }
   addPackage(workflowRoot, 'project');
   addPackage(join(workflowRoot, 'node_modules', 'pi-maestro-flow'), 'project');
 
@@ -152,6 +160,15 @@ export function discoverPiSkillSources(
     if (a.scope !== b.scope) return a.scope === 'global' ? -1 : 1;
     return a.dir.localeCompare(b.dir);
   });
+}
+
+export function diagnosePiSkillSources(
+  workflowRoot: string = resolve(process.cwd()),
+  runtimeModulePath: string = fileURLToPath(import.meta.url),
+): PiSkillSourceDiagnostic[] {
+  return discoverPiSkillSources(workflowRoot, runtimeModulePath)
+    .filter(source => !existsSync(source.dir))
+    .map(source => ({ ...source, code: 'PI_SKILL_DIR_MISSING' }));
 }
 
 function readPiSkillDirs(packageRoot: string): string[] {
