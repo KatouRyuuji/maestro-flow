@@ -11,6 +11,7 @@ const EXECUTOR_OPTIONS: { value: AgentType; label: string }[] = [
   { value: 'claude-code', label: 'Claude Code' },
   { value: 'codex', label: 'Codex' },
   { value: 'gemini', label: 'Gemini' },
+  { value: 'pi', label: 'Pi' },
 ];
 
 export function ExecutionToolbar() {

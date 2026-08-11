@@ -29,6 +29,7 @@ const EXECUTOR_OPTIONS: { value: AgentType; label: string }[] = [
   { value: 'claude-code', label: 'Claude' },
   { value: 'codex', label: 'Codex' },
   { value: 'gemini', label: 'Gemini' },
+  { value: 'pi', label: 'Pi' },
   { value: 'agent-sdk', label: 'Agent SDK' },
 ];
 

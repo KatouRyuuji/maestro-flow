@@ -276,6 +276,19 @@ export function hashFile(path: string): { hash: string; size: number } {
   return hashBuffer(readVerifiedFile(path, canonicalParent, canonicalParent).data);
 }
 
+/**
+ * Read one file with the same verified fd/fstat/realpath containment fence as
+ * artifact scans: the path must resolve to a regular file directly inside its
+ * canonical parent, the opened descriptor must match the inspected identity,
+ * and the bytes must be stable across the read. Returns the content plus its
+ * plain sha256 hex digest.
+ */
+export function readContainedFile(path: string): { data: Buffer; hash: string } {
+  const canonicalParent = realpathSync(dirname(path));
+  const { data } = readVerifiedFile(path, canonicalParent, canonicalParent);
+  return { data, hash: createHash('sha256').update(data).digest('hex') };
+}
+
 export function hashDirectory(path: string): { hash: string; size: number } {
   const canonicalParent = realpathSync(dirname(path));
   const root = requireSafePath(path, canonicalParent, canonicalParent);

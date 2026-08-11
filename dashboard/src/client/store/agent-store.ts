@@ -149,8 +149,32 @@ export const useAgentStore = create<AgentStore>((set) => ({
     set((state) => {
       const proc = state.processes[processId];
       if (!proc) return state;
+
+      const terminal = status === 'stopped' || status === 'error';
+      let entries = state.entries;
+      if (terminal) {
+        const processEntries = state.entries[processId] ?? [];
+        const partialIndex = processEntries.findLastIndex((entry, index) => (
+          entry.type === 'assistant_message'
+          && entry.partial
+          && !processEntries.slice(index + 1).some((later) => later.type === 'assistant_message')
+        ));
+        if (partialIndex >= 0) {
+          const finalized = processEntries.slice();
+          const partial = finalized[partialIndex];
+          if (partial.type === 'assistant_message') {
+            finalized[partialIndex] = { ...partial, partial: false };
+            entries = { ...state.entries, [processId]: finalized };
+          }
+        }
+      }
+
       return {
         processes: { ...state.processes, [processId]: { ...proc, status } },
+        entries,
+        ...(terminal
+          ? { processStreaming: { ...state.processStreaming, [processId]: false } }
+          : {}),
       };
     });
   },
@@ -192,6 +216,9 @@ export const useAgentStore = create<AgentStore>((set) => ({
             ? newEntries.slice(-MAX_ENTRIES_PER_PROCESS)
             : newEntries,
         },
+        ...(entry.type === 'assistant_message'
+          ? { processStreaming: { ...state.processStreaming, [processId]: entry.partial } }
+          : {}),
       };
     }),
 

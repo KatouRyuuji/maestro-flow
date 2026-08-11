@@ -15,7 +15,7 @@ import type { AgentType } from '@/shared/agent-types.js';
 // ChatInput -- composer with chip + icon agent selector (chat.html reference)
 // ---------------------------------------------------------------------------
 
-const AGENT_TYPES: AgentType[] = ['claude-code', 'codex', 'gemini', 'qwen', 'opencode', 'agent-sdk'];
+const AGENT_TYPES: AgentType[] = ['claude-code', 'codex', 'gemini', 'qwen', 'opencode', 'agent-sdk', 'pi'];
 
 /** Short labels for agent icon buttons */
 const AGENT_SHORT: Record<AgentType, string> = {
@@ -29,6 +29,7 @@ const AGENT_SHORT: Record<AgentType, string> = {
   agy: 'A',
   'agent-sdk': 'S',
   'api-explore': 'Ax',
+  pi: 'Pi',
 };
 
 const SLASH_COMMANDS: SlashCommand[] = [

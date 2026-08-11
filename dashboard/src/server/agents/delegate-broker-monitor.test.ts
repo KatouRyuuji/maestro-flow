@@ -45,7 +45,7 @@ describe('DelegateBrokerMonitor', () => {
             status: 'queued',
             payload: { summary: 'Queued for execution' },
             metadata: {
-              tool: 'codex',
+              tool: 'pi',
               prompt: 'Inspect async delegate',
               workDir: 'D:/maestro2',
               queuedMessages: [],
@@ -60,7 +60,7 @@ describe('DelegateBrokerMonitor', () => {
             status: 'running',
             payload: { summary: 'Queued after_complete follow-up message', messageId: 'msg-2' },
             metadata: {
-              tool: 'codex',
+              tool: 'pi',
               prompt: 'Inspect async delegate',
               workDir: 'D:/maestro2',
               queuedMessages: [
@@ -104,7 +104,7 @@ describe('DelegateBrokerMonitor', () => {
         lastEventType: 'completed',
         latestSnapshot: { outputPreview: 'Finished successfully' },
         metadata: {
-          tool: 'codex',
+          tool: 'pi',
           prompt: 'Inspect async delegate',
           workDir: 'D:/maestro2',
           queuedMessages: [
@@ -133,10 +133,13 @@ describe('DelegateBrokerMonitor', () => {
     await (monitor as any).poll();
     monitor.stop();
 
-    const process = agentManager.listProcesses().find((item) => item.id === 'cli-history-job-1');
-    expect(process).toBeTruthy();
-    expect(process?.status).toBe('stopped');
-    expect(process?.interactive).toBe(true);
+    const spawned = eventBus
+      .getRecentEvents(10, 'agent:spawned')
+      .find((event) => (event.data as { id?: string }).id === 'cli-history-job-1')
+      ?.data as { type?: string; interactive?: boolean } | undefined;
+    expect(spawned).toBeTruthy();
+    expect(spawned?.type).toBe('pi');
+    expect(spawned?.interactive).toBe(true);
 
     const entries = agentManager.getEntries('cli-history-job-1');
     expect(entries.some((entry) => entry.type === 'user_message' && 'content' in entry && entry.content === 'Inspect async delegate')).toBe(true);

@@ -50,6 +50,10 @@ export async function createAdapterForType(agentType: AgentType): Promise<AgentA
       const { ApiExploreAdapter } = await import('./api-explore-adapter.js');
       return new ApiExploreAdapter();
     }
+    case 'pi': {
+      const { PiAdapter } = await import('./pi-adapter.js');
+      return new PiAdapter();
+    }
     default:
       throw new Error(`Unknown agent type for adapter factory: ${agentType}`);
   }

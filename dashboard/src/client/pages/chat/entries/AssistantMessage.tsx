@@ -20,6 +20,7 @@ export const AVATAR_CONFIG: Record<AgentType, { label: string; color: string; ti
   agy:           { label: 'A', color: 'var(--color-accent-blue)', tint: 'var(--color-tint-exploring)', className: 'gemini' },
   'agent-sdk':   { label: 'S', color: 'var(--color-accent-purple)', tint: 'var(--color-tint-planning)', className: 'claude' },
   'api-explore': { label: 'Ax', color: 'var(--color-accent-orange)', tint: 'var(--color-tint-verifying)', className: 'qwen' },
+  pi:            { label: 'Pi', color: 'var(--color-accent-blue)', tint: 'var(--color-tint-exploring)', className: 'gemini' },
 };
 
 function formatMsgTime(iso: string): string {

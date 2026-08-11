@@ -44,6 +44,9 @@ function normalizeAgentType(tool: string | undefined): AgentType {
     case 'gemini':
     case 'qwen':
     case 'opencode':
+    case 'agy':
+    case 'api-explore':
+    case 'pi':
       return tool;
     default:
       return 'codex';

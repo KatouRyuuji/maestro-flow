@@ -77,9 +77,9 @@ export function MessageArea({ processId }: { processId: string | null }) {
   }, []);
 
   const processStatus = process?.status;
-  const isCliHistory = processId?.startsWith('cli-history-') ?? false;
-  // cli-history processes with "running" status are stale — not truly active
-  const isActive = !isCliHistory && (processStatus === 'running' || processStatus === 'spawning');
+  // Broker-backed cli-history delegates are live while their projected process
+  // is spawning/running; hydration reconciles completed metadata to terminal.
+  const isActive = processStatus === 'running' || processStatus === 'spawning';
 
   // Show loading placeholder when agent is active but hasn't started streaming a response
   const showLoadingPlaceholder = useMemo(() => {

@@ -22,6 +22,7 @@ const TOOL_TO_AGENT_TYPE: Record<string, AgentType> = {
   codex: 'codex',
   claude: 'claude-code',
   opencode: 'opencode',
+  pi: 'pi',
 };
 
 const TOOL_TO_TERMINAL_CMD: Record<string, string> = {
@@ -30,6 +31,7 @@ const TOOL_TO_TERMINAL_CMD: Record<string, string> = {
   codex: 'codex',
   claude: 'claude',
   opencode: 'opencode',
+  pi: 'pi',
 };
 
 // ---------------------------------------------------------------------------

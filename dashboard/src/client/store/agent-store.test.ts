@@ -8,7 +8,7 @@ function makeProcess(id: string, status: 'running' | 'stopped' = 'running'): Age
     id,
     type: 'claude-code',
     status,
-    config: { type: 'claude-code', prompt: 'test', workDir: '/tmp' },
+    config: { type: 'claude-code', prompt: '', workDir: '/tmp' },
     startedAt: '2026-01-01T00:00:00Z',
   };
 }
@@ -124,6 +124,17 @@ describe('useAgentStore', () => {
       }
     });
 
+    it('tracks streaming while partial deltas arrive', () => {
+      const { addProcess, addEntry } = useAgentStore.getState();
+      addProcess(makeProcess('p-stream-state'));
+
+      addEntry('p-stream-state', EntryNormalizer.assistantMessage('p-stream-state', 'Hello', true));
+      expect(useAgentStore.getState().processStreaming['p-stream-state']).toBe(true);
+
+      addEntry('p-stream-state', EntryNormalizer.assistantMessage('p-stream-state', 'Hello world', false));
+      expect(useAgentStore.getState().processStreaming['p-stream-state']).toBe(false);
+    });
+
     it('final message replaces accumulated partial', () => {
       const { addProcess, addEntry } = useAgentStore.getState();
       addProcess(makeProcess('p-final'));
@@ -200,6 +211,20 @@ describe('useAgentStore', () => {
       updateProcessStatus('p-status', 'stopped');
 
       expect(useAgentStore.getState().processes['p-status'].status).toBe('stopped');
+    });
+
+    it('finalizes the trailing partial message when a process stops', () => {
+      const { addProcess, addEntry, updateProcessStatus } = useAgentStore.getState();
+      addProcess(makeProcess('p-terminal-stream'));
+      addEntry('p-terminal-stream', EntryNormalizer.assistantMessage('p-terminal-stream', 'streamed text', true));
+      addEntry('p-terminal-stream', EntryNormalizer.tokenUsage('p-terminal-stream', 10, 5));
+
+      updateProcessStatus('p-terminal-stream', 'stopped');
+
+      const state = useAgentStore.getState();
+      const assistant = state.entries['p-terminal-stream'].find((entry) => entry.type === 'assistant_message');
+      expect(assistant).toMatchObject({ content: 'streamed text', partial: false });
+      expect(state.processStreaming['p-terminal-stream']).toBe(false);
     });
 
     it('no-ops for unknown process', () => {

@@ -17,6 +17,12 @@ import type { DashboardEventBus } from '../state/event-bus.js';
 import { EntryNormalizer } from './entry-normalizer.js';
 import { CLI_HISTORY_DIR_NAME } from '../../shared/constants.js';
 
+function terminalExitCode(status: 'stopped' | 'error', reason?: string): number {
+  if (status === 'error') return 1;
+  const match = reason?.match(/exited with code:\s*(-?\d+)/i);
+  return match ? Number(match[1]) : 1;
+}
+
 export class AgentManager {
   private readonly adapters = new Map<AgentType, AgentAdapter>();
   private readonly processToAdapter = new Map<string, AgentAdapter>();
@@ -67,8 +73,9 @@ export class AgentManager {
         prompt: config.prompt.substring(0, 500),
         workDir: config.workDir,
         startedAt: process.startedAt,
-        completedAt: new Date().toISOString(),
-        exitCode,
+        ...(exitCode !== undefined
+          ? { completedAt: new Date().toISOString(), exitCode }
+          : {}),
       };
       writeFileSync(join(this.historyDir, `${execId}.meta.json`), JSON.stringify(meta, null, 2), 'utf-8');
     } catch {
@@ -112,6 +119,7 @@ export class AgentManager {
     const execId = `${prefix}-${process.id.replace(/-/g, '').substring(0, 12)}`;
     this.processExecIds.set(process.id, execId);
     this.processConfigs.set(process.id, { process, config });
+    this.persistMeta(process.id, process, config);
 
     const unsubs: Array<() => void> = [];
 
@@ -130,7 +138,7 @@ export class AgentManager {
       // --- Lifecycle bridge: Detect agent completion from entries ---
       if (entry.type === 'status_change') {
         if (entry.status === 'stopped' || entry.status === 'error') {
-          this.handleAutoStop(process.id, entry.reason);
+          this.handleAutoStop(process.id, entry.status, entry.reason);
         } else if (entry.status === 'paused') {
           // Turn completed in app-server mode — process still alive
           this.eventBus.emit('agent:turnCompleted', { processId: process.id });
@@ -190,7 +198,11 @@ export class AgentManager {
   }
 
   /** Handle agent process that stopped on its own */
-  private handleAutoStop(processId: string, reason?: string): void {
+  private handleAutoStop(
+    processId: string,
+    status: 'stopped' | 'error',
+    reason?: string,
+  ): void {
     if (!this.processToAdapter.has(processId)) return;
 
     // Clean up subscriptions
@@ -206,7 +218,9 @@ export class AgentManager {
 
     // Persist meta to CLI History before cleanup
     const saved = this.processConfigs.get(processId);
-    if (saved) this.persistMeta(processId, saved.process, saved.config, reason ? 1 : 0);
+    if (saved) {
+      this.persistMeta(processId, saved.process, saved.config, terminalExitCode(status, reason));
+    }
 
     this.processToAdapter.delete(processId);
     this.entryHistory.delete(processId);
