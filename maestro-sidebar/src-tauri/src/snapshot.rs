@@ -55,7 +55,8 @@ pub fn build_snapshot(cfg: &AppConfig) -> RuntimeSnapshot {
     knowledge.total = knowledge.specs
         + knowledge.memory
         + knowledge.knowhow
-        + knowledge.learning_rows;
+        + knowledge.learning_rows
+        + knowledge.issue_rows;
 
     let calls = activity::scan_calls(&crate::config::cli_history_dir(), 20);
 

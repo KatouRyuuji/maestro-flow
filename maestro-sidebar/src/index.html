@@ -43,12 +43,13 @@
       <button type="button" class="cap-main" id="capBody" title="回到卡片" aria-label="打开完整卡片视图">
         <div class="cap-intent" id="capTitle">—</div>
         <div class="cap-sub" id="capSub">—</div>
+        <div class="cap-progress" id="capProgress" aria-hidden="true"><i id="capProgressBar"></i></div>
       </button>
       <div class="cap-chips">
         <span class="cap-chip" id="capSessions">0 会话</span>
         <span class="cap-chip" id="capKnowledge">0 知识</span>
       </div>
-      <button type="button" class="ib cap-menu" id="btnCapMenu" title="胶囊菜单" aria-label="胶囊菜单" aria-expanded="false">
+      <button type="button" class="ib cap-menu" id="btnCapMenu" title="胶囊菜单" aria-label="胶囊菜单" aria-expanded="false" aria-controls="menuPop" aria-haspopup="dialog">
         <svg class="lucide" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-more"/></svg>
       </button>
     </div>
@@ -66,7 +67,7 @@
             <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><use href="icons.svg#i-refresh"/></svg>
           </button>
           <span class="tb-div" aria-hidden="true"></span>
-          <button type="button" class="ib" id="btnMenu" title="菜单" aria-label="打开菜单" aria-expanded="false" aria-controls="menuPop">
+          <button type="button" class="ib" id="btnMenu" title="菜单" aria-label="打开菜单" aria-expanded="false" aria-controls="menuPop" aria-haspopup="dialog">
             <svg class="lucide" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><use href="icons.svg#i-menu"/></svg>
           </button>
           <button type="button" class="ib" id="btnHideWin" title="隐藏到托盘" aria-label="隐藏到托盘">
@@ -80,7 +81,7 @@
 
       <!-- 菜单 -->
       <div class="menu-scrim" id="menuScrim" hidden></div>
-      <div class="menu-pop" id="menuPop" role="dialog" aria-label="设置菜单" tabindex="-1" hidden>
+      <div class="menu-pop" id="menuPop" role="dialog" aria-label="设置菜单" aria-modal="true" tabindex="-1" hidden>
         <div class="mp-group">
           <div class="mp-label">窗口</div>
           <button type="button" class="mp-row setting" id="btnTop" role="switch" aria-checked="false">
@@ -97,14 +98,28 @@
           </button>
         </div>
         <div class="mp-group">
-          <div class="mp-label">主题</div>
+          <div class="mp-label">外观</div>
           <div class="theme-row" id="themeRow" role="radiogroup" aria-label="界面主题">
-            <button type="button" class="theme-dot" data-theme="graphite" role="radio" aria-checked="false" title="石墨" aria-label="主题：石墨"></button>
-            <button type="button" class="theme-dot" data-theme="mist" role="radio" aria-checked="false" title="雾白浅色" aria-label="主题：雾白浅色"></button>
-            <button type="button" class="theme-dot" data-theme="glass" role="radio" aria-checked="false" title="烟熏玻璃" aria-label="主题：烟熏玻璃"></button>
-            <button type="button" class="theme-dot" data-theme="ember" role="radio" aria-checked="false" title="余烬" aria-label="主题：余烬"></button>
-            <button type="button" class="theme-dot" data-theme="blueprint" role="radio" aria-checked="false" title="蓝图" aria-label="主题：蓝图"></button>
+            <button type="button" class="theme-dot" data-theme="graphite" role="radio" aria-checked="false" title="石墨" aria-label="主题：石墨" tabindex="0"></button>
+            <button type="button" class="theme-dot" data-theme="mist" role="radio" aria-checked="false" title="雾白浅色" aria-label="主题：雾白浅色" tabindex="-1"></button>
+            <button type="button" class="theme-dot" data-theme="glass" role="radio" aria-checked="false" title="烟熏玻璃" aria-label="主题：烟熏玻璃" tabindex="-1"></button>
+            <button type="button" class="theme-dot" data-theme="ember" role="radio" aria-checked="false" title="余烬" aria-label="主题：余烬" tabindex="-1"></button>
+            <button type="button" class="theme-dot" data-theme="blueprint" role="radio" aria-checked="false" title="蓝图" aria-label="主题：蓝图" tabindex="-1"></button>
+            <button type="button" class="theme-dot" data-theme="ocean" role="radio" aria-checked="false" title="海洋" aria-label="主题：海洋" tabindex="-1"></button>
+            <button type="button" class="theme-dot" data-theme="sunset" role="radio" aria-checked="false" title="日落" aria-label="主题：日落" tabindex="-1"></button>
           </div>
+          <button type="button" class="mp-row" id="btnWallpaper" aria-label="选择壁纸图片">
+            <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-image"/></svg>
+            <span>选择壁纸图片</span><span class="wp-name" id="wpName"></span>
+          </button>
+          <div class="wp-slider-row" id="wpSliderRow" hidden>
+            <input type="range" id="wpOpacity" min="10" max="90" step="5" value="45" aria-label="壁纸不透明度" />
+            <span class="wp-val" id="wpVal">45%</span>
+          </div>
+          <button type="button" class="mp-row" id="btnWallpaperClear" hidden>
+            <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-trash"/></svg>
+            <span>清除壁纸</span>
+          </button>
         </div>
         <div class="mp-group">
           <div class="mp-label">工程</div>
@@ -194,5 +209,5 @@
 </div>
 </body>
 <!-- 启动错误显示（调试用） -->
-<div id="bootError" hidden style="position:fixed;bottom:8px;left:8px;right:8px;background:rgba(80,0,0,0.92);color:#ff8b8b;font-size:11px;padding:8px 10px;border-radius:8px;z-index:999;white-space:pre-wrap;word-break:break-all;font-family:monospace;pointer-events:none;"></div>
+<div id="bootError" role="alert" hidden style="position:fixed;bottom:8px;left:8px;right:8px;background:rgba(80,0,0,0.92);color:#ff8b8b;font-size:11px;padding:8px 10px;border-radius:8px;z-index:999;white-space:pre-wrap;word-break:break-all;font-family:monospace;pointer-events:none;"></div>
 </html>

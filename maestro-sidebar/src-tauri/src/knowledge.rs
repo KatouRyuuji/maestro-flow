@@ -63,6 +63,6 @@ pub fn scan_knowledge(wf_root: &Path) -> KnowledgeStats {
         knowhow,
         learning_rows,
         issue_rows,
-        total: specs + memory + knowhow + learning_rows,
+        total: specs + memory + knowhow + learning_rows + issue_rows,
     }
 }

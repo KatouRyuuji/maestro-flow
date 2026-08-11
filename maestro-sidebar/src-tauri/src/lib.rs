@@ -121,6 +121,18 @@ struct ConfigOut {
     configured: bool,
     roots: Vec<String>,
     always_on_top: bool,
+    wallpaper: Option<String>,
+    wallpaper_opacity: f64,
+}
+
+fn config_out(cfg: &AppConfig) -> ConfigOut {
+    ConfigOut {
+        configured: cfg.initialized || !cfg.roots.is_empty(),
+        roots: cfg.roots.clone(),
+        always_on_top: cfg.always_on_top,
+        wallpaper: cfg.wallpaper.clone(),
+        wallpaper_opacity: cfg.wallpaper_opacity_value(),
+    }
 }
 
 fn save_state(state: &AppState) -> Result<(), String> {
@@ -146,8 +158,20 @@ fn get_snapshot(state: tauri::State<AppState>) -> RuntimeSnapshot {
     }
 }
 
+/// 防路径逃逸：session_id / exec_id 必须是不含路径分隔符的普通 ID。
+fn is_safe_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && !id.contains("..")
+        && !id.contains(['/', '\\'])
+        && !id.contains('\0')
+}
+
 #[tauri::command]
 fn get_session_runs(state: tauri::State<AppState>, session_id: String) -> Vec<workflow::RunSummary> {
+    if !is_safe_id(&session_id) {
+        return Vec::new();
+    }
     let cfg = state.config.lock().unwrap().clone();
     let mut projects = workflow::discover_projects(&cfg.roots);
     for auto_root in auto::auto_discover_roots() {
@@ -169,6 +193,9 @@ fn get_session_detail(
     state: tauri::State<AppState>,
     session_id: String,
 ) -> Option<workflow::SessionDetail> {
+    if !is_safe_id(&session_id) {
+        return None;
+    }
     let cfg = state.config.lock().unwrap().clone();
     let mut projects = workflow::discover_projects(&cfg.roots);
     for auto_root in auto::auto_discover_roots() {
@@ -186,17 +213,15 @@ fn get_session_detail(
 
 #[tauri::command]
 fn get_call_detail(exec_id: String) -> Option<activity::CallDetail> {
+    if !is_safe_id(&exec_id) {
+        return None;
+    }
     activity::read_call_detail(&config::cli_history_dir(), &exec_id)
 }
 
 #[tauri::command]
 fn get_config(state: tauri::State<AppState>) -> ConfigOut {
-    let cfg = state.config.lock().unwrap();
-    ConfigOut {
-        configured: cfg.initialized || !cfg.roots.is_empty(),
-        roots: cfg.roots.clone(),
-        always_on_top: cfg.always_on_top,
-    }
+    config_out(&state.config.lock().unwrap())
 }
 
 #[tauri::command]
@@ -222,12 +247,7 @@ fn add_root(state: tauri::State<AppState>, path: String) -> Result<ConfigOut, St
         }
     }
     save_state(&state)?;
-    let cfg = state.config.lock().unwrap();
-    Ok(ConfigOut {
-        configured: true,
-        roots: cfg.roots.clone(),
-        always_on_top: cfg.always_on_top,
-    })
+    Ok(config_out(&state.config.lock().unwrap()))
 }
 
 #[tauri::command]
@@ -237,12 +257,39 @@ fn remove_root(state: tauri::State<AppState>, path: String) -> Result<ConfigOut,
         cfg.roots.retain(|r| r != &path);
     }
     save_state(&state)?;
-    let cfg = state.config.lock().unwrap();
-    Ok(ConfigOut {
-        configured: true,
-        roots: cfg.roots.clone(),
-        always_on_top: cfg.always_on_top,
-    })
+    Ok(config_out(&state.config.lock().unwrap()))
+}
+
+#[tauri::command]
+fn set_wallpaper(state: tauri::State<AppState>, path: String) -> Result<ConfigOut, String> {
+    let expanded = config::expand_home(&path);
+    if !expanded.is_file() {
+        return Err("壁纸文件不存在或不可读".into());
+    }
+    let normalized = config::normalize_path(&expanded);
+    {
+        let mut cfg = state.config.lock().unwrap();
+        cfg.wallpaper = Some(normalized);
+    }
+    save_state(&state)?;
+    Ok(config_out(&state.config.lock().unwrap()))
+}
+
+#[tauri::command]
+fn clear_wallpaper(state: tauri::State<AppState>) -> Result<ConfigOut, String> {
+    state.config.lock().unwrap().wallpaper = None;
+    save_state(&state)?;
+    Ok(config_out(&state.config.lock().unwrap()))
+}
+
+#[tauri::command]
+fn set_wallpaper_opacity(
+    state: tauri::State<AppState>,
+    opacity: f64,
+) -> Result<ConfigOut, String> {
+    state.config.lock().unwrap().wallpaper_opacity = Some(opacity.clamp(0.1, 0.9));
+    save_state(&state)?;
+    Ok(config_out(&state.config.lock().unwrap()))
 }
 
 #[tauri::command]
@@ -406,6 +453,9 @@ pub fn run() {
             remove_root,
             list_projects,
             set_always_on_top,
+            set_wallpaper,
+            clear_wallpaper,
+            set_wallpaper_opacity,
             set_window_mode,
             fit_window_height,
             hide_window,

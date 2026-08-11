@@ -26,6 +26,7 @@ html, body {
 }
 
 .world {
+  position: relative;
   width: 100vw;
   height: 100vh;
   display: flex;
@@ -33,7 +34,7 @@ html, body {
   background: var(--bg);
   border-radius: 14px;
   overflow: hidden;
-  box-shadow: inset 0 0 0 1px var(--border);
+  box-shadow: 0 18px 46px var(--shadow), 0 2px 10px color-mix(in srgb, var(--shadow) 60%, transparent);
 }
 
 /* ---------------------------------------------------------------------------
@@ -80,14 +81,18 @@ html, body {
 .menu-pop {
   position: absolute;
   top: 38px; right: 10px;
-  width: 210px;
+  width: 240px;
   background: var(--popover);
   border: 1px solid var(--border);
   border-radius: 10px;
   box-shadow: 0 12px 40px var(--shadow);
   z-index: 50;
   padding: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
 }
+.menu-pop::-webkit-scrollbar { width: 5px; }
+.menu-pop::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 3px; }
 .mp-group { padding: 4px 0; }
 .mp-group + .mp-group { border-top: 1px solid var(--border-soft); }
 .mp-label {
@@ -123,21 +128,54 @@ html, body {
 .mp-row.danger svg { color: var(--danger); }
 .mp-row.danger:hover { background: var(--danger-soft); }
 
-.theme-row { display: flex; gap: 8px; padding: 4px 10px 6px; }
+.theme-row { display: flex; gap: 6px; padding: 4px 10px 6px; flex-wrap: wrap; }
 .theme-dot {
-  width: 22px; height: 22px;
+  width: 24px; height: 24px;
   border-radius: 50%;
   border: 2px solid var(--border);
   cursor: pointer;
-  transition: transform 0.15s, border-color 0.15s;
+  transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 0 6px transparent;
 }
-.theme-dot:hover { transform: scale(1.12); }
-.theme-dot.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
+.theme-dot:hover { transform: scale(1.12); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 0 10px var(--accent-glow); }
+.theme-dot.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow), inset 0 1px 0 rgba(255, 255, 255, 0.22); }
 .theme-dot[data-theme="graphite"] { background: linear-gradient(135deg, #2dd4bf, #0c1114); }
 .theme-dot[data-theme="mist"] { background: linear-gradient(135deg, #f8fbfa, #0f766e); }
 .theme-dot[data-theme="glass"] { background: linear-gradient(135deg, #a5f3fc, #0a1417); }
 .theme-dot[data-theme="ember"] { background: linear-gradient(135deg, #f59e0b, #15120f); }
 .theme-dot[data-theme="blueprint"] { background: linear-gradient(135deg, #38bdf8, #07131c); }
+.theme-dot[data-theme="ocean"] { background: linear-gradient(135deg, #5eead4, #03181e); }
+.theme-dot[data-theme="sunset"] { background: linear-gradient(135deg, #fdba74, #19110e); }
+
+/* 壁纸：选择 / 不透明度 / 清除 */
+.wp-row { display: flex; align-items: center; gap: 8px; padding: 7px 10px; }
+.wp-row .wp-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font: 9px/1.4 var(--mono);
+  text-align: right;
+}
+.wp-row .wp-name.on { color: var(--selection); }
+.wp-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 12px 8px;
+}
+.wp-slider-row input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+input[type="range"]:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 8px; }
+.wp-slider-row .wp-val { flex: none; width: 34px; text-align: right; color: var(--text-dim); font: 9px/1.4 var(--mono); }
 
 #rootList .mp-row { font-size: 11px; padding: 5px 10px; }
 #rootList .mp-row .root-path {
@@ -171,6 +209,8 @@ html, body {
   color: var(--text-dim);
   font-size: 11.5px;
 }
+.empty .empty-ic { color: var(--text-dim); opacity: .8; margin-bottom: 6px; }
+.empty .empty-hint { margin-top: 3px; font-size: 10px; opacity: .75; }
 
 @keyframes pulse {
   0%, 100% { opacity: 1; }
@@ -199,7 +239,6 @@ html, body {
 }
 .sb-time { font-family: var(--mono); }
 .sb-spacer { flex: 1; }
-.sb-hint { opacity: 0.7; }
 
 /* ---------------------------------------------------------------------------
    胶囊形态
@@ -212,6 +251,7 @@ html, body {
   background: var(--bg);
   border-radius: 14px;
   overflow: hidden;
+  box-shadow: inset 0 1px 0 var(--highlight), inset 0 0 0 1px var(--border);
 }
 
 /* ---------------------------------------------------------------------------

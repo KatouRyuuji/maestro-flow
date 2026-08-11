@@ -58,7 +58,7 @@
   --shadow: rgba(18, 45, 47, 0.18);
   --text: #334345;
   --text-strong: #152426;
-  --text-dim: #5a6d70;
+  --text-dim: #55676a;
   --accent: #0f766e;
   --accent-2: #115e59;
   --accent-glow: rgba(15, 118, 110, 0.20);
@@ -212,5 +212,89 @@
   --info-soft: rgba(96, 165, 250, 0.13);
   --danger: #fb7185;
   --danger-soft: rgba(251, 113, 133, 0.13);
+  --cyan: #22d3ee;
+}
+
+/* Ocean: deep sea teal, aqua operational accent. */
+[data-theme="ocean"] {
+  color-scheme: dark;
+  --bg: #03181e;
+  --bg-hi: #0a2b33;
+  --panel: #07232b;
+  --panel-soft: rgba(153, 246, 228, 0.045);
+  --surface-raised: #0d333d;
+  --surface-sunken: #021115;
+  --popover: #07232b;
+  --border: rgba(94, 234, 212, 0.24);
+  --border-soft: rgba(94, 234, 212, 0.12);
+  --highlight: rgba(255, 255, 255, 0.07);
+  --shadow: rgba(0, 0, 0, 0.55);
+  --text: #cfe8e4;
+  --text-strong: #f0fbf8;
+  --text-dim: #8aacaa;
+  --accent: #2dd4bf;
+  --accent-2: #0f766e;
+  --accent-glow: rgba(45, 212, 191, 0.30);
+  --selection: #5eead4;
+  --selection-soft: rgba(45, 212, 191, 0.11);
+  --selection-border: rgba(45, 212, 191, 0.38);
+  --focus: #67e8f9;
+  --ambient: rgba(45, 212, 191, 0.10);
+  --ambient-2: rgba(34, 211, 238, 0.05);
+  --chip-bg: rgba(153, 246, 228, 0.075);
+  --hover: rgba(153, 246, 228, 0.07);
+  --active-soft: rgba(45, 212, 191, 0.10);
+  --scrollbar: rgba(94, 234, 212, 0.30);
+  --ok: #34d399;
+  --ok-soft: rgba(52, 211, 153, 0.14);
+  --ok-glow: rgba(52, 211, 153, 0.34);
+  --warn: #fbbf24;
+  --warn-soft: rgba(251, 191, 36, 0.14);
+  --info: #60a5fa;
+  --info-soft: rgba(96, 165, 250, 0.14);
+  --danger: #fb7185;
+  --danger-soft: rgba(251, 113, 133, 0.14);
+  --cyan: #22d3ee;
+}
+
+/* Sunset: warm dusk charcoal, coral interaction accent (no purple). */
+[data-theme="sunset"] {
+  color-scheme: dark;
+  --bg: #19110e;
+  --bg-hi: #2a1c15;
+  --panel: #221712;
+  --panel-soft: rgba(254, 215, 170, 0.045);
+  --surface-raised: #2e2018;
+  --surface-sunken: #110b09;
+  --popover: #221712;
+  --border: rgba(253, 186, 116, 0.24);
+  --border-soft: rgba(253, 186, 116, 0.12);
+  --highlight: rgba(255, 255, 255, 0.07);
+  --shadow: rgba(0, 0, 0, 0.55);
+  --text: #ecd9c8;
+  --text-strong: #fdf3ea;
+  --text-dim: #a8927f;
+  --accent: #fb923c;
+  --accent-2: #c2410c;
+  --accent-glow: rgba(251, 146, 60, 0.30);
+  --selection: #fdba74;
+  --selection-soft: rgba(251, 146, 60, 0.12);
+  --selection-border: rgba(251, 146, 60, 0.38);
+  --focus: #fcd34d;
+  --ambient: rgba(251, 146, 60, 0.09);
+  --ambient-2: rgba(244, 63, 94, 0.045);
+  --chip-bg: rgba(254, 215, 170, 0.075);
+  --hover: rgba(254, 215, 170, 0.07);
+  --active-soft: rgba(251, 146, 60, 0.11);
+  --scrollbar: rgba(253, 186, 116, 0.30);
+  --ok: #4ade80;
+  --ok-soft: rgba(74, 222, 128, 0.13);
+  --ok-glow: rgba(74, 222, 128, 0.32);
+  --warn: #fbbf24;
+  --warn-soft: rgba(251, 191, 36, 0.14);
+  --info: #60a5fa;
+  --info-soft: rgba(96, 165, 250, 0.14);
+  --danger: #fb7185;
+  --danger-soft: rgba(251, 113, 133, 0.14);
   --cyan: #22d3ee;
 }

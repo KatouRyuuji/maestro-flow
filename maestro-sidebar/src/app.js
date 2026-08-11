@@ -76,6 +76,17 @@ const VERDICT_COLOR = {
   blocked: 'var(--danger)', failed: 'var(--danger)',
   'needs-retry': 'var(--warn)', done_with_concerns: 'var(--warn)',
 };
+// verdict 中文语义（层次分明的状态语言）；原始英文保留在 title 中供技术读者查看
+const VERDICT_LABEL = {
+  ready: '就绪', done: '完成',
+  blocked: '卡住', failed: '失败',
+  'needs-retry': '需重试', done_with_concerns: '有疑虑',
+};
+function verdictLabel(v) {
+  const s = String(v || '').toLowerCase();
+  return VERDICT_LABEL[s] || s || '未知';
+}
+const THEME_LABELS = { graphite: '石墨', mist: '雾白', glass: '玻璃', ember: '余烬', blueprint: '蓝图', ocean: '海洋', sunset: '日落' };
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => {
@@ -84,7 +95,13 @@ const el = (tag, cls, text) => {
   if (text !== undefined) n.textContent = text;
   return n;
 };
-const safeDomId = (value) => String(value || 'item').replace(/[^A-Za-z0-9_-]+/g, '-');
+// DOM id 安全化 + 短哈希：避免中文/特殊字符碰撞出重复 id
+const safeDomId = (value) => {
+  const raw = String(value || 'item');
+  let h = 5381;
+  for (let i = 0; i < raw.length; i++) h = ((h << 5) + h + raw.charCodeAt(i)) >>> 0;
+  return `${raw.replace(/[^A-Za-z0-9_-]+/g, '-')}-${h.toString(36)}`;
+};
 
 // ---------------------------------------------------------------------------
 // 初始化
@@ -97,6 +114,7 @@ async function init() {
     config = await invoke('get_config');
   } catch { config = { configured: false, roots: [], always_on_top: false }; }
   applyTop(config.always_on_top);
+  applyWallpaper(config);
 
   if (!config.configured) {
     $('setup').hidden = false;
@@ -105,15 +123,26 @@ async function init() {
   $('mainView').hidden = false;
   renderRootList();
 
-  snapshot = await invoke('get_snapshot');
+  // 首帧骨架：快照到达前不闪空态
+  $('liveStatus').textContent = '正在加载…';
+  renderSkeleton();
+  try {
+    snapshot = await invoke('get_snapshot');
+  } catch (err) {
+    snapshot = { workspace: '未连接', active_session_id: null, sessions: [], calls: [], knowledge: { total: 0 } };
+    $('liveStatus').textContent = '连接中断';
+    $('liveDot').classList.add('stale');
+    showBootError(`首次快照失败：${String(err && err.message ? err.message : err)}`);
+  }
   render();
 
-  // 后端推送：快照变化即重渲染（指纹去重在 Rust 端）
+  // 后端推送：快照变化即重渲染（指纹去重在 Rust 端）；菜单打开或焦点在行内时保留焦点
   try {
     await listen('snapshot-changed', (event) => {
       snapshot = event.payload;
+      if (!$('menuPop').hidden) return;
       $('liveStatus').textContent = '实时监听';
-      render();
+      renderWithFocus();
     });
     $('liveStatus').textContent = '实时监听';
   } catch {
@@ -127,13 +156,36 @@ async function init() {
       const s = await invoke('get_snapshot');
       if (JSON.stringify(s) !== JSON.stringify(snapshot)) {
         snapshot = s;
-        render();
+        if (!$('menuPop').hidden) return;
+        renderWithFocus();
       }
     } catch {
       $('liveStatus').textContent = '连接中断';
       $('liveDot').classList.add('stale');
     }
   }, 15000);
+}
+
+/** 渲染并尽力保留键盘焦点（监听推送/轮询重绘时用） */
+function renderWithFocus() {
+  const focused = document.activeElement;
+  render();
+  requestAnimationFrame(() => {
+    if (focused && focused.isConnected) focused.focus();
+  });
+}
+
+/** 首帧骨架行（快照到达前） */
+function renderSkeleton() {
+  for (const id of ['callsList', 'sessionsList']) {
+    const list = $(id);
+    list.innerHTML = '';
+    for (let i = 0; i < 3; i++) {
+      const row = el('div', 'loading-line');
+      if (i === 1) row.classList.add('short');
+      list.appendChild(row);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -170,17 +222,19 @@ function bindEvents() {
     const btn = $('btnRefresh');
     btn.classList.add('rotating');
     btn.disabled = true;
+    btn.setAttribute('aria-busy', 'true');
     $('liveStatus').textContent = '正在刷新';
     try {
       snapshot = await invoke('get_snapshot');
-      render();
-      $('liveStatus').textContent = '已更新';
+      renderWithFocus();
+      $('liveStatus').textContent = `已更新 ${fmtClock2(new Date().toISOString())}`;
     } catch (err) {
       $('liveStatus').textContent = '刷新失败';
       showBootError(`刷新失败：${String(err)}`);
     } finally {
       btn.classList.remove('rotating');
       btn.disabled = false;
+      btn.removeAttribute('aria-busy');
     }
   });
 
@@ -195,9 +249,19 @@ function bindEvents() {
   // 菜单
   $('menuScrim').addEventListener('click', () => toggleMenu(false));
   $('btnTop').addEventListener('click', async () => {
-    const flag = $('btnTop').getAttribute('aria-checked') !== 'true';
-    try { await invoke('set_always_on_top', { flag }); } catch {}
-    applyTop(flag);
+    const btn = $('btnTop');
+    const flag = btn.getAttribute('aria-checked') !== 'true';
+    btn.disabled = true;
+    btn.setAttribute('aria-busy', 'true');
+    try {
+      await invoke('set_always_on_top', { flag });
+      applyTop(flag);
+    } catch {
+      $('liveStatus').textContent = '置顶设置失败';
+    } finally {
+      btn.disabled = false;
+      btn.removeAttribute('aria-busy');
+    }
   });
   $('btnCapsule').addEventListener('click', async () => {
     toggleMenu(false);
@@ -205,6 +269,9 @@ function bindEvents() {
     document.body.dataset.mode = 'capsule';
     $('card').hidden = true;
     $('capsule').hidden = false;
+    $('capsule').classList.add('mode-enter');
+    setTimeout(() => $('capsule').classList.remove('mode-enter'), 200);
+    fitWindow();
   });
   $('btnHide').addEventListener('click', () => { toggleMenu(false); invoke('hide_window'); });
   $('btnQuit').addEventListener('click', () => invoke('quit_app'));
@@ -212,6 +279,8 @@ function bindEvents() {
     toggleMenu(false);
     const path = await dialogOpen({ directory: true, multiple: false });
     if (!path) return;
+    const btn = $('btnAddRoot');
+    btn.disabled = true;
     try {
       config = await invoke('add_root', { path });
       renderRootList();
@@ -219,7 +288,12 @@ function bindEvents() {
       render();
       $('setup').hidden = true;
       $('mainView').hidden = false;
-    } catch { /* 无效目录 */ }
+      $('liveStatus').textContent = `已添加工程 ${(config.roots || []).length} 个`;
+    } catch {
+      $('liveStatus').textContent = '目录无效，请重试';
+    } finally {
+      btn.disabled = false;
+    }
   });
   $('btnCapMenu').addEventListener('click', async (e) => {
     e.stopPropagation();
@@ -227,16 +301,85 @@ function bindEvents() {
     document.body.dataset.mode = 'card';
     $('capsule').hidden = true;
     $('card').hidden = false;
+    $('card').classList.add('mode-enter');
+    setTimeout(() => $('card').classList.remove('mode-enter'), 200);
     toggleMenu(true, $('btnMenu'));
+    fitWindow();
   });
 
-  // 主题
-  document.querySelectorAll('.theme-dot').forEach((dot) => {
-    dot.addEventListener('click', () => {
-      document.body.dataset.theme = dot.dataset.theme;
-      localStorage.setItem('theme', dot.dataset.theme);
-      applyTheme();
+  // 主题（点击 + radiogroup 方向键，roving tabindex）
+  const dots = Array.from(document.querySelectorAll('.theme-dot'));
+  const selectTheme = (name) => {
+    document.body.dataset.theme = name;
+    localStorage.setItem('theme', name);
+    applyTheme();
+  };
+  dots.forEach((dot) => {
+    dot.addEventListener('click', () => selectTheme(dot.dataset.theme));
+  });
+  $('themeRow').addEventListener('keydown', (event) => {
+    const idx = dots.findIndex((d) => d.dataset.theme === document.body.dataset.theme);
+    let next = -1;
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = (idx + 1) % dots.length;
+    else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next = (idx - 1 + dots.length) % dots.length;
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = dots.length - 1;
+    if (next < 0) return;
+    event.preventDefault();
+    selectTheme(dots[next].dataset.theme);
+    dots[next].focus();
+  });
+
+  // 壁纸：选择 / 不透明度（80ms 防抖）/ 清除
+  const updateWallpaperUI = () => {
+    const on = Boolean(config.wallpaper);
+    $('wpSliderRow').hidden = !on;
+    $('btnWallpaperClear').hidden = !on;
+    const name = $('wpName');
+    name.textContent = on ? config.wallpaper.split(/[\\/]/).pop() : '';
+    name.classList.toggle('on', on);
+    if (on) {
+      $('wpOpacity').value = String(Math.round((config.wallpaper_opacity ?? 0.45) * 100));
+      $('wpVal').textContent = `${$('wpOpacity').value}%`;
+    }
+  };
+  $('btnWallpaper').addEventListener('click', async () => {
+    const path = await dialogOpen({
+      directory: false,
+      multiple: false,
+      filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'] }],
     });
+    if (!path) return;
+    try {
+      config = await invoke('set_wallpaper', { path });
+      applyWallpaper(config);
+      updateWallpaperUI();
+      $('liveStatus').textContent = '壁纸已应用';
+    } catch {
+      $('liveStatus').textContent = '壁纸文件不可用';
+    }
+  });
+  let wpTimer = null;
+  $('wpOpacity').addEventListener('input', () => {
+    const v = $('wpOpacity').value;
+    $('wpVal').textContent = `${v}%`;
+    document.body.style.setProperty('--wp-opacity', String(Number(v) / 100));
+    clearTimeout(wpTimer);
+    wpTimer = setTimeout(async () => {
+      try {
+        config = await invoke('set_wallpaper_opacity', { opacity: Number(v) / 100 });
+      } catch { /* 保留当前预览 */ }
+    }, 80);
+  });
+  $('btnWallpaperClear').addEventListener('click', async () => {
+    try {
+      config = await invoke('clear_wallpaper');
+      applyWallpaper(config);
+      updateWallpaperUI();
+      $('liveStatus').textContent = '壁纸已清除';
+    } catch {
+      $('liveStatus').textContent = '清除失败';
+    }
   });
 
   // 胶囊 → 卡片
@@ -245,16 +388,33 @@ function bindEvents() {
     document.body.dataset.mode = 'card';
     $('capsule').hidden = true;
     $('card').hidden = false;
+    $('card').classList.add('mode-enter');
+    setTimeout(() => $('card').classList.remove('mode-enter'), 200);
     fitWindow();
   });
 
-  // Esc 关闭菜单或返回列表
+  // Esc 关闭菜单或返回列表；菜单打开时 Tab 焦点陷阱
   document.addEventListener('keydown', (event) => {
-    if (event.key !== 'Escape') return;
-    if (!$('menuPop').hidden) {
-      toggleMenu(false);
-    } else if (view) {
-      closeDetail();
+    if (event.key === 'Escape') {
+      if (!$('menuPop').hidden) {
+        toggleMenu(false);
+      } else if (view) {
+        closeDetail();
+      }
+      return;
+    }
+    if (event.key === 'Tab' && !$('menuPop').hidden) {
+      const focusables = Array.from($('menuPop').querySelectorAll('button:not([disabled]), input[type="range"]')).filter((n) => !n.hidden);
+      if (!focusables.length) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     }
   });
 
@@ -303,17 +463,44 @@ function applyTop(flag) {
 }
 
 function applyTheme() {
-  const supported = ['graphite', 'mist', 'glass', 'ember', 'blueprint'];
+  const supported = ['graphite', 'mist', 'glass', 'ember', 'blueprint', 'ocean', 'sunset'];
   const aliases = { specimen: 'graphite', synthwave: 'ember' };
   const stored = aliases[localStorage.getItem('theme')] || localStorage.getItem('theme');
   const theme = supported.includes(stored) ? stored : 'graphite';
   document.body.dataset.theme = theme;
   localStorage.setItem('theme', theme);
+  // roving tabindex：radio 组单 Tab 停靠 + 方向键
   document.querySelectorAll('.theme-dot').forEach((dot) => {
     const selected = dot.dataset.theme === theme;
     dot.classList.toggle('active', selected);
     dot.setAttribute('aria-checked', String(selected));
+    dot.tabIndex = selected ? 0 : -1;
   });
+}
+
+/** 应用自定义壁纸：config.wallpaper → asset URL + 不透明度；文件失效时静默回退主题背景 */
+function applyWallpaper(cfg) {
+  const path = cfg && cfg.wallpaper;
+  const opacity = cfg && typeof cfg.wallpaper_opacity === 'number' ? cfg.wallpaper_opacity : 0.45;
+  document.body.style.setProperty('--wp-opacity', String(opacity));
+  const world = $('world');
+  if (!path) {
+    document.body.classList.remove('has-wallpaper');
+    world.style.removeProperty('--wp-img');
+    return;
+  }
+  const url = TAURI?.core?.convertFileSrc ? TAURI.core.convertFileSrc(path) : `file:///${path.replace(/\\/g, '/')}`;
+  const probe = new Image();
+  probe.onload = () => {
+    document.body.classList.add('has-wallpaper');
+    world.style.setProperty('--wp-img', `url("${url}")`);
+  };
+  probe.onerror = () => {
+    document.body.classList.remove('has-wallpaper');
+    world.style.removeProperty('--wp-img');
+    $('liveStatus').textContent = '壁纸文件不存在，已回退主题';
+  };
+  probe.src = url;
 }
 
 function renderRootList() {
@@ -377,6 +564,20 @@ function renderCalls() {
   const calls = snapshot.calls || [];
   $('callsCount').textContent = String(calls.length);
   $('callsEmpty').hidden = calls.length > 0;
+  // Section 头状态 chip：运行中调用数
+  let meta = $('headCalls').querySelector('.sh-meta');
+  if (meta) meta.remove();
+  const runningCount = calls.filter((c) => callStatus(c) === 'running').length;
+  if (runningCount > 0) {
+    meta = el('span', 'sh-meta');
+    const hm = el('span', 'hm run');
+    const dot = el('i', 'hm-dot');
+    dot.style.setProperty('--c', 'var(--ok)');
+    hm.appendChild(dot);
+    hm.appendChild(document.createTextNode(`运行 ${runningCount}`));
+    meta.appendChild(hm);
+    $('headCalls').appendChild(meta);
+  }
   const list = $('callsList');
   list.innerHTML = '';
   const visibleCalls = callsExpanded ? calls : calls.slice(0, CALLS_LIMIT);
@@ -405,6 +606,15 @@ function renderCalls() {
     item.addEventListener('click', () => openDetail('call', call.exec_id, item));
     list.appendChild(item);
   }
+  if (!calls.length) {
+    const empty = $('callsEmpty');
+    empty.innerHTML = '';
+    const ic = el('div', 'empty-ic');
+    ic.appendChild(svg('i-activity', 20));
+    empty.appendChild(ic);
+    empty.appendChild(el('div', '', '暂无 Agent 调用'));
+    empty.appendChild(el('div', 'empty-hint', '运行一个 Agent，这里就会亮起来'));
+  }
   const foot = $('callsFoot');
   foot.innerHTML = '';
   if (calls.length > CALLS_LIMIT) {
@@ -415,6 +625,8 @@ function renderCalls() {
     expand.addEventListener('click', () => {
       callsExpanded = !callsExpanded;
       renderCalls();
+      const newBtn = $('callsFoot').querySelector('.expand-btn');
+      if (newBtn) newBtn.focus();
       fitWindow();
       scheduleFade();
     });
@@ -468,7 +680,7 @@ function sessionStatusMeta(status) {
 }
 
 function miniTlNode(run) {
-  const vc = VERDICT_COLOR[run.verdict] || VERDICT_COLOR[run.status] || 'var(--text-dim)';
+  const vc = VERDICT_COLOR[String(run.verdict || run.status || '').toLowerCase()] || 'var(--text-dim)';
   const running = String(run.status || '').toLowerCase() === 'running';
   const node = el('div', 'tln');
   const d = el('span', `tld${running ? ' pulse' : ''}`);
@@ -476,9 +688,13 @@ function miniTlNode(run) {
   node.appendChild(d);
   const tlc = el('div', 'tlc');
   const tlh = el('div', 'tlh');
-  tlh.appendChild(el('span', 'tlh-cmd', `#${run.sequence ?? '—'} ${run.command || 'run'}`));
+  const cmd = el('span', 'tlh-cmd', `#${run.sequence ?? '—'} ${run.command || 'run'}`);
+  cmd.title = `${run.run_id || ''} · ${run.verdict || run.status || ''}`;
+  tlh.appendChild(cmd);
   if (run.platform) tlh.appendChild(el('span', 'bd bd-dim', run.platform));
-  tlh.appendChild(el('span', `bd ${verdictClass(run.verdict)}`, run.verdict || run.status || 'unknown'));
+  const v = el('span', `bd ${verdictClass(run.verdict)}`, verdictLabel(run.verdict));
+  v.title = run.verdict || run.status || 'unknown';
+  tlh.appendChild(v);
   tlh.appendChild(el('span', 'rt', `${fmtClock2(run.started_at)}${run.duration_secs != null ? ` · ${run.duration_secs}s` : ''}`));
   tlc.appendChild(tlh);
   if (run.handoff_summary) tlc.appendChild(el('div', 'tls', oneLine(run.handoff_summary)));
@@ -490,8 +706,46 @@ function renderSessions() {
   const sessions = snapshot.sessions || [];
   $('sessionsCount').textContent = String(sessions.length);
   $('sessionsEmpty').hidden = sessions.length > 0;
+  // Section 头状态概览 chips：运行/封存/暂停/失败 一眼可见
+  let meta = $('headSessions').querySelector('.sh-meta');
+  if (meta) meta.remove();
+  const statusCounts = { running: 0, sealed: 0, paused: 0, failed: 0 };
+  for (const s of sessions) {
+    const st = String(s.status || '').toLowerCase();
+    if (['running', 'active', 'executing'].includes(st)) statusCounts.running++;
+    else if (['sealed', 'completed', 'done'].includes(st)) statusCounts.sealed++;
+    else if (st === 'paused') statusCounts.paused++;
+    else if (['failed', 'blocked', 'error'].includes(st)) statusCounts.failed++;
+  }
+  const statusChips = [];
+  if (statusCounts.running) statusChips.push(['run', `运行 ${statusCounts.running}`]);
+  if (statusCounts.paused) statusChips.push(['', `暂停 ${statusCounts.paused}`]);
+  if (statusCounts.failed) statusChips.push(['fail', `失败 ${statusCounts.failed}`]);
+  if (statusChips.length) {
+    meta = el('span', 'sh-meta');
+    for (const [cls, text] of statusChips) {
+      const hm = el('span', `hm${cls ? ' ' + cls : ''}`);
+      if (cls === 'run') {
+        const dot = el('i', 'hm-dot');
+        dot.style.setProperty('--c', 'var(--ok)');
+        hm.appendChild(dot);
+      }
+      hm.appendChild(document.createTextNode(text));
+      meta.appendChild(hm);
+    }
+    $('headSessions').appendChild(meta);
+  }
   const list = $('sessionsList');
   list.innerHTML = '';
+  if (!sessions.length) {
+    const empty = $('sessionsEmpty');
+    empty.innerHTML = '';
+    const ic = el('div', 'empty-ic');
+    ic.appendChild(svg('i-session', 20));
+    empty.appendChild(ic);
+    empty.appendChild(el('div', '', '暂无会话'));
+    empty.appendChild(el('div', 'empty-hint', '运行一次 Maestro 流程后，会话会出现在这里'));
+  }
   const active = snapshot.active_session_id;
   const orderedSessions = sessions.slice().sort((a, b) => Number(b.session_id === active) - Number(a.session_id === active));
   const visibleSessions = sessionsListExpanded ? orderedSessions : orderedSessions.slice(0, SESSIONS_LIMIT);
@@ -520,20 +774,19 @@ function renderSessions() {
     rl.appendChild(el('span', 'rl-spacer'));
     rl.appendChild(el('span', `bd ${sm[0]}`, sm[1]));
     toggle.appendChild(rl);
-    if (s.intent) {
-      const sl2 = el('div', 'sl2');
-      sl2.appendChild(el('span', 'si', oneLine(s.intent)));
-      toggle.appendChild(sl2);
-    }
+    const sl2 = el('div', 'sl2');
+    sl2.appendChild(el('span', 'si', oneLine(s.intent) || '无意图'));
+    toggle.appendChild(sl2);
     const sl3 = el('div', 'sl3');
     const slat = el('span', 'slat');
     if (lr) {
-      const vc = VERDICT_COLOR[lr.verdict] || VERDICT_COLOR[lr.status] || 'var(--text-dim)';
-      slat.append(`最新 #${lr.sequence ?? '—'} ${lr.command || 'run'} · `);
-      const v = el('span', 'slat-v', lr.verdict || lr.status || 'unknown');
+      const vc = VERDICT_COLOR[String(lr.verdict || lr.status || '').toLowerCase()] || 'var(--text-dim)';
+      slat.append(`第 ${lr.sequence ?? '—'}/${s.run_count || '—'} 步 · ${lr.command || 'run'} · `);
+      const v = el('span', 'slat-v', verdictLabel(lr.verdict));
       v.style.color = vc;
+      v.title = `${lr.run_id || ''} · ${lr.verdict || lr.status || ''}`;
       slat.appendChild(v);
-      slat.append(` · ${s.run_count || 0} runs · ${fmtAgo(lr.started_at)}`);
+      slat.append(` · ${fmtAgo(lr.started_at)}${lr.duration_secs != null ? ` · ${lr.duration_secs}s` : ''}`);
     } else {
       slat.textContent = `${s.run_count || 0} runs · 无 Run 数据`;
     }
@@ -553,14 +806,28 @@ function renderSessions() {
     tl.setAttribute('role', 'region');
     tl.setAttribute('aria-label', `${s.session_id} Run 时间线`);
     tl.setAttribute('aria-busy', String(loadState === 'loading'));
-    const runs = expanded && sessionRunCache[s.session_id]?.length ? sessionRunCache[s.session_id] : (lr ? [lr] : []);
+    const MINI_TL_CAP = 8;
+    const cached = sessionRunCache[s.session_id];
+    const runs = expanded && cached?.length ? cached.slice(-MINI_TL_CAP) : (lr ? [lr] : []);
     for (const run of runs) tl.appendChild(miniTlNode(run));
+    if (expanded && cached && cached.length > MINI_TL_CAP) {
+      tl.appendChild(el('div', 'timeline-limit', `仅展示最近 ${MINI_TL_CAP} 个 Run，共 ${cached.length} 个`));
+    }
     if (loadState === 'loading') tl.appendChild(el('div', 'run-inline-status', '正在载入历史 Run…'));
     if (loadState === 'error') tl.appendChild(el('div', 'run-inline-error', '载入失败，保留最新 Run'));
     sexp.appendChild(tl);
     const sexpf = el('div', 'sexp-f');
     const engine = s.orchestration?.engine;
     if (engine) sexpf.appendChild(el('span', 'bd bd-dim', `engine · ${engine}`));
+    if (loadState === 'error') {
+      const retry = el('button', 'more', '重试');
+      retry.type = 'button';
+      retry.addEventListener('click', (event) => {
+        event.stopPropagation();
+        toggleSessionExpand(s.session_id, true);
+      });
+      sexpf.appendChild(retry);
+    }
     const more = el('button', 'more', '查看详情 ›');
     more.type = 'button';
     more.addEventListener('click', (event) => {
@@ -584,6 +851,8 @@ function renderSessions() {
     expand.addEventListener('click', () => {
       sessionsListExpanded = !sessionsListExpanded;
       renderSessions();
+      const newBtn = $('sessionsFoot').querySelector('.expand-btn');
+      if (newBtn) newBtn.focus();
       fitWindow();
       scheduleFade();
     });
@@ -593,22 +862,24 @@ function renderSessions() {
   }
 }
 
-async function toggleSessionExpand(sessionId) {
-  if (expandedSessions.has(sessionId)) {
+async function toggleSessionExpand(sessionId, force = false) {
+  if (!force && expandedSessions.has(sessionId)) {
     expandedSessions.delete(sessionId);
     sessionLoadState[sessionId] = 'collapsed';
     renderSessions();
     fitWindow();
     return;
   }
-  if (sessionRunCache[sessionId]?.length) {
+  if (!force && sessionRunCache[sessionId]?.length) {
     expandedSessions.add(sessionId);
     sessionLoadState[sessionId] = 'expanded';
     renderSessions();
     fitWindow();
+    refocusSessionToggle(sessionId);
     return;
   }
   sessionLoadState[sessionId] = 'loading';
+  expandedSessions.add(sessionId);
   renderSessions();
   try {
     const runs = await invoke('get_session_runs', { sessionId });
@@ -616,49 +887,21 @@ async function toggleSessionExpand(sessionId) {
     expandedSessions.add(sessionId);
     sessionLoadState[sessionId] = 'expanded';
   } catch {
-    expandedSessions.delete(sessionId);
+    // 失败保留展开状态 + 行内错误（含重试），不静默折叠
+    expandedSessions.add(sessionId);
     sessionLoadState[sessionId] = 'error';
   }
   renderSessions();
   fitWindow();
+  refocusSessionToggle(sessionId);
 }
 
-/** 时间线节点 */
-function tlNode(run, detailed = false) {
-  const vc = VERDICT_COLOR[run.verdict] || VERDICT_COLOR[run.status] || 'var(--text-dim)';
-  const node = el('div', `tl-node${detailed ? ' tl-node-detailed' : ''}`);
-  node.style.setProperty('--vc', vc);
-  node.style.setProperty('--vc-glow', colorGlow(run.verdict || run.status));
-  const row = el('div', 'tl-row');
-  row.appendChild(el('span', `run-verdict ${verdictClass(run.verdict)}`, run.verdict || run.status || 'unknown'));
-  row.appendChild(el('span', 'run-cmd', run.command || 'run'));
-  if (run.platform) row.appendChild(el('span', 'run-platform', run.platform));
-  node.appendChild(row);
-  const meta = el('div', 'tl-meta');
-  if (run.sequence !== null && run.sequence !== undefined) meta.appendChild(el('span', 'tl-sequence', `#${run.sequence}`));
-  if (run.run_id) meta.appendChild(el('span', 'run-runid', run.run_id));
-  if (run.started_at) meta.appendChild(el('span', 'tl-time', fmtClock2(run.started_at)));
-  if (run.duration_secs !== null && run.duration_secs !== undefined) meta.appendChild(el('span', 'tl-dur', `${run.duration_secs}s`));
-  node.appendChild(meta);
-  if (run.handoff_summary) {
-    if (detailed) {
-      const summary = el('div', 'tl-handoff');
-      summary.appendChild(el('div', 'tl-extra-label', '交接摘要'));
-      summary.appendChild(el('div', 'tl-summary', String(run.handoff_summary)));
-      node.appendChild(summary);
-    } else {
-      node.appendChild(el('div', 'tl-summary', oneLine(run.handoff_summary)));
-    }
-  }
-  return node;
-}
-
-function colorGlow(v) {
-  const s = String(v || '').toLowerCase();
-  if (s === 'ready' || s === 'done') return 'rgba(52,211,153,.45)';
-  if (s === 'blocked' || s === 'failed') return 'rgba(248,113,113,.45)';
-  if (s === 'needs-retry' || s === 'done_with_concerns') return 'rgba(251,191,36,.45)';
-  return 'transparent';
+function refocusSessionToggle(sessionId) {
+  requestAnimationFrame(() => {
+    const tl = document.getElementById(`session-runs-${safeDomId(sessionId)}`);
+    const toggle = tl && tl.closest('.srow')?.querySelector('.sess-toggle');
+    if (toggle && toggle.isConnected) toggle.focus();
+  });
 }
 
 function statusClass(status) {
@@ -703,7 +946,13 @@ function renderKnowledge() {
   const body = $('kbBody');
   body.innerHTML = '';
   if (!total) {
-    body.appendChild(el('div', 'empty', '暂无知识积累'));
+    const empty = el('div', 'empty');
+    const ic = el('div', 'empty-ic');
+    ic.appendChild(svg('i-book', 20));
+    empty.appendChild(ic);
+    empty.appendChild(el('div', '', '暂无知识积累'));
+    empty.appendChild(el('div', 'empty-hint', 'specs / memory / knowhow 沉淀后展示占比'));
+    body.appendChild(empty);
     return;
   }
   const kpis = el('div', 'kpis');
@@ -737,7 +986,6 @@ function renderKnowledge() {
   body.appendChild(stack);
   body.appendChild(legend);
 }
-
 // ---------------------------------------------------------------------------
 // 详情视图
 // ---------------------------------------------------------------------------
@@ -985,7 +1233,9 @@ function renderRunEntry(run, session) {
   trigger.appendChild(main);
 
   const side = el('div', 'run-side');
-  side.appendChild(el('span', `run-verdict ${verdictClass(verdict)}`, run.verdict || run.status || 'unknown'));
+  const vBadge = el('span', `run-verdict ${verdictClass(verdict)}`, verdictLabel(run.verdict));
+  vBadge.title = run.verdict || run.status || 'unknown';
+  side.appendChild(vBadge);
   const time = [fmtClock2(run.started_at), run.duration_secs !== null && run.duration_secs !== undefined ? `${run.duration_secs}s` : ''].filter(Boolean).join(' · ');
   if (time) side.appendChild(el('span', 'tl-time', time));
   side.appendChild(svg('i-chevron', 11));
@@ -1113,6 +1363,7 @@ function renderCapsule() {
   const capsule = $('capsule');
   const knowledgeTotal = (snapshot.knowledge || {}).total || 0;
   const sub = $('capSub');
+  const progressBar = $('capProgressBar');
   if (active) {
     const run = active.latest_run || null;
     const signal = String(run?.verdict || run?.status || active.status || 'unknown').toLowerCase();
@@ -1120,7 +1371,8 @@ function renderCapsule() {
       || (['running', 'active', 'executing'].includes(signal) ? 'var(--ok)' : null)
       || (['sealed', 'completed'].includes(signal) ? 'var(--info)' : null)
       || (['paused'].includes(signal) ? 'var(--warn)' : null)
-      || (['failed', 'blocked', 'error'].includes(signal) ? 'var(--danger)' : 'var(--text-dim)');
+      || (['failed', 'blocked', 'error'].includes(signal) ? 'var(--danger)' : 'var(--text-dim)')
+      || 'var(--text-dim)';
     capsule.dataset.kind = signal;
     capsule.style.setProperty('--cap-color', color);
     $('capTitle').textContent = active.intent ? oneLine(active.intent) : active.session_id;
@@ -1128,10 +1380,24 @@ function renderCapsule() {
     const dot = el('span', `dot${['running', 'active', 'executing'].includes(String(active.status || '').toLowerCase()) ? ' pulse' : ''}`);
     dot.style.setProperty('--c', color);
     sub.appendChild(dot);
-    sub.appendChild(document.createTextNode(run
-      ? ` ${active.status || 'unknown'} · #${run.sequence ?? '—'} ${run.command || 'run'}`
-      : ` ${active.status || 'unknown'} · 等待 Run`));
-    $('capSessions').textContent = `${sessions.length} 会话`;
+    const text = el('span', 'cap-sub-t');
+    const step = run && run.sequence != null && active.run_count
+      ? `第 ${run.sequence}/${active.run_count} 步`
+      : `#${run?.sequence ?? '—'}`;
+    text.textContent = run
+      ? ` ${active.status || 'unknown'} · ${step} ${run.command || 'run'}`
+      : ` ${active.status || 'unknown'} · 等待 Run`;
+    text.title = run ? `${run.run_id || ''} · ${run.verdict || ''}` : '';
+    sub.appendChild(text);
+    if (run && run.sequence != null && active.run_count) {
+      $('capProgress').hidden = false;
+      progressBar.style.width = `${Math.min(100, Math.round((run.sequence / active.run_count) * 100))}%`;
+    } else {
+      $('capProgress').hidden = true;
+      progressBar.style.width = '0%';
+    }
+    const total = sessions.length;
+    $('capSessions').textContent = total >= 40 ? '40+ 会话' : `${total} 会话`;
     $('capBody').setAttribute('aria-label', `打开活动会话：${$('capTitle').textContent}`);
   } else {
     capsule.dataset.kind = 'idle';
@@ -1139,6 +1405,8 @@ function renderCapsule() {
     $('capTitle').textContent = snapshot.workspace || 'Maestro';
     sub.innerHTML = '';
     sub.appendChild(document.createTextNode('当前没有活动会话'));
+    $('capProgress').hidden = true;
+    progressBar.style.width = '0%';
     $('capSessions').textContent = '0 会话';
     $('capBody').setAttribute('aria-label', '打开完整卡片视图');
   }
@@ -1219,13 +1487,14 @@ function updateFade() {
 }
 function scheduleFade() { setTimeout(updateFade, 60); }
 
-/** 内容自适应窗口高度（卡片模式） */
+/** 内容自适应窗口高度（卡片模式）：测真实内容而非视口 */
 let fitTimer = null;
 function fitWindow() {
   clearTimeout(fitTimer);
   fitTimer = setTimeout(() => {
     if (document.body.dataset.mode !== 'card') return;
-    const h = document.documentElement.scrollHeight;
+    const content = document.querySelector('.content');
+    const h = content ? content.scrollHeight + 46 + 32 + 22 : document.documentElement.scrollHeight;
     invoke('fit_window_height', { height: h }).catch(() => {});
   }, 120);
 }

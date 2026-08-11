@@ -1,7 +1,8 @@
-// 应用配置：扫描根目录 + 窗口置顶偏好，持久化于
+// 应用配置：扫描根目录 + 窗口置顶 + 壁纸偏好，持久化于
 // dirs::config_dir()/maestro-sidebar/config.json
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -11,6 +12,19 @@ pub struct AppConfig {
     pub roots: Vec<String>,
     pub initialized: bool,
     pub always_on_top: bool,
+    /// 自定义壁纸图片路径（None = 未启用）
+    pub wallpaper: Option<String>,
+    /// 壁纸图层不透明度 0.1–0.9（默认 0.45）
+    pub wallpaper_opacity: Option<f64>,
+}
+
+impl AppConfig {
+    /// 壁纸不透明度取值，越界回退默认。
+    pub fn wallpaper_opacity_value(&self) -> f64 {
+        self.wallpaper_opacity
+            .map(|v| v.clamp(0.1, 0.9))
+            .unwrap_or(0.45)
+    }
 }
 
 pub fn app_config_dir() -> PathBuf {
@@ -30,11 +44,19 @@ pub fn load() -> AppConfig {
         .unwrap_or_default()
 }
 
+/// 原子写入：先写临时文件再 rename，避免中途崩溃截断 config.json。
 pub fn save(cfg: &AppConfig) -> Result<(), String> {
     let dir = app_config_dir();
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let data = serde_json::to_string_pretty(cfg).map_err(|e| e.to_string())?;
-    fs::write(config_path(), data).map_err(|e| e.to_string())
+    let path = config_path();
+    let tmp = path.with_extension("json.tmp");
+    let mut f = fs::File::create(&tmp).map_err(|e| e.to_string())?;
+    f.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
+    f.sync_all().map_err(|e| e.to_string())?;
+    drop(f);
+    fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// 展开 `~` 开头的路径（兼容 Windows 的 `~\proj` 与 Unix 的 `~/proj`）。
