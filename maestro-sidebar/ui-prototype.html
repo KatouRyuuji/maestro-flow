@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="color-scheme" content="dark"/>
+<title>Maestro Sidebar · UI 原型</title>
+<style>
+/* ============================================================================
+   Maestro Sidebar · 玻璃拟态深色主题原型（380 × 680）
+   ============================================================================ */
+*{margin:0;padding:0;box-sizing:border-box}
+
+:root{
+  /* 品牌与语义色（与项目 themes.css / app.js 对齐） */
+  --accent:#a78bfa;          /* 主紫 */
+  --accent-2:#7c3aed;        /* 深紫（Claude） */
+  --accent-glow:rgba(167,139,250,.45);
+  --ok:#34d399;   --ok-soft:rgba(52,211,153,.13);      /* 运行中/完成/ready/Gemini */
+  --info:#60a5fa; --info-soft:rgba(96,165,250,.13);    /* 排队/sealed/Codex */
+  --warn:#fbbf24; --warn-soft:rgba(251,191,36,.13);    /* 取消/paused/needs-retry/Qwen */
+  --danger:#f87171;--danger-soft:rgba(248,113,113,.13);/* 失败/blocked */
+  --cyan:#22d3ee;                                       /* learning 知识类 */
+  /* 文字三级 */
+  --text-strong:#f1edfb; --text:#d9d2ec; --text-dim:#8d83a8; --text-faint:#6a6085;
+  /* 表面层次 */
+  --panel:rgba(255,255,255,.045);
+  --panel-deep:rgba(255,255,255,.03);
+  --border:rgba(167,139,250,.18);
+  --border-soft:rgba(167,139,250,.10);
+  --hover:rgba(255,255,255,.06);
+  --mono:ui-monospace,"Cascadia Code","JetBrains Mono",Consolas,monospace;
+}
+
+html,body{height:100%}
+body{
+  min-height:100vh;padding:28px 16px;
+  display:flex;align-items:center;justify-content:center;
+  font-family:"Segoe UI",-apple-system,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  color:var(--text);
+  /* 原型预览用：深色渐变模拟桌面（真实 Tauri 窗口 body 透明） */
+  background:
+    radial-gradient(1000px 720px at 76% -8%, rgba(124,58,237,.32), transparent 58%),
+    radial-gradient(820px 640px at 6% 110%, rgba(96,165,250,.15), transparent 55%),
+    radial-gradient(600px 480px at 50% 52%, rgba(167,139,250,.07), transparent 62%),
+    linear-gradient(158deg,#0c0917 0%,#140f26 46%,#1b1130 100%);
+}
+
+/* ---------- 玻璃卡片（第一层：窗口） ---------- */
+.card{
+  width:380px;height:680px;flex-shrink:0;
+  display:flex;flex-direction:column;overflow:hidden;
+  border-radius:14px;
+  background:linear-gradient(168deg,rgba(44,31,74,.88) 0%,rgba(24,17,44,.92) 55%,rgba(19,13,36,.94) 100%);
+  backdrop-filter:blur(26px) saturate(1.35);
+  -webkit-backdrop-filter:blur(26px) saturate(1.35);
+  border:1px solid var(--border);
+  box-shadow:
+    0 30px 90px rgba(0,0,0,.58),
+    0 0 48px rgba(124,58,237,.16),
+    inset 0 1px 0 rgba(255,255,255,.09);
+}
+
+/* ---------- 顶栏 ---------- */
+.topbar{
+  flex-shrink:0;height:46px;
+  display:flex;align-items:center;gap:7px;
+  padding:0 9px 0 13px;
+  border-bottom:1px solid var(--border-soft);
+  background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,0));
+}
+.brand{display:flex;align-items:center;gap:7px;flex-shrink:0;cursor:default}
+.brand-dot{
+  width:11px;height:11px;border-radius:50%;
+  background:linear-gradient(135deg,#c4b5fd 0%,#a78bfa 45%,#7c3aed 100%);
+  box-shadow:0 0 10px var(--accent-glow),inset 0 1px 1px rgba(255,255,255,.5);
+}
+.brand-name{font-size:13px;font-weight:700;letter-spacing:.3px;color:var(--text-strong)}
+.brand-sub{font-size:11px;font-weight:500;color:var(--text-dim);letter-spacing:.4px}
+
+.top-actions{margin-left:auto;display:flex;align-items:center;gap:5px;min-width:0}
+.ws-chip{
+  display:inline-flex;align-items:center;gap:5px;
+  font-size:10.5px;line-height:1;padding:4px 9px;border-radius:999px;white-space:nowrap;
+  color:#cbb9ff;background:rgba(167,139,250,.12);border:1px solid rgba(167,139,250,.28);
+  max-width:96px;overflow:hidden;text-overflow:ellipsis;
+}
+.ws-chip svg{flex-shrink:0;opacity:.85}
+.iconbtn{
+  width:26px;height:26px;border-radius:8px;border:0;background:transparent;
+  display:grid;place-items:center;color:var(--text-dim);cursor:pointer;
+  transition:background .15s,color .15s,transform .1s;
+}
+.iconbtn:hover{background:var(--hover);color:var(--text-strong)}
+.iconbtn:active{transform:scale(.92)}
+
+/* Windows 风格窗口控制 */
+.win-controls{
+  display:flex;gap:2px;padding:2px;margin-left:3px;flex-shrink:0;
+  border-radius:9px;background:rgba(255,255,255,.04);border:1px solid var(--border-soft);
+}
+.wc{
+  width:26px;height:22px;border:0;border-radius:6px;background:transparent;
+  display:grid;place-items:center;color:var(--text-dim);cursor:pointer;
+  transition:background .15s,color .15s;
+}
+.wc:hover{background:rgba(255,255,255,.10);color:var(--text-strong)}
+.wc-close:hover{background:#e81123;color:#fff}
+
+/* ---------- 内容区（第二层：区块面板） ---------- */
+.content{
+  flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;
+  display:flex;flex-direction:column;gap:10px;
+  padding:10px 11px 12px;
+}
+.content::-webkit-scrollbar{width:8px}
+.content::-webkit-scrollbar-thumb{
+  background:rgba(167,139,250,.22);border-radius:8px;
+  border:2px solid transparent;background-clip:content-box;
+}
+.content::-webkit-scrollbar-thumb:hover{background:rgba(167,139,250,.42);border:2px solid transparent;background-clip:content-box}
+
+.panel{
+  flex-shrink:0;
+  background:var(--panel);
+  border:1px solid var(--border-soft);
+  border-radius:12px;
+  padding:3px 7px 7px;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.04);
+}
+.panel-head{
+  display:flex;align-items:center;gap:6px;width:100%;
+  padding:7px 5px 6px;border:0;background:transparent;cursor:pointer;
+  font-size:12px;font-weight:600;letter-spacing:.3px;color:var(--text);
+  font-family:inherit;
+}
+.panel-head .picon{color:var(--accent);display:grid;place-items:center}
+.chev{color:var(--text-faint);display:grid;place-items:center;transition:transform .2s ease}
+.panel.closed .panel-body{display:none}
+.panel.closed .chev{transform:rotate(-90deg)}
+.panel-count{
+  margin-left:auto;font-family:var(--mono);font-size:10px;line-height:1;
+  padding:3px 8px;border-radius:999px;color:#c9b8f5;
+  background:rgba(167,139,250,.14);border:1px solid rgba(167,139,250,.24);
+}
+.panel-body{padding:0 2px 2px}
+
+/* ---------- Agent 调用（第三层：列表行） ---------- */
+.call-item{
+  display:grid;grid-template-columns:8px minmax(0,1fr) auto;gap:9px;
+  align-items:center;padding:6px 7px;border-radius:10px;
+  transition:background .15s;
+}
+.call-item + .call-item{margin-top:2px}
+.call-item:hover{background:var(--hover)}
+.call-dot{width:8px;height:8px;border-radius:50%;background:var(--c,var(--text-dim));box-shadow:0 0 7px var(--c,var(--text-dim))}
+.call-main{min-width:0}
+.call-line1{display:flex;align-items:center;gap:6px}
+.tool-name{font-size:12px;font-weight:600;color:var(--text-strong);flex-shrink:0}
+.call-model{
+  font-family:var(--mono);font-size:9.5px;line-height:1;color:var(--text-dim);
+  padding:2.5px 6px;border-radius:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:104px;
+  background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.08);
+}
+.call-prompt{
+  margin-top:2.5px;font-size:11.5px;color:var(--text-dim);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.call-side{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+.call-time{font-size:10px;color:var(--text-faint);white-space:nowrap}
+
+/* 状态徽章通用 */
+.badge{
+  display:inline-flex;align-items:center;gap:4px;
+  font-size:10px;font-weight:600;line-height:1;letter-spacing:.2px;white-space:nowrap;
+  padding:3.5px 7px;border-radius:999px;border:1px solid transparent;
+}
+.badge i{width:5px;height:5px;border-radius:50%;background:currentColor;flex-shrink:0}
+.st-running{color:var(--ok);background:var(--ok-soft);border-color:rgba(52,211,153,.35)}
+.st-running i{animation:pulse 1.6s ease-out infinite}
+.st-done{color:var(--ok);background:var(--ok-soft);border-color:rgba(52,211,153,.22)}
+.st-error{color:var(--danger);background:var(--danger-soft);border-color:rgba(248,113,113,.30)}
+.st-queued{color:var(--info);background:var(--info-soft);border-color:rgba(96,165,250,.30)}
+.st-cancel{color:var(--warn);background:var(--warn-soft);border-color:rgba(251,191,36,.30)}
+@keyframes pulse{
+  0%{box-shadow:0 0 0 0 rgba(52,211,153,.55)}
+  70%{box-shadow:0 0 0 5px rgba(52,211,153,0)}
+  100%{box-shadow:0 0 0 0 rgba(52,211,153,0)}
+}
+
+/* ---------- Session · Run ---------- */
+.session-item{
+  position:relative;border-radius:10px;padding:7px 8px 7px 12px;
+  border:1px solid transparent;transition:background .15s,border-color .15s;
+}
+.session-item + .session-item{margin-top:3px}
+.session-item:hover{background:var(--hover)}
+.session-item.active{
+  background:rgba(167,139,250,.10);border-color:rgba(167,139,250,.30);
+}
+.session-item.active::before{
+  content:"";position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:3px;
+  background:linear-gradient(180deg,#a78bfa,#7c3aed);
+  box-shadow:0 0 8px var(--accent-glow);
+}
+.session-head{
+  display:flex;align-items:center;gap:8px;width:100%;
+  border:0;background:transparent;cursor:pointer;text-align:left;font-family:inherit;
+}
+.sess-meta{flex:1;min-width:0}
+.sess-idline{display:flex;align-items:center;gap:6px}
+.sess-id{
+  font-family:var(--mono);font-size:11px;font-weight:600;color:var(--text-strong);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.active-tag{
+  font-size:8.5px;font-weight:700;letter-spacing:.8px;line-height:1;
+  padding:2.5px 5px;border-radius:5px;flex-shrink:0;
+  color:#e3d9ff;background:rgba(167,139,250,.22);border:1px solid rgba(167,139,250,.40);
+}
+.sess-intent{
+  margin-top:2.5px;font-size:11.5px;color:var(--text-dim);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.sess-badges{display:flex;align-items:center;gap:5px;flex-shrink:0}
+.sbadge{font-family:var(--mono);font-size:10px;font-weight:600}
+.sb-running{color:var(--ok);background:var(--ok-soft);border-color:rgba(52,211,153,.35)}
+.sb-running i{animation:pulse 1.6s ease-out infinite}
+.sb-sealed{color:var(--info);background:var(--info-soft);border-color:rgba(96,165,250,.30)}
+.sb-paused{color:var(--warn);background:var(--warn-soft);border-color:rgba(251,191,36,.30)}
+.sb-failed{color:var(--danger);background:var(--danger-soft);border-color:rgba(248,113,113,.30)}
+.runs-count{font-family:var(--mono);font-size:10px;color:var(--text-faint);white-space:nowrap}
+
+/* run 明细 */
+.run-list{margin:7px 0 1px 1px;display:flex;flex-direction:column;gap:3px}
+.run-item{
+  display:grid;grid-template-columns:auto auto auto 1fr;gap:6px;align-items:center;
+  font-family:var(--mono);font-size:10px;
+  padding:4.5px 7px;border-radius:8px;
+  background:var(--panel-deep);border:1px solid rgba(255,255,255,.05);
+}
+.verdict{font-size:9px;font-weight:700;line-height:1;letter-spacing:.2px;padding:2.5px 5px;border-radius:5px;border:1px solid transparent}
+.v-ready{color:var(--ok);background:var(--ok-soft);border-color:rgba(52,211,153,.25)}
+.v-blocked{color:var(--danger);background:var(--danger-soft);border-color:rgba(248,113,113,.25)}
+.v-retry{color:var(--warn);background:var(--warn-soft);border-color:rgba(251,191,36,.25)}
+.run-cmd{color:var(--text);font-weight:600}
+.run-platform{
+  font-size:8.5px;line-height:1;color:var(--text-dim);
+  padding:2.5px 5px;border-radius:5px;background:rgba(255,255,255,.06);
+}
+.run-id{justify-self:end;color:var(--text-faint)}
+.run-more{
+  align-self:stretch;margin-top:1px;padding:4px;border:0;border-radius:7px;
+  background:transparent;color:var(--accent);font-size:10.5px;font-family:inherit;
+  cursor:pointer;transition:background .15s;
+}
+.run-more:hover{background:rgba(167,139,250,.10)}
+
+/* ---------- 知识积累 ---------- */
+.kpi-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;padding:2px 1px 0}
+.kpi{
+  text-align:center;padding:8px 2px 7px;border-radius:10px;cursor:default;
+  background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.05);
+  transition:background .15s,transform .15s;
+}
+.kpi:hover{background:rgba(255,255,255,.07);transform:translateY(-1px)}
+.kpi-value{font-size:15px;font-weight:700;line-height:1.1;color:var(--kc,var(--text-strong))}
+.kpi-label{margin-top:3px;font-size:10px;color:var(--text-dim);letter-spacing:.5px}
+
+.knowledge-bar{
+  margin-top:9px;height:8px;display:flex;gap:2px;
+  border-radius:999px;background:rgba(255,255,255,.06);
+  border:1px solid rgba(255,255,255,.05);overflow:hidden;padding:0;
+}
+.knowledge-bar i{display:block;height:100%;border-radius:2px}
+.kb-specs{background:linear-gradient(90deg,#b49dfb,#a78bfa)}
+.kb-memory{background:#60a5fa}
+.kb-knowhow{background:#34d399}
+.kb-learning{background:#22d3ee}
+.kb-issues{background:#f87171}
+.bar-legend{
+  margin-top:8px;display:flex;flex-wrap:wrap;gap:4px 11px;
+  font-size:9.5px;color:var(--text-dim);
+}
+.bar-legend span{display:inline-flex;align-items:center;gap:4px}
+.bar-legend i{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+
+/* ---------- 状态栏 ---------- */
+.statusbar{
+  flex-shrink:0;height:32px;
+  display:flex;align-items:center;gap:7px;
+  padding:0 13px;font-size:10.5px;color:var(--text-dim);
+  border-top:1px solid var(--border-soft);
+  background:rgba(0,0,0,.18);
+}
+.live-dot{position:relative;width:7px;height:7px;border-radius:50%;background:var(--ok);flex-shrink:0}
+.live-dot::after{
+  content:"";position:absolute;inset:-3px;border-radius:50%;
+  border:1px solid rgba(52,211,153,.6);
+  animation:ring 2s ease-out infinite;
+}
+@keyframes ring{
+  0%{transform:scale(.55);opacity:1}
+  80%{transform:scale(1.5);opacity:0}
+  100%{transform:scale(1.5);opacity:0}
+}
+.sb-time{font-family:var(--mono);font-size:10px;color:var(--text)}
+.sb-spacer{flex:1}
+.sb-hint{color:var(--text-faint);font-size:10px}
+
+button:focus-visible,.session-head:focus-visible{outline:1.5px solid rgba(167,139,250,.7);outline-offset:1px}
+</style>
+</head>
+<body>
+<!--
+  ══════════════════════════════════════════════════════════════════════════
+  Maestro Sidebar · 设计说明（380 × 680 · 玻璃拟态深色主题）
+  ══════════════════════════════════════════════════════════════════════════
+
+  一、布局层次（三级表面）
+  ──────────────────────────────────────────────────────────────────────
+  L1 窗口卡片：380×680，圆角 14px，紫色渐变玻璃（backdrop-blur 26px +
+     saturate 1.35），1px 紫色描边 + 顶部 inset 高光线 + 深投影与紫色
+     环境光，形成"悬浮于桌面"的层次。顶栏 46px / 状态栏 32px 固定，
+     中间内容区独立滚动（紫色细滚动条）。
+  L2 区块面板：Agent 调用 / Session·Run / 知识积累 三个 panel，
+     rgba(255,255,255,.045) 半透明表面 + 圆角 12px + 细紫描边，头部
+     带图标、标题、数量 pill，点击可整块折叠（chevron 旋转 -90°）。
+  L3 列表行：调用行 / 会话行 / run 行，圆角 8–10px，hover 提亮
+     rgba(255,255,255,.06)，行高 38–46px，信息左主右辅。
+  间距基于 8px 栅格；字号 8.5–15px 七级递进；ID/模型/run_id 一律
+  等宽字体，与中文正文（Segoe UI + 苹方/雅黑）形成节奏对比。
+
+  二、色彩语义（与项目 TOOL_COLORS / statusClass 对齐）
+  ──────────────────────────────────────────────────────────────────────
+  主紫 #a78bfa / 深紫 #7c3aed：品牌点、active 会话左条、计数 pill、
+     更多按钮、聚焦环 —— 所有"当前/强调"信息。
+  绿 #34d399 = 运行中（脉冲圆点）/ 完成 / verdict ready / Gemini；
+  蓝 #60a5fa = 排队 / 会话 sealed / Codex；
+  黄 #fbbf24 = 取消 / 会话 paused / verdict needs-retry / Qwen；
+  红 #f87171 = 失败 / verdict blocked；
+  青 #22d3ee = 知识类 learning；工具色 Claude 用深紫 #7c3aed、
+     OpenCode 用浅紫 #a78bfa，以发光圆点呈现。
+  语义色统一"13% 软底 + 25–35% 描边 + 纯色文字"配方，保证深底对比度。
+  文字三级：#f1edfb 强 / #d9d2ec 正文 / #8d83a8 弱化 / #6a6085 时间戳。
+  知识条：五类占比分段堆叠（specs 46% 紫 / memory 27% 蓝 / knowhow
+     15% 绿 / learning 8% 青 / issues 4% 红），KPI 数值颜色与分段同色
+     形成视觉联动，下方 legend 标注百分比。
+
+  三、交互细节
+  ──────────────────────────────────────────────────────────────────────
+  1. 顶栏整体为拖动区（真实实现挂 data-tauri-drag-region，按钮
+     no-drag）；工作区 chip 紫色软底，超长省略号。
+  2. 窗口控制为 Windows 风格三连键：hover 灰亮，关闭键 hover 变
+     #e81123 红；点击关闭 = 隐藏到托盘（状态栏右侧常驻提示）。
+  3. "运行中"徽章内圆点与状态栏绿点均为呼吸动画：前者 box-shadow
+     扩散脉冲 1.6s，后者外圈 ring 扩散 2s，表达实时监听。
+  4. 会话行点击展开/收起 run 明细（"+N 更多 ⇄ 收起 ⌃"）；active
+     会话默认展开并高亮（紫左条 + 紫晕底 + ACTIVE 标签）。
+  5. run 行：verdict 徽章 + command + platform 片 + run_id 右对齐，
+     等宽小字，深一档表面与外层会话行拉开嵌套层次。
+  6. 面板头点击折叠整块；所有按钮 :active 缩放 .92、:focus-visible
+     紫色焦点环，支持键盘可达。
+  7. KPI 卡 hover 微浮起 1px；调用行/会话行 hover 提亮，均为 150ms
+     缓动，避免 380px 窄栏内动画喧宾夺主。
+  8. 预览说明：body 透明不可用，故用深色渐变 + 双径向光斑模拟桌面；
+     接入 Tauri 后仅需将 body 背景置为 transparent，玻璃效果不变。
+  ══════════════════════════════════════════════════════════════════════════
+-->
+
+<article class="card" role="application" aria-label="Maestro Sidebar">
+
+  <!-- ══ 顶栏（可拖动区） ══ -->
+  <header class="topbar" data-tauri-drag-region>
+    <div class="brand" title="Maestro Sidebar">
+      <span class="brand-dot" aria-hidden="true"></span>
+      <span class="brand-name">Maestro</span>
+      <span class="brand-sub">Sidebar</span>
+    </div>
+
+    <div class="top-actions">
+      <span class="ws-chip" title="工作区：maestro2">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+        maestro2
+      </span>
+      <button class="iconbtn" title="刷新" aria-label="刷新">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+      </button>
+      <button class="iconbtn" title="菜单" aria-label="菜单" aria-haspopup="true">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+      </button>
+    </div>
+
+    <div class="win-controls">
+      <button class="wc" title="最小化" aria-label="最小化">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="6" y1="14" x2="18" y2="14"/></svg>
+      </button>
+      <button class="wc" title="最大化" aria-label="最大化">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="6.5" y="6.5" width="11" height="11" rx="1"/></svg>
+      </button>
+      <button class="wc wc-close" title="关闭（隐藏到托盘）" aria-label="关闭">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="7" y1="7" x2="17" y2="17"/><line x1="17" y1="7" x2="7" y2="17"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- ══ 内容区 ══ -->
+  <main class="content">
+
+    <!-- ── 区块 1：Agent 调用 ── -->
+    <section class="panel" aria-label="Agent 调用">
+      <button class="panel-head" aria-expanded="true">
+        <span class="chev"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+        <span class="picon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></span>
+        <span>Agent 调用</span>
+        <span class="panel-count">5</span>
+      </button>
+      <div class="panel-body">
+
+        <div class="call-item">
+          <span class="call-dot" style="--c:#7c3aed" aria-hidden="true"></span>
+          <div class="call-main">
+            <div class="call-line1"><span class="tool-name">Claude</span><span class="call-model">opus-4.5</span></div>
+            <div class="call-prompt">修复 Tauri 无边框窗口的拖动区域与置顶逻辑</div>
+          </div>
+          <div class="call-side">
+            <span class="badge st-running"><i></i>运行中</span>
+            <span class="call-time">2 分钟前</span>
+          </div>
+        </div>
+
+        <div class="call-item">
+          <span class="call-dot" style="--c:#60a5fa" aria-hidden="true"></span>
+          <div class="call-main">
+            <div class="call-line1"><span class="tool-name">Codex</span><span class="call-model">gpt-5.2</span></div>
+            <div class="call-prompt">重构 snapshot 数据加载，支持增量刷新</div>
+          </div>
+          <div class="call-side">
+            <span class="badge st-done">完成</span>
+            <span class="call-time">8 分钟前</span>
+          </div>
+        </div>
+
+        <div class="call-item">
+          <span class="call-dot" style="--c:#34d399" aria-hidden="true"></span>
+          <div class="call-main">
+            <div class="call-line1"><span class="tool-name">Gemini</span><span class="call-model">2.5-pro</span></div>
+            <div class="call-prompt">生成知识积累占比条的 spec-analytics 规范</div>
+          </div>
+          <div class="call-side">
+            <span class="badge st-error">失败</span>
+            <span class="call-time">15 分钟前</span>
+          </div>
+        </div>
+
+        <div class="call-item">
+          <span class="call-dot" style="--c:#fbbf24" aria-hidden="true"></span>
+          <div class="call-main">
+            <div class="call-line1"><span class="tool-name">Qwen</span><span class="call-model">qwen3-max</span></div>
+            <div class="call-prompt">为会话状态机补充单元测试与边界用例</div>
+          </div>
+          <div class="call-side">
+            <span class="badge st-queued">排队</span>
+            <span class="call-time">21 分钟前</span>
+          </div>
+        </div>
+
+        <div class="call-item">
+          <span class="call-dot" style="--c:#a78bfa" aria-hidden="true"></span>
+          <div class="call-main">
+            <div class="call-line1"><span class="tool-name">OpenCode</span><span class="call-model">glm-4.7</span></div>
+            <div class="call-prompt">整理 v0.5.69 发布说明与变更清单</div>
+          </div>
+          <div class="call-side">
+            <span class="badge st-cancel">取消</span>
+            <span class="call-time">32 分钟前</span>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ── 区块 2：Session · Run ── -->
+    <section class="panel" aria-label="Session 与 Run">
+      <button class="panel-head" aria-expanded="true">
+        <span class="chev"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+        <span class="picon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg></span>
+        <span>Session · Run</span>
+        <span class="panel-count">4</span>
+      </button>
+      <div class="panel-body">
+
+        <!-- active 会话：高亮 + 默认展开 -->
+        <div class="session-item active open">
+          <button class="session-head" aria-expanded="true">
+            <div class="sess-meta">
+              <div class="sess-idline">
+                <span class="sess-id">s-a7f3c2</span>
+                <span class="active-tag">ACTIVE</span>
+              </div>
+              <div class="sess-intent">修复侧边栏玻璃拟态主题切换时的闪烁问题</div>
+            </div>
+            <div class="sess-badges">
+              <span class="badge sbadge sb-running"><i></i>running</span>
+              <span class="runs-count">3 runs</span>
+            </div>
+          </button>
+          <div class="run-list">
+            <div class="run-item">
+              <span class="verdict v-ready">ready</span>
+              <span class="run-cmd">build</span>
+              <span class="run-platform">windows</span>
+              <span class="run-id">r-91a2f7</span>
+            </div>
+            <div class="run-item">
+              <span class="verdict v-retry">needs-retry</span>
+              <span class="run-cmd">test</span>
+              <span class="run-platform">macos</span>
+              <span class="run-id">r-90f8b3</span>
+            </div>
+            <div class="run-item">
+              <span class="verdict v-blocked">blocked</span>
+              <span class="run-cmd">package</span>
+              <span class="run-platform">linux</span>
+              <span class="run-id">r-8fd102</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- sealed：收起态，仅最新 run -->
+        <div class="session-item">
+          <button class="session-head" aria-expanded="false">
+            <div class="sess-meta">
+              <div class="sess-idline"><span class="sess-id">s-b8e1d4</span></div>
+              <div class="sess-intent">知识库 KPI 抽取与占比统计</div>
+            </div>
+            <div class="sess-badges">
+              <span class="badge sbadge sb-sealed">sealed</span>
+              <span class="runs-count">5 runs</span>
+            </div>
+          </button>
+          <div class="run-list">
+            <div class="run-item">
+              <span class="verdict v-ready">ready</span>
+              <span class="run-cmd">run</span>
+              <span class="run-platform">windows</span>
+              <span class="run-id">r-77c4e9</span>
+            </div>
+            <div class="run-extra" hidden>
+              <div class="run-item">
+                <span class="verdict v-ready">ready</span>
+                <span class="run-cmd">plan</span>
+                <span class="run-platform">windows</span>
+                <span class="run-id">r-76b210</span>
+              </div>
+            </div>
+            <button class="run-more" data-more="4">+4 更多</button>
+          </div>
+        </div>
+
+        <!-- paused：收起态 -->
+        <div class="session-item">
+          <button class="session-head" aria-expanded="false">
+            <div class="sess-meta">
+              <div class="sess-idline"><span class="sess-id">s-c9d2e6</span></div>
+              <div class="sess-intent">历史 spec 批量迁移至新目录结构</div>
+            </div>
+            <div class="sess-badges">
+              <span class="badge sbadge sb-paused">paused</span>
+              <span class="runs-count">2 runs</span>
+            </div>
+          </button>
+          <div class="run-list">
+            <div class="run-item">
+              <span class="verdict v-retry">needs-retry</span>
+              <span class="run-cmd">migrate</span>
+              <span class="run-platform">macos</span>
+              <span class="run-id">r-51cc08</span>
+            </div>
+            <div class="run-extra" hidden>
+              <div class="run-item">
+                <span class="verdict v-ready">ready</span>
+                <span class="run-cmd">scan</span>
+                <span class="run-platform">macos</span>
+                <span class="run-id">r-50ba77</span>
+              </div>
+            </div>
+            <button class="run-more">+1 更多</button>
+          </div>
+        </div>
+
+        <!-- failed：单 run -->
+        <div class="session-item">
+          <button class="session-head" aria-expanded="false">
+            <div class="sess-meta">
+              <div class="sess-idline"><span class="sess-id">s-d4f7a1</span></div>
+              <div class="sess-intent">发布说明自动生成流水线</div>
+            </div>
+            <div class="sess-badges">
+              <span class="badge sbadge sb-failed">failed</span>
+              <span class="runs-count">1 run</span>
+            </div>
+          </button>
+          <div class="run-list">
+            <div class="run-item">
+              <span class="verdict v-blocked">blocked</span>
+              <span class="run-cmd">run</span>
+              <span class="run-platform">windows</span>
+              <span class="run-id">r-62ab3d</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ── 区块 3：知识积累 ── -->
+    <section class="panel" aria-label="知识积累">
+      <button class="panel-head" aria-expanded="true">
+        <span class="chev"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+        <span class="picon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span>
+        <span>知识积累</span>
+        <span class="panel-count">26</span>
+      </button>
+      <div class="panel-body">
+        <div class="kpi-grid">
+          <div class="kpi" style="--kc:#a78bfa" title="specs 规范：12 条">
+            <div class="kpi-value">12</div><div class="kpi-label">规范</div>
+          </div>
+          <div class="kpi" style="--kc:#60a5fa" title="memory 记忆：7 条">
+            <div class="kpi-value">7</div><div class="kpi-label">记忆</div>
+          </div>
+          <div class="kpi" style="--kc:#34d399" title="knowhow 诀窍：4 条">
+            <div class="kpi-value">4</div><div class="kpi-label">诀窍</div>
+          </div>
+          <div class="kpi" style="--kc:#22d3ee" title="learning 学习：2 条">
+            <div class="kpi-value">2</div><div class="kpi-label">学习</div>
+          </div>
+          <div class="kpi" style="--kc:#f87171" title="issues 问题：1 条">
+            <div class="kpi-value">1</div><div class="kpi-label">问题</div>
+          </div>
+        </div>
+
+        <!-- 占比进度条：五类知识分段堆叠 -->
+        <div class="knowledge-bar" role="img" aria-label="知识占比：规范 46%，记忆 27%，诀窍 15%，学习 8%，问题 4%">
+          <i class="kb-specs" style="width:46%"></i>
+          <i class="kb-memory" style="width:27%"></i>
+          <i class="kb-knowhow" style="width:15%"></i>
+          <i class="kb-learning" style="width:8%"></i>
+          <i class="kb-issues" style="width:4%"></i>
+        </div>
+        <div class="bar-legend">
+          <span><i style="background:#a78bfa"></i>规范 46%</span>
+          <span><i style="background:#60a5fa"></i>记忆 27%</span>
+          <span><i style="background:#34d399"></i>诀窍 15%</span>
+          <span><i style="background:#22d3ee"></i>学习 8%</span>
+          <span><i style="background:#f87171"></i>问题 4%</span>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ══ 状态栏 ══ -->
+  <footer class="statusbar">
+    <span class="live-dot" title="实时监听中" aria-label="实时监听中"></span>
+    <span class="sb-time">16:42:08</span>
+    <span>已更新</span>
+    <span class="sb-spacer"></span>
+    <span class="sb-hint">关闭 = 隐藏托盘</span>
+  </footer>
+
+</article>
+
+<script>
+/* 原型交互：面板折叠 + 会话展开/收起（真实实现由 Tauri invoke 驱动） */
+document.querySelectorAll('.panel-head').forEach(function(h){
+  h.addEventListener('click', function(){
+    var panel = h.closest('.panel');
+    var closed = panel.classList.toggle('closed');
+    h.setAttribute('aria-expanded', String(!closed));
+  });
+});
+
+function toggleSession(item){
+  var extra = item.querySelector('.run-extra');
+  var more = item.querySelector('.run-more');
+  if(!extra || !more) return;
+  var nowOpen = extra.hidden;
+  extra.hidden = !nowOpen;
+  item.classList.toggle('open', nowOpen);
+  var n = more.dataset.more || extra.querySelectorAll('.run-item').length;
+  more.textContent = nowOpen ? '收起 ⌃' : '+' + n + ' 更多';
+  var head = item.querySelector('.session-head');
+  if(head) head.setAttribute('aria-expanded', String(nowOpen));
+}
+document.querySelectorAll('.session-head, .run-more').forEach(function(el){
+  el.addEventListener('click', function(e){
+    e.stopPropagation();
+    toggleSession(el.closest('.session-item'));
+  });
+});
+</script>
+</body>
+</html>

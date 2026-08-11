@@ -16,6 +16,8 @@ pub struct AppConfig {
     pub wallpaper: Option<String>,
     /// 壁纸图层不透明度 0.1–0.9（默认 0.45）
     pub wallpaper_opacity: Option<f64>,
+    /// 当前激活的工作空间（.workflow 目录的归一化路径；None = 自动选第一个）
+    pub active_root: Option<String>,
 }
 
 impl AppConfig {

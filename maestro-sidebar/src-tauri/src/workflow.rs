@@ -4,7 +4,7 @@
 //   - state.json                          — 会话注册表（sessions[] + active_session_id）
 //   - sessions/<id>/session.json          — 会话状态（active_run_id / latest_completed_run_id）
 //   - sessions/<id>/runs/<run>/run.json   — 单次 Run 的状态、verdict、command、platform
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -14,7 +14,7 @@ use crate::config::normalize_path;
 // Types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RunSummary {
     pub run_id: String,
     pub sequence: Option<i64>,
@@ -31,7 +31,7 @@ pub struct RunSummary {
     pub gate_ids: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SessionDetail {
     pub session: SessionSummary,
     pub runs: Vec<RunSummary>,
@@ -39,7 +39,7 @@ pub struct SessionDetail {
     pub boundary_contract: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SessionSummary {
     pub session_id: String,
     pub intent: Option<String>,
@@ -52,7 +52,7 @@ pub struct SessionSummary {
     pub latest_run: Option<RunSummary>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProjectInfo {
     pub path: String,
     pub name: String,

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
-#[derive(Debug, Clone, Serialize, PartialEq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct KnowledgeStats {
     pub specs: u64,
     pub memory: u64,
@@ -418,4 +418,154 @@ fn read_md_entry(path: &Path) -> (String, String, String, Vec<String>, String, O
             dt
         });
     (id, title, summary, tags, status, updated)
+}
+
+/// 写入知识条目内容（md 全文覆盖 / jsonl 行替换），返回错误信息。
+pub fn write_knowledge_item(wf_root: &Path, kind: &str, id: &str, content: &str) -> Result<(), String> {
+    match kind {
+        "specs" | "memory" | "knowhow" => {
+            let path = wf_root.join(kind).join(format!("{id}.md"));
+            fs::write(&path, content).map_err(|e| e.to_string())
+        }
+        "learning" | "issues" => {
+            // 校验 content 是单行 JSON
+            let value: serde_json::Value = serde_json::from_str(content)
+                .map_err(|e| format!("内容不是合法 JSON：{e}"))?;
+            let line = serde_json::to_string(&value).map_err(|e| e.to_string())?;
+            let dir = wf_root.join(kind);
+            let Ok(entries) = fs::read_dir(&dir) else {
+                return Err("目录不存在".into());
+            };
+            let mut files: Vec<_> = entries.flatten().collect();
+            files.sort_by_key(|e| e.file_name());
+            for entry in files {
+                let p = entry.path();
+                let is_jsonl = entry
+                    .file_name()
+                    .to_str()
+                    .map(|n| n.ends_with(".jsonl"))
+                    .unwrap_or(false);
+                if !p.is_file() || !is_jsonl {
+                    continue;
+                }
+                let Ok(raw) = fs::read_to_string(&p) else { continue };
+                let mut replaced = false;
+                let mut out = String::new();
+                for l in raw.lines() {
+                    let t = l.trim();
+                    if t.is_empty() {
+                        out.push_str(l);
+                        out.push('\n');
+                        continue;
+                    }
+                    let Ok(v) = serde_json::from_str::<serde_json::Value>(t) else {
+                        out.push_str(l);
+                        out.push('\n');
+                        continue;
+                    };
+                    let row_id = v.get("id").and_then(|x| x.as_str()).unwrap_or("");
+                    if row_id == id {
+                        out.push_str(&line);
+                        out.push('\n');
+                        replaced = true;
+                    } else {
+                        out.push_str(l);
+                        out.push('\n');
+                    }
+                }
+                if replaced {
+                    return fs::write(&p, out).map_err(|e| e.to_string());
+                }
+            }
+            Err("未找到匹配条目".into())
+        }
+        _ => Err("不支持的条目类型".into()),
+    }
+}
+
+/// 删除知识条目（md 文件 / jsonl 行）。
+pub fn delete_knowledge_item(wf_root: &Path, kind: &str, id: &str) -> Result<(), String> {
+    match kind {
+        "specs" | "memory" | "knowhow" => {
+            let path = wf_root.join(kind).join(format!("{id}.md"));
+            if !path.exists() {
+                return Err("条目不存在".into());
+            }
+            fs::remove_file(&path).map_err(|e| e.to_string())
+        }
+        "learning" | "issues" => {
+            let dir = wf_root.join(kind);
+            let Ok(entries) = fs::read_dir(&dir) else {
+                return Err("目录不存在".into());
+            };
+            let mut files: Vec<_> = entries.flatten().collect();
+            files.sort_by_key(|e| e.file_name());
+            for entry in files {
+                let p = entry.path();
+                let is_jsonl = entry
+                    .file_name()
+                    .to_str()
+                    .map(|n| n.ends_with(".jsonl"))
+                    .unwrap_or(false);
+                if !p.is_file() || !is_jsonl {
+                    continue;
+                }
+                let Ok(raw) = fs::read_to_string(&p) else { continue };
+                let mut removed = false;
+                let mut out = String::new();
+                for l in raw.lines() {
+                    let t = l.trim();
+                    if t.is_empty() {
+                        out.push_str(l);
+                        out.push('\n');
+                        continue;
+                    }
+                    let Ok(v) = serde_json::from_str::<serde_json::Value>(t) else {
+                        out.push_str(l);
+                        out.push('\n');
+                        continue;
+                    };
+                    let row_id = v.get("id").and_then(|x| x.as_str()).unwrap_or("");
+                    if row_id == id {
+                        removed = true; // 跳过该行
+                    } else {
+                        out.push_str(l);
+                        out.push('\n');
+                    }
+                }
+                if removed {
+                    return fs::write(&p, out).map_err(|e| e.to_string());
+                }
+            }
+            Err("未找到匹配条目".into())
+        }
+        _ => Err("不支持的条目类型".into()),
+    }
+}
+
+/// 新建 md 知识条目（specs/memory/knowhow），返回生成的 id。
+pub fn create_knowledge_md(
+    wf_root: &Path,
+    kind: &str,
+    title: &str,
+    content: &str,
+) -> Result<String, String> {
+    if !["specs", "memory", "knowhow"].contains(&kind) {
+        return Err("仅支持 specs / memory / knowhow".into());
+    }
+    let dir = wf_root.join(kind);
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    // id：kind-YYYYMMDD-HHMMSS-短slug
+    let now = chrono::Local::now();
+    let ts = now.format("%Y%m%d-%H%M%S").to_string();
+    let slug = title
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .take(24)
+        .collect::<String>()
+        .to_ascii_lowercase();
+    let id = format!("{kind}-{ts}-{slug}");
+    let body = format!("---\ntitle: \"{}\"\n---\n\n{}\n", title.replace('"', "\\\""), content.trim());
+    fs::write(dir.join(format!("{id}.md")), body).map_err(|e| e.to_string())?;
+    Ok(id)
 }

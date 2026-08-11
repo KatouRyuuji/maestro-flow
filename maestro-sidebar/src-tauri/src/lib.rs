@@ -22,10 +22,9 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 use tauri::Manager;
-use tauri::{WebviewUrl, WebviewWindowBuilder};
 
 use config::AppConfig;
-use snapshot::{RuntimeSnapshot, snapshot_fingerprint};
+use snapshot::{RuntimeSnapshot, snapshot_fingerprint, all_projects, resolve_active};
 
 // ---------------------------------------------------------------------------
 // App state
@@ -36,20 +35,9 @@ struct RuntimeStore {
     last_emitted_fingerprint: Option<String>,
 }
 
-/// 独立 markdown 预览窗口的待渲染文档
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct PreviewDoc {
-    pub kind: String,
-    pub id: String,
-    pub title: String,
-    pub content: String,
-}
-
 struct AppState {
     config: Mutex<AppConfig>,
     runtime: Mutex<RuntimeStore>,
-    preview: Mutex<Option<PreviewDoc>>,
 }
 
 impl Default for RuntimeStore {
@@ -116,6 +104,7 @@ fn flush_snapshot(app: &tauri::AppHandle) {
         runtime.last_snapshot = Some(snapshot.clone());
         runtime.last_emitted_fingerprint.as_deref() == Some(fp.as_str())
     };
+    save_snapshot_cache(&snapshot);
     if unchanged {
         return;
     }
@@ -135,6 +124,7 @@ struct ConfigOut {
     always_on_top: bool,
     wallpaper: Option<String>,
     wallpaper_opacity: f64,
+    active_root: Option<String>,
 }
 
 fn config_out(cfg: &AppConfig) -> ConfigOut {
@@ -144,6 +134,7 @@ fn config_out(cfg: &AppConfig) -> ConfigOut {
         always_on_top: cfg.always_on_top,
         wallpaper: cfg.wallpaper.clone(),
         wallpaper_opacity: cfg.wallpaper_opacity_value(),
+        active_root: cfg.active_root.clone(),
     }
 }
 
@@ -152,22 +143,129 @@ fn save_state(state: &AppState) -> Result<(), String> {
     config::save(&cfg)
 }
 
+// ---------------------------------------------------------------------------
+// 快照磁盘缓存：冷启动秒开（15s TTL 内直接返回缓存，后台 reconcile 持续刷新）
+// ---------------------------------------------------------------------------
+
+const SNAPSHOT_CACHE_TTL_SECS: i64 = 15;
+
+fn snapshot_cache_path() -> std::path::PathBuf {
+    config::app_config_dir().join("snapshot-cache.json")
+}
+
+fn load_snapshot_cache() -> Option<(i64, RuntimeSnapshot)> {
+    let raw = std::fs::read_to_string(snapshot_cache_path()).ok()?;
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Envelope {
+        generated_at: i64,
+        snapshot: RuntimeSnapshot,
+    }
+    let env: Envelope = serde_json::from_str(&raw).ok()?;
+    Some((env.generated_at, env.snapshot))
+}
+
+fn save_snapshot_cache(snapshot: &RuntimeSnapshot) {
+    let data = serde_json::json!({
+        "generated_at": snapshot.generated_at,
+        "snapshot": snapshot,
+    });
+    if let Ok(text) = serde_json::to_string(&data) {
+        let _ = std::fs::create_dir_all(config::app_config_dir());
+        let _ = std::fs::write(snapshot_cache_path(), text);
+    }
+}
+
+/// 当前激活工程（单工程模式：所有数据命令只作用于它）。
+fn active_projects(cfg: &AppConfig) -> Vec<std::path::PathBuf> {
+    let projects = all_projects(cfg);
+    match resolve_active(cfg, &projects) {
+        Some(p) => vec![p.clone()],
+        None => Vec::new(),
+    }
+}
+
+/// 可用工作空间列表（切换菜单用）
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceInfo {
+    path: String,
+    name: String,
+    active: bool,
+    source: String, // root | auto
+}
+
+#[tauri::command]
+fn list_workspaces(state: tauri::State<AppState>) -> Vec<WorkspaceInfo> {
+    let cfg = state.config.lock().unwrap().clone();
+    let projects = all_projects(&cfg);
+    let active = resolve_active(&cfg, &projects);
+    let roots: Vec<String> = cfg.roots.iter().map(|r| config::normalize_path(&config::expand_home(r))).collect();
+    projects
+        .iter()
+        .map(|p| {
+            let path = config::normalize_path(p);
+            let info = workflow::project_info(p);
+            let name = if info.name.is_empty() {
+                p.parent()
+                    .and_then(|d| d.file_name())
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default()
+            } else {
+                info.name
+            };
+            WorkspaceInfo {
+                path: path.clone(),
+                name,
+                active: active == Some(p),
+                source: if roots.contains(&path) { "root".into() } else { "auto".into() },
+            }
+        })
+        .collect()
+}
+
+/// 切换激活工作空间（path 必须是可用工程之一）
+#[tauri::command]
+fn set_active_root(app: tauri::AppHandle, state: tauri::State<AppState>, path: String) -> Result<(), String> {
+    let cfg = state.config.lock().unwrap().clone();
+    let projects = all_projects(&cfg);
+    let target = config::normalize_path(&std::path::PathBuf::from(path));
+    let matched = projects.iter().any(|p| config::normalize_path(p) == target);
+    if !matched {
+        return Err("工作空间不在可用列表中".into());
+    }
+    state.config.lock().unwrap().active_root = Some(target);
+    save_state(&state)?;
+    // 立即重建快照并推送
+    flush_snapshot(&app);
+    Ok(())
+}
+
 #[tauri::command]
 fn get_snapshot(state: tauri::State<AppState>) -> RuntimeSnapshot {
-    // 返回最近一次 flush 的缓存快照；无缓存时立即构建一次。
-    let cached = state.runtime.lock().unwrap().last_snapshot.clone();
-    match cached {
-        Some(snapshot) => snapshot,
-        None => {
-            let cfg = state.config.lock().unwrap().clone();
-            let snapshot = snapshot::build_snapshot(&cfg);
-            let fp = snapshot_fingerprint(&snapshot);
+    // 1) 内存缓存（最近一次 flush/构建）
+    if let Some(snapshot) = state.runtime.lock().unwrap().last_snapshot.clone() {
+        return snapshot;
+    }
+    // 2) 磁盘缓存（15s 内新鲜 → 冷启动秒开）
+    if let Some((generated_at, snapshot)) = load_snapshot_cache() {
+        let now = snapshot::now_seconds();
+        if now - generated_at < SNAPSHOT_CACHE_TTL_SECS {
             let mut runtime = state.runtime.lock().unwrap();
             runtime.last_snapshot = Some(snapshot.clone());
-            runtime.last_emitted_fingerprint = Some(fp);
-            snapshot
+            runtime.last_emitted_fingerprint = Some(snapshot_fingerprint(&snapshot));
+            return snapshot;
         }
     }
+    // 3) 全量构建 + 写缓存
+    let cfg = state.config.lock().unwrap().clone();
+    let snapshot = snapshot::build_snapshot(&cfg);
+    let fp = snapshot_fingerprint(&snapshot);
+    save_snapshot_cache(&snapshot);
+    let mut runtime = state.runtime.lock().unwrap();
+    runtime.last_snapshot = Some(snapshot.clone());
+    runtime.last_emitted_fingerprint = Some(fp);
+    snapshot
 }
 
 /// 防路径逃逸：session_id / exec_id 必须是不含路径分隔符的普通 ID。
@@ -185,12 +283,7 @@ fn get_session_runs(state: tauri::State<AppState>, session_id: String) -> Vec<wo
         return Vec::new();
     }
     let cfg = state.config.lock().unwrap().clone();
-    let mut projects = workflow::discover_projects(&cfg.roots);
-    for auto_root in auto::auto_discover_roots() {
-        if let Some(wf) = workflow::find_workflow_root(&auto_root) {
-            projects.push(wf);
-        }
-    }
+    let projects = active_projects(&cfg);
     for wf in projects {
         let runs = workflow::scan_runs(&wf, &session_id);
         if !runs.is_empty() {
@@ -209,12 +302,7 @@ fn get_session_detail(
         return None;
     }
     let cfg = state.config.lock().unwrap().clone();
-    let mut projects = workflow::discover_projects(&cfg.roots);
-    for auto_root in auto::auto_discover_roots() {
-        if let Some(wf) = workflow::find_workflow_root(&auto_root) {
-            projects.push(wf);
-        }
-    }
+    let projects = active_projects(&cfg);
     for wf in projects {
         if let Some(detail) = workflow::scan_session_detail(&wf, &session_id) {
             return Some(detail);
@@ -223,63 +311,58 @@ fn get_session_detail(
     None
 }
 
-/// 打开独立 markdown 预览窗口（重复打开同一窗口：聚焦 + 刷新内容）
+/// 更新知识条目内容（md 覆盖 / jsonl 行替换）
 #[tauri::command]
-fn open_md_preview(
-    app: tauri::AppHandle,
+fn update_knowledge_item(
+    state: tauri::State<AppState>,
+    kind: String,
+    id: String,
+    content: String,
+) -> Result<(), String> {
+    if !["specs", "memory", "knowhow", "learning", "issues"].contains(&kind.as_str())
+        || !is_safe_id(&id)
+    {
+        return Err("无效的条目标识".into());
+    }
+    let cfg = state.config.lock().unwrap().clone();
+    let projects = active_projects(&cfg);
+    let wf = projects.first().ok_or("无激活工作空间")?;
+    knowledge::write_knowledge_item(wf, &kind, &id, &content)
+}
+
+/// 删除知识条目
+#[tauri::command]
+fn delete_knowledge_item(
     state: tauri::State<AppState>,
     kind: String,
     id: String,
 ) -> Result<(), String> {
-    if !["specs", "memory", "knowhow"].contains(&kind.as_str()) || !is_safe_id(&id) {
-        return Err("不支持的条目类型".into());
+    if !["specs", "memory", "knowhow", "learning", "issues"].contains(&kind.as_str())
+        || !is_safe_id(&id)
+    {
+        return Err("无效的条目标识".into());
     }
     let cfg = state.config.lock().unwrap().clone();
-    let mut projects = workflow::discover_projects(&cfg.roots);
-    for auto_root in auto::auto_discover_roots() {
-        if let Some(wf) = workflow::find_workflow_root(&auto_root) {
-            projects.push(wf);
-        }
-    }
-    projects.sort();
-    projects.dedup();
-    let mut doc = None;
-    for wf in projects {
-        if let Some(c) = knowledge::read_knowledge_item_content(&wf, &kind, &id) {
-            doc = Some(PreviewDoc {
-                kind: kind.clone(),
-                id: id.clone(),
-                title: c.title,
-                content: c.content,
-            });
-            break;
-        }
-    }
-    let Some(doc) = doc else {
-        return Err("条目不存在或不可读".into());
-    };
-    *state.preview.lock().unwrap() = Some(doc.clone());
-    let title = format!("MD 预览 · {}", doc.title);
-    if let Some(window) = app.get_webview_window("md-preview") {
-        let _ = window.set_title(&title);
-        let _ = window.show();
-        let _ = window.set_focus();
-        let _ = window.eval("window.location.reload()");
-        return Ok(());
-    }
-    WebviewWindowBuilder::new(&app, "md-preview", WebviewUrl::App("preview.html".into()))
-        .title(title)
-        .inner_size(720.0, 560.0)
-        .min_inner_size(420.0, 300.0)
-        .build()
-        .map_err(|e| e.to_string())?;
-    Ok(())
+    let projects = active_projects(&cfg);
+    let wf = projects.first().ok_or("无激活工作空间")?;
+    knowledge::delete_knowledge_item(wf, &kind, &id)
 }
 
-/// preview.html 拉取当前预览文档
+/// 新建 md 知识条目，返回生成的 id
 #[tauri::command]
-fn get_md_preview(state: tauri::State<AppState>) -> Option<PreviewDoc> {
-    state.preview.lock().unwrap().clone()
+fn create_knowledge_item(
+    state: tauri::State<AppState>,
+    kind: String,
+    title: String,
+    content: String,
+) -> Result<String, String> {
+    if title.trim().is_empty() {
+        return Err("标题不能为空".into());
+    }
+    let cfg = state.config.lock().unwrap().clone();
+    let projects = active_projects(&cfg);
+    let wf = projects.first().ok_or("无激活工作空间")?;
+    knowledge::create_knowledge_md(wf, &kind, &title, &content)
 }
 
 #[tauri::command]
@@ -294,14 +377,7 @@ fn get_call_detail(exec_id: String) -> Option<activity::CallDetail> {
 #[tauri::command]
 fn get_knowledge_items(state: tauri::State<AppState>) -> Vec<knowledge::KnowledgeEntry> {
     let cfg = state.config.lock().unwrap().clone();
-    let mut projects = workflow::discover_projects(&cfg.roots);
-    for auto_root in auto::auto_discover_roots() {
-        if let Some(wf) = workflow::find_workflow_root(&auto_root) {
-            projects.push(wf);
-        }
-    }
-    projects.sort();
-    projects.dedup();
+    let projects = active_projects(&cfg);
     let mut seen = std::collections::HashSet::new();
     let mut items = Vec::new();
     for wf in projects {
@@ -327,14 +403,7 @@ fn get_knowledge_item_content(
         return None;
     }
     let cfg = state.config.lock().unwrap().clone();
-    let mut projects = workflow::discover_projects(&cfg.roots);
-    for auto_root in auto::auto_discover_roots() {
-        if let Some(wf) = workflow::find_workflow_root(&auto_root) {
-            projects.push(wf);
-        }
-    }
-    projects.sort();
-    projects.dedup();
+    let projects = active_projects(&cfg);
     for wf in projects {
         if let Some(content) = knowledge::read_knowledge_item_content(&wf, &kind, &id) {
             return Some(content);
@@ -450,6 +519,9 @@ fn set_window_mode(app: tauri::AppHandle, mode: String) -> Result<(), String> {
     let position = window.outer_position().ok();
     let (w, h, min_h) = if mode == "capsule" {
         (380.0, 96.0, 96.0)
+    } else if mode == "editor" {
+        // 编辑器模式：侧边栏 380 + 编辑器 380 并排
+        (760.0, 680.0, 320.0)
     } else {
         (380.0, 680.0, 320.0)
     };
@@ -514,7 +586,6 @@ pub fn run() {
             app.manage(AppState {
                 config: Mutex::new(cfg.clone()),
                 runtime: Mutex::new(RuntimeStore::default()),
-                preview: Mutex::new(None),
             });
 
             // 协调器 + watcher + 10s reconcile
@@ -574,9 +645,12 @@ pub fn run() {
             get_call_detail,
             get_knowledge_items,
             get_knowledge_item_content,
-            open_md_preview,
-            get_md_preview,
+            update_knowledge_item,
+            delete_knowledge_item,
+            create_knowledge_item,
             get_config,
+            list_workspaces,
+            set_active_root,
             complete_setup,
             add_root,
             remove_root,

@@ -1,14 +1,15 @@
-// 运行时快照聚合：跨所有工程合并 Session/Run 状态、Agent 调用、知识统计，
+// 运行时快照聚合：只聚合当前激活工作空间的 Session/Run 状态、Agent 调用、知识统计，
 // 并生成「语义指纹」用于判断前端可见状态是否变化（避免无谓重渲染）。
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::activity::{self, AgentCall};
 use crate::auto;
+use crate::config;
 use crate::config::AppConfig;
 use crate::knowledge::{self, KnowledgeStats};
 use crate::workflow::{self, ProjectInfo, SessionSummary};
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RuntimeSnapshot {
     pub workspace: Option<String>,
     pub active_session_id: Option<String>,
@@ -18,9 +19,8 @@ pub struct RuntimeSnapshot {
     pub knowledge: KnowledgeStats,
 }
 
-/// 构建快照：扫描所有工程并聚合。所有扫描失败都降级为空数据而非报错。
-/// 工程来源 = 用户配置 roots ∪ 自动发现（cli-history workDir 含 .workflow）。
-pub fn build_snapshot(cfg: &AppConfig) -> RuntimeSnapshot {
+/// 全部可用工程（.workflow 目录）：用户配置 roots ∪ 自动发现。
+pub fn all_projects(cfg: &AppConfig) -> Vec<std::path::PathBuf> {
     let mut projects = workflow::discover_projects(&cfg.roots);
     // 自动识别：Agent 调用过且含 .workflow 的项目无需手动配置
     for auto_root in auto::auto_discover_roots() {
@@ -30,6 +30,45 @@ pub fn build_snapshot(cfg: &AppConfig) -> RuntimeSnapshot {
     }
     projects.sort();
     projects.dedup();
+    projects
+}
+
+/// 解析当前激活工程：cfg.active_root 精确匹配；无/失效时回退 roots[0] 或第一个可用工程。
+pub fn resolve_active<'a>(
+    cfg: &AppConfig,
+    projects: &'a [std::path::PathBuf],
+) -> Option<&'a std::path::PathBuf> {
+    if projects.is_empty() {
+        return None;
+    }
+    if let Some(ar) = &cfg.active_root {
+        let arn = config::normalize_path(&std::path::PathBuf::from(ar));
+        if let Some(p) = projects.iter().find(|p| config::normalize_path(p) == arn) {
+            return Some(p);
+        }
+    }
+    if let Some(first_root) = cfg.roots.first() {
+        let expanded = config::expand_home(first_root);
+        let wf = expanded.join(".workflow");
+        if let Some(p) = projects
+            .iter()
+            .find(|p| config::normalize_path(p) == config::normalize_path(&wf))
+        {
+            return Some(p);
+        }
+    }
+    projects.first()
+}
+
+/// 构建快照：扫描当前激活工程。所有扫描失败都降级为空数据而非报错。
+pub fn build_snapshot(cfg: &AppConfig) -> RuntimeSnapshot {
+    let mut projects = all_projects(cfg);
+    let active = resolve_active(cfg, &projects);
+    if let Some(a) = active {
+        projects = vec![a.clone()];
+    } else {
+        projects = Vec::new();
+    }
     let mut sessions: Vec<SessionSummary> = Vec::new();
     let mut knowledge = KnowledgeStats::default();
     let mut workspace: Option<String> = None;

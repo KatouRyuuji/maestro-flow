@@ -49,6 +49,7 @@
         <div class="cap-progress" id="capProgress" aria-hidden="true"><i id="capProgressBar"></i></div>
       </button>
       <div class="cap-chips">
+        <button type="button" class="cap-chip hot" id="capWs" title="点击切换工作空间" aria-label="切换工作空间"></button>
         <span class="cap-chip" id="capSessions">0 会话</span>
         <span class="cap-chip" id="capKnowledge">0 知识</span>
       </div>
@@ -197,6 +198,25 @@
         </div>
       </main>
 
+      <!-- 多 tab 文本编辑器（与 bar 等高紧贴，右栏展开） -->
+      <div class="editor" id="editor" hidden>
+        <div class="editor-tabs" id="edTabs" role="tablist" aria-label="打开的文档"></div>
+        <div class="editor-toolbar" id="edToolbar">
+          <button type="button" class="retry-btn primary" id="edSave" disabled>保存</button>
+          <button type="button" class="retry-btn" id="edPreview">预览</button>
+          <button type="button" class="retry-btn" id="edCopy">复制 ID</button>
+          <button type="button" class="retry-btn" id="edDelete">删除</button>
+          <span class="ed-dirty" id="edDirty"></span>
+          <span class="ed-spacer"></span>
+          <span class="ed-meta" id="edMeta"></span>
+          <button type="button" class="retry-btn" id="edClose" title="收起编辑器（恢复窄窗）">收起 ▸</button>
+        </div>
+        <div class="editor-body">
+          <textarea id="edContent" spellcheck="false" aria-label="条目内容（Markdown / JSON）"></textarea>
+          <div class="editor-preview" id="edPreview" hidden></div>
+        </div>
+      </div>
+
       <div id="fade" aria-hidden="true"></div>
 
       <!-- 状态栏 32px -->
@@ -205,7 +225,11 @@
         <span class="sb-status" id="liveStatus" role="status" aria-live="polite">实时监听</span>
         <span class="sb-time clk" id="clk">--:--:--</span>
         <span class="sb-spacer"></span>
-        <span class="sb-hint">关闭 = 隐藏托盘</span>
+        <button type="button" class="sb-ws" id="btnWs" title="点击切换工作空间" aria-label="切换工作空间">
+          <span class="sb-ws-dot" aria-hidden="true">◆</span>
+          <span class="sb-ws-name" id="wsName">—</span>
+          <span class="sb-ws-chev" aria-hidden="true">▾</span>
+        </button>
       </footer>
     </article>
   </div>

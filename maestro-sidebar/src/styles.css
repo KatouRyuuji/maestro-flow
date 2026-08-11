@@ -308,3 +308,11 @@ input[type="range"]:focus-visible { outline: 2px solid var(--focus); outline-off
 .setup-option-copy strong { font-size: 12.5px; }
 .setup-option-copy small { font-size: 10.5px; color: var(--text-dim); line-height: 1.5; }
 .setup-note { margin-top: 14px; font-size: 10.5px; color: var(--text-dim); }
+
+/* 菜单工程行：激活标记（✓） */
+.mp-row .ws-mark { margin-left: auto; color: var(--selection); font: 700 11px/1 var(--mono); flex: none; }
+.mp-row.active-ws { background: var(--selection-soft); color: var(--text-strong); }
+.mp-row.active-ws svg { color: var(--selection); }
+#rootList .mp-row .root-path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 10px; color: var(--text-dim); }
+.mp-row .ws-trash { flex: none; color: var(--text-dim); opacity: .6; }
+.mp-row .ws-trash:hover { color: var(--danger); opacity: 1; }

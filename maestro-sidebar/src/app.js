@@ -40,6 +40,7 @@ if (!invoke) showBootError('__TAURI__.core 缺失：Tauri API 未注入');
 
 let snapshot = null;          // 最近一次快照
 let config = null;            // 配置（roots / always_on_top）
+let workspaces = [];          // 可用工作空间 [{path, name, active, source}]
 let view = null;              // null=列表 | {kind:'call'|'session', id}
 let detail = null;            // 详情数据（CallDetail / SessionDetail）
 let detailStatus = 'idle';    // idle | loading | ready | not-found | error
@@ -122,13 +123,26 @@ async function init() {
     return;
   }
   $('mainView').hidden = false;
-  renderRootList();
+  await refreshWorkspaces();
 
-  // 首帧骨架：快照到达前不闪空态
-  $('liveStatus').textContent = '正在加载…';
-  renderSkeleton();
+  // 冷启动优化：先渲染上次快照缓存（秒开），再拉取最新数据覆盖
+  try {
+    const cached = JSON.parse(localStorage.getItem('snapshot-cache') || 'null');
+    if (cached && cached.snapshot && cached.snapshot.sessions) {
+      snapshot = cached.snapshot;
+      render();
+      $('liveStatus').textContent = `缓存 · ${fmtClock2(new Date(cached.ts).toISOString())}`;
+    }
+  } catch { /* 缓存损坏忽略 */ }
+
+  // 首帧骨架：无缓存时快照到达前不闪空态
+  if (!snapshot) {
+    $('liveStatus').textContent = '正在加载…';
+    renderSkeleton();
+  }
   try {
     snapshot = await invoke('get_snapshot');
+    cacheSnapshot(snapshot);
   } catch (err) {
     snapshot = { workspace: '未连接', active_session_id: null, sessions: [], calls: [], knowledge: { total: 0 } };
     $('liveStatus').textContent = '连接中断';
@@ -141,6 +155,7 @@ async function init() {
   try {
     await listen('snapshot-changed', (event) => {
       snapshot = event.payload;
+      cacheSnapshot(snapshot);
       if (!$('menuPop').hidden) return;
       $('liveStatus').textContent = '实时监听';
       renderWithFocus();
@@ -157,6 +172,7 @@ async function init() {
       const s = await invoke('get_snapshot');
       if (JSON.stringify(s) !== JSON.stringify(snapshot)) {
         snapshot = s;
+        cacheSnapshot(snapshot);
         if (!$('menuPop').hidden) return;
         renderWithFocus();
       }
@@ -174,6 +190,13 @@ function renderWithFocus() {
   requestAnimationFrame(() => {
     if (focused && focused.isConnected) focused.focus();
   });
+}
+
+/** 快照写入 localStorage 缓存（冷启动秒开用） */
+function cacheSnapshot(snap) {
+  try {
+    localStorage.setItem('snapshot-cache', JSON.stringify({ ts: Date.now(), snapshot: snap }));
+  } catch { /* 存储满/不可用忽略 */ }
 }
 
 /** 首帧骨架行（快照到达前） */
@@ -227,6 +250,7 @@ function bindEvents() {
     $('liveStatus').textContent = '正在刷新';
     try {
       snapshot = await invoke('get_snapshot');
+      cacheSnapshot(snapshot);
       renderWithFocus();
       $('liveStatus').textContent = `已更新 ${fmtClock2(new Date().toISOString())}`;
     } catch (err) {
@@ -267,6 +291,9 @@ function bindEvents() {
     toggleMenu(false);
     await invoke('set_window_mode', { mode: 'capsule' });
     document.body.dataset.mode = 'capsule';
+    // 胶囊形态无编辑器面板
+    document.body.classList.remove('editor-on');
+    $('editor').hidden = true;
     $('card').hidden = true;
     $('capsule').hidden = false;
     $('capsule').classList.add('mode-enter');
@@ -283,7 +310,7 @@ function bindEvents() {
     btn.disabled = true;
     try {
       config = await invoke('add_root', { path });
-      renderRootList();
+      await refreshWorkspaces();
       snapshot = await invoke('get_snapshot');
       render();
       $('setup').hidden = true;
@@ -295,6 +322,37 @@ function bindEvents() {
       btn.disabled = false;
     }
   });
+  // 底部工作空间切换按钮 + 胶囊工程 chip（循环切换）
+  $('btnWs').addEventListener('click', cycleWorkspace);
+  $('capWs').addEventListener('click', cycleWorkspace);
+
+  // 多 tab 编辑器
+  $('edSave').addEventListener('click', saveEditorTab);
+  $('edPreview').addEventListener('click', () => {
+    const t = edTab();
+    if (t) { t.preview = !t.preview; renderEditorUI(); }
+  });
+  $('edCopy').addEventListener('click', async () => {
+    const t = edTab();
+    if (!t) return;
+    try {
+      await navigator.clipboard.writeText(t.id);
+      $('liveStatus').textContent = `已复制 ${t.id}`;
+    } catch { /* 剪贴板不可用 */ }
+  });
+  $('edDelete').addEventListener('click', deleteEditorTab);
+  $('edClose').addEventListener('click', () => closeEditorTab(activeEd, true));
+  $('edContent').addEventListener('input', () => {
+    const t = edTab();
+    if (t) { t.dirty = true; $('edDirty').textContent = '未保存'; }
+  });
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's' && !$('editor').hidden) {
+      e.preventDefault();
+      saveEditorTab();
+    }
+  });
+
   $('btnCapMenu').addEventListener('click', async (e) => {
     e.stopPropagation();
     await invoke('set_window_mode', { mode: 'card' });
@@ -426,7 +484,7 @@ function bindEvents() {
       config = await invoke('add_root', { path });
       $('setup').hidden = true;
       $('mainView').hidden = false;
-      renderRootList();
+      await refreshWorkspaces();
       snapshot = await invoke('get_snapshot');
       render();
     } catch {
@@ -506,26 +564,97 @@ function applyWallpaper(cfg) {
 function renderRootList() {
   const box = $('rootList');
   box.innerHTML = '';
-  if (!config || !config.roots.length) {
-    box.appendChild(el('div', 'mp-label', '未添加工程'));
+  if (!workspaces.length) {
+    box.appendChild(el('div', 'mp-label', '未发现工作空间'));
     return;
   }
-  for (const root of config.roots) {
-    const row = el('button', 'mp-row');
+  for (const ws of workspaces) {
+    const row = el('button', `mp-row${ws.active ? ' active-ws' : ''}`);
     row.type = 'button';
-    row.setAttribute('aria-label', `移除工程目录：${root}`);
-    row.title = '移除工程目录';
-    row.appendChild(svg('i-trash', 12));
-    const span = el('span', 'root-path', root);
+    row.title = ws.active ? `${ws.name}（当前）` : `切换到 ${ws.name}`;
+    row.setAttribute('aria-label', `工作空间：${ws.name}${ws.active ? '（当前）' : ''}`);
+    row.appendChild(svg(ws.source === 'root' ? 'i-folder' : 'i-git', 12));
+    const span = el('span', 'root-path', `${ws.name} · ${ws.path}`);
+    span.title = ws.path;
     row.appendChild(span);
+    // 激活标记（✓）
+    if (ws.active) {
+      const mark = el('span', 'ws-mark', '✓');
+      row.appendChild(mark);
+    } else {
+      row.appendChild(el('span', 'ws-mark', ''));
+    }
+    // 切换激活
     row.addEventListener('click', async () => {
-      if (!window.confirm(`从侧边栏移除工程目录？\n${root}`)) return;
-      config = await invoke('remove_root', { path: root });
-      renderRootList();
-      snapshot = await invoke('get_snapshot');
-      render();
+      if (ws.active) return;
+      try {
+        await invoke('set_active_root', { path: ws.path });
+        config = await invoke('get_config');
+        snapshot = await invoke('get_snapshot');
+        render();
+        await refreshWorkspaces();
+        $('liveStatus').textContent = `已切换：${ws.name}`;
+        fitWindow();
+      } catch {
+        $('liveStatus').textContent = '切换失败';
+      }
     });
+    // 删除（仅 root 来源）
+    if (ws.source === 'root' && config?.roots?.includes(ws.path)) {
+      const trash = el('span', 'ws-trash', '');
+      trash.title = '移除工程目录';
+      trash.setAttribute('role', 'button');
+      trash.setAttribute('aria-label', `移除工程目录：${ws.name}`);
+      trash.appendChild(svg('i-trash', 11));
+      trash.addEventListener('click', async (event) => {
+        event.stopPropagation();
+        if (!window.confirm(`从侧边栏移除工程目录？\n${ws.path}`)) return;
+        config = await invoke('remove_root', { path: ws.path });
+        await refreshWorkspaces();
+        snapshot = await invoke('get_snapshot');
+        render();
+      });
+      row.appendChild(trash);
+    }
     box.appendChild(row);
+  }
+}
+
+/** 拉取工作空间列表并渲染：菜单工程组 + 底部切换按钮 + 胶囊 chip */
+async function refreshWorkspaces() {
+  try {
+    workspaces = await invoke('list_workspaces');
+  } catch {
+    workspaces = [];
+  }
+  renderRootList();
+  const active = workspaces.find((w) => w.active) || workspaces[0] || null;
+  const name = active ? active.name : (snapshot?.workspace || '—');
+  $('wsName').textContent = name;
+  $('wsName').title = active ? active.path : '';
+  const capWs = $('capWs');
+  capWs.textContent = name;
+  capWs.title = active ? `当前：${name} · 点击切换` : '点击切换工作空间';
+}
+
+/** 切换到下一个工作空间（底部按钮 / 胶囊 chip 循环） */
+async function cycleWorkspace() {
+  if (workspaces.length < 2) {
+    $('liveStatus').textContent = workspaces.length === 1 ? '仅一个工作空间' : '无可用工作空间';
+    return;
+  }
+  const idx = workspaces.findIndex((w) => w.active);
+  const next = workspaces[(idx + 1) % workspaces.length];
+  try {
+    await invoke('set_active_root', { path: next.path });
+    config = await invoke('get_config');
+    snapshot = await invoke('get_snapshot');
+    render();
+    await refreshWorkspaces();
+    $('liveStatus').textContent = `已切换：${next.name}`;
+    fitWindow();
+  } catch {
+    $('liveStatus').textContent = '切换失败';
   }
 }
 
@@ -598,14 +727,14 @@ function renderCalls() {
     rl.appendChild(el('span', 'tool-n', TOOL_LABEL[call.tool] || call.tool || 'Agent'));
     if (call.model) rl.appendChild(el('span', 'model', call.model));
     const rc = el('span', 'rc');
-    rc.appendChild(el('span', 'rt', fmtAgo(call.started_at)));
+    rc.appendChild(el('span', 'rt', fmtAgo(call.startedAt)));
     rc.appendChild(el('span', `bd ${callStatusClass(call)}`, callStatusLabel(call)));
     rl.appendChild(rc);
     rb.appendChild(rl);
     rb.appendChild(el('div', 'rp', oneLine(call.prompt) || '（无提示词）'));
     item.appendChild(rb);
 
-    item.addEventListener('click', () => openDetail('call', call.exec_id, item));
+    item.addEventListener('click', () => openDetail('call', call.execId, item));
     list.appendChild(item);
   }
   if (!calls.length) {
@@ -639,14 +768,14 @@ function renderCalls() {
 }
 
 function callStatus(call) {
-  const delegate = String(call.delegate_status || '').toLowerCase();
+  const delegate = String(call.delegateStatus || '').toLowerCase();
   if (delegate === 'cancelling' || delegate === 'cancelled') return 'cancel';
   if (delegate === 'queued') return 'queued';
   if (delegate === 'running') return 'running';
-  if (call.completed_at) return call.exit_code === 0 ? 'done' : 'error';
+  if (call.completedAt) return call.exitCode === 0 ? 'done' : 'error';
   // 无 completed_at 且无 delegate：仅当 started_at 新鲜（≤10 分钟）才算运行中；
   // 陈旧记录（中断/测试探针/旧版 meta）显示未知，避免误报「运行中」
-  const t = call.started_at ? new Date(call.started_at).getTime() : NaN;
+  const t = call.startedAt ? new Date(call.startedAt).getTime() : NaN;
   if (!Number.isNaN(t) && Date.now() - t < 10 * 60 * 1000) return 'running';
   return 'unknown';
 }
@@ -666,7 +795,7 @@ function callStatusLabel(call) {
     case 'error': return '失败';
     case 'cancel': return '取消';
     case 'queued': return '排队';
-    case 'unknown': return call.delegate_status || '未知';
+    case 'unknown': return call.delegateStatus || '未知';
     default: return '运行中';
   }
 }
@@ -1004,6 +1133,10 @@ function renderKnowledge() {
   all.type = 'button';
   all.addEventListener('click', () => openDetail('knowledge', 'all', all));
   foot.appendChild(all);
+  const create = el('button', 'expand-btn', '+ 新建条目');
+  create.type = 'button';
+  create.addEventListener('click', createKnowledgeItem);
+  foot.appendChild(create);
   body.appendChild(foot);
 }
 
@@ -1061,7 +1194,7 @@ function renderKnowledgeDetail() {
       if (item.status) kf.appendChild(el('span', `bd ${kbStatusClass(item.status)}`, item.status));
       if (item.updated) kf.appendChild(el('span', 'rt', `${fmtAgo(item.updated)} 更新`));
       ke.appendChild(kf);
-      ke.addEventListener('click', () => openDetail('knowledge-item', `${item.kind}::${item.id}`, ke));
+      ke.addEventListener('click', () => openEditor(item.kind, item.id));
       body.appendChild(ke);
     }
   }
@@ -1268,11 +1401,11 @@ function renderCallDetail() {
   meta.appendChild(detailRow('模型', call.model));
   meta.appendChild(detailRow('模式', call.mode));
   meta.appendChild(detailRow('状态', callStatusLabel(call)));
-  meta.appendChild(detailRow('执行目录', call.work_dir));
-  meta.appendChild(detailRow('开始', fmtFull(call.started_at)));
-  meta.appendChild(detailRow('结束', fmtFull(call.completed_at)));
-  if (call.exit_code !== null && call.exit_code !== undefined) meta.appendChild(detailRow('退出码', String(call.exit_code)));
-  if (call.delegate_status) meta.appendChild(detailRow('委托状态', call.delegate_status));
+  meta.appendChild(detailRow('执行目录', call.workDir));
+  meta.appendChild(detailRow('开始', fmtFull(call.startedAt)));
+  meta.appendChild(detailRow('结束', fmtFull(call.completedAt)));
+  if (call.exitCode !== null && call.exitCode !== undefined) meta.appendChild(detailRow('退出码', String(call.exitCode)));
+  if (call.delegateStatus) meta.appendChild(detailRow('委托状态', call.delegateStatus));
   body.appendChild(meta);
 
   if (call.prompt) {
@@ -1601,6 +1734,239 @@ function renderCapsule() {
 // ---------------------------------------------------------------------------
 // 工具
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// 多 tab 文本编辑器：与 bar 等高紧贴的右栏，直接点击知识条目即打开
+// ---------------------------------------------------------------------------
+
+const editorTabs = [];   // {kind, id, title, content, preview, dirty}
+let activeEd = -1;
+
+function edEsc(x) {
+  return String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function edInline(x) {
+  return edEsc(x)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+}
+/** 迷你 markdown 渲染 */
+function renderMd(md) {
+  let body = md;
+  if (body.startsWith('---\n') || body.startsWith('---\r\n')) {
+    const end = body.indexOf('\n---');
+    if (end > 0) body = body.slice(end + 4);
+  }
+  const lines = body.split(/\r?\n/);
+  let html = '';
+  let list = null;
+  let inCode = false;
+  let codeBuf = [];
+  let para = [];
+  const flushPara = () => {
+    if (para.length) { html += '<p>' + para.map(edInline).join('<br/>') + '</p>'; para = []; }
+  };
+  const closeList = () => {
+    if (list) { html += '</' + list + '>'; list = null; }
+  };
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    if (line.trimStart().startsWith('```')) {
+      if (inCode) {
+        html += '<pre><code>' + edEsc(codeBuf.join('\n')) + '</code></pre>';
+        codeBuf = []; inCode = false;
+      } else {
+        flushPara(); closeList(); inCode = true;
+      }
+      continue;
+    }
+    if (inCode) { codeBuf.push(line); continue; }
+    const t = line.trim();
+    if (!t) { flushPara(); closeList(); continue; }
+    if (/^#{1,6}\s/.test(t)) {
+      flushPara(); closeList();
+      const level = t.match(/^(#{1,6})\s/)[1].length;
+      html += `<h${level}>${edInline(t.replace(/^#{1,6}\s*/, ''))}</h${level}>`;
+      continue;
+    }
+    if (/^\s*[-*+]\s/.test(t)) {
+      flushPara();
+      if (list !== 'ul') { closeList(); list = 'ul'; html += '<ul>'; }
+      html += `<li>${edInline(t.replace(/^\s*[-*+]\s*/, ''))}</li>`;
+      continue;
+    }
+    if (/^\s*\d+[.)]\s/.test(t)) {
+      flushPara();
+      if (list !== 'ol') { closeList(); list = 'ol'; html += '<ol>'; }
+      html += `<li>${edInline(t.replace(/^\s*\d+[.)]\s*/, ''))}</li>`;
+      continue;
+    }
+    if (/^>\s?/.test(t)) {
+      flushPara(); closeList();
+      html += `<blockquote>${edInline(t.replace(/^>\s?/, ''))}</blockquote>`;
+      continue;
+    }
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(t)) {
+      flushPara(); closeList();
+      html += '<hr/>';
+      continue;
+    }
+    if (/^\|.*\|$/.test(t)) {
+      flushPara(); closeList();
+      const cells = t.replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
+      html += '<table><tr>' + cells.map((c) => '<th>' + edInline(c) + '</th>').join('') + '</tr></table>';
+      continue;
+    }
+    closeList();
+    para.push(t);
+  }
+  flushPara(); closeList();
+  if (inCode) html += '<pre><code>' + edEsc(codeBuf.join('\n')) + '</code></pre>';
+  return html;
+}
+
+function edTab() { return editorTabs[activeEd] || null; }
+
+function renderEditorTabs() {
+  const tabs = $('edTabs');
+  tabs.innerHTML = '';
+  editorTabs.forEach((tab, i) => {
+    const btn = el('button', `ed-tab${i === activeEd ? ' active' : ''}`);
+    btn.type = 'button';
+    btn.setAttribute('role', 'tab');
+    btn.setAttribute('aria-selected', String(i === activeEd));
+    if (tab.dirty) btn.appendChild(el('i', 'ed-tab-dot'));
+    const t = el('span', 'ed-tab-t', tab.title || tab.id);
+    t.title = `${tab.kind} · ${tab.id}`;
+    btn.appendChild(t);
+    const x = el('span', 'ed-tab-x', '×');
+    x.title = '关闭';
+    x.addEventListener('click', (e) => { e.stopPropagation(); closeEditorTab(i); });
+    btn.appendChild(x);
+    btn.addEventListener('click', () => { activeEd = i; renderEditorUI(); });
+    tabs.appendChild(btn);
+  });
+}
+
+function renderEditorUI() {
+  const tab = edTab();
+  renderEditorTabs();
+  if (!tab) {
+    $('edSave').disabled = true;
+    $('edMeta').textContent = '';
+    $('edDirty').textContent = '';
+    $('edContent').value = '';
+    $('edPreview').hidden = true;
+    $('edContent').hidden = false;
+    return;
+  }
+  $('edSave').disabled = false;
+  $('edContent').value = tab.content;
+  $('edContent').hidden = tab.preview;
+  $('edPreview').hidden = !tab.preview;
+  if (tab.preview) $('edPreview').innerHTML = renderMd(tab.content);
+  $('edMeta').textContent = `${tab.kind} · ${tab.id}`;
+  $('edDirty').textContent = tab.dirty ? '未保存' : '';
+  $('edPreview').textContent = '';
+}
+
+/** 打开/激活编辑器 tab（知识条目直接点击即预览编辑） */
+async function openEditor(kind, id) {
+  const existing = editorTabs.findIndex((t) => t.kind === kind && t.id === id);
+  if (existing >= 0) {
+    activeEd = existing;
+    renderEditorUI();
+  } else {
+    let content = '';
+    try {
+      const item = await invoke('get_knowledge_item_content', { kind, id });
+      content = item ? (item.content || '') : '';
+    } catch { /* 内容读取失败则空 */ }
+    editorTabs.push({ kind, id, title: '', content, preview: false, dirty: false });
+    activeEd = editorTabs.length - 1;
+  }
+  // 标题补充（列表缓存里有）
+  const cachedItem = detailCache['knowledge::all']?.items?.find((i) => i.kind === kind && i.id === id);
+  if (cachedItem) editorTabs[activeEd].title = cachedItem.title || editorTabs[activeEd].title;
+  if (!editorTabs[activeEd].title) editorTabs[activeEd].title = id;
+  // 展开编辑器 + 宽窗（与 bar 等高紧贴）
+  $('editor').hidden = false;
+  document.body.classList.add('editor-on');
+  renderEditorUI();
+  await invoke('set_window_mode', { mode: 'editor' }).catch(() => {});
+  fitWindow();
+}
+
+async function saveEditorTab() {
+  const tab = edTab();
+  if (!tab) return;
+  try {
+    await invoke('update_knowledge_item', { kind: tab.kind, id: tab.id, content: $('edContent').value });
+    tab.content = $('edContent').value;
+    tab.dirty = false;
+    delete detailCache['knowledge::all'];
+    $('liveStatus').textContent = `已保存 ${tab.id}`;
+    renderEditorUI();
+  } catch (err) {
+    $('liveStatus').textContent = `保存失败：${err && err.message ? err.message : err}`;
+  }
+}
+
+async function deleteEditorTab() {
+  const tab = edTab();
+  if (!tab) return;
+  if (!window.confirm(`删除知识条目？\n${tab.kind} · ${tab.id}`)) return;
+  try {
+    await invoke('delete_knowledge_item', { kind: tab.kind, id: tab.id });
+    delete detailCache['knowledge::all'];
+    $('liveStatus').textContent = `已删除 ${tab.id}`;
+    closeEditorTab(activeEd, true);
+    if (view?.kind === 'knowledge') openDetail('knowledge', 'all', null, true);
+  } catch (err) {
+    $('liveStatus').textContent = `删除失败：${err && err.message ? err.message : err}`;
+  }
+}
+
+function closeEditorTab(index, force = false) {
+  const tab = editorTabs[index];
+  if (!tab) return;
+  if (tab.dirty && !force && !window.confirm('有未保存的修改，放弃？')) return;
+  editorTabs.splice(index, 1);
+  if (editorTabs.length === 0) {
+    activeEd = -1;
+    $('editor').hidden = true;
+    document.body.classList.remove('editor-on');
+    invoke('set_window_mode', { mode: 'card' }).catch(() => {});
+    fitWindow();
+  } else {
+    activeEd = Math.min(index, editorTabs.length - 1);
+    renderEditorUI();
+  }
+}
+
+/** 新建 md 知识条目 */
+async function createKnowledgeItem() {
+  const kind = window.prompt('条目类型（specs / memory / knowhow）：', 'specs');
+  if (!kind || !['specs', 'memory', 'knowhow'].includes(kind)) return;
+  const title = window.prompt('条目标题：');
+  if (!title) return;
+  try {
+    const id = await invoke('create_knowledge_item', { kind, title, content: '' });
+    delete detailCache['knowledge::all'];
+    $('liveStatus').textContent = `已创建 ${id}`;
+    await openEditor(kind, id);
+    if (activeEd >= 0) {
+      editorTabs[activeEd].content = `# ${title}\n\n`;
+      editorTabs[activeEd].dirty = true;
+    }
+    renderEditorUI();
+    $('edContent').focus();
+  } catch (err) {
+    $('liveStatus').textContent = `创建失败：${err && err.message ? err.message : err}`;
+  }
+}
 
 function svg(symbol, size) {
   const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
