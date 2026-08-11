@@ -229,8 +229,7 @@ function bindEvents() {
       renderWithFocus();
       $('liveStatus').textContent = `已更新 ${fmtClock2(new Date().toISOString())}`;
     } catch (err) {
-      $('liveStatus').textContent = '刷新失败';
-      showBootError(`刷新失败：${String(err)}`);
+      $('liveStatus').textContent = `刷新失败${err && err.message ? ' · ' + err.message : ''}`;
     } finally {
       btn.classList.remove('rotating');
       btn.disabled = false;
@@ -1381,12 +1380,13 @@ function renderCapsule() {
     dot.style.setProperty('--c', color);
     sub.appendChild(dot);
     const text = el('span', 'cap-sub-t');
+    const statusZh = sessionStatusMeta(active.status)[1];
     const step = run && run.sequence != null && active.run_count
       ? `第 ${run.sequence}/${active.run_count} 步`
       : `#${run?.sequence ?? '—'}`;
     text.textContent = run
-      ? ` ${active.status || 'unknown'} · ${step} ${run.command || 'run'}`
-      : ` ${active.status || 'unknown'} · 等待 Run`;
+      ? ` ${statusZh} · ${step} ${run.command || 'run'}`
+      : ` ${statusZh} · 等待 Run`;
     text.title = run ? `${run.run_id || ''} · ${run.verdict || ''}` : '';
     sub.appendChild(text);
     if (run && run.sequence != null && active.run_count) {
