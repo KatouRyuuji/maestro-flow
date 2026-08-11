@@ -81,7 +81,6 @@ const commandLoaders: Record<string, () => Promise<(p: Command) => void>> = {
   explore:    async () => (await import('./commands/explore.js')).registerExploreCommand,
   moa:        async () => (await import('./commands/moa.js')).registerMoaCommand,
   timeline:   async () => (await import('./commands/timeline.js')).registerTimelineCommand,
-  plan:       async () => (await import('./commands/plan.js')).registerPlanCommand,
 };
 
 // Determine which command is being invoked from argv (if any)
@@ -122,13 +121,7 @@ function inferMachineOperation(command: 'run' | 'session' | 'plan', args: string
   const tail = args.slice(commandIndex + 1);
   const primaryIndex = tail.findIndex(token => !token.startsWith('-'));
   const primary = primaryIndex >= 0 ? tail[primaryIndex] : null;
-<<<<<<< Updated upstream
   if (command === 'plan') return 'plan-publish';
-=======
-  if (command === 'plan') {
-    return 'plan-publish';
-  }
->>>>>>> Stashed changes
   if (command === 'run') {
     if (primary === 'new') return 'create';
     if (primary === 'recall-confirm') return 'recall';
