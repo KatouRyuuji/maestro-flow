@@ -19,6 +19,7 @@ const { listen } = TAURI?.event ?? {};
 
 let state = { tabs: [], active: -1 };
 let previewMode = false;
+let draftSyncPromise = Promise.resolve();
 
 const $ = (id) => document.getElementById(id);
 
@@ -110,11 +111,29 @@ function tab() {
   return state.tabs[state.active] || null;
 }
 
+function syncDraft(t, content) {
+  const draft = { kind: t.kind, id: t.id, content };
+  draftSyncPromise = draftSyncPromise
+    .catch(() => {})
+    .then(() => invoke('editor_changed', draft));
+  return draftSyncPromise;
+}
+
 async function loadState() {
+  const dirtyDrafts = new Map(
+    state.tabs
+      .filter((t) => t.dirty)
+      .map((t) => [`${t.kind}::${t.id}`, { content: t.content, dirty: true }]),
+  );
   try {
-    state = await invoke('get_editor_state');
+    const next = await invoke('get_editor_state');
+    for (const t of next.tabs || []) {
+      const draft = dirtyDrafts.get(`${t.kind}::${t.id}`);
+      if (draft) Object.assign(t, draft);
+    }
+    state = next;
   } catch {
-    state = { tabs: [], active: -1 };
+    // Keep the last local state: a transient IPC failure must not erase drafts.
   }
   renderTabs();
   renderBody();
@@ -189,9 +208,11 @@ async function save() {
   const t = tab();
   if (!t) return;
   try {
-    await invoke('update_knowledge_item', { kind: t.kind, id: t.id, content: $('edContent').value });
-    await invoke('editor_synced', { kind: t.kind, id: t.id, content: $('edContent').value });
-    t.content = $('edContent').value;
+    const content = $('edContent').value;
+    t.content = content;
+    await draftSyncPromise.catch(() => {});
+    await invoke('update_knowledge_item', { kind: t.kind, id: t.id, content });
+    await invoke('editor_synced', { kind: t.kind, id: t.id, content });
     t.dirty = false;
     $('edDirty').textContent = '';
     $('stText').textContent = `已保存 ${t.id}`;
@@ -231,6 +252,7 @@ async function createTab() {
     if (t) {
       t.content = `# ${title}\n\n`;
       t.dirty = true;
+      void syncDraft(t, t.content).catch(() => {});
       renderBody();
       $('edContent').focus();
     }
@@ -252,10 +274,6 @@ $('edCopy').addEventListener('click', async () => {
 });
 $('edDelete').addEventListener('click', removeTab);
 $('edNew').addEventListener('click', createTab);
-$('edContent').addEventListener('input', () => {
-  const t = tab();
-  if (t) { t.dirty = true; $('edDirty').textContent = '未保存'; }
-});
 document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
     e.preventDefault();
@@ -289,7 +307,12 @@ window.__refreshEditor = loadState;
 let prevTimer = null;
 $('edContent').addEventListener('input', () => {
   const t = tab();
-  if (t) { t.dirty = true; $('edDirty').textContent = '未保存'; }
+  if (t) {
+    t.content = $('edContent').value;
+    t.dirty = true;
+    $('edDirty').textContent = '未保存';
+    void syncDraft(t, t.content).catch(() => {});
+  }
   if (previewMode) {
     clearTimeout(prevTimer);
     prevTimer = setTimeout(() => {

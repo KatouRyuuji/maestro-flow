@@ -177,6 +177,9 @@ async function init() {
       $('liveStatus').textContent = '实时监听';
       renderWithFocus();
     });
+    await listen('knowledge-updated', (event) => {
+      void refreshKnowledgeCaches(event.payload || {});
+    });
     $('liveStatus').textContent = '实时监听';
   } catch {
     $('liveStatus').textContent = '轮询模式';
@@ -229,7 +232,7 @@ function scheduleLiveCallDetailRefresh() {
     } catch {
       // Keep the last good frame; the next JSONL write or fallback poll retries.
     }
-  }, 180);
+  }, 400);
 }
 
 /** 快照写入 localStorage 缓存（冷启动秒开用） */
@@ -255,6 +258,17 @@ function renderSkeleton() {
 // ---------------------------------------------------------------------------
 // 事件绑定
 // ---------------------------------------------------------------------------
+
+async function restoreCard(options = {}) {
+  await invoke('set_window_mode', { mode: 'card' });
+  document.body.dataset.mode = 'card';
+  $('capsule').hidden = true;
+  $('card').hidden = false;
+  $('card').classList.add('mode-enter');
+  setTimeout(() => $('card').classList.remove('mode-enter'), 200);
+  if (options.openMenu) toggleMenu(true, $('btnMenu'));
+  fitWindow();
+}
 
 function bindEvents() {
   // 面板折叠（.sec 0fr 动画）
@@ -435,14 +449,11 @@ function bindEvents() {
 
   $('btnCapMenu').addEventListener('click', async (e) => {
     e.stopPropagation();
-    await invoke('set_window_mode', { mode: 'card' });
-    document.body.dataset.mode = 'card';
-    $('capsule').hidden = true;
-    $('card').hidden = false;
-    $('card').classList.add('mode-enter');
-    setTimeout(() => $('card').classList.remove('mode-enter'), 200);
-    toggleMenu(true, $('btnMenu'));
-    fitWindow();
+    await restoreCard({ openMenu: true });
+  });
+  $('btnCapRestore').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    await restoreCard();
   });
 
   // 主题（点击 + radiogroup 方向键，roving tabindex）
@@ -521,15 +532,7 @@ function bindEvents() {
   });
 
   // 胶囊 → 卡片
-  $('capBody').addEventListener('click', async () => {
-    await invoke('set_window_mode', { mode: 'card' });
-    document.body.dataset.mode = 'card';
-    $('capsule').hidden = true;
-    $('card').hidden = false;
-    $('card').classList.add('mode-enter');
-    setTimeout(() => $('card').classList.remove('mode-enter'), 200);
-    fitWindow();
-  });
+  $('capBody').addEventListener('click', () => restoreCard());
 
   // Esc 关闭菜单或返回列表；菜单打开时 Tab 焦点陷阱
   document.addEventListener('keydown', (event) => {
@@ -919,6 +922,43 @@ function getKbItems(force) {
       .catch(() => []);
   }
   return kbItemsPromise;
+}
+
+function invalidateKnowledgeCaches(kind, id) {
+  kbItemsPromise = null;
+  topKbCache = { ts: 0, items: null };
+  delete detailCache['knowledge::all'];
+  if (kind && id) delete detailCache[`knowledge-item::${kind}::${id}`];
+}
+
+async function refreshKnowledgeCaches(payload) {
+  const kind = String(payload?.kind || '');
+  const id = String(payload?.id || '');
+  invalidateKnowledgeCaches(kind, id);
+
+  if (view?.kind === 'knowledge') {
+    const currentId = view.id;
+    const items = await getKbItems(true);
+    if (view?.kind !== 'knowledge' || view.id !== currentId) return;
+    detail = { items };
+    detailStatus = 'ready';
+    detailCache[`knowledge::${currentId}`] = detail;
+    renderWithFocus();
+    return;
+  }
+
+  const itemId = `${kind}::${id}`;
+  if (kind && id && view?.kind === 'knowledge-item' && view.id === itemId) {
+    const item = await invoke('get_knowledge_item_content', { kind, id }).catch(() => null);
+    if (view?.kind !== 'knowledge-item' || view.id !== itemId) return;
+    detail = item ? { item } : null;
+    detailStatus = item ? 'ready' : 'not-found';
+    if (item) detailCache[`knowledge-item::${itemId}`] = detail;
+    renderWithFocus();
+    return;
+  }
+
+  if (!view) renderWithFocus();
 }
 
 /** 高频知识：30s TTL 缓存，force 强制刷新 */
@@ -1946,7 +1986,7 @@ function renderCallDetail() {
   const running = callStatus(call) === 'running';
   const allEntries = normalizeCallEntries(detail.entries, running);
   const entries = q ? allEntries.filter((entry) => callEntryText(entry).toLowerCase().includes(q)) : allEntries;
-  setSearchCount((promptText && promptMatch ? 1 : 0) + entries.length, (promptText ? 1 : 0) + allEntries.length);
+  setSearchCount(entries.length, allEntries.length);
   const chat = el('section', 'detail-card full-width');
   chat.appendChild(el('h2', 'd-sec-title', `对话 · ${entries.length}${q ? ` / ${allEntries.length}` : ''}${running ? ' · 实时' : ''}`));
   if (!allEntries.length) {

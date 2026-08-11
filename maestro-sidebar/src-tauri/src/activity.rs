@@ -35,7 +35,8 @@ struct StreamSummary {
     output_preview: Option<String>,
 }
 
-const STREAM_TAIL_BYTES: u64 = 256 * 1024;
+const STREAM_TAIL_BYTES: u64 = 64 * 1024;
+const LIVE_DETAIL_TAIL_BYTES: u64 = 1024 * 1024;
 const OUTPUT_PREVIEW_CHARS: usize = 220;
 
 fn tail_chars(value: &str, limit: usize) -> String {
@@ -201,30 +202,57 @@ pub struct CallDetail {
     pub entries: Vec<CallEntry>,
 }
 
-/// 读取单条调用的 meta + JSONL 对话条目。
+fn read_jsonl_entries(path: &Path, tail_bytes: Option<u64>) -> Vec<CallEntry> {
+    let Ok(mut file) = fs::File::open(path) else {
+        return Vec::new();
+    };
+    let bytes = file.metadata().map(|meta| meta.len()).unwrap_or(0);
+    let start = tail_bytes
+        .map(|limit| bytes.saturating_sub(limit))
+        .unwrap_or(0);
+    if file.seek(SeekFrom::Start(start)).is_err() {
+        return Vec::new();
+    }
+    let mut buffer = Vec::new();
+    if file.read_to_end(&mut buffer).is_err() {
+        return Vec::new();
+    }
+    let mut jsonl = String::from_utf8_lossy(&buffer).into_owned();
+    if start > 0 {
+        if let Some(first_newline) = jsonl.find('\n') {
+            jsonl = jsonl[first_newline + 1..].to_owned();
+        } else {
+            return Vec::new();
+        }
+    }
+    jsonl
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            (!line.is_empty())
+                .then(|| serde_json::from_str::<CallEntry>(line).ok())
+                .flatten()
+        })
+        .collect()
+}
+
+/// Read one call's metadata and entries. Completed calls retain their full
+/// history; active calls use a bounded tail because this path refreshes often.
 pub fn read_call_detail(dir: &Path, exec_id: &str) -> Option<CallDetail> {
     let meta_raw = fs::read_to_string(dir.join(format!("{exec_id}.meta.json"))).ok()?;
     let mut call: AgentCall = serde_json::from_str(&meta_raw).ok()?;
     call.exec_id = exec_id.to_owned();
-    let stream = read_stream_summary(&dir.join(format!("{exec_id}.jsonl")));
+    let jsonl_path = dir.join(format!("{exec_id}.jsonl"));
+    let stream = read_stream_summary(&jsonl_path);
     call.stream_bytes = stream.bytes;
     call.last_activity_ms = stream.modified_ms;
     call.last_entry_type = stream.last_entry_type;
     call.last_output_preview = stream.output_preview;
-    // 完整 prompt 不做截断（详情视图展示全文）
+    // Full prompt remains available in the detail view.
 
-    let mut entries: Vec<CallEntry> = Vec::new();
-    if let Ok(jsonl) = fs::read_to_string(dir.join(format!("{exec_id}.jsonl"))) {
-        for line in jsonl.lines() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            if let Ok(entry) = serde_json::from_str::<CallEntry>(line) {
-                entries.push(entry);
-            }
-        }
-    }
+    let is_active = call.completed_at.is_none() && call.exit_code.is_none();
+    let tail_bytes = is_active.then_some(LIVE_DETAIL_TAIL_BYTES);
+    let entries = read_jsonl_entries(&jsonl_path, tail_bytes);
     Some(CallDetail { call, entries })
 }
 
@@ -273,6 +301,56 @@ mod tests {
         assert_eq!(c.model.as_deref(), Some("claude-sonnet"));
         assert_eq!(c.exit_code, Some(0));
         assert!(c.prompt.chars().count() <= 400);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_jsonl_entries_uses_complete_lines_from_tail() {
+        let dir = tmp_dir("detail-tail");
+        let path = dir.join("live.jsonl");
+        fs::write(
+            &path,
+            concat!(
+                "{\"type\":\"assistant_message\",\"content\":\"old\"}\n",
+                "{\"type\":\"assistant_message\",\"content\":\"middle\"}\n",
+                "{\"type\":\"assistant_message\",\"content\":\"latest\"}\n"
+            ),
+        )
+        .unwrap();
+
+        let entries = read_jsonl_entries(&path, Some(90));
+        assert!(!entries.is_empty());
+        assert_eq!(
+            entries.last().and_then(|entry| entry.content.as_deref()),
+            Some("latest")
+        );
+        assert!(entries
+            .iter()
+            .all(|entry| entry.content.as_deref() != Some("old")));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_call_detail_bounds_only_active_history() {
+        let dir = tmp_dir("active-detail");
+        fs::write(
+            dir.join("pi-live.meta.json"),
+            r#"{"execId":"pi-live","tool":"pi","mode":"analysis","prompt":"test","startedAt":"2026-08-11T08:00:00Z"}"#,
+        )
+        .unwrap();
+        let old = format!(
+            "{{\"type\":\"assistant_message\",\"content\":\"{}\"}}\n",
+            "x".repeat(LIVE_DETAIL_TAIL_BYTES as usize)
+        );
+        fs::write(
+            dir.join("pi-live.jsonl"),
+            format!("{old}{{\"type\":\"assistant_message\",\"content\":\"latest\"}}\n"),
+        )
+        .unwrap();
+
+        let detail = read_call_detail(&dir, "pi-live").unwrap();
+        assert_eq!(detail.entries.len(), 1);
+        assert_eq!(detail.entries[0].content.as_deref(), Some("latest"));
         let _ = fs::remove_dir_all(&dir);
     }
 

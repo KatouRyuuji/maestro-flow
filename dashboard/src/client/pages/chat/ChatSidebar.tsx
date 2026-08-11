@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import * as ContextMenu from '@radix-ui/react-context-menu';
-import { Pencil, Trash2, Copy } from 'lucide-react';
+import { Pencil, Trash2, Copy, X } from 'lucide-react';
 import { useAgentStore } from '@/client/store/agent-store.js';
 import { useWorkspaceTree } from '@/client/hooks/useWorkspaceTree.js';
 import { useGitStatus } from '@/client/hooks/useGitStatus.js';
@@ -217,6 +217,7 @@ function ConversationList({ searchQuery }: { searchQuery?: string }) {
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const lastClickedId = useRef<string | null>(null);
   const { state: layoutState, dispatch: layoutDispatch } = useLayoutContext();
+  const { setSidebarOpen } = useChatSidebar();
 
   // Select a process: set active + lazy-load entries if empty
   const handleSelect = useCallback(async (processId: string, e?: React.MouseEvent) => {
@@ -245,6 +246,7 @@ function ConversationList({ searchQuery }: { searchQuery?: string }) {
     clearProcessSelection();
     setActiveProcessId(processId);
     lastClickedId.current = processId;
+    if (window.innerWidth < 640) setSidebarOpen(false);
 
     // Directly activate the tab in LayoutContext
     const tabId = `chat-${processId}`;
@@ -338,7 +340,7 @@ function ConversationList({ searchQuery }: { searchQuery?: string }) {
       }
     } catch { /* silent */ }
     setLoadingId(null);
-  }, [setActiveProcessId, layoutState.editorArea, layoutDispatch]);
+  }, [setActiveProcessId, setSidebarOpen, layoutState.editorArea, layoutDispatch]);
 
   // Keyboard shortcut: Escape clears selection, Delete dismisses selected
   useEffect(() => {
@@ -734,7 +736,7 @@ function getFirstLeaf(node: import('@/client/types/layout-types.js').EditorGroup
 }
 
 export function ChatSidebar() {
-  const { sidebarOpen, activeTab, setActiveTab } = useChatSidebar();
+  const { sidebarOpen, setSidebarOpen, activeTab, setActiveTab } = useChatSidebar();
   const [searchQuery, setSearchQuery] = useState('');
   const workspace = useWorkspaceTree();
   const { state: layoutState, dispatch: layoutDispatch } = useLayoutContext();
@@ -753,13 +755,23 @@ export function ChatSidebar() {
         ref: filePath,
       },
     });
-  }, [layoutState.editorArea, layoutDispatch]);
+    if (window.innerWidth < 640) setSidebarOpen(false);
+  }, [layoutState.editorArea, layoutDispatch, setSidebarOpen]);
 
   return (
     <div
-      className="shrink-0 flex flex-col overflow-hidden transition-[width] duration-200"
+      role="navigation"
+      aria-label="Chat navigation"
+      aria-hidden={!sidebarOpen}
+      inert={!sidebarOpen}
+      className={[
+        'absolute inset-y-0 left-0 z-40 flex w-[230px] shrink-0 flex-col overflow-hidden',
+        'shadow-lg transition-[transform,width] duration-200 sm:relative sm:inset-auto sm:z-auto sm:shadow-none',
+        sidebarOpen
+          ? 'translate-x-0 sm:w-[230px]'
+          : '-translate-x-full pointer-events-none sm:w-0 sm:translate-x-0',
+      ].join(' ')}
       style={{
-        width: sidebarOpen ? 230 : 0,
         backgroundColor: 'var(--color-bg-secondary)',
         borderRight: sidebarOpen ? '1px solid var(--color-border)' : 'none',
       }}
@@ -796,6 +808,16 @@ export function ChatSidebar() {
             <TabIcon tab={tab} />
           </button>
         ))}
+        <button
+          type="button"
+          aria-label="Close sidebar"
+          title="Close sidebar"
+          onClick={() => setSidebarOpen(false)}
+          className="ml-auto flex h-8 w-8 items-center justify-center border-none bg-transparent cursor-pointer sm:hidden"
+          style={{ color: 'var(--color-text-secondary)' }}
+        >
+          <X size={15} strokeWidth={1.8} />
+        </button>
       </div>
 
       {/* Search bar */}

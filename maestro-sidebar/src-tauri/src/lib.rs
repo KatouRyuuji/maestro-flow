@@ -38,12 +38,13 @@ struct RuntimeStore {
 
 /// 独立编辑器窗口的文档 tab
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct EditorTab {
     pub kind: String,
     pub id: String,
     pub title: String,
     pub content: String,
+    pub dirty: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -51,6 +52,63 @@ pub struct EditorTab {
 pub struct EditorState {
     pub tabs: Vec<EditorTab>,
     pub active: i64,
+}
+
+fn open_or_refresh_editor_tab(editor: &mut EditorState, incoming: EditorTab) {
+    if let Some(index) = editor
+        .tabs
+        .iter()
+        .position(|tab| tab.kind == incoming.kind && tab.id == incoming.id)
+    {
+        editor.active = index as i64;
+        if editor.tabs[index].dirty {
+            // A disk refresh may update the label, but never replace a draft.
+            editor.tabs[index].title = incoming.title;
+        } else {
+            editor.tabs[index] = incoming;
+        }
+        return;
+    }
+
+    editor.tabs.push(incoming);
+    editor.active = (editor.tabs.len() - 1) as i64;
+}
+
+#[cfg(test)]
+mod editor_state_tests {
+    use super::*;
+
+    fn tab(content: &str, dirty: bool) -> EditorTab {
+        EditorTab {
+            kind: "specs".into(),
+            id: "coding".into(),
+            title: "Coding".into(),
+            content: content.into(),
+            dirty,
+        }
+    }
+
+    #[test]
+    fn refresh_preserves_dirty_editor_content() {
+        let mut state = EditorState {
+            tabs: vec![tab("draft", true)],
+            active: 0,
+        };
+        open_or_refresh_editor_tab(&mut state, tab("disk", false));
+        assert_eq!(state.tabs[0].content, "draft");
+        assert!(state.tabs[0].dirty);
+    }
+
+    #[test]
+    fn refresh_reloads_clean_editor_content() {
+        let mut state = EditorState {
+            tabs: vec![tab("old", false)],
+            active: 0,
+        };
+        open_or_refresh_editor_tab(&mut state, tab("disk", false));
+        assert_eq!(state.tabs[0].content, "disk");
+        assert!(!state.tabs[0].dirty);
+    }
 }
 
 struct AppState {
@@ -347,30 +405,19 @@ fn open_editor_tab(
     let cfg = state.config.lock().unwrap().clone();
     let projects = active_projects(&cfg);
     let wf = projects.first().ok_or("无激活工作空间")?;
-    let item = knowledge::read_knowledge_item_content(wf, &kind, &id)
-        .ok_or("条目不存在或不可读")?;
+    let item =
+        knowledge::read_knowledge_item_content(wf, &kind, &id).ok_or("条目不存在或不可读")?;
     let mut editor = state.editor.lock().unwrap();
-    let idx = editor
-        .tabs
-        .iter()
-        .position(|t| t.kind == kind && t.id == id);
-    match idx {
-        Some(i) => {
-            editor.active = i as i64;
-            // 内容可能已变化：刷新
-            editor.tabs[i].content = item.content.clone();
-            editor.tabs[i].title = item.title.clone();
-        }
-        None => {
-            editor.tabs.push(EditorTab {
-                kind: kind.clone(),
-                id: id.clone(),
-                title: item.title,
-                content: item.content,
-            });
-            editor.active = (editor.tabs.len() - 1) as i64;
-        }
-    }
+    open_or_refresh_editor_tab(
+        &mut editor,
+        EditorTab {
+            kind: kind.clone(),
+            id: id.clone(),
+            title: item.title,
+            content: item.content,
+            dirty: false,
+        },
+    );
     drop(editor);
     // 显示窗口（预创建于 setup，仅 show/focus + 刷新事件）
     match app.get_webview_window("editor-win") {
@@ -447,15 +494,40 @@ fn editor_synced(
     content: String,
 ) -> Result<(), String> {
     let mut editor = state.editor.lock().unwrap();
-    if let Some(tab) = editor.tabs.iter_mut().find(|t| t.kind == kind && t.id == id) {
+    if let Some(tab) = editor
+        .tabs
+        .iter_mut()
+        .find(|t| t.kind == kind && t.id == id)
+    {
         tab.content = content;
+        tab.dirty = false;
     }
+    Ok(())
+}
+
+/// Keep the authoritative in-memory draft current between window refreshes.
+#[tauri::command]
+fn editor_changed(
+    state: tauri::State<AppState>,
+    kind: String,
+    id: String,
+    content: String,
+) -> Result<(), String> {
+    let mut editor = state.editor.lock().unwrap();
+    let tab = editor
+        .tabs
+        .iter_mut()
+        .find(|tab| tab.kind == kind && tab.id == id)
+        .ok_or("编辑器标签不存在")?;
+    tab.content = content;
+    tab.dirty = true;
     Ok(())
 }
 
 /// 更新知识条目内容（md 覆盖 / jsonl 行替换）
 #[tauri::command]
 fn update_knowledge_item(
+    app: tauri::AppHandle,
     state: tauri::State<AppState>,
     kind: String,
     id: String,
@@ -469,7 +541,12 @@ fn update_knowledge_item(
     let cfg = state.config.lock().unwrap().clone();
     let projects = active_projects(&cfg);
     let wf = projects.first().ok_or("无激活工作空间")?;
-    knowledge::write_knowledge_item(wf, &kind, &id, &content)
+    knowledge::write_knowledge_item(wf, &kind, &id, &content)?;
+    let _ = app.emit(
+        "knowledge-updated",
+        serde_json::json!({ "kind": kind, "id": id }),
+    );
+    Ok(())
 }
 
 /// 删除知识条目
@@ -856,6 +933,7 @@ pub fn run() {
             close_editor_tab,
             set_editor_active,
             editor_synced,
+            editor_changed,
             get_config,
             list_workspaces,
             set_active_root,
