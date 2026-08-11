@@ -7,12 +7,18 @@ contract:
   - kind: execution
     alias: current-execution
     required: true
+    schema: execution/1.0
+    role: primary
   - kind: verification
     alias: latest-verification
     required: false
+    schema: verification/1.0
+    role: primary
   - kind: review-findings
     alias: prior-review
     required: false
+    schema: review-findings/1.0
+    role: primary
   produces:
   - path: outputs/review-findings.json
     kind: review-findings

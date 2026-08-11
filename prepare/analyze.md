@@ -7,12 +7,18 @@ contract:
   - kind: guidance
     alias: current-guidance
     required: false
+    schema: guidance/1.0
+    role: primary
   - kind: blueprint
     alias: current-blueprint
     required: false
+    schema: blueprint/1.0
+    role: primary
   - kind: diagnosis
     alias: latest-debug
     required: false
+    schema: diagnosis/1.0
+    role: primary
   produces:
   - path: outputs/findings.json
     kind: findings

@@ -366,6 +366,28 @@ for (const dir of readdirSync(skillDir)) {
   }
 }
 
+// v2/v2.1 prepare contracts must declare the artifact schema (and role for 2.1) on
+// every consumes entry: a missing schema yields ARTIFACT_SCHEMA_UNKNOWN in reuse
+// assessment and forces a manual REVIEW acceptance on an otherwise eligible artifact.
+const prepareDir = join(root, 'prepare');
+for (const file of readdirSync(prepareDir).filter((name) => name.endsWith('.md'))) {
+  const path = join(prepareDir, file);
+  const contract = frontmatter(readFileSync(path, 'utf8'))?.contract;
+  if (!contract) continue;
+  const version = contract.contract_version;
+  if (version !== 2 && version !== 2.1) continue;
+  if (!Array.isArray(contract.consumes)) continue;
+  contract.consumes.forEach((item, index) => {
+    const label = `${relative(root, path)}: consumes[${index}] kind=${item?.kind ?? '?'}`;
+    if (typeof item?.schema !== 'string' || item.schema.length === 0) {
+      errors.push(`${label}: missing schema (declare the producer artifact schema so reuse binds without a manual REVIEW)`);
+    }
+    if (version === 2.1 && (typeof item?.role !== 'string' || item.role.length === 0)) {
+      errors.push(`${label}: missing role for contract_version 2.1`);
+    }
+  });
+}
+
 if (errors.length > 0) {
   console.error(errors.join('\n'));
   console.error(`session-run prompt lint failed: ${errors.length} issue(s)`);

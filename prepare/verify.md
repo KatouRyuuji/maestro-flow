@@ -7,9 +7,13 @@ contract:
   - kind: plan
     alias: current-plan
     required: true
+    schema: plan/1.0
+    role: primary
   - kind: execution
     alias: current-execution
     required: true
+    schema: execution/1.0
+    role: primary
   produces:
   - path: outputs/verification.json
     kind: verification

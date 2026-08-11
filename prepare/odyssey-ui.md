@@ -8,6 +8,8 @@ contract:
   - kind: session
     alias: prior-session
     required: false
+    schema: session/1.0
+    role: primary
   produces:
   - path: outputs/session.json
     kind: ui-audit

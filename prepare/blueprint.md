@@ -7,6 +7,8 @@ contract:
   - kind: context-package
     alias: upstream-context
     required: false
+    schema: context-package/1.0
+    role: attachment
   produces:
   - path: outputs/product-brief.md
     kind: blueprint

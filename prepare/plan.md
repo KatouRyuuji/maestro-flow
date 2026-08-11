@@ -7,20 +7,32 @@ contract:
   - kind: findings
     alias: current-analysis
     required: false
+    schema: findings/1.0
+    role: primary
   - kind: diagnosis
     alias: latest-debug
     required: false
+    schema: diagnosis/1.0
+    role: primary
   - kind: blueprint
     alias: current-blueprint
     required: false
+    schema: blueprint/1.0
+    role: primary
   - kind: roadmap
     alias: current-roadmap
     required: false
+    schema: roadmap/1.0
+    role: primary
   - kind: plan
     required: false
+    schema: plan/1.0
+    role: primary
   - kind: priors
     alias: session-priors
     required: false
+    schema: priors/1.0
+    role: evidence
   produces:
   - path: outputs/plan.json
     kind: plan

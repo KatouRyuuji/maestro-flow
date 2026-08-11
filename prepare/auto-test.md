@@ -7,15 +7,23 @@ contract:
   - kind: verification
     alias: latest-verification
     required: false
+    schema: verification/1.0
+    role: primary
   - kind: execution
     alias: current-execution
     required: false
+    schema: execution/1.0
+    role: primary
   - kind: review-findings
     alias: latest-review
     required: false
+    schema: review-findings/1.0
+    role: primary
   - kind: diagnosis
     alias: latest-debug
     required: false
+    schema: diagnosis/1.0
+    role: primary
   produces:
   - path: outputs/auto-test-report.json
     kind: auto-test-report

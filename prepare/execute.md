@@ -7,18 +7,28 @@ contract:
   - kind: plan
     alias: current-plan
     required: false
+    schema: plan/1.0
+    role: primary
   - kind: review-findings
     alias: latest-review
     required: false
+    schema: review-findings/1.0
+    role: primary
   - kind: fix-directions
     alias: latest-fix-directions
     required: false
+    schema: fix-directions/1.0
+    role: attachment
   - kind: diagnosis
     alias: latest-debug
     required: false
+    schema: diagnosis/1.0
+    role: primary
   - kind: priors
     alias: session-priors
     required: false
+    schema: priors/1.0
+    role: evidence
   produces:
   - path: outputs/execution.json
     kind: execution

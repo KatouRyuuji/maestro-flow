@@ -7,18 +7,28 @@ contract:
   - kind: verification
     alias: latest-verification
     required: false
+    schema: verification/1.0
+    role: primary
   - kind: plan
     alias: current-plan
     required: false
+    schema: plan/1.0
+    role: primary
   - kind: execution
     alias: current-execution
     required: false
+    schema: execution/1.0
+    role: primary
   - kind: review-findings
     alias: latest-review
     required: false
+    schema: review-findings/1.0
+    role: primary
   - kind: diagnosis
     alias: latest-debug
     required: false
+    schema: diagnosis/1.0
+    role: primary
   produces:
   - path: outputs/test-plan.json
     kind: test-plan

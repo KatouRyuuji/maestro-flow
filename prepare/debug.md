@@ -7,12 +7,18 @@ contract:
   - kind: test-results
     alias: latest-test
     required: false
+    schema: test-results/1.0
+    role: primary
   - kind: review-findings
     alias: latest-review
     required: false
+    schema: review-findings/1.0
+    role: primary
   - kind: execution
     alias: current-execution
     required: false
+    schema: execution/1.0
+    role: primary
   produces:
   - path: outputs/diagnosis.json
     kind: diagnosis
