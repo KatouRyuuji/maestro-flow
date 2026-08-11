@@ -86,7 +86,6 @@ function verdictLabel(v) {
   const s = String(v || '').toLowerCase();
   return VERDICT_LABEL[s] || s || '未知';
 }
-const THEME_LABELS = { graphite: '石墨', mist: '雾白', glass: '玻璃', ember: '余烬', blueprint: '蓝图', ocean: '海洋', sunset: '日落' };
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => {

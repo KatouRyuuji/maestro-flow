@@ -19,7 +19,7 @@
   background-position: center;
   background-repeat: no-repeat;
   opacity: 0;
-  transition: opacity .25s ease;
+  transition: opacity .2s ease;
   pointer-events: none;
 }
 #world::after {
@@ -29,7 +29,7 @@
   z-index: -1;
   background: var(--bg);
   opacity: calc(1 - var(--wp-opacity, 0.45) * 0.6);
-  transition: opacity .25s ease;
+  transition: opacity .2s ease;
   pointer-events: none;
 }
 body.has-wallpaper #world::before { opacity: var(--wp-opacity, 0.45); }
