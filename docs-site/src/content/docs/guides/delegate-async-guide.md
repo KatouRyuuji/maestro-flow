@@ -39,7 +39,7 @@ maestro delegate "<PROMPT>" [options]
 
 | 选项 | 说明 | 默认值 |
 |------|------|--------|
-| `--to <tool>` | Agent：gemini, qwen, codex, claude, opencode | 配置中第一个启用的 |
+| `--to <tool>` | Agent：gemini, qwen, codex, claude, opencode, agy, pi | 配置中第一个启用的 |
 | `--role <role>` | 能力角色（analyze, explore, review, implement, plan, brainstorm, research） | — |
 | `--mode <mode>` | `analysis`（只读）或 `write`（创建/修改/删除） | `analysis` |
 | `--effort <level>` | 推理强度（low, medium, high, max） | — |
@@ -97,7 +97,7 @@ queued → running → completed
 ```
 
 **执行 ID**：`{prefix}-{HHmmss}-{rand4}`（如 `gem-143022-a7f2`）
-前缀：gemini→`gem`，qwen→`qwn`，codex→`cdx`，claude→`cld`，opencode→`opc`
+前缀：gemini→`gem`，qwen→`qwn`，codex→`cdx`，claude→`cld`，opencode→`opc`，agy→`agy`，pi→`pi`
 
 <details>
 <summary>Delegate vs CLI 功能对比</summary>

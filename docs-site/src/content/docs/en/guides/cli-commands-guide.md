@@ -297,7 +297,7 @@ maestro skills --json                   # 机器可读（每行一条 JSON）
 <details>
 <summary>maestro delegate</summary>
 
-Delegate tasks to AI agents (gemini/qwen/codex/claude/opencode). Supports sync, async, and session resume.
+Delegate tasks to AI agents (gemini/qwen/codex/claude/opencode/agy/pi). Supports sync, async, and session resume.
 
 ```bash
 maestro delegate "analyze auth module" --to gemini

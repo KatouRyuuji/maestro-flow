@@ -218,6 +218,10 @@ describe('resolveAgentType', () => {
     expect(resolveAgentType('opencode')).toBe('opencode');
   });
 
+  it('maps pi to pi', () => {
+    expect(resolveAgentType('pi')).toBe('pi');
+  });
+
   it('returns claude-code for null', () => {
     expect(resolveAgentType(null)).toBe('claude-code');
   });

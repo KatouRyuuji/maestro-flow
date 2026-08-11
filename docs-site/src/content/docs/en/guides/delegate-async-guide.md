@@ -38,7 +38,7 @@ maestro delegate "<PROMPT>" [options]
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--to <tool>` | Agent: gemini, qwen, codex, claude, opencode | First enabled in config |
+| `--to <tool>` | Agent: gemini, qwen, codex, claude, opencode, agy, pi | First enabled in config |
 | `--role <role>` | Capability role (analyze, explore, review, implement, plan, brainstorm, research) | — |
 | `--mode <mode>` | `analysis` (read-only) or `write` (create/modify/delete) | `analysis` |
 | `--effort <level>` | Reasoning effort (low, medium, high, max) | — |
@@ -96,7 +96,7 @@ queued → running → completed
 ```
 
 **Execution ID**: `{prefix}-{HHmmss}-{rand4}` (e.g. `gem-143022-a7f2`)
-Prefix: gemini→`gem`, qwen→`qwn`, codex→`cdx`, claude→`cld`, opencode→`opc`
+Prefix: gemini→`gem`, qwen→`qwn`, codex→`cdx`, claude→`cld`, opencode→`opc`, agy→`agy`, pi→`pi`
 
 <details>
 <summary>Delegate vs CLI: Feature Comparison</summary>

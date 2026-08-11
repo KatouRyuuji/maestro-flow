@@ -178,6 +178,8 @@ export function resolveAgentType(tool: string | null): AgentType {
       return 'qwen';
     case 'opencode':
       return 'opencode';
+    case 'pi':
+      return 'pi';
     default:
       return 'claude-code';
   }

@@ -373,7 +373,8 @@
       "codex_desc": "OpenAI Codex CLI 代理",
       "gemini_desc": "Google Gemini CLI 代理",
       "qwen_desc": "阿里通义千问 CLI 代理",
-      "opencode_desc": "开源代码代理"
+      "opencode_desc": "开源代码代理",
+      "pi_desc": "Pi 编码代理 CLI"
     },
     "commander": {
       "profile_card": "配置文件",

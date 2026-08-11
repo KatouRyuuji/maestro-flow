@@ -105,6 +105,7 @@ const AGENT_TYPES: { type: AgentType; label: string }[] = [
   { type: 'gemini-a2a', label: 'Gemini (A2A)' },
   { type: 'qwen', label: 'Qwen' },
   { type: 'opencode', label: 'OpenCode' },
+  { type: 'pi', label: 'Pi' },
 ];
 
 export function AgentsSection() {
@@ -126,6 +127,7 @@ export function AgentsSection() {
       'gemini-a2a': 'settings.agents.gemini_desc',
       qwen: 'settings.agents.qwen_desc',
       opencode: 'settings.agents.opencode_desc',
+      pi: 'settings.agents.pi_desc',
     };
     return t(keyMap[type] ?? 'settings.agents.claude_code_desc');
   };

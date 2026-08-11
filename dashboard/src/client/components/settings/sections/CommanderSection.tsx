@@ -29,6 +29,7 @@ const EXECUTOR_OPTIONS: { value: AgentType; label: string }[] = [
   { value: 'gemini', label: 'Gemini' },
   { value: 'qwen', label: 'Qwen' },
   { value: 'opencode', label: 'OpenCode' },
+  { value: 'pi', label: 'Pi' },
 ];
 
 function NumberField({

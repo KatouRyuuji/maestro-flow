@@ -356,6 +356,7 @@ export const AGENT_DOT_COLORS: Record<AgentType, string> = {
   'agy': 'var(--color-accent-blue)',
   'agent-sdk': 'var(--color-accent-purple)',
   'api-explore': 'var(--color-accent-orange)',
+  'pi': 'var(--color-accent-blue)',
 } as const;
 
 export const AGENT_LABELS: Record<AgentType, string> = {
@@ -369,6 +370,7 @@ export const AGENT_LABELS: Record<AgentType, string> = {
   'agy': 'Antigravity',
   'agent-sdk': 'Agent SDK',
   'api-explore': 'API Explore',
+  'pi': 'Pi',
 } as const;
 
 // ---------------------------------------------------------------------------
