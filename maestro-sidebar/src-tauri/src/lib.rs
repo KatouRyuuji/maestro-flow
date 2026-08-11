@@ -22,6 +22,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 use tauri::Manager;
+use tauri::{WebviewUrl, WebviewWindowBuilder};
 
 use config::AppConfig;
 use snapshot::{RuntimeSnapshot, snapshot_fingerprint, all_projects, resolve_active};
@@ -35,9 +36,27 @@ struct RuntimeStore {
     last_emitted_fingerprint: Option<String>,
 }
 
+/// 独立编辑器窗口的文档 tab
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct EditorTab {
+    pub kind: String,
+    pub id: String,
+    pub title: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct EditorState {
+    pub tabs: Vec<EditorTab>,
+    pub active: i64,
+}
+
 struct AppState {
     config: Mutex<AppConfig>,
     runtime: Mutex<RuntimeStore>,
+    editor: Mutex<EditorState>,
 }
 
 impl Default for RuntimeStore {
@@ -311,6 +330,129 @@ fn get_session_detail(
     None
 }
 
+/// 打开/激活编辑器 tab：读取内容 → 存入 state → 显示编辑器窗口 → 推送刷新事件。
+#[tauri::command]
+fn open_editor_tab(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+    kind: String,
+    id: String,
+) -> Result<(), String> {
+    if !["specs", "memory", "knowhow", "learning", "issues"].contains(&kind.as_str())
+        || !is_safe_id(&id)
+    {
+        return Err("无效的条目标识".into());
+    }
+    // 读取内容
+    let cfg = state.config.lock().unwrap().clone();
+    let projects = active_projects(&cfg);
+    let wf = projects.first().ok_or("无激活工作空间")?;
+    let item = knowledge::read_knowledge_item_content(wf, &kind, &id)
+        .ok_or("条目不存在或不可读")?;
+    let mut editor = state.editor.lock().unwrap();
+    let idx = editor
+        .tabs
+        .iter()
+        .position(|t| t.kind == kind && t.id == id);
+    match idx {
+        Some(i) => {
+            editor.active = i as i64;
+            // 内容可能已变化：刷新
+            editor.tabs[i].content = item.content.clone();
+            editor.tabs[i].title = item.title.clone();
+        }
+        None => {
+            editor.tabs.push(EditorTab {
+                kind: kind.clone(),
+                id: id.clone(),
+                title: item.title,
+                content: item.content,
+            });
+            editor.active = (editor.tabs.len() - 1) as i64;
+        }
+    }
+    drop(editor);
+    // 显示窗口（预创建于 setup，仅 show/focus + 刷新事件）
+    match app.get_webview_window("editor-win") {
+        Some(win) => {
+            eprintln!("[editor] show editor-win ({} tabs)", {
+                let e = state.editor.lock().unwrap();
+                e.tabs.len()
+            });
+            let _ = win.show();
+            let _ = win.set_focus();
+            // 兜底刷新（窗口页若错过 emit 则此处拉取；非 reload，避免历史卡死根因）
+            let _ = win.eval("window.__refreshEditor && window.__refreshEditor()");
+        }
+        None => {
+            eprintln!("[editor] editor-win 不存在！尝试运行时创建");
+            match WebviewWindowBuilder::new(
+                &app,
+                "editor-win",
+                WebviewUrl::App("editor.html".into()),
+            )
+            .title("Maestro Sidebar · 编辑器")
+            .inner_size(820.0, 640.0)
+            .min_inner_size(480.0, 320.0)
+            .build()
+            {
+                Ok(_) => eprintln!("[editor] 运行时创建成功"),
+                Err(e) => eprintln!("[editor] 运行时创建失败: {e}"),
+            }
+        }
+    }
+    let _ = app.emit("editor-updated", ());
+    Ok(())
+}
+
+/// 编辑器窗口拉取全部 tab 状态
+#[tauri::command]
+fn get_editor_state(state: tauri::State<AppState>) -> EditorState {
+    state.editor.lock().unwrap().clone()
+}
+
+/// 关闭编辑器 tab（窗口内）
+#[tauri::command]
+fn close_editor_tab(state: tauri::State<AppState>, index: i64) -> Result<(), String> {
+    let mut editor = state.editor.lock().unwrap();
+    if index < 0 || index >= editor.tabs.len() as i64 {
+        return Err("索引越界".into());
+    }
+    editor.tabs.remove(index as usize);
+    if editor.tabs.is_empty() {
+        editor.active = -1;
+    } else if editor.active >= editor.tabs.len() as i64 {
+        editor.active = (editor.tabs.len() - 1) as i64;
+    }
+    Ok(())
+}
+
+/// 切换编辑器激活 tab（窗口内）
+#[tauri::command]
+fn set_editor_active(state: tauri::State<AppState>, index: i64) -> Result<(), String> {
+    let mut editor = state.editor.lock().unwrap();
+    if index < 0 || index >= editor.tabs.len() as i64 {
+        return Err("索引越界".into());
+    }
+    editor.active = index;
+    Ok(())
+}
+
+/// 编辑器窗口保存后同步内容回 state
+#[tauri::command]
+fn editor_synced(
+    state: tauri::State<AppState>,
+    kind: String,
+    id: String,
+    content: String,
+) -> Result<(), String> {
+    let mut editor = state.editor.lock().unwrap();
+    if let Some(tab) = editor.tabs.iter_mut().find(|t| t.kind == kind && t.id == id) {
+        tab.content = content;
+    }
+    Ok(())
+}
+
 /// 更新知识条目内容（md 覆盖 / jsonl 行替换）
 #[tauri::command]
 fn update_knowledge_item(
@@ -387,6 +529,30 @@ fn get_knowledge_items(state: tauri::State<AppState>) -> Vec<knowledge::Knowledg
             }
         }
     }
+    items
+}
+
+/// 高频知识沉淀：learning 行按使用频次倒序，跨工程合并去重后取前 N 条。
+#[tauri::command]
+fn get_top_knowledge(state: tauri::State<AppState>, limit: Option<u64>) -> Vec<knowledge::KnowledgeEntry> {
+    let cfg = state.config.lock().unwrap().clone();
+    let projects = active_projects(&cfg);
+    let mut seen = std::collections::HashSet::new();
+    let mut items = Vec::new();
+    for wf in projects {
+        for entry in knowledge::scan_top_learning(&wf, 64) {
+            if seen.insert(format!("{}:{}", entry.kind, entry.id)) {
+                items.push(entry);
+            }
+        }
+    }
+    items.sort_by(|a, b| {
+        b.frequency
+            .unwrap_or(0)
+            .cmp(&a.frequency.unwrap_or(0))
+            .then_with(|| a.title.cmp(&b.title))
+    });
+    items.truncate(limit.unwrap_or(5) as usize);
     items
 }
 
@@ -586,7 +752,32 @@ pub fn run() {
             app.manage(AppState {
                 config: Mutex::new(cfg.clone()),
                 runtime: Mutex::new(RuntimeStore::default()),
+                editor: Mutex::new(EditorState {
+                    tabs: Vec::new(),
+                    active: -1,
+                }),
             });
+            // 预创建独立编辑器窗口（隐藏，按需 show）：避免运行时同步建窗阻塞主线程
+            {
+                match WebviewWindowBuilder::new(
+                    app.handle(),
+                    "editor-win",
+                    WebviewUrl::App("editor.html".into()),
+                )
+                .title("Maestro Sidebar · 编辑器")
+                .inner_size(820.0, 640.0)
+                .min_inner_size(480.0, 320.0)
+                .visible(false)
+                .build()
+                {
+                    Ok(w) => {
+                        let _ = w;
+                    }
+                    Err(e) => {
+                        eprintln!("[editor-win] 预创建失败: {e}");
+                    }
+                }
+            }
 
             // 协调器 + watcher + 10s reconcile
             let handle = app.handle().clone();
@@ -611,6 +802,17 @@ pub fn run() {
                     let _ = w.hide();
                 }
             });
+
+            // 编辑器窗口：X = 隐藏（复用，避免运行时重建）
+            if let Some(ewin) = app.get_webview_window("editor-win") {
+                let ew = ewin.clone();
+                ewin.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = ew.hide();
+                    }
+                });
+            }
 
             // 托盘：显示 / 退出
             use tauri::menu::{MenuBuilder, MenuItemBuilder};
@@ -644,10 +846,16 @@ pub fn run() {
             get_session_detail,
             get_call_detail,
             get_knowledge_items,
+            get_top_knowledge,
             get_knowledge_item_content,
             update_knowledge_item,
             delete_knowledge_item,
             create_knowledge_item,
+            open_editor_tab,
+            get_editor_state,
+            close_editor_tab,
+            set_editor_active,
+            editor_synced,
             get_config,
             list_workspaces,
             set_active_root,

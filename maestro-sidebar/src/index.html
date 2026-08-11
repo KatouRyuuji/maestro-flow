@@ -153,19 +153,57 @@
             <h1 class="detail-title" id="detailTitle" tabindex="-1"></h1>
             <span class="detail-kind" id="detailKind"></span>
           </div>
+          <!-- 详情页搜索栏（占位符随视图类型切换） -->
+          <div class="detail-search" id="detailSearchRow" hidden>
+            <svg class="lucide" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-search"/></svg>
+            <input type="search" id="detailSearch" placeholder="搜索…" aria-label="搜索详情内容" autocomplete="off" spellcheck="false" />
+            <button type="button" class="sec-search-clear" id="detailSearchClear" title="清除搜索" aria-label="清除搜索" hidden>×</button>
+            <span class="detail-search-count" id="detailSearchCount" hidden></span>
+          </div>
           <div class="detail-body" id="detailBody" aria-busy="false"></div>
         </div>
 
         <!-- 列表视图 -->
         <div id="listView">
+        <!-- 顶部数据展示：实时运行（Agent/Session）+ 高频知识沉淀 -->
+        <section class="overview" id="overview" aria-label="运行概览">
+          <div class="ov-card" id="ovRunning">
+            <button type="button" class="ov-head" id="ovRunningHead" title="点击查看全部会话" aria-label="查看全部会话">
+              <span class="ov-ic"><svg class="lucide" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-activity"/></svg></span>
+              <span class="ov-t">实时运行</span>
+              <span class="ov-count" id="ovRunningCount">0</span>
+            </button>
+            <div class="ov-body" id="ovRunningBody"></div>
+          </div>
+          <div class="ov-card" id="ovTopKb">
+            <button type="button" class="ov-head" id="ovTopKbHead" title="查看高频知识条目" aria-label="查看高频知识条目">
+              <span class="ov-ic"><svg class="lucide" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-trend"/></svg></span>
+              <span class="ov-t">高频知识</span>
+              <span class="ov-count" id="ovTopKbCount">0</span>
+            </button>
+            <div class="ov-body" id="ovTopKbBody"></div>
+          </div>
+        </section>
+
         <!-- 区块 1：Agent 调用 -->
         <section class="sec" id="secCalls">
-          <button type="button" class="sh" id="headCalls" data-sec="secCalls" aria-expanded="true" aria-controls="callsBody">
-            <span class="chev"><svg class="lucide" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-chevron"/></svg></span>
-            <span class="sh-ic"><svg class="lucide" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-activity"/></svg></span>
-            <span class="sh-t">Agent 调用</span><span class="pill" id="callsCount">0</span>
-          </button>
+          <div class="sh-row">
+            <button type="button" class="sh" id="headCalls" data-sec="secCalls" aria-expanded="true" aria-controls="callsBody">
+              <span class="chev"><svg class="lucide" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-chevron"/></svg></span>
+              <span class="sh-ic"><svg class="lucide" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-activity"/></svg></span>
+              <span class="sh-t">Agent 调用</span><span class="pill" id="callsCount">0</span>
+            </button>
+            <button type="button" class="sh-go" id="goCalls" title="进入全部 Agent 调用详情" aria-label="进入全部 Agent 调用详情">
+              <svg class="lucide" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-list"/></svg>
+              <span>详情</span>
+            </button>
+          </div>
           <div class="sb" id="callsBody"><div class="sbi">
+            <div class="sec-search">
+              <svg class="lucide" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-search"/></svg>
+              <input type="search" id="callsSearch" placeholder="搜索 Agent 调用（提示词 / 模型 / 工具）" aria-label="搜索 Agent 调用" autocomplete="off" spellcheck="false" />
+              <button type="button" class="sec-search-clear" id="callsSearchClear" title="清除搜索" aria-label="清除搜索" hidden>×</button>
+            </div>
             <div class="rows" id="callsList"></div>
             <div class="empty" id="callsEmpty" hidden>暂无 Agent 调用</div>
             <div class="sec-f" id="callsFoot" hidden></div>
@@ -174,12 +212,23 @@
 
         <!-- 区块 2：Session · Run -->
         <section class="sec" id="secSess">
-          <button type="button" class="sh" id="headSessions" data-sec="secSess" aria-expanded="true" aria-controls="sessionsBody">
-            <span class="chev"><svg class="lucide" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-chevron"/></svg></span>
-            <span class="sh-ic"><svg class="lucide" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-session"/></svg></span>
-            <span class="sh-t">Session · Run</span><span class="pill" id="sessionsCount">0</span>
-          </button>
+          <div class="sh-row">
+            <button type="button" class="sh" id="headSessions" data-sec="secSess" aria-expanded="true" aria-controls="sessionsBody">
+              <span class="chev"><svg class="lucide" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-chevron"/></svg></span>
+              <span class="sh-ic"><svg class="lucide" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-session"/></svg></span>
+              <span class="sh-t">Session · Run</span><span class="pill" id="sessionsCount">0</span>
+            </button>
+            <button type="button" class="sh-go" id="goSessions" title="进入全部会话详情" aria-label="进入全部会话详情">
+              <svg class="lucide" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-list"/></svg>
+              <span>详情</span>
+            </button>
+          </div>
           <div class="sb" id="sessionsBody"><div class="sbi">
+            <div class="sec-search">
+              <svg class="lucide" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-search"/></svg>
+              <input type="search" id="sessionsSearch" placeholder="搜索会话（ID / 意图 / Run）" aria-label="搜索会话" autocomplete="off" spellcheck="false" />
+              <button type="button" class="sec-search-clear" id="sessionsSearchClear" title="清除搜索" aria-label="清除搜索" hidden>×</button>
+            </div>
             <div class="rows" id="sessionsList"></div>
             <div class="empty" id="sessionsEmpty" hidden>暂无会话</div>
             <div class="sec-f" id="sessionsFoot" hidden></div>
@@ -188,34 +237,28 @@
 
         <!-- 区块 3：知识积累 -->
         <section class="sec" id="secKb">
-          <button type="button" class="sh" id="headKnowledge" data-sec="secKb" aria-expanded="true" aria-controls="knowledgeBody">
-            <span class="chev"><svg class="lucide" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-chevron"/></svg></span>
-            <span class="sh-ic"><svg class="lucide" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-book"/></svg></span>
-            <span class="sh-t">知识积累</span><span class="pill" id="knowledgeTotal">0</span>
-          </button>
-          <div class="sb" id="knowledgeBody"><div class="sbi" id="kbBody"></div></div>
+          <div class="sh-row">
+            <button type="button" class="sh" id="headKnowledge" data-sec="secKb" aria-expanded="true" aria-controls="knowledgeBody">
+              <span class="chev"><svg class="lucide" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-chevron"/></svg></span>
+              <span class="sh-ic"><svg class="lucide" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-book"/></svg></span>
+              <span class="sh-t">知识积累</span><span class="pill" id="knowledgeTotal">0</span>
+            </button>
+            <button type="button" class="sh-go" id="goKnowledge" title="进入知识条目详情" aria-label="进入知识条目详情">
+              <svg class="lucide" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-list"/></svg>
+              <span>详情</span>
+            </button>
+          </div>
+          <div class="sb" id="knowledgeBody"><div class="sbi">
+            <div class="sec-search">
+              <svg class="lucide" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-search"/></svg>
+              <input type="search" id="knowledgeSearch" placeholder="搜索知识条目（标题 / ID / 标签）" aria-label="搜索知识条目" autocomplete="off" spellcheck="false" />
+              <button type="button" class="sec-search-clear" id="knowledgeSearchClear" title="清除搜索" aria-label="清除搜索" hidden>×</button>
+            </div>
+            <div id="kbBody"></div>
+          </div></div>
         </section>
         </div>
       </main>
-
-      <!-- 多 tab 文本编辑器（与 bar 等高紧贴，右栏展开） -->
-      <div class="editor" id="editor" hidden>
-        <div class="editor-tabs" id="edTabs" role="tablist" aria-label="打开的文档"></div>
-        <div class="editor-toolbar" id="edToolbar">
-          <button type="button" class="retry-btn primary" id="edSave" disabled>保存</button>
-          <button type="button" class="retry-btn" id="edPreview">预览</button>
-          <button type="button" class="retry-btn" id="edCopy">复制 ID</button>
-          <button type="button" class="retry-btn" id="edDelete">删除</button>
-          <span class="ed-dirty" id="edDirty"></span>
-          <span class="ed-spacer"></span>
-          <span class="ed-meta" id="edMeta"></span>
-          <button type="button" class="retry-btn" id="edClose" title="收起编辑器（恢复窄窗）">收起 ▸</button>
-        </div>
-        <div class="editor-body">
-          <textarea id="edContent" spellcheck="false" aria-label="条目内容（Markdown / JSON）"></textarea>
-          <div class="editor-preview" id="edPreview" hidden></div>
-        </div>
-      </div>
 
       <div id="fade" aria-hidden="true"></div>
 
@@ -225,14 +268,21 @@
         <span class="sb-status" id="liveStatus" role="status" aria-live="polite">实时监听</span>
         <span class="sb-time clk" id="clk">--:--:--</span>
         <span class="sb-spacer"></span>
-        <button type="button" class="sb-ws" id="btnWs" title="点击切换工作空间" aria-label="切换工作空间">
+        <button type="button" class="sb-ws" id="btnWs" title="选择工作空间" aria-label="选择工作空间" aria-expanded="false" aria-controls="wsPop">
           <span class="sb-ws-dot" aria-hidden="true">◆</span>
           <span class="sb-ws-name" id="wsName">—</span>
           <span class="sb-ws-chev" aria-hidden="true">▾</span>
         </button>
       </footer>
+
+      <!-- 工作空间选择弹层 -->
+      <div class="ws-pop" id="wsPop" hidden>
+        <div class="ws-pop-title">选择工作空间</div>
+        <div id="wsList" role="listbox" aria-label="工作空间列表"></div>
+      </div>
     </article>
   </div>
+
 </div>
 </body>
 <!-- 启动错误显示（调试用） -->

@@ -6,7 +6,8 @@ use std::time::Duration;
 
 const REDISCOVER: Duration = Duration::from_secs(60);
 
-/// 事件是否与可见状态相关（state.json / session.json / run.json / *.meta.json）
+/// 事件是否与可见状态相关。JSONL carries live agent deltas, while the
+/// coordinator's 250ms trailing debounce coalesces bursty writes.
 fn is_relevant(path: &Path) -> bool {
     let name = path
         .file_name()
@@ -16,6 +17,7 @@ fn is_relevant(path: &Path) -> bool {
         || name == "session.json"
         || name == "run.json"
         || name.ends_with(".meta.json")
+        || name.ends_with(".jsonl")
 }
 
 /// 期望的监听集合：(路径, 是否递归)。.workflow 目录递归，cli-history 非递归。
@@ -77,7 +79,6 @@ pub fn spawn_watcher(request: mpsc::Sender<()>) {
 
             // 等待事件或 rediscover 超时
             let deadline = std::time::Instant::now() + REDISCOVER;
-            let mut relevant = false;
             loop {
                 let remaining = deadline.saturating_duration_since(std::time::Instant::now());
                 if remaining.is_zero() {
@@ -92,16 +93,26 @@ pub fn spawn_watcher(request: mpsc::Sender<()>) {
                                 | notify::EventKind::Remove(_)
                         );
                         if kind && event.paths.iter().any(|p| is_relevant(p)) {
-                            relevant = true;
+                            // Signal immediately; RuntimeCoordinator owns burst debouncing.
+                            let _ = request.send(());
                         }
                     }
                     Err(mpsc::RecvTimeoutError::Timeout) => break,
                     Err(mpsc::RecvTimeoutError::Disconnected) => return,
                 }
             }
-            if relevant {
-                let _ = request.send(());
-            }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn jsonl_stream_writes_are_relevant() {
+        assert!(is_relevant(Path::new("pi-123.jsonl")));
+        assert!(is_relevant(Path::new("pi-123.meta.json")));
+        assert!(!is_relevant(Path::new("notes.txt")));
+    }
 }

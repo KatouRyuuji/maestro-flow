@@ -57,6 +57,16 @@ const CALLS_LIMIT = 8;
 const SESSIONS_LIMIT = 8;
 let callsExpanded = false;
 let sessionsListExpanded = false;
+let liveCallRefreshTimer = null;
+
+// 搜索：区块列表搜索（主视图）+ 详情页搜索
+const listSearch = { calls: '', sessions: '', knowledge: '' };
+let detailSearch = '';
+// 高频知识缓存（30s TTL）
+let topKbCache = { ts: 0, items: null };
+const TOP_KB_TTL = 30 * 1000;
+const TOP_KB_LIMIT = 5;
+let kbItemsPromise = null; // 知识条目全量缓存（详情页 / 区块搜索共用）
 
 const TOOL_COLORS = {
   'claude-code': '#e08a57',
@@ -65,6 +75,9 @@ const TOOL_COLORS = {
   'gemini': 'var(--ok)',
   'qwen': 'var(--warn)',
   'opencode': 'var(--accent)',
+  'pi': 'var(--info)',
+  'agy': 'var(--info)',
+  'api-explore': 'var(--warn)',
 };
 const TOOL_LABEL = {
   'claude-code': 'Claude',
@@ -73,6 +86,9 @@ const TOOL_LABEL = {
   'gemini': 'Gemini',
   'qwen': 'Qwen',
   'opencode': 'OpenCode',
+  'pi': 'Pi',
+  'agy': 'Antigravity',
+  'api-explore': 'API Explore',
 };
 const VERDICT_COLOR = {
   ready: 'var(--ok)', done: 'var(--ok)',
@@ -156,6 +172,7 @@ async function init() {
     await listen('snapshot-changed', (event) => {
       snapshot = event.payload;
       cacheSnapshot(snapshot);
+      scheduleLiveCallDetailRefresh();
       if (!$('menuPop').hidden) return;
       $('liveStatus').textContent = '实时监听';
       renderWithFocus();
@@ -173,6 +190,7 @@ async function init() {
       if (JSON.stringify(s) !== JSON.stringify(snapshot)) {
         snapshot = s;
         cacheSnapshot(snapshot);
+        scheduleLiveCallDetailRefresh();
         if (!$('menuPop').hidden) return;
         renderWithFocus();
       }
@@ -190,6 +208,28 @@ function renderWithFocus() {
   requestAnimationFrame(() => {
     if (focused && focused.isConnected) focused.focus();
   });
+}
+
+/** Refresh an open call without replacing the detail view with a skeleton. */
+function scheduleLiveCallDetailRefresh() {
+  if (view?.kind !== 'call') return;
+  const call = (snapshot?.calls || []).find((item) => item.execId === view.id);
+  if (!call) return;
+  clearTimeout(liveCallRefreshTimer);
+  liveCallRefreshTimer = setTimeout(async () => {
+    const id = view?.kind === 'call' ? view.id : null;
+    if (!id) return;
+    try {
+      const result = await invoke('get_call_detail', { execId: id });
+      if (!result || view?.kind !== 'call' || view.id !== id) return;
+      detail = result;
+      detailStatus = 'ready';
+      detailCache[`call::${id}`] = result;
+      renderWithFocus();
+    } catch {
+      // Keep the last good frame; the next JSONL write or fallback poll retries.
+    }
+  }, 180);
 }
 
 /** 快照写入 localStorage 缓存（冷启动秒开用） */
@@ -235,6 +275,62 @@ function bindEvents() {
     if (localStorage.getItem(`panel-${id}`) === 'false') applyExpanded(false);
   }
 
+  // 区块头部「详情」按钮 → 全部列表详情视图
+  $('goCalls').addEventListener('click', () => openDetail('calls', 'all'));
+  $('goSessions').addEventListener('click', () => openDetail('sessions', 'all'));
+  $('goKnowledge').addEventListener('click', () => openDetail('knowledge', 'all'));
+  // 顶部概览卡头部
+  $('ovRunningHead').addEventListener('click', () => openDetail('sessions', 'all'));
+  $('ovTopKbHead').addEventListener('click', () => openDetail('knowledge', 'all'));
+
+  // 区块搜索框（输入即过滤；Esc/清除按钮复位）
+  for (const name of ['calls', 'sessions', 'knowledge']) {
+    const input = $(`${name}Search`);
+    const clear = $(`${name}SearchClear`);
+    input.addEventListener('input', () => {
+      listSearch[name] = input.value.trim();
+      clear.hidden = !input.value;
+      render();
+      fitWindow();
+      scheduleFade();
+    });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && input.value) {
+        e.stopPropagation();
+        input.value = '';
+        listSearch[name] = '';
+        clear.hidden = true;
+        render();
+        fitWindow();
+      }
+    });
+    clear.addEventListener('click', () => {
+      input.value = '';
+      listSearch[name] = '';
+      clear.hidden = true;
+      input.focus();
+      render();
+      fitWindow();
+    });
+  }
+
+  // 详情页搜索栏
+  $('detailSearch').addEventListener('input', onDetailSearchInput);
+  $('detailSearchClear').addEventListener('click', () => {
+    $('detailSearch').value = '';
+    onDetailSearchInput();
+    $('detailSearch').focus();
+  });
+  // 快捷键：列表视图下按 / 聚焦第一个区块搜索框
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== '/' || view || e.ctrlKey || e.metaKey || e.altKey) return;
+    const tag = document.activeElement && document.activeElement.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    e.preventDefault();
+    const first = document.querySelector('#listView .sec-search input');
+    if (first && !first.closest('.sec').classList.contains('closed')) first.focus();
+  });
+
   // 底部渐隐与时钟
   $('content').addEventListener('scroll', updateFade);
   const tickClock = () => { $('clk').textContent = new Date().toLocaleTimeString('zh-CN', { hour12: false }); };
@@ -252,6 +348,9 @@ function bindEvents() {
       snapshot = await invoke('get_snapshot');
       cacheSnapshot(snapshot);
       renderWithFocus();
+      // 高频知识同步强刷
+      await loadTopKnowledge(true);
+      if (!view) renderOverview();
       $('liveStatus').textContent = `已更新 ${fmtClock2(new Date().toISOString())}`;
     } catch (err) {
       $('liveStatus').textContent = `刷新失败${err && err.message ? ' · ' + err.message : ''}`;
@@ -291,9 +390,6 @@ function bindEvents() {
     toggleMenu(false);
     await invoke('set_window_mode', { mode: 'capsule' });
     document.body.dataset.mode = 'capsule';
-    // 胶囊形态无编辑器面板
-    document.body.classList.remove('editor-on');
-    $('editor').hidden = true;
     $('card').hidden = true;
     $('capsule').hidden = false;
     $('capsule').classList.add('mode-enter');
@@ -322,36 +418,20 @@ function bindEvents() {
       btn.disabled = false;
     }
   });
-  // 底部工作空间切换按钮 + 胶囊工程 chip（循环切换）
-  $('btnWs').addEventListener('click', cycleWorkspace);
+  // 底部工作空间选择按钮（弹层选择）+ 胶囊工程 chip（循环切换）
+  $('btnWs').addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleWsPop();
+  });
   $('capWs').addEventListener('click', cycleWorkspace);
-
-  // 多 tab 编辑器
-  $('edSave').addEventListener('click', saveEditorTab);
-  $('edPreview').addEventListener('click', () => {
-    const t = edTab();
-    if (t) { t.preview = !t.preview; renderEditorUI(); }
-  });
-  $('edCopy').addEventListener('click', async () => {
-    const t = edTab();
-    if (!t) return;
-    try {
-      await navigator.clipboard.writeText(t.id);
-      $('liveStatus').textContent = `已复制 ${t.id}`;
-    } catch { /* 剪贴板不可用 */ }
-  });
-  $('edDelete').addEventListener('click', deleteEditorTab);
-  $('edClose').addEventListener('click', () => closeEditorTab(activeEd, true));
-  $('edContent').addEventListener('input', () => {
-    const t = edTab();
-    if (t) { t.dirty = true; $('edDirty').textContent = '未保存'; }
-  });
-  document.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's' && !$('editor').hidden) {
-      e.preventDefault();
-      saveEditorTab();
+  // 点击外部关闭选择弹层
+  document.addEventListener('click', (e) => {
+    if (!$('wsPop').hidden && !e.target.closest('#wsPop') && e.target.id !== 'btnWs') {
+      toggleWsPop(false);
     }
   });
+
+
 
   $('btnCapMenu').addEventListener('click', async (e) => {
     e.stopPropagation();
@@ -456,6 +536,23 @@ function bindEvents() {
     if (event.key === 'Escape') {
       if (!$('menuPop').hidden) {
         toggleMenu(false);
+      } else if (!view && (listSearch.calls || listSearch.sessions || listSearch.knowledge)) {
+        // 主视图：Esc 逐层清除区块搜索
+        for (const name of ['calls', 'sessions', 'knowledge']) {
+          if (listSearch[name]) {
+            const input = $(`${name}Search`);
+            input.value = '';
+            listSearch[name] = '';
+            $(`${name}SearchClear`).hidden = true;
+            render();
+            fitWindow();
+            return;
+          }
+        }
+      } else if (view && $('detailSearch').value) {
+        // 详情页：先清除搜索，再返回
+        $('detailSearch').value = '';
+        onDetailSearchInput();
       } else if (view) {
         closeDetail();
       }
@@ -637,7 +734,49 @@ async function refreshWorkspaces() {
   capWs.title = active ? `当前：${name} · 点击切换` : '点击切换工作空间';
 }
 
-/** 切换到下一个工作空间（底部按钮 / 胶囊 chip 循环） */
+/** 工作空间选择弹层开关 */
+function toggleWsPop(open) {
+  const pop = $('wsPop');
+  const show = open !== undefined ? open : pop.hidden;
+  pop.hidden = !show;
+  $('btnWs').setAttribute('aria-expanded', String(show));
+  if (show) renderWorkspacePop();
+}
+
+/** 渲染工作空间选择列表（当前项 ✓ 且置顶） */
+function renderWorkspacePop() {
+  const list = $('wsList');
+  list.innerHTML = '';
+  const order = [...workspaces].sort((a, b) => (b.active ? 1 : 0) - (a.active ? 1 : 0));
+  for (const ws of order) {
+    const row = el('button', `ws-item${ws.active ? ' active' : ''}`);
+    row.type = 'button';
+    row.setAttribute('role', 'option');
+    row.setAttribute('aria-selected', String(ws.active));
+    row.appendChild(el('span', 'ws-item-name', ws.name));
+    row.appendChild(el('span', 'ws-item-path', ws.path));
+    row.appendChild(el('span', 'ws-item-src', ws.source === 'root' ? '根' : '自动'));
+    row.appendChild(el('span', 'ws-item-mark', ws.active ? '✓' : ''));
+    row.addEventListener('click', async () => {
+      if (ws.active) { toggleWsPop(false); return; }
+      try {
+        await invoke('set_active_root', { path: ws.path });
+        config = await invoke('get_config');
+        snapshot = await invoke('get_snapshot');
+        render();
+        await refreshWorkspaces();
+        toggleWsPop(false);
+        $('liveStatus').textContent = `已切换：${ws.name}`;
+        fitWindow();
+      } catch {
+        $('liveStatus').textContent = '切换失败';
+      }
+    });
+    list.appendChild(row);
+  }
+}
+
+/** 切换到下一个工作空间（胶囊 chip 循环） */
 async function cycleWorkspace() {
   if (workspaces.length < 2) {
     $('liveStatus').textContent = workspaces.length === 1 ? '仅一个工作空间' : '无可用工作空间';
@@ -672,6 +811,8 @@ function render() {
     $('listView').hidden = true;
     $('detailView').hidden = false;
     if (view.kind === 'call') renderCallDetail();
+    else if (view.kind === 'calls') renderCallsListDetail();
+    else if (view.kind === 'sessions') renderSessionsListDetail();
     else if (view.kind === 'knowledge') renderKnowledgeDetail();
     else if (view.kind === 'knowledge-item') renderKnowledgeItemDetail();
     else renderSessionDetail();
@@ -681,10 +822,223 @@ function render() {
     renderCalls();
     renderSessions();
     renderKnowledge();
+    renderOverview();
   }
+  updateDetailSearchUI();
   renderCapsule();
   fitWindow();
   scheduleFade();
+}
+
+// ---------------------------------------------------------------------------
+// 搜索 & 顶部概览
+// ---------------------------------------------------------------------------
+
+/** 关键词高亮：命中片段包 <mark>（不转义，直接按原文切分） */
+function highlightText(text, q) {
+  const t = String(text == null ? '' : text);
+  if (!q) return document.createTextNode(t);
+  const lower = t.toLowerCase();
+  const frag = document.createDocumentFragment();
+  let i = 0;
+  for (;;) {
+    const idx = lower.indexOf(q, i);
+    if (idx < 0) {
+      frag.appendChild(document.createTextNode(t.slice(i)));
+      break;
+    }
+    if (idx > i) frag.appendChild(document.createTextNode(t.slice(i, idx)));
+    const mark = document.createElement('mark');
+    mark.textContent = t.slice(idx, idx + q.length);
+    frag.appendChild(mark);
+    i = idx + q.length;
+  }
+  return frag;
+}
+
+/** 详情搜索命中计数（无搜索时隐藏） */
+function setSearchCount(matched, total) {
+  const el0 = $('detailSearchCount');
+  if (!detailSearch) {
+    el0.hidden = true;
+    return;
+  }
+  el0.hidden = false;
+  el0.textContent = `${matched} / ${total}`;
+}
+
+function emptySearchResult(text) {
+  const d = el('div', 'detail-empty');
+  d.appendChild(el('div', '', text || '未找到匹配内容'));
+  d.appendChild(el('div', 'empty-hint', '换个关键词试试，或清除搜索'));
+  return d;
+}
+
+/** 调用匹配：提示词 / 模型 / 工具 / execId / 模式 / 目录 */
+function matchCall(c, q) {
+  if (!q) return true;
+  return [c.prompt, c.lastOutputPreview, c.model, c.tool, c.execId, c.mode, c.workDir]
+    .filter(Boolean)
+    .some((v) => String(v).toLowerCase().includes(q));
+}
+
+/** 会话匹配：ID / 意图 / 工程 / 状态 / 最新 Run */
+function matchSession(s, q) {
+  if (!q) return true;
+  const run = s.latest_run || {};
+  const hay = [s.session_id, s.intent, s.project, s.status, run.command, run.verdict, run.status, run.run_id, run.handoff_summary]
+    .filter(Boolean)
+    .some((v) => String(v).toLowerCase().includes(q));
+  return hay;
+}
+
+/** Run 匹配：序号 / 命令 / run_id / verdict / 交接 / 决策 / 疑虑 / 门禁 */
+function runMatches(run, q) {
+  if (!q) return true;
+  const parts = [
+    run.sequence, run.command, run.platform, run.run_id, run.verdict, run.status,
+    run.handoff_summary, (run.decisions || []).join(' '), (run.concerns || []).join(' '),
+    (run.gate_ids || []).join(' '),
+  ];
+  return parts.filter(Boolean).some((v) => String(v).toLowerCase().includes(q));
+}
+
+/** 知识条目匹配：标题 / ID / 摘要 / 标签 / 状态 */
+function matchKbItem(item, q) {
+  if (!q) return true;
+  return [item.title, item.id, item.summary, item.status, (item.tags || []).join(' ')]
+    .filter(Boolean)
+    .some((v) => String(v).toLowerCase().includes(q));
+}
+
+/** 知识条目全量缓存（详情页与区块搜索共用一次拉取） */
+function getKbItems(force) {
+  if (force || !kbItemsPromise) {
+    kbItemsPromise = invoke('get_knowledge_items')
+      .then((items) => (Array.isArray(items) ? items : []))
+      .catch(() => []);
+  }
+  return kbItemsPromise;
+}
+
+/** 高频知识：30s TTL 缓存，force 强制刷新 */
+async function loadTopKnowledge(force = false) {
+  if (!force && topKbCache.items && Date.now() - topKbCache.ts < TOP_KB_TTL) {
+    return topKbCache.items;
+  }
+  try {
+    const items = await invoke('get_top_knowledge', { limit: TOP_KB_LIMIT });
+    topKbCache = { ts: Date.now(), items: Array.isArray(items) ? items : [] };
+  } catch {
+    if (!topKbCache.items) topKbCache = { ts: Date.now(), items: [] };
+  }
+  return topKbCache.items;
+}
+
+/** 顶部概览条：实时运行（Agent/会话）+ 高频知识沉淀 */
+async function renderOverview() {
+  if (view) return;
+  const sessions = snapshot.sessions || [];
+  const runningSessions = sessions.filter((s) =>
+    ['running', 'active', 'executing'].includes(String(s.status || '').toLowerCase()),
+  );
+  const calls = snapshot.calls || [];
+  const runningCalls = calls.filter((c) => callStatus(c) === 'running');
+  $('ovRunningCount').textContent = String(runningSessions.length + runningCalls.length);
+  const rBody = $('ovRunningBody');
+  rBody.innerHTML = '';
+  if (!runningSessions.length && !runningCalls.length) {
+    rBody.appendChild(el('div', 'ov-empty', '当前无运行中的 Agent / 会话'));
+  } else {
+    for (const s of runningSessions.slice(0, 2)) {
+      const row = el('button', 'ov-row');
+      row.type = 'button';
+      row.title = `打开会话 ${s.session_id}`;
+      const dot = el('span', 'dot pulse');
+      dot.style.setProperty('--c', 'var(--ok)');
+      row.appendChild(dot);
+      const txt = el('div', 'ov-row-t');
+      txt.appendChild(el('span', 'ov-row-a', '会话'));
+      txt.appendChild(el('span', 'ov-row-b', oneLine(s.intent) || s.session_id));
+      row.appendChild(txt);
+      row.addEventListener('click', () => openDetail('session', s.session_id, row));
+      rBody.appendChild(row);
+    }
+    for (const c of runningCalls.slice(0, 2)) {
+      const row = el('button', 'ov-row');
+      row.type = 'button';
+      row.title = `打开调用 ${c.execId}`;
+      const dot = el('span', 'dot pulse');
+      dot.style.setProperty('--c', TOOL_COLORS[c.tool] || 'var(--ok)');
+      row.appendChild(dot);
+      const txt = el('div', 'ov-row-t');
+      txt.appendChild(el('span', 'ov-row-a', TOOL_LABEL[c.tool] || c.tool || 'Agent'));
+      txt.appendChild(el('span', 'ov-row-b', oneLine(c.prompt) || '无提示词'));
+      row.appendChild(txt);
+      row.addEventListener('click', () => openDetail('call', c.execId, row));
+      rBody.appendChild(row);
+    }
+  }
+  // 高频知识沉淀
+  const kb = await loadTopKnowledge();
+  if (view) return; // 等待期间已切换视图
+  $('ovTopKbCount').textContent = String(kb.length);
+  const kbBody = $('ovTopKbBody');
+  kbBody.innerHTML = '';
+  if (!kb.length) {
+    kbBody.appendChild(el('div', 'ov-empty', '暂无高频知识沉淀'));
+  } else {
+    for (const item of kb) {
+      const row = el('button', 'ov-row');
+      row.type = 'button';
+      row.title = `打开知识条目 ${item.id}（使用 ${item.frequency} 次）`;
+      const dot = el('span', 'lg-dot');
+      dot.style.setProperty('--c', 'var(--accent)');
+      row.appendChild(dot);
+      const txt = el('div', 'ov-row-t');
+      txt.appendChild(el('span', 'ov-row-a', item.title || item.id));
+      txt.appendChild(el('span', 'ov-row-b', item.summary ? oneLine(item.summary) : `使用 ${item.frequency} 次`));
+      row.appendChild(txt);
+      const freq = el('span', 'ov-freq', `×${item.frequency ?? '—'}`);
+      freq.title = `调用频次 ${item.frequency}`;
+      row.appendChild(freq);
+      row.addEventListener('click', () => openDetail('knowledge-item', `${item.kind}::${item.id}`, row));
+      kbBody.appendChild(row);
+    }
+  }
+}
+
+/** 详情搜索输入：仅重渲染详情正文（保留标题/滚动位置） */
+function onDetailSearchInput() {
+  const input = $('detailSearch');
+  detailSearch = input.value.trim().toLowerCase();
+  $('detailSearchClear').hidden = !input.value;
+  if (!view) return;
+  if (view.kind === 'call') renderCallDetail();
+  else if (view.kind === 'calls') renderCallsListDetail();
+  else if (view.kind === 'session') renderSessionDetail();
+  else if (view.kind === 'sessions') renderSessionsListDetail();
+  else if (view.kind === 'knowledge') renderKnowledgeDetail();
+  else renderKnowledgeItemDetail();
+  scheduleFade();
+}
+
+/** 详情搜索栏可见性 + 占位符随视图类型切换 */
+function updateDetailSearchUI() {
+  const row = $('detailSearchRow');
+  const input = $('detailSearch');
+  row.hidden = !view;
+  if (!view) return;
+  const ph = {
+    call: '搜索对话 / 提示词…',
+    calls: '搜索 Agent 调用…',
+    session: '搜索 Run / 编排步骤…',
+    sessions: '搜索会话 / Run…',
+    knowledge: '搜索知识条目…',
+    'knowledge-item': '搜索全文…',
+  };
+  input.placeholder = ph[view.kind] || '搜索…';
+  $('detailSearchCount').hidden = !detailSearch;
 }
 
 // ---------------------------------------------------------------------------
@@ -692,13 +1046,16 @@ function render() {
 // ---------------------------------------------------------------------------
 
 function renderCalls() {
-  const calls = snapshot.calls || [];
-  $('callsCount').textContent = String(calls.length);
-  $('callsEmpty').hidden = calls.length > 0;
+  const all = snapshot.calls || [];
+  const q = listSearch.calls;
+  const calls = q ? all.filter((c) => matchCall(c, q)) : all;
+  $('callsCount').textContent = q ? `${calls.length}/${all.length}` : String(all.length);
+  const searching = Boolean(q);
+  $('callsEmpty').hidden = all.length > 0 && !(searching && !calls.length);
   // Section 头状态 chip：运行中调用数
   let meta = $('headCalls').querySelector('.sh-meta');
   if (meta) meta.remove();
-  const runningCount = calls.filter((c) => callStatus(c) === 'running').length;
+  const runningCount = all.filter((c) => callStatus(c) === 'running').length;
   if (runningCount > 0) {
     meta = el('span', 'sh-meta');
     const hm = el('span', 'hm run');
@@ -707,37 +1064,13 @@ function renderCalls() {
     hm.appendChild(dot);
     hm.appendChild(document.createTextNode(`运行 ${runningCount}`));
     meta.appendChild(hm);
-    $('headCalls').appendChild(meta);
+    $('headCalls').insertBefore(meta, $('callsCount'));
   }
   const list = $('callsList');
   list.innerHTML = '';
-  const visibleCalls = callsExpanded ? calls : calls.slice(0, CALLS_LIMIT);
-  for (const call of visibleCalls) {
-    const running = callStatus(call) === 'running';
-    const item = el('button', 'row');
-    item.type = 'button';
-    item.title = oneLine(call.prompt) || '调用';
-    item.setAttribute('aria-label', `${TOOL_LABEL[call.tool] || call.tool || 'Agent'}：${oneLine(call.prompt) || '无提示词'}，${callStatusLabel(call)}`);
-    const dot = el('span', `dot${running ? ' pulse' : ''}`);
-    dot.style.setProperty('--c', TOOL_COLORS[call.tool] || 'var(--text-dim)');
-    item.appendChild(dot);
-
-    const rb = el('div', 'rb');
-    const rl = el('div', 'rl');
-    rl.appendChild(el('span', 'tool-n', TOOL_LABEL[call.tool] || call.tool || 'Agent'));
-    if (call.model) rl.appendChild(el('span', 'model', call.model));
-    const rc = el('span', 'rc');
-    rc.appendChild(el('span', 'rt', fmtAgo(call.startedAt)));
-    rc.appendChild(el('span', `bd ${callStatusClass(call)}`, callStatusLabel(call)));
-    rl.appendChild(rc);
-    rb.appendChild(rl);
-    rb.appendChild(el('div', 'rp', oneLine(call.prompt) || '（无提示词）'));
-    item.appendChild(rb);
-
-    item.addEventListener('click', () => openDetail('call', call.execId, item));
-    list.appendChild(item);
-  }
-  if (!calls.length) {
+  const visibleCalls = searching || callsExpanded ? calls : calls.slice(0, CALLS_LIMIT);
+  for (const call of visibleCalls) list.appendChild(callRowEl(call, q));
+  if (!all.length) {
     const empty = $('callsEmpty');
     empty.innerHTML = '';
     const ic = el('div', 'empty-ic');
@@ -745,10 +1078,18 @@ function renderCalls() {
     empty.appendChild(ic);
     empty.appendChild(el('div', '', '暂无 Agent 调用'));
     empty.appendChild(el('div', 'empty-hint', '运行一个 Agent，这里就会亮起来'));
+  } else if (searching && !calls.length) {
+    const empty = $('callsEmpty');
+    empty.innerHTML = '';
+    const ic = el('div', 'empty-ic');
+    ic.appendChild(svg('i-search', 18));
+    empty.appendChild(ic);
+    empty.appendChild(el('div', '', `未找到匹配的调用`));
+    empty.appendChild(el('div', 'empty-hint', '换个关键词试试（提示词 / 模型 / 工具）'));
   }
   const foot = $('callsFoot');
   foot.innerHTML = '';
-  if (calls.length > CALLS_LIMIT) {
+  if (calls.length > CALLS_LIMIT && !searching) {
     foot.hidden = false;
     const expand = el('button', 'expand-btn', callsExpanded ? '收起 ↑' : `展开全部 ${calls.length} 条 ↓`);
     expand.type = 'button';
@@ -767,6 +1108,42 @@ function renderCalls() {
   }
 }
 
+/** 单条调用行（列表视图与「全部调用」详情视图共用） */
+function callRowEl(call, q) {
+  const running = callStatus(call) === 'running';
+  const item = el('button', 'row');
+  item.type = 'button';
+  item.title = oneLine(call.prompt) || '调用';
+  item.setAttribute('aria-label', `${TOOL_LABEL[call.tool] || call.tool || 'Agent'}：${oneLine(call.prompt) || '无提示词'}，${callStatusLabel(call)}`);
+  const dot = el('span', `dot${running ? ' pulse' : ''}`);
+  dot.style.setProperty('--c', TOOL_COLORS[call.tool] || 'var(--text-dim)');
+  item.appendChild(dot);
+
+  const rb = el('div', 'rb');
+  const rl = el('div', 'rl');
+  const toolN = el('span', 'tool-n');
+  toolN.appendChild(highlightText(TOOL_LABEL[call.tool] || call.tool || 'Agent', q));
+  rl.appendChild(toolN);
+  if (call.model) {
+    const m = el('span', 'model');
+    m.appendChild(highlightText(call.model, q));
+    rl.appendChild(m);
+  }
+  const rc = el('span', 'rc');
+  rc.appendChild(el('span', 'rt', fmtAgo(call.startedAt)));
+  rc.appendChild(el('span', `bd ${callStatusClass(call)}`, callStatusLabel(call)));
+  rl.appendChild(rc);
+  rb.appendChild(rl);
+  const livePreview = running ? oneLine(call.lastOutputPreview) : '';
+  const rp = el('div', `rp${livePreview ? ' live' : ''}`);
+  rp.appendChild(highlightText(livePreview || oneLine(call.prompt) || '（无提示词）', q));
+  rb.appendChild(rp);
+  item.appendChild(rb);
+
+  item.addEventListener('click', () => openDetail('call', call.execId, item));
+  return item;
+}
+
 function callStatus(call) {
   const delegate = String(call.delegateStatus || '').toLowerCase();
   if (delegate === 'cancelling' || delegate === 'cancelled') return 'cancel';
@@ -775,7 +1152,9 @@ function callStatus(call) {
   if (call.completedAt) return call.exitCode === 0 ? 'done' : 'error';
   // 无 completed_at 且无 delegate：仅当 started_at 新鲜（≤10 分钟）才算运行中；
   // 陈旧记录（中断/测试探针/旧版 meta）显示未知，避免误报「运行中」
-  const t = call.startedAt ? new Date(call.startedAt).getTime() : NaN;
+  const activity = Number(call.lastActivityMs);
+  const started = call.startedAt ? new Date(call.startedAt).getTime() : NaN;
+  const t = Number.isFinite(activity) && activity > 0 ? activity : started;
   if (!Number.isNaN(t) && Date.now() - t < 10 * 60 * 1000) return 'running';
   return 'unknown';
 }
@@ -837,14 +1216,17 @@ function miniTlNode(run) {
 }
 
 function renderSessions() {
-  const sessions = snapshot.sessions || [];
-  $('sessionsCount').textContent = String(sessions.length);
-  $('sessionsEmpty').hidden = sessions.length > 0;
+  const all = snapshot.sessions || [];
+  const q = listSearch.sessions;
+  const sessions = q ? all.filter((s) => matchSession(s, q)) : all;
+  $('sessionsCount').textContent = q ? `${sessions.length}/${all.length}` : String(all.length);
+  const searching = Boolean(q);
+  $('sessionsEmpty').hidden = all.length > 0 && !(searching && !sessions.length);
   // Section 头状态概览 chips：运行/封存/暂停/失败 一眼可见
   let meta = $('headSessions').querySelector('.sh-meta');
   if (meta) meta.remove();
   const statusCounts = { running: 0, sealed: 0, paused: 0, failed: 0 };
-  for (const s of sessions) {
+  for (const s of all) {
     const st = String(s.status || '').toLowerCase();
     if (['running', 'active', 'executing'].includes(st)) statusCounts.running++;
     else if (['sealed', 'completed', 'done'].includes(st)) statusCounts.sealed++;
@@ -867,11 +1249,11 @@ function renderSessions() {
       hm.appendChild(document.createTextNode(text));
       meta.appendChild(hm);
     }
-    $('headSessions').appendChild(meta);
+    $('headSessions').insertBefore(meta, $('sessionsCount'));
   }
   const list = $('sessionsList');
   list.innerHTML = '';
-  if (!sessions.length) {
+  if (!all.length) {
     const empty = $('sessionsEmpty');
     empty.innerHTML = '';
     const ic = el('div', 'empty-ic');
@@ -879,111 +1261,25 @@ function renderSessions() {
     empty.appendChild(ic);
     empty.appendChild(el('div', '', '暂无会话'));
     empty.appendChild(el('div', 'empty-hint', '运行一次 Maestro 流程后，会话会出现在这里'));
+  } else if (searching && !sessions.length) {
+    const empty = $('sessionsEmpty');
+    empty.innerHTML = '';
+    const ic = el('div', 'empty-ic');
+    ic.appendChild(svg('i-search', 18));
+    empty.appendChild(ic);
+    empty.appendChild(el('div', '', '未找到匹配的会话'));
+    empty.appendChild(el('div', 'empty-hint', '换个关键词试试（ID / 意图 / Run）'));
   }
   const active = snapshot.active_session_id;
   const orderedSessions = sessions.slice().sort((a, b) => Number(b.session_id === active) - Number(a.session_id === active));
-  const visibleSessions = sessionsListExpanded ? orderedSessions : orderedSessions.slice(0, SESSIONS_LIMIT);
+  const visibleSessions = searching || sessionsListExpanded ? orderedSessions : orderedSessions.slice(0, SESSIONS_LIMIT);
 
   for (const s of visibleSessions) {
-    const isActive = s.session_id === active;
-    const expanded = expandedSessions.has(s.session_id);
-    const loadState = sessionLoadState[s.session_id] || 'collapsed';
-    const sm = sessionStatusMeta(s.status);
-    const lr = s.latest_run || null;
-    const timelineId = `session-runs-${safeDomId(s.session_id)}`;
-    const item = el('article', `srow${expanded ? ' open' : ''}${isActive ? ' active' : ''}`);
-
-    const toggle = el('button', 'sess-toggle');
-    toggle.type = 'button';
-    toggle.setAttribute('aria-expanded', String(expanded));
-    toggle.setAttribute('aria-controls', timelineId);
-    if (isActive) toggle.setAttribute('aria-current', 'true');
-
-    const rl = el('div', 'rl');
-    const dot = el('span', `dot${sm[2] ? ' pulse' : ''}`);
-    dot.style.setProperty('--c', sm[3]);
-    rl.appendChild(dot);
-    rl.appendChild(el('span', 'sid', s.session_id));
-    // 多工程合并：行内标注工程归属
-    if (s.project && s.project !== snapshot.workspace) {
-      const proj = el('span', 'bd bd-dim', s.project);
-      proj.title = `工程：${s.project}`;
-      rl.appendChild(proj);
-    }
-    if (isActive) rl.appendChild(el('span', 'bd bd-accent', 'ACTIVE'));
-    rl.appendChild(el('span', 'rl-spacer'));
-    rl.appendChild(el('span', `bd ${sm[0]}`, sm[1]));
-    toggle.appendChild(rl);
-    const sl2 = el('div', 'sl2');
-    sl2.appendChild(el('span', 'si', oneLine(s.intent) || '无意图'));
-    toggle.appendChild(sl2);
-    const sl3 = el('div', 'sl3');
-    const slat = el('span', 'slat');
-    if (lr) {
-      const vc = VERDICT_COLOR[String(lr.verdict || lr.status || '').toLowerCase()] || 'var(--text-dim)';
-      slat.append(`第 ${lr.sequence ?? '—'}/${s.run_count || '—'} 步 · ${lr.command || 'run'} · `);
-      const v = el('span', 'slat-v', verdictLabel(lr.verdict));
-      v.style.color = vc;
-      v.title = `${lr.run_id || ''} · ${lr.verdict || lr.status || ''}`;
-      slat.appendChild(v);
-      slat.append(` · ${fmtAgo(lr.started_at)}${lr.duration_secs != null ? ` · ${lr.duration_secs}s` : ''}`);
-    } else {
-      slat.textContent = `${s.run_count || 0} runs · 无 Run 数据`;
-    }
-    sl3.appendChild(slat);
-    const chev = el('span', 'schev');
-    chev.appendChild(svg('i-chevron', 10));
-    sl3.appendChild(chev);
-    toggle.appendChild(sl3);
-    toggle.addEventListener('click', () => toggleSessionExpand(s.session_id));
-    item.appendChild(toggle);
-
-    const sexpb = el('div', 'sexpb');
-    const sbi = el('div', 'sbi');
-    const sexp = el('div', 'sexp');
-    const tl = el('div', 'mini-tl');
-    tl.id = timelineId;
-    tl.setAttribute('role', 'region');
-    tl.setAttribute('aria-label', `${s.session_id} Run 时间线`);
-    tl.setAttribute('aria-busy', String(loadState === 'loading'));
-    const MINI_TL_CAP = 8;
-    const cached = sessionRunCache[s.session_id];
-    const runs = expanded && cached?.length ? cached.slice(-MINI_TL_CAP) : (lr ? [lr] : []);
-    for (const run of runs) tl.appendChild(miniTlNode(run));
-    if (expanded && cached && cached.length > MINI_TL_CAP) {
-      tl.appendChild(el('div', 'timeline-limit', `仅展示最近 ${MINI_TL_CAP} 个 Run，共 ${cached.length} 个`));
-    }
-    if (loadState === 'loading') tl.appendChild(el('div', 'run-inline-status', '正在载入历史 Run…'));
-    if (loadState === 'error') tl.appendChild(el('div', 'run-inline-error', '载入失败，保留最新 Run'));
-    sexp.appendChild(tl);
-    const sexpf = el('div', 'sexp-f');
-    const engine = s.orchestration?.engine;
-    if (engine) sexpf.appendChild(el('span', 'bd bd-dim', `engine · ${engine}`));
-    if (loadState === 'error') {
-      const retry = el('button', 'more', '重试');
-      retry.type = 'button';
-      retry.addEventListener('click', (event) => {
-        event.stopPropagation();
-        toggleSessionExpand(s.session_id, true);
-      });
-      sexpf.appendChild(retry);
-    }
-    const more = el('button', 'more', '查看详情 ›');
-    more.type = 'button';
-    more.addEventListener('click', (event) => {
-      event.stopPropagation();
-      openDetail('session', s.session_id, more);
-    });
-    sexpf.appendChild(more);
-    sexp.appendChild(sexpf);
-    sbi.appendChild(sexp);
-    sexpb.appendChild(sbi);
-    item.appendChild(sexpb);
-    list.appendChild(item);
+    list.appendChild(sessionRowEl(s, s.session_id === active));
   }
   const foot = $('sessionsFoot');
   foot.innerHTML = '';
-  if (sessions.length > SESSIONS_LIMIT) {
+  if (sessions.length > SESSIONS_LIMIT && !searching) {
     foot.hidden = false;
     const expand = el('button', 'expand-btn', sessionsListExpanded ? '收起 ↑' : `展开全部 ${sessions.length} 个会话 ↓`);
     expand.type = 'button';
@@ -1000,6 +1296,104 @@ function renderSessions() {
   } else {
     foot.hidden = true;
   }
+}
+
+/** 单条会话行（含可展开 Run 时间线；列表与「全部会话」详情视图共用） */
+function sessionRowEl(s, isActive) {
+  const expanded = expandedSessions.has(s.session_id);
+  const loadState = sessionLoadState[s.session_id] || 'collapsed';
+  const sm = sessionStatusMeta(s.status);
+  const lr = s.latest_run || null;
+  const timelineId = `session-runs-${safeDomId(s.session_id)}`;
+  const item = el('article', `srow${expanded ? ' open' : ''}${isActive ? ' active' : ''}`);
+
+  const toggle = el('button', 'sess-toggle');
+  toggle.type = 'button';
+  toggle.setAttribute('aria-expanded', String(expanded));
+  toggle.setAttribute('aria-controls', timelineId);
+  if (isActive) toggle.setAttribute('aria-current', 'true');
+
+  const rl = el('div', 'rl');
+  const dot = el('span', `dot${sm[2] ? ' pulse' : ''}`);
+  dot.style.setProperty('--c', sm[3]);
+  rl.appendChild(dot);
+  rl.appendChild(el('span', 'sid', s.session_id));
+  // 多工程合并：行内标注工程归属
+  if (s.project && s.project !== snapshot.workspace) {
+    const proj = el('span', 'bd bd-dim', s.project);
+    proj.title = `工程：${s.project}`;
+    rl.appendChild(proj);
+  }
+  if (isActive) rl.appendChild(el('span', 'bd bd-accent', 'ACTIVE'));
+  rl.appendChild(el('span', 'rl-spacer'));
+  rl.appendChild(el('span', `bd ${sm[0]}`, sm[1]));
+  toggle.appendChild(rl);
+  const sl2 = el('div', 'sl2');
+  sl2.appendChild(el('span', 'si', oneLine(s.intent) || '无意图'));
+  toggle.appendChild(sl2);
+  const sl3 = el('div', 'sl3');
+  const slat = el('span', 'slat');
+  if (lr) {
+    const vc = VERDICT_COLOR[String(lr.verdict || lr.status || '').toLowerCase()] || 'var(--text-dim)';
+    slat.append(`第 ${lr.sequence ?? '—'}/${s.run_count || '—'} 步 · ${lr.command || 'run'} · `);
+    const v = el('span', 'slat-v', verdictLabel(lr.verdict));
+    v.style.color = vc;
+    v.title = `${lr.run_id || ''} · ${lr.verdict || lr.status || ''}`;
+    slat.appendChild(v);
+    slat.append(` · ${fmtAgo(lr.started_at)}${lr.duration_secs != null ? ` · ${lr.duration_secs}s` : ''}`);
+  } else {
+    slat.textContent = `${s.run_count || 0} runs · 无 Run 数据`;
+  }
+  sl3.appendChild(slat);
+  const chev = el('span', 'schev');
+  chev.appendChild(svg('i-chevron', 10));
+  sl3.appendChild(chev);
+  toggle.appendChild(sl3);
+  toggle.addEventListener('click', () => toggleSessionExpand(s.session_id));
+  item.appendChild(toggle);
+
+  const sexpb = el('div', 'sexpb');
+  const sbi = el('div', 'sbi');
+  const sexp = el('div', 'sexp');
+  const tl = el('div', 'mini-tl');
+  tl.id = timelineId;
+  tl.setAttribute('role', 'region');
+  tl.setAttribute('aria-label', `${s.session_id} Run 时间线`);
+  tl.setAttribute('aria-busy', String(loadState === 'loading'));
+  const MINI_TL_CAP = 8;
+  const cached = sessionRunCache[s.session_id];
+  const runs = expanded && cached?.length ? cached.slice(-MINI_TL_CAP) : (lr ? [lr] : []);
+  for (const run of runs) tl.appendChild(miniTlNode(run));
+  if (expanded && cached && cached.length > MINI_TL_CAP) {
+    tl.appendChild(el('div', 'timeline-limit', `仅展示最近 ${MINI_TL_CAP} 个 Run，共 ${cached.length} 个`));
+  }
+  if (loadState === 'loading') tl.appendChild(el('div', 'run-inline-status', '正在载入历史 Run…'));
+  if (loadState === 'error') tl.appendChild(el('div', 'run-inline-error', '载入失败，保留最新 Run'));
+  sexp.appendChild(tl);
+  const sexpf = el('div', 'sexp-f');
+  const engine = s.orchestration?.engine;
+  if (engine) sexpf.appendChild(el('span', 'bd bd-dim', `engine · ${engine}`));
+  if (loadState === 'error') {
+    const retry = el('button', 'more', '重试');
+    retry.type = 'button';
+    retry.addEventListener('click', (event) => {
+      event.stopPropagation();
+      toggleSessionExpand(s.session_id, true);
+    });
+    sexpf.appendChild(retry);
+  }
+  const more = el('button', 'more', '查看详情 ›');
+  more.type = 'button';
+  more.addEventListener('click', (event) => {
+    event.stopPropagation();
+    openDetail('session', s.session_id, more);
+  });
+  sexpf.appendChild(more);
+  sexp.appendChild(sexpf);
+  sbi.appendChild(sexp);
+  sexpb.appendChild(sbi);
+  item.appendChild(sexpb);
+  return item;
 }
 
 async function toggleSessionExpand(sessionId, force = false) {
@@ -1082,8 +1476,42 @@ function knowledgeValue(stats, key) {
 function renderKnowledge() {
   const k = snapshot.knowledge || {};
   const total = k.total || 0;
-  $('knowledgeTotal').textContent = String(total);
   const body = $('kbBody');
+  const q = listSearch.knowledge;
+  // 搜索模式：内联展示匹配条目（最多 8 条），异步拉取条目列表
+  if (q) {
+    $('knowledgeTotal').textContent = `…/${total}`;
+    body.innerHTML = '';
+    const searching = el('div', 'kb-searching', `搜索 “${q}”`);
+    body.appendChild(searching);
+    getKbItems().then((items) => {
+      if (listSearch.knowledge !== q) return; // 关键词已变化，丢弃过期结果
+      body.innerHTML = '';
+      body.appendChild(searching);
+      const matched = items.filter((it) => matchKbItem(it, q));
+      if (!matched.length) {
+        const empty = el('div', 'empty');
+        const ic = el('div', 'empty-ic');
+        ic.appendChild(svg('i-search', 18));
+        empty.appendChild(ic);
+        empty.appendChild(el('div', '', '未找到匹配的知识条目'));
+        empty.appendChild(el('div', 'empty-hint', '换个关键词试试（标题 / ID / 标签）'));
+        body.appendChild(empty);
+        return;
+      }
+      for (const item of matched.slice(0, 8)) body.appendChild(kbEntryEl(item, q));
+      const foot = el('div', 'kb-foot');
+      const more = el('button', 'expand-btn', `在详情中查看全部 ${matched.length} 条 ›`);
+      more.type = 'button';
+      more.addEventListener('click', () => openDetail('knowledge', 'all', more));
+      foot.appendChild(more);
+      body.appendChild(foot);
+      fitWindow();
+      scheduleFade();
+    });
+    return;
+  }
+  $('knowledgeTotal').textContent = String(total);
   body.innerHTML = '';
   if (!total) {
     const empty = el('div', 'empty');
@@ -1140,6 +1568,34 @@ function renderKnowledge() {
   body.appendChild(foot);
 }
 
+/** 知识条目行（知识详情分组 / 区块搜索共用；点击复制 ID） */
+function kbEntryEl(item, q) {
+  const ke = el('button', 'ke');
+  ke.type = 'button';
+  ke.title = `${item.id} · ${item.status || ''}`;
+  ke.setAttribute('aria-label', `复制 ${item.id}`);
+  const kh = el('div', 'ke-h');
+  kh.appendChild(el('span', 'ke-id', item.id || ''));
+  const t = el('span', 'ke-t');
+  t.appendChild(highlightText(item.title || '未命名条目', q));
+  kh.appendChild(t);
+  ke.appendChild(kh);
+  if (item.summary) {
+    const s = el('div', 'ke-s');
+    s.appendChild(highlightText(oneLine(item.summary), q));
+    ke.appendChild(s);
+  }
+  const kf = el('div', 'ke-f');
+  for (const tag of (item.tags || []).slice(0, 4)) {
+    kf.appendChild(el('span', 'tag', String(tag)));
+  }
+  if (item.status) kf.appendChild(el('span', `bd ${kbStatusClass(item.status)}`, item.status));
+  if (item.updated) kf.appendChild(el('span', 'rt', `${fmtAgo(item.updated)} 更新`));
+  ke.appendChild(kf);
+  ke.addEventListener('click', () => openEditor(item.kind, item.id));
+  return ke;
+}
+
 // 知识条目状态徽章（参考 ref/sidebar.html：open→danger / draft→warn / 其余→ok）
 function kbStatusClass(status) {
   const s = String(status || '').toLowerCase();
@@ -1154,8 +1610,11 @@ function renderKnowledgeDetail() {
   if (!renderDetailState('知识积累')) return;
   const body = $('detailBody');
   const items = Array.isArray(detail.items) ? detail.items : [];
+  const q = detailSearch;
+  const matched = q ? items.filter((it) => matchKbItem(it, q)) : items;
   $('detailTitle').textContent = '知识积累';
   $('detailKind').textContent = 'KNOWLEDGE';
+  setSearchCount(matched.length, items.length);
   const sub = el('div', 'kb-sub');
   sub.textContent = 'specs 规范 / memory 记忆 / knowhow 诀窍 / learning 学习 / issues 问题 · 点击条目复制 ID';
   body.appendChild(sub);
@@ -1163,12 +1622,16 @@ function renderKnowledgeDetail() {
     body.appendChild(el('div', 'detail-empty', '暂无知识条目。'));
     return;
   }
+  if (q && !matched.length) {
+    body.appendChild(emptySearchResult('未找到匹配的知识条目'));
+    return;
+  }
   const colorOf = (key) => {
     const found = KNOWLEDGE_ITEMS.find(([k]) => k === key);
     return found ? found[2] : 'var(--text-dim)';
   };
   for (const [kind, label] of KB_KIND_ORDER) {
-    const group = items.filter((item) => item.kind === kind);
+    const group = matched.filter((item) => item.kind === kind);
     if (!group.length) continue;
     const head = el('div', 'kg-h');
     const dot = el('i', 'lg-dot');
@@ -1177,26 +1640,7 @@ function renderKnowledgeDetail() {
     head.appendChild(el('span', '', label));
     head.appendChild(el('span', 'pill', String(group.length)));
     body.appendChild(head);
-    for (const item of group) {
-      const ke = el('button', 'ke');
-      ke.type = 'button';
-      ke.title = `${item.id} · ${item.status || ''}`;
-      ke.setAttribute('aria-label', `复制 ${item.id}`);
-      const kh = el('div', 'ke-h');
-      kh.appendChild(el('span', 'ke-id', item.id || ''));
-      kh.appendChild(el('span', 'ke-t', item.title || '未命名条目'));
-      ke.appendChild(kh);
-      if (item.summary) ke.appendChild(el('div', 'ke-s', oneLine(item.summary)));
-      const kf = el('div', 'ke-f');
-      for (const tag of (item.tags || []).slice(0, 4)) {
-        kf.appendChild(el('span', 'tag', String(tag)));
-      }
-      if (item.status) kf.appendChild(el('span', `bd ${kbStatusClass(item.status)}`, item.status));
-      if (item.updated) kf.appendChild(el('span', 'rt', `${fmtAgo(item.updated)} 更新`));
-      ke.appendChild(kf);
-      ke.addEventListener('click', () => openEditor(item.kind, item.id));
-      body.appendChild(ke);
-    }
+    for (const item of group) body.appendChild(kbEntryEl(item, q));
   }
 }
 
@@ -1239,14 +1683,33 @@ function renderKnowledgeItemDetail() {
     meta.appendChild(pv);
   }
   body.appendChild(meta);
-  if (item.content) {
-    const card = el('section', 'detail-card full-width');
-    card.appendChild(el('h2', 'd-sec-title', '全文'));
-    card.appendChild(el('pre', 'd-prompt', String(item.content)));
-    body.appendChild(card);
-  } else {
+  const content = String(item.content || '');
+  const q = detailSearch;
+  const lines = content.split('\n');
+  const matchedLines = q ? lines.filter((l) => l.toLowerCase().includes(q)) : lines;
+  setSearchCount(matchedLines.length, lines.length);
+  if (!content) {
     body.appendChild(el('div', 'detail-empty', '该条目没有可展示的正文。'));
+    return;
   }
+  if (q && !matchedLines.length) {
+    body.appendChild(emptySearchResult('未找到匹配内容'));
+    return;
+  }
+  const card = el('section', 'detail-card full-width');
+  card.appendChild(el('h2', 'd-sec-title', q ? `全文 · 命中 ${matchedLines.length} 行` : '全文'));
+  const pre = el('pre', 'd-prompt');
+  if (q) {
+    for (const line of matchedLines) {
+      const div = el('div', 'd-prompt-line');
+      div.appendChild(highlightText(line, q));
+      pre.appendChild(div);
+    }
+  } else {
+    pre.textContent = content;
+  }
+  card.appendChild(pre);
+  body.appendChild(card);
 }
 // ---------------------------------------------------------------------------
 // 详情视图
@@ -1257,6 +1720,21 @@ async function openDetail(kind, id, trigger = null, fromStack = false) {
   const key = `${kind}::${id}`;
   if (trigger) detailReturnFocus = trigger;
   if (!fromStack) viewStack.push({ kind, id });
+  // 重置详情搜索
+  detailSearch = '';
+  const dInput = $('detailSearch');
+  if (dInput.value) dInput.value = '';
+  $('detailSearchClear').hidden = true;
+  // 快照直供视图（全部调用 / 全部会话）：无需后端拉取
+  if (kind === 'calls' || kind === 'sessions') {
+    view = { kind, id };
+    detail = { ok: true };
+    detailStatus = 'ready';
+    render();
+    $('content').scrollTop = 0;
+    requestAnimationFrame(() => $('detailTitle').focus());
+    return;
+  }
   // 已缓存 → 直接展示（返回栈回退秒开）
   if (detailCache[key]) {
     view = { kind, id };
@@ -1279,7 +1757,7 @@ async function openDetail(kind, id, trigger = null, fromStack = false) {
     if (kind === 'call') {
       result = await invoke('get_call_detail', { execId: id });
     } else if (kind === 'knowledge') {
-      result = await invoke('get_knowledge_items');
+      result = await getKbItems();
     } else if (kind === 'knowledge-item') {
       const sep = id.indexOf('::');
       const k = sep > 0 ? id.slice(0, sep) : '';
@@ -1390,10 +1868,56 @@ function detailRow(label, value) {
   return row;
 }
 
+function normalizeCallEntries(rawEntries, running) {
+  const allowed = new Set([
+    'user_message', 'assistant_message', 'thinking', 'tool_use', 'tool_result',
+    'system_message', 'error', 'status_change',
+  ]);
+  const entries = [];
+  for (const raw of Array.isArray(rawEntries) ? rawEntries : []) {
+    if (!raw || !allowed.has(raw.type)) continue;
+    const entry = { ...raw };
+    if (entry.type === 'assistant_message') {
+      entry.partial = running && Boolean(entry.partial);
+      const previous = entries[entries.length - 1];
+      if (previous?.type === 'assistant_message') {
+        previous.content = String(previous.content || '') + String(entry.content || '');
+        previous.partial = entry.partial;
+        previous.timestamp = entry.timestamp || previous.timestamp;
+        continue;
+      }
+    }
+    if (entry.type === 'tool_use' && ['completed', 'failed'].includes(entry.status)) {
+      const pending = entries.findLastIndex((item) => (
+        item.type === 'tool_use'
+        && item.status === 'running'
+        && (!entry.name || item.name === entry.name)
+      ));
+      if (pending >= 0) {
+        entries[pending] = { ...entries[pending], ...entry };
+        continue;
+      }
+    }
+    entries.push(entry);
+  }
+  return entries;
+}
+
+function callEntryText(entry) {
+  if (entry.type === 'tool_use') {
+    const head = [entry.name || '工具', entry.status].filter(Boolean).join(' · ');
+    return [head, entry.result].filter(Boolean).join('\n');
+  }
+  if (entry.type === 'error') return entry.message || entry.content || '调用失败';
+  if (entry.type === 'status_change') return [entry.status, entry.reason].filter(Boolean).join(' · ');
+  return entry.content || entry.message || entry.result || '';
+}
+
 function renderCallDetail() {
   if (!renderDetailState('AGENT 调用')) return;
   const body = $('detailBody');
   const call = detail.call || {};
+  const q = detailSearch;
   $('detailTitle').textContent = TOOL_LABEL[call.tool] || call.tool || '调用详情';
 
   const meta = el('section', 'detail-card');
@@ -1408,33 +1932,115 @@ function renderCallDetail() {
   if (call.delegateStatus) meta.appendChild(detailRow('委托状态', call.delegateStatus));
   body.appendChild(meta);
 
-  if (call.prompt) {
+  const promptText = String(call.prompt || '');
+  const promptMatch = !q || promptText.toLowerCase().includes(q);
+  if (promptText && promptMatch) {
     const prompt = el('section', 'detail-card full-width');
     prompt.appendChild(el('h2', 'd-sec-title', '完整提示词'));
-    prompt.appendChild(el('pre', 'd-prompt', call.prompt));
+    const pre = el('pre', 'd-prompt');
+    pre.appendChild(highlightText(promptText, q));
+    prompt.appendChild(pre);
     body.appendChild(prompt);
   }
 
-  const allowed = new Set(['user_message', 'assistant_message', 'tool_use', 'tool_result', 'system_message']);
-  const entries = (Array.isArray(detail.entries) ? detail.entries : []).filter((entry) => entry && allowed.has(entry.type));
+  const running = callStatus(call) === 'running';
+  const allEntries = normalizeCallEntries(detail.entries, running);
+  const entries = q ? allEntries.filter((entry) => callEntryText(entry).toLowerCase().includes(q)) : allEntries;
+  setSearchCount((promptText && promptMatch ? 1 : 0) + entries.length, (promptText ? 1 : 0) + allEntries.length);
   const chat = el('section', 'detail-card full-width');
-  chat.appendChild(el('h2', 'd-sec-title', `对话 · ${entries.length}`));
-  if (!entries.length) {
-    chat.appendChild(el('div', 'detail-empty', '没有可展示的对话条目。'));
+  chat.appendChild(el('h2', 'd-sec-title', `对话 · ${entries.length}${q ? ` / ${allEntries.length}` : ''}${running ? ' · 实时' : ''}`));
+  if (!allEntries.length) {
+    chat.appendChild(el('div', 'detail-empty', running ? 'Agent 已连接，正在等待首个输出。' : '没有可展示的对话条目。'));
+  } else if (q && !entries.length && !(promptText && promptMatch)) {
+    chat.appendChild(emptySearchResult());
   } else {
     const flow = el('div', 'chat-flow');
     for (const entry of entries) {
-      const kind = entry.type === 'user_message' ? 'user' : entry.type === 'assistant_message' ? 'assistant' : 'tool';
+      const kind = entry.type === 'user_message'
+        ? 'user'
+        : entry.type === 'assistant_message'
+          ? 'assistant'
+          : entry.type === 'error'
+            ? 'error'
+            : entry.type === 'thinking'
+              ? 'thinking'
+              : entry.type === 'status_change'
+                ? 'status'
+                : 'tool';
       const bubble = el('div', `chat-bubble ${kind}`);
-      bubble.appendChild(el('div', 'chat-role', kind === 'user' ? '用户' : kind === 'assistant' ? '助手' : entry.type));
-      const content = String(entry.content || '');
-      bubble.appendChild(el('div', 'chat-content', content.length > 600 ? `${content.slice(0, 600)}…` : content));
+      const role = kind === 'user'
+        ? '用户'
+        : kind === 'assistant'
+          ? '助手'
+          : kind === 'thinking'
+            ? '思考'
+            : kind === 'status'
+              ? '状态'
+              : entry.type === 'tool_use'
+                ? '工具'
+                : entry.type;
+      bubble.appendChild(el('div', 'chat-role', role));
+      const content = String(callEntryText(entry));
+      const contentDiv = el('div', 'chat-content');
+      contentDiv.appendChild(highlightText(content.length > 4000 ? `${content.slice(0, 4000)}…` : content, q));
+      if (entry.type === 'assistant_message' && entry.partial) contentDiv.appendChild(el('span', 'chat-cursor'));
+      bubble.appendChild(contentDiv);
       if (entry.timestamp) bubble.appendChild(el('div', 'chat-time', fmtFull(entry.timestamp)));
       flow.appendChild(bubble);
     }
     chat.appendChild(flow);
   }
   body.appendChild(chat);
+}
+
+/** 全部 Agent 调用详情视图（含搜索） */
+function renderCallsListDetail() {
+  if (!renderDetailState('AGENT 调用')) return;
+  const body = $('detailBody');
+  const q = detailSearch;
+  const calls = snapshot.calls || [];
+  const matched = q ? calls.filter((c) => matchCall(c, q)) : calls;
+  $('detailTitle').textContent = 'Agent 调用 · 全部';
+  $('detailKind').textContent = 'AGENT';
+  setSearchCount(matched.length, calls.length);
+  if (!calls.length) {
+    body.appendChild(el('div', 'detail-empty', '暂无 Agent 调用记录。'));
+    return;
+  }
+  if (q && !matched.length) {
+    body.appendChild(emptySearchResult('未找到匹配的调用'));
+    return;
+  }
+  const rows = el('div', 'rows');
+  for (const call of matched) rows.appendChild(callRowEl(call, q));
+  body.appendChild(rows);
+  body.appendChild(el('div', 'kb-sub', '点击任意调用查看完整对话与元数据'));
+}
+
+/** 全部会话详情视图（含搜索，行内可展开 Run 时间线） */
+function renderSessionsListDetail() {
+  if (!renderDetailState('SESSION · RUN')) return;
+  const body = $('detailBody');
+  const q = detailSearch;
+  const sessions = snapshot.sessions || [];
+  const matched = q ? sessions.filter((s) => matchSession(s, q)) : sessions;
+  $('detailTitle').textContent = 'Session · Run · 全部';
+  $('detailKind').textContent = 'SESSIONS';
+  setSearchCount(matched.length, sessions.length);
+  if (!sessions.length) {
+    body.appendChild(el('div', 'detail-empty', '暂无会话记录。'));
+    return;
+  }
+  if (q && !matched.length) {
+    body.appendChild(emptySearchResult('未找到匹配的会话'));
+    return;
+  }
+  const active = snapshot.active_session_id;
+  const ordered = matched.slice().sort((a, b) => Number(b.session_id === active) - Number(a.session_id === active));
+  const rows = el('div', 'rows');
+  for (const s of ordered) rows.appendChild(sessionRowEl(s, s.session_id === active));
+  body.appendChild(rows);
+  body.appendChild(el('div', 'kb-sub', '点击会话查看完整时间线、编排链与边界契约'));
 }
 
 function textArray(value) {
@@ -1494,7 +2100,7 @@ function appendRunDetailSection(parent, label, items, tone) {
   parent.appendChild(section);
 }
 
-function renderRunEntry(run, session) {
+function renderRunEntry(run, session, q) {
   const key = `${session.session_id}:${run.run_id}`;
   const verdict = String(run.verdict || run.status || 'unknown').toLowerCase();
   const attention = ['blocked', 'failed', 'needs-retry', 'done_with_concerns'].includes(verdict) || (run.concerns || []).length > 0;
@@ -1513,11 +2119,18 @@ function renderRunEntry(run, session) {
 
   const main = el('div', 'run-main');
   const primary = el('div', 'run-primary');
-  primary.appendChild(el('span', 'run-cmd', run.command || 'run'));
+  const cmd = el('span', 'run-cmd');
+  cmd.appendChild(highlightText(run.command || 'run', q));
+  primary.appendChild(cmd);
   if (run.platform) primary.appendChild(el('span', 'run-platform', run.platform));
-  primary.appendChild(el('span', 'run-runid', run.run_id || '—'));
+  const rid = el('span', 'run-runid', run.run_id || '—');
+  primary.appendChild(rid);
   main.appendChild(primary);
-  if (run.handoff_summary) main.appendChild(el('div', 'run-handoff', oneLine(run.handoff_summary)));
+  if (run.handoff_summary) {
+    const hs = el('div', 'run-handoff');
+    hs.appendChild(highlightText(oneLine(run.handoff_summary), q));
+    main.appendChild(hs);
+  }
   const signals = el('div', 'run-signals');
   const decisions = Array.isArray(run.decisions) ? run.decisions.length : 0;
   const concerns = Array.isArray(run.concerns) ? run.concerns.length : 0;
@@ -1565,6 +2178,7 @@ function renderSessionDetail() {
   if (!renderDetailState('SESSION · RUN')) return;
   const body = $('detailBody');
   const session = detail.session || {};
+  const q = detailSearch;
   $('detailTitle').textContent = session.session_id || '会话详情';
 
   const resume = el('section', 'resume-strip');
@@ -1602,6 +2216,13 @@ function renderSessionDetail() {
 
   const orchestration = detail.orchestration && typeof detail.orchestration === 'object' ? detail.orchestration : {};
   const chain = Array.isArray(orchestration.chain) ? orchestration.chain.filter((step) => step && typeof step === 'object') : [];
+  const stepMatches = (step) => {
+    if (!q) return true;
+    return [step.command, step.step_id, step.stage, step.goal_ref, step.run_id, step.status]
+      .filter(Boolean)
+      .some((v) => String(v).toLowerCase().includes(q));
+  };
+  const steps = chain.filter(stepMatches);
   const chainSection = el('section', 'detail-section chain-section');
   chainSection.appendChild(el('h2', 'section-title', '编排链 · Orchestration'));
   const summary = el('div', 'chain-summary');
@@ -1617,15 +2238,22 @@ function renderSessionDetail() {
   chainSection.appendChild(summary);
   if (!chain.length) {
     chainSection.appendChild(el('div', 'detail-empty', '尚未定义编排步骤。'));
+  } else if (q && !steps.length) {
+    chainSection.appendChild(el('div', 'detail-empty', '未找到匹配的编排步骤'));
   } else {
     const rail = el('ol', 'chain-rail');
     chain.forEach((step, index) => {
+      if (q && !stepMatches(step)) return;
       const state = chainStepState(step, session, index, orchestration.position);
       const row = el('li', `chain-step ${state}`);
       row.appendChild(el('span', 'chain-node'));
       const copy = el('div', 'chain-copy');
-      copy.appendChild(el('div', 'chain-cmd', step.command || step.step_id || `step ${index + 1}`));
-      copy.appendChild(el('div', 'chain-id', [step.step_id, step.stage, step.goal_ref].filter(Boolean).join(' · ')));
+      const cmd = el('div', 'chain-cmd');
+      cmd.appendChild(highlightText(step.command || step.step_id || `step ${index + 1}`, q));
+      copy.appendChild(cmd);
+      const id = el('div', 'chain-id');
+      id.appendChild(highlightText([step.step_id, step.stage, step.goal_ref].filter(Boolean).join(' · '), q));
+      copy.appendChild(id);
       row.appendChild(copy);
       row.appendChild(el('span', 'chain-run', step.run_id || step.status || 'pending'));
       rail.appendChild(row);
@@ -1636,14 +2264,18 @@ function renderSessionDetail() {
 
   const allRuns = Array.isArray(detail.runs) ? detail.runs : [];
   const runs = allRuns.length > 50 ? allRuns.slice(-50) : allRuns;
+  const visibleRuns = q ? runs.filter((r) => runMatches(r || {}, q)) : runs;
+  setSearchCount(visibleRuns.length + steps.length, runs.length + chain.length);
   const runSection = el('section', 'detail-section runs-section');
-  runSection.appendChild(el('h2', 'section-title', `Run 时间线 · ${allRuns.length}`));
+  runSection.appendChild(el('h2', 'section-title', `Run 时间线 · ${visibleRuns.length}${q ? ` / ${runs.length}` : ''}`));
   if (allRuns.length > runs.length) runSection.appendChild(el('div', 'timeline-limit', `为保证性能，仅展示最近 ${runs.length} 个 Run。`));
   if (!runs.length) {
     runSection.appendChild(el('div', 'detail-empty', '尚无 Run 记录。'));
+  } else if (q && !visibleRuns.length && !steps.length) {
+    runSection.appendChild(emptySearchResult('未找到匹配的 Run'));
   } else {
     const ledger = el('div', 'run-ledger');
-    for (const run of runs) ledger.appendChild(renderRunEntry(run || {}, session));
+    for (const run of visibleRuns) ledger.appendChild(renderRunEntry(run || {}, session, q));
     runSection.appendChild(ledger);
   }
   body.appendChild(runSection);
@@ -1736,217 +2368,20 @@ function renderCapsule() {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// 多 tab 文本编辑器：与 bar 等高紧贴的右栏，直接点击知识条目即打开
+// 独立编辑器窗口（多 tab，由 Rust 预创建复用，主窗口仅转发）
 // ---------------------------------------------------------------------------
 
-const editorTabs = [];   // {kind, id, title, content, preview, dirty}
-let activeEd = -1;
-
-function edEsc(x) {
-  return String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-function edInline(x) {
-  return edEsc(x)
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-}
-/** 迷你 markdown 渲染 */
-function renderMd(md) {
-  let body = md;
-  if (body.startsWith('---\n') || body.startsWith('---\r\n')) {
-    const end = body.indexOf('\n---');
-    if (end > 0) body = body.slice(end + 4);
-  }
-  const lines = body.split(/\r?\n/);
-  let html = '';
-  let list = null;
-  let inCode = false;
-  let codeBuf = [];
-  let para = [];
-  const flushPara = () => {
-    if (para.length) { html += '<p>' + para.map(edInline).join('<br/>') + '</p>'; para = []; }
-  };
-  const closeList = () => {
-    if (list) { html += '</' + list + '>'; list = null; }
-  };
-  for (const raw of lines) {
-    const line = raw.trimEnd();
-    if (line.trimStart().startsWith('```')) {
-      if (inCode) {
-        html += '<pre><code>' + edEsc(codeBuf.join('\n')) + '</code></pre>';
-        codeBuf = []; inCode = false;
-      } else {
-        flushPara(); closeList(); inCode = true;
-      }
-      continue;
-    }
-    if (inCode) { codeBuf.push(line); continue; }
-    const t = line.trim();
-    if (!t) { flushPara(); closeList(); continue; }
-    if (/^#{1,6}\s/.test(t)) {
-      flushPara(); closeList();
-      const level = t.match(/^(#{1,6})\s/)[1].length;
-      html += `<h${level}>${edInline(t.replace(/^#{1,6}\s*/, ''))}</h${level}>`;
-      continue;
-    }
-    if (/^\s*[-*+]\s/.test(t)) {
-      flushPara();
-      if (list !== 'ul') { closeList(); list = 'ul'; html += '<ul>'; }
-      html += `<li>${edInline(t.replace(/^\s*[-*+]\s*/, ''))}</li>`;
-      continue;
-    }
-    if (/^\s*\d+[.)]\s/.test(t)) {
-      flushPara();
-      if (list !== 'ol') { closeList(); list = 'ol'; html += '<ol>'; }
-      html += `<li>${edInline(t.replace(/^\s*\d+[.)]\s*/, ''))}</li>`;
-      continue;
-    }
-    if (/^>\s?/.test(t)) {
-      flushPara(); closeList();
-      html += `<blockquote>${edInline(t.replace(/^>\s?/, ''))}</blockquote>`;
-      continue;
-    }
-    if (/^(-{3,}|\*{3,}|_{3,})$/.test(t)) {
-      flushPara(); closeList();
-      html += '<hr/>';
-      continue;
-    }
-    if (/^\|.*\|$/.test(t)) {
-      flushPara(); closeList();
-      const cells = t.replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
-      html += '<table><tr>' + cells.map((c) => '<th>' + edInline(c) + '</th>').join('') + '</tr></table>';
-      continue;
-    }
-    closeList();
-    para.push(t);
-  }
-  flushPara(); closeList();
-  if (inCode) html += '<pre><code>' + edEsc(codeBuf.join('\n')) + '</code></pre>';
-  return html;
-}
-
-function edTab() { return editorTabs[activeEd] || null; }
-
-function renderEditorTabs() {
-  const tabs = $('edTabs');
-  tabs.innerHTML = '';
-  editorTabs.forEach((tab, i) => {
-    const btn = el('button', `ed-tab${i === activeEd ? ' active' : ''}`);
-    btn.type = 'button';
-    btn.setAttribute('role', 'tab');
-    btn.setAttribute('aria-selected', String(i === activeEd));
-    if (tab.dirty) btn.appendChild(el('i', 'ed-tab-dot'));
-    const t = el('span', 'ed-tab-t', tab.title || tab.id);
-    t.title = `${tab.kind} · ${tab.id}`;
-    btn.appendChild(t);
-    const x = el('span', 'ed-tab-x', '×');
-    x.title = '关闭';
-    x.addEventListener('click', (e) => { e.stopPropagation(); closeEditorTab(i); });
-    btn.appendChild(x);
-    btn.addEventListener('click', () => { activeEd = i; renderEditorUI(); });
-    tabs.appendChild(btn);
-  });
-}
-
-function renderEditorUI() {
-  const tab = edTab();
-  renderEditorTabs();
-  if (!tab) {
-    $('edSave').disabled = true;
-    $('edMeta').textContent = '';
-    $('edDirty').textContent = '';
-    $('edContent').value = '';
-    $('edPreview').hidden = true;
-    $('edContent').hidden = false;
-    return;
-  }
-  $('edSave').disabled = false;
-  $('edContent').value = tab.content;
-  $('edContent').hidden = tab.preview;
-  $('edPreview').hidden = !tab.preview;
-  if (tab.preview) $('edPreview').innerHTML = renderMd(tab.content);
-  $('edMeta').textContent = `${tab.kind} · ${tab.id}`;
-  $('edDirty').textContent = tab.dirty ? '未保存' : '';
-  $('edPreview').textContent = '';
-}
-
-/** 打开/激活编辑器 tab（知识条目直接点击即预览编辑） */
+/** 打开独立编辑器窗口并添加/激活条目 tab */
 async function openEditor(kind, id) {
-  const existing = editorTabs.findIndex((t) => t.kind === kind && t.id === id);
-  if (existing >= 0) {
-    activeEd = existing;
-    renderEditorUI();
-  } else {
-    let content = '';
-    try {
-      const item = await invoke('get_knowledge_item_content', { kind, id });
-      content = item ? (item.content || '') : '';
-    } catch { /* 内容读取失败则空 */ }
-    editorTabs.push({ kind, id, title: '', content, preview: false, dirty: false });
-    activeEd = editorTabs.length - 1;
-  }
-  // 标题补充（列表缓存里有）
-  const cachedItem = detailCache['knowledge::all']?.items?.find((i) => i.kind === kind && i.id === id);
-  if (cachedItem) editorTabs[activeEd].title = cachedItem.title || editorTabs[activeEd].title;
-  if (!editorTabs[activeEd].title) editorTabs[activeEd].title = id;
-  // 展开编辑器 + 宽窗（与 bar 等高紧贴）
-  $('editor').hidden = false;
-  document.body.classList.add('editor-on');
-  renderEditorUI();
-  await invoke('set_window_mode', { mode: 'editor' }).catch(() => {});
-  fitWindow();
-}
-
-async function saveEditorTab() {
-  const tab = edTab();
-  if (!tab) return;
   try {
-    await invoke('update_knowledge_item', { kind: tab.kind, id: tab.id, content: $('edContent').value });
-    tab.content = $('edContent').value;
-    tab.dirty = false;
-    delete detailCache['knowledge::all'];
-    $('liveStatus').textContent = `已保存 ${tab.id}`;
-    renderEditorUI();
+    await invoke('open_editor_tab', { kind, id });
+    $('liveStatus').textContent = '编辑器已打开';
   } catch (err) {
-    $('liveStatus').textContent = `保存失败：${err && err.message ? err.message : err}`;
+    $('liveStatus').textContent = `编辑器打开失败：${err && err.message ? err.message : err}`;
   }
 }
 
-async function deleteEditorTab() {
-  const tab = edTab();
-  if (!tab) return;
-  if (!window.confirm(`删除知识条目？\n${tab.kind} · ${tab.id}`)) return;
-  try {
-    await invoke('delete_knowledge_item', { kind: tab.kind, id: tab.id });
-    delete detailCache['knowledge::all'];
-    $('liveStatus').textContent = `已删除 ${tab.id}`;
-    closeEditorTab(activeEd, true);
-    if (view?.kind === 'knowledge') openDetail('knowledge', 'all', null, true);
-  } catch (err) {
-    $('liveStatus').textContent = `删除失败：${err && err.message ? err.message : err}`;
-  }
-}
-
-function closeEditorTab(index, force = false) {
-  const tab = editorTabs[index];
-  if (!tab) return;
-  if (tab.dirty && !force && !window.confirm('有未保存的修改，放弃？')) return;
-  editorTabs.splice(index, 1);
-  if (editorTabs.length === 0) {
-    activeEd = -1;
-    $('editor').hidden = true;
-    document.body.classList.remove('editor-on');
-    invoke('set_window_mode', { mode: 'card' }).catch(() => {});
-    fitWindow();
-  } else {
-    activeEd = Math.min(index, editorTabs.length - 1);
-    renderEditorUI();
-  }
-}
-
-/** 新建 md 知识条目 */
+/** 新建 md 知识条目（创建后直接打开到编辑器窗口） */
 async function createKnowledgeItem() {
   const kind = window.prompt('条目类型（specs / memory / knowhow）：', 'specs');
   if (!kind || !['specs', 'memory', 'knowhow'].includes(kind)) return;
@@ -1954,15 +2389,10 @@ async function createKnowledgeItem() {
   if (!title) return;
   try {
     const id = await invoke('create_knowledge_item', { kind, title, content: '' });
+    kbItemsPromise = null; // 条目列表失效，下次拉取
     delete detailCache['knowledge::all'];
     $('liveStatus').textContent = `已创建 ${id}`;
     await openEditor(kind, id);
-    if (activeEd >= 0) {
-      editorTabs[activeEd].content = `# ${title}\n\n`;
-      editorTabs[activeEd].dirty = true;
-    }
-    renderEditorUI();
-    $('edContent').focus();
   } catch (err) {
     $('liveStatus').textContent = `创建失败：${err && err.message ? err.message : err}`;
   }
@@ -2054,3 +2484,4 @@ function fitWindow() {
 init().catch((err) => {
   showBootError(`init failed: ${err && err.message ? err.message : String(err)}`);
 });
+

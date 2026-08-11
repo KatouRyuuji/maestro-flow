@@ -316,3 +316,46 @@ input[type="range"]:focus-visible { outline: 2px solid var(--focus); outline-off
 #rootList .mp-row .root-path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 10px; color: var(--text-dim); }
 .mp-row .ws-trash { flex: none; color: var(--text-dim); opacity: .6; }
 .mp-row .ws-trash:hover { color: var(--danger); opacity: 1; }
+
+/* 工作空间选择弹层（右下角按钮展开） */
+.ws-pop {
+  position: absolute;
+  right: 10px;
+  bottom: 40px;
+  width: 260px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--popover);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px var(--shadow);
+  z-index: 60;
+  padding: 6px;
+}
+.ws-pop-title {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+  padding: 4px 10px 6px;
+}
+.ws-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font-size: 11.5px;
+  cursor: pointer;
+  text-align: left;
+}
+.ws-item:hover { background: var(--hover); }
+.ws-item.active { background: var(--selection-soft); color: var(--text-strong); }
+.ws-item .ws-item-name { flex: none; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.ws-item .ws-item-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); font: 8.5px/1.4 var(--mono); }
+.ws-item .ws-item-mark { flex: none; color: var(--selection); font: 700 11px/1 var(--mono); }
+.ws-item .ws-item-src { flex: none; color: var(--text-dim); font-size: 8px; opacity: .7; }

@@ -25,6 +25,8 @@ pub struct KnowledgeEntry {
     pub status: String,
     pub updated: Option<String>,
     pub priority: Option<String>,
+    /// learning 行使用频次（CLI 统计）；其他类型为 None。
+    pub frequency: Option<u64>,
 }
 
 const KIND_ORDER: [&str; 5] = ["specs", "memory", "knowhow", "learning", "issues"];
@@ -145,7 +147,24 @@ pub fn read_knowledge_item_content(
                             continue;
                         };
                         let row_id = v.get("id").and_then(|x| x.as_str()).unwrap_or("");
-                        if row_id == id {
+                        // learning 行无自有 id：支持合成 id `{command}-{frequency}` 匹配
+                        let matches = if kind == "learning" {
+                            let synth = row_id.is_empty()
+                                && id
+                                    .rsplit_once('-')
+                                    .map(|(cmd, freq)| {
+                                        v.get("command").and_then(|x| x.as_str()) == Some(cmd)
+                                            && v.get("frequency")
+                                                .and_then(|x| x.as_f64())
+                                                .map(|f| f.to_string() == freq)
+                                                .unwrap_or(false)
+                                    })
+                                    .unwrap_or(false);
+                            row_id == id || synth
+                        } else {
+                            row_id == id
+                        };
+                        if matches {
                             let entry = if kind == "issues" {
                                 jsonl_issue_entry(&v, kind)
                             } else {
@@ -206,6 +225,7 @@ pub fn scan_knowledge_items(wf_root: &Path) -> Vec<KnowledgeEntry> {
                         status,
                         updated,
                         priority: None,
+                        frequency: None,
                     });
                 }
             }
@@ -286,6 +306,7 @@ fn jsonl_issue_entry(v: &serde_json::Value, kind: &str) -> KnowledgeEntry {
         status: s("status"),
         updated: nonempty(s("updated_at")).or_else(|| nonempty(s("created_at"))),
         priority: nonempty(priority),
+        frequency: None,
     }
 }
 
@@ -318,7 +339,21 @@ fn jsonl_learning_entry(v: &serde_json::Value, kind: &str) -> KnowledgeEntry {
         status: "active".to_string(),
         updated: nonempty(s("lastUsed")),
         priority: None,
+        frequency: Some(freq),
     }
+}
+
+/// 高频知识沉淀：learning 行按使用频次倒序取前 N 条（跨工程合并由调用方完成）。
+pub fn scan_top_learning(wf_root: &Path, limit: usize) -> Vec<KnowledgeEntry> {
+    let mut items = read_jsonl_entries(&wf_root.join("learning"), "learning", jsonl_learning_entry);
+    items.sort_by(|a, b| {
+        b.frequency
+            .unwrap_or(0)
+            .cmp(&a.frequency.unwrap_or(0))
+            .then_with(|| a.title.cmp(&b.title))
+    });
+    items.truncate(limit);
+    items
 }
 
 fn nonempty(s: String) -> Option<String> {
@@ -568,4 +603,60 @@ pub fn create_knowledge_md(
     let body = format!("---\ntitle: \"{}\"\n---\n\n{}\n", title.replace('"', "\\\""), content.trim());
     fs::write(dir.join(format!("{id}.md")), body).map_err(|e| e.to_string())?;
     Ok(id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn tmp_dir(tag: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("maestro-sidebar-kb-{}-{}", tag, std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write_learning(dir: &Path, rows: &[(&str, u64)]) {
+        fs::create_dir_all(dir.join("learning")).unwrap();
+        let mut out = String::new();
+        for (cmd, freq) in rows {
+            out.push_str(&format!(
+                r#"{{"command":"{cmd}","frequency":{freq},"successRate":1,"avgDuration":1000,"lastUsed":"2026-07-01T00:00:00Z"}}"#,
+            ));
+            out.push('\n');
+        }
+        fs::write(dir.join("learning/patterns.jsonl"), out).unwrap();
+    }
+
+    #[test]
+    fn scan_top_learning_sorts_by_frequency() {
+        let dir = tmp_dir("top");
+        write_learning(&dir, &[("gemini", 3), ("claude-code", 9), ("codex", 5)]);
+        let top = scan_top_learning(&dir, 2);
+        assert_eq!(top.len(), 2);
+        assert_eq!(top[0].title, "claude-code");
+        assert_eq!(top[0].frequency, Some(9));
+        assert_eq!(top[1].title, "codex");
+        // 截断
+        let all = scan_top_learning(&dir, 10);
+        assert_eq!(all.len(), 3);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_learning_content_by_synthetic_id() {
+        let dir = tmp_dir("synth");
+        write_learning(&dir, &[("gemini", 3), ("claude-code", 9)]);
+        let item = read_knowledge_item_content(&dir, "learning", "claude-code-9");
+        assert!(item.is_some());
+        let item = item.unwrap();
+        assert_eq!(item.id, "claude-code-9");
+        assert_eq!(item.title, "claude-code");
+        assert!(item.content.contains("claude-code"));
+        // 不存在的合成 id → None
+        assert!(read_knowledge_item_content(&dir, "learning", "claude-code-99").is_none());
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

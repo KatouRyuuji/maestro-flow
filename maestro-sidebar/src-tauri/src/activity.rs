@@ -4,6 +4,7 @@
 // 元数据含 tool、model、mode、prompt、startedAt、exitCode 等。
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -20,6 +21,92 @@ pub struct AgentCall {
     pub exit_code: Option<i64>,
     pub async_delegate: bool,
     pub delegate_status: Option<String>,
+    pub stream_bytes: u64,
+    pub last_activity_ms: Option<u64>,
+    pub last_entry_type: Option<String>,
+    pub last_output_preview: Option<String>,
+}
+
+#[derive(Debug, Default)]
+struct StreamSummary {
+    bytes: u64,
+    modified_ms: Option<u64>,
+    last_entry_type: Option<String>,
+    output_preview: Option<String>,
+}
+
+const STREAM_TAIL_BYTES: u64 = 256 * 1024;
+const OUTPUT_PREVIEW_CHARS: usize = 220;
+
+fn tail_chars(value: &str, limit: usize) -> String {
+    let chars: Vec<char> = value.chars().collect();
+    let start = chars.len().saturating_sub(limit);
+    chars[start..].iter().collect::<String>().trim().to_owned()
+}
+
+/// Read only the tail of the JSONL stream. Size/mtime make stream progress part
+/// of the snapshot fingerprint while the preview gives the UI useful live text.
+fn read_stream_summary(path: &Path) -> StreamSummary {
+    let Ok(mut file) = fs::File::open(path) else {
+        return StreamSummary::default();
+    };
+    let Ok(meta) = file.metadata() else {
+        return StreamSummary::default();
+    };
+    let bytes = meta.len();
+    let modified_ms = meta
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|value| value.as_millis() as u64);
+    let start = bytes.saturating_sub(STREAM_TAIL_BYTES);
+    if file.seek(SeekFrom::Start(start)).is_err() {
+        return StreamSummary {
+            bytes,
+            modified_ms,
+            ..Default::default()
+        };
+    }
+
+    let mut buffer = Vec::new();
+    if file.read_to_end(&mut buffer).is_err() {
+        return StreamSummary {
+            bytes,
+            modified_ms,
+            ..Default::default()
+        };
+    }
+    let mut raw = String::from_utf8_lossy(&buffer).into_owned();
+    if start > 0 {
+        if let Some(first_newline) = raw.find('\n') {
+            raw = raw[first_newline + 1..].to_owned();
+        }
+    }
+
+    let mut assistant_output = String::new();
+    let mut last_entry_type = None;
+    for line in raw.lines() {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let entry_type = value.get("type").and_then(|item| item.as_str());
+        if let Some(entry_type) = entry_type {
+            last_entry_type = Some(entry_type.to_owned());
+        }
+        if entry_type == Some("assistant_message") {
+            if let Some(content) = value.get("content").and_then(|item| item.as_str()) {
+                assistant_output.push_str(content);
+            }
+        }
+    }
+
+    let output_preview = tail_chars(&assistant_output, OUTPUT_PREVIEW_CHARS);
+    StreamSummary {
+        bytes,
+        modified_ms,
+        last_entry_type,
+        output_preview: (!output_preview.is_empty()).then_some(output_preview),
+    }
 }
 
 /// 扫描 cli-history 目录，返回最近 N 条调用（按 mtime 新→旧）。
@@ -71,6 +158,11 @@ pub fn scan_calls(dir: &Path, limit: usize) -> Vec<AgentCall> {
             continue;
         };
         call.exec_id = name.trim_end_matches(".meta.json").to_owned();
+        let stream = read_stream_summary(&dir.join(format!("{}.jsonl", call.exec_id)));
+        call.stream_bytes = stream.bytes;
+        call.last_activity_ms = stream.modified_ms;
+        call.last_entry_type = stream.last_entry_type;
+        call.last_output_preview = stream.output_preview;
         // 大 prompt 截断保护（前端展示摘要）
         if call.prompt.chars().count() > 400 {
             call.prompt = call.prompt.chars().take(400).collect();
@@ -96,6 +188,11 @@ pub struct CallEntry {
     pub timestamp: Option<String>,
     pub partial: Option<bool>,
     pub role: Option<String>,
+    pub name: Option<String>,
+    pub status: Option<String>,
+    pub result: Option<String>,
+    pub message: Option<String>,
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -109,6 +206,11 @@ pub fn read_call_detail(dir: &Path, exec_id: &str) -> Option<CallDetail> {
     let meta_raw = fs::read_to_string(dir.join(format!("{exec_id}.meta.json"))).ok()?;
     let mut call: AgentCall = serde_json::from_str(&meta_raw).ok()?;
     call.exec_id = exec_id.to_owned();
+    let stream = read_stream_summary(&dir.join(format!("{exec_id}.jsonl")));
+    call.stream_bytes = stream.bytes;
+    call.last_activity_ms = stream.modified_ms;
+    call.last_entry_type = stream.last_entry_type;
+    call.last_output_preview = stream.output_preview;
     // 完整 prompt 不做截断（详情视图展示全文）
 
     let mut entries: Vec<CallEntry> = Vec::new();
@@ -171,6 +273,33 @@ mod tests {
         assert_eq!(c.model.as_deref(), Some("claude-sonnet"));
         assert_eq!(c.exit_code, Some(0));
         assert!(c.prompt.chars().count() <= 400);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scan_calls_includes_live_stream_summary() {
+        let dir = tmp_dir("stream");
+        fs::write(
+            dir.join("pi-123.meta.json"),
+            r#"{"execId":"pi-123","tool":"pi","mode":"analysis","prompt":"test","startedAt":"2026-08-11T08:00:00Z"}"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pi-123.jsonl"),
+            concat!(
+                "{\"type\":\"assistant_message\",\"content\":\"Hello\",\"partial\":true}\n",
+                "{\"type\":\"assistant_message\",\"content\":\" world\",\"partial\":true}\n",
+                "{\"type\":\"token_usage\",\"inputTokens\":1,\"outputTokens\":2}\n"
+            ),
+        )
+        .unwrap();
+
+        let calls = scan_calls(&dir, 10);
+        assert_eq!(calls.len(), 1);
+        assert!(calls[0].stream_bytes > 0);
+        assert!(calls[0].last_activity_ms.is_some());
+        assert_eq!(calls[0].last_entry_type.as_deref(), Some("token_usage"));
+        assert_eq!(calls[0].last_output_preview.as_deref(), Some("Hello world"));
         let _ = fs::remove_dir_all(&dir);
     }
 }
