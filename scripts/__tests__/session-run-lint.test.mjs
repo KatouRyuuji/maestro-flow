@@ -14,6 +14,7 @@ import {
   validateCompanionRunCreate,
   validateConsumesSchema,
   validateExecutorLifecycleBoundary,
+  validateProducesAliases,
   validateRunCreateArgumentChannels,
 } from '../lint-session-run-prompts.mjs';
 
@@ -320,4 +321,25 @@ test('validateConsumesSchema rejects v2.1 consumes missing schema/role and versi
   assert.deepEqual(v21Complete, []);
 
   assert.deepEqual(validateConsumesSchema({ contract_version: 2.1, consumes: [] }, 'prepare/empty.md'), []);
+});
+
+test('validateProducesAliases requires an explicit alias on primary produces', () => {
+  const missing = validateProducesAliases(
+    { contract_version: 2.1, produces: [{ kind: 'result', path: 'outputs/r.json', role: 'primary', required: true, schema: 'result/1.0' }] },
+    'prepare/demo.md',
+  );
+  assert.equal(missing.length, 1);
+  assert.match(missing[0], /primary but declares no alias/);
+
+  const explicit = validateProducesAliases(
+    { contract_version: 2.1, produces: [{ kind: 'result', path: 'outputs/r.json', alias: 'current-result', role: 'primary', required: true, schema: 'result/1.0' }] },
+    'prepare/demo.md',
+  );
+  assert.deepEqual(explicit, []);
+
+  const attachment = validateProducesAliases(
+    { contract_version: 2.1, produces: [{ kind: 'note', path: 'outputs/n.json', role: 'attachment', required: false, schema: 'note/1.0' }] },
+    'prepare/demo.md',
+  );
+  assert.deepEqual(attachment, []);
 });

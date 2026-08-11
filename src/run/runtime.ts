@@ -200,6 +200,7 @@ export interface CreateRunResult {
   upstream: Record<string, RunUpstream>;
   topic_identity: TopicIdentity;
   reuse_assessments: ReuseAssessment[];
+  reuse_warnings: string[];
   argument_requirements: ArgumentRequirement[];
   entry_gates: GateSummary;
   entry_blockers: NamedGateBlocker[];
@@ -2010,6 +2011,18 @@ export function createRun(options: CreateRunOptions): CreateRunResult {
       source.contract,
     );
     const upstream = reuse.upstream;
+    const reuseWarnings: string[] = [];
+    for (const consume of source.contract.consumes) {
+      if (!consume.alias) continue;
+      const aliasTargetId = bundle.artifacts.aliases[consume.alias];
+      const kindMatches = Object.values(bundle.artifacts.artifacts)
+        .filter(artifact => artifact.kind === consume.kind);
+      if (aliasTargetId === undefined && kindMatches.length > 0) {
+        reuseWarnings.push(
+          `consume alias '${consume.alias}' (kind=${consume.kind}) is not registered in this Session while ${kindMatches.length} ${consume.kind} artifact(s) exist; the upstream cannot bind — check the producer alias`,
+        );
+      }
+    }
     const guidanceSnapshot = buildGuidanceSnapshot(options.projectRoot, options.command, source);
     const creationMode = options.creation?.mode
       ?? (options.retryToken ? 'retry' : boundStep ? 'chain-next' : 'explicit-create');
@@ -2119,6 +2132,7 @@ export function createRun(options: CreateRunOptions): CreateRunResult {
       upstream,
       topic_identity: bundle.session.topic_identity ?? topicIdentity,
       reuse_assessments: reuse.assessments,
+      reuse_warnings: reuseWarnings,
       argument_requirements: argumentRequirements,
       entry_gates: entrySummary,
       entry_blockers: entryBlockers,

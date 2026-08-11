@@ -5,6 +5,7 @@ argument-hint: <requirement> [--template feature|bugfix|refactor|migration|api-e
 contract:
   consumes:
   - kind: session
+    alias: planex-session
     required: false
     schema: session/1.0
     role: primary

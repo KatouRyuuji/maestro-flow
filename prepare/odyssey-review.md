@@ -6,6 +6,7 @@ argument-hint: '<target: file|dir|HEAD|staged|phase#|PR#> [--skip-fix] [--skip-g
 contract:
   consumes:
   - kind: session
+    alias: review-session
     required: false
     schema: session/1.0
     role: primary

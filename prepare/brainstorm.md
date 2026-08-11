@@ -5,6 +5,7 @@ argument-hint: '[topic|role-name] [--yes] [--count N] [--session ID] [--update] 
 contract:
   consumes:
   - kind: context-package
+    alias: upstream-context
     required: false
     schema: context-package/1.0
     role: attachment

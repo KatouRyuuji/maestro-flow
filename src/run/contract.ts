@@ -104,8 +104,13 @@ function refineStrictContract(
   contract: { consumes: Array<{ alias?: string }>; produces: Array<{ alias?: string; path: string; role: string; required: boolean }> },
   context: z.RefinementCtx,
 ): void {
+  // Producer aliases must be unique within one contract so registry.aliases[alias]
+  // stays unambiguous after seal. A consume may reuse a producer alias: consume
+  // binds the alias target registered at create time (a previous sealed Run),
+  // while the same alias is registered/superseded only when this Run seals — the
+  // two phases never overlap.
   const aliases = new Set<string>();
-  for (const item of [...contract.consumes, ...contract.produces]) {
+  for (const item of contract.produces) {
     if (!item.alias) continue;
     if (aliases.has(item.alias)) context.addIssue({ code: z.ZodIssueCode.custom, message: `duplicate contract alias: ${item.alias}` });
     aliases.add(item.alias);

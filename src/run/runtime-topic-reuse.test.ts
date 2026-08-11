@@ -205,6 +205,61 @@ describe('same-Session reuse assessment', () => {
     expect(conflict.upstream).toEqual({});
     expect(conflict.reuse_assessments.every(item => item.decision === 'CONFLICT')).toBe(true);
   });
+
+  it('binds the previous sealed generation when a command consumes and produces the same alias', () => {
+    const selfReuseContract = `contract_version: 2.1
+arguments: []
+consumes:
+  - kind: context
+    alias: current-context
+    required: false
+    require_status: sealed
+    schema: context/1.0
+    role: primary
+produces:
+  - kind: context
+    path: outputs/context.json
+    alias: current-context
+    role: primary
+    required: true
+    schema: context/1.0
+gates:
+  entry: []
+  exit: []`;
+    const projectRoot = root();
+    commandFile(projectRoot, 'self-reuse', selfReuseContract);
+
+    const first = createRun({ projectRoot, command: 'self-reuse', sessionId: 's', intent: 'self' });
+    expect(first.upstream).toEqual({});
+    expect(first.reuse_warnings).toEqual([]);
+    sealContext(projectRoot, 's', first.run_id, 'gen-1');
+
+    const store = new SessionStore(projectRoot);
+    const gen1Id = Object.entries(store.readBundle('s').artifacts.artifacts)
+      .find(([, artifact]) => artifact.producer_run_id === first.run_id)?.[0]!;
+    const second = createRun({ projectRoot, command: 'self-reuse', sessionId: 's', intent: 'self' });
+    expect(second.upstream['current-context']?.artifact_id).toBe(gen1Id);
+    expect(second.reuse_assessments).toEqual([expect.objectContaining({ decision: 'REUSE' })]);
+    sealContext(projectRoot, 's', second.run_id, 'gen-2');
+
+    const gen2Id = Object.entries(store.readBundle('s').artifacts.artifacts)
+      .find(([, artifact]) => artifact.producer_run_id === second.run_id)?.[0]!;
+    const third = createRun({ projectRoot, command: 'self-reuse', sessionId: 's', intent: 'self' });
+    expect(third.upstream['current-context']?.artifact_id).toBe(gen2Id);
+    expect(third.reuse_assessments[0]).toMatchObject({ decision: 'REUSE' });
+  });
+
+  it('warns when a consume alias has same-kind artifacts but no registered alias', () => {
+    const projectRoot = root();
+    commandFile(projectRoot, 'produce', producerContract);
+    commandFile(projectRoot, 'consume-other', consumerContract.replace('alias: current-context', 'alias: other-context'));
+    const producer = createRun({ projectRoot, command: 'produce', sessionId: 's', intent: 'warn' });
+    sealContext(projectRoot, 's', producer.run_id, 'v');
+
+    const consumer = createRun({ projectRoot, command: 'consume-other', sessionId: 's', intent: 'warn' });
+    expect(consumer.upstream).toEqual({});
+    expect(consumer.reuse_warnings.some(warning => warning.includes("'other-context'") && warning.includes('context artifact'))).toBe(true);
+  });
 });
 
 describe('argument requirements projection', () => {

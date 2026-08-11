@@ -5,6 +5,7 @@ argument-hint: <topic|plan> [-y] [-c] [--from <source>] [--depth shallow|standar
 contract:
   consumes:
   - kind: context-package
+    alias: upstream-context
     required: false
     schema: context-package/1.0
     role: attachment

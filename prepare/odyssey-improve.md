@@ -5,6 +5,7 @@ argument-hint: <target> [--dimensions <list>] [--fix-threshold <severity>] [--sk
 contract:
   consumes:
   - kind: audit-result
+    alias: latest-audit
     required: false
     schema: audit-result/1.0
     role: primary

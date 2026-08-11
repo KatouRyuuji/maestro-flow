@@ -73,7 +73,7 @@ export function createTransitionRequest(
 
 export class TransitionReceiptError extends Error {
   constructor(
-    readonly code: 'REQUEST_CONFLICT' | 'REPLAY_STATE_DIVERGED' | 'INVALID_TRANSITION_RECEIPT' | 'FENCE_CONFLICT',
+    readonly code: 'REQUEST_CONFLICT' | 'REPLAY_STATE_DIVERGED' | 'INVALID_TRANSITION_RECEIPT' | 'FENCE_CONFLICT' | 'ALREADY_ACCEPTED',
     message: string,
   ) {
     super(message);

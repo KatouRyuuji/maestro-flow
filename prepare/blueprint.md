@@ -5,6 +5,7 @@ argument-hint: <idea or @file> [-y] [-c] [--from <source>]
 contract:
   consumes:
   - kind: context-package
+    alias: upstream-context
     required: false
     schema: context-package/1.0
     role: attachment

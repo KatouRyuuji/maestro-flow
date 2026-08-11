@@ -6,6 +6,7 @@ argument-hint: <target> [--tier quick|standard|deep] [--skip-generalize] [-y] [-
 contract:
   consumes:
   - kind: security-audit-result
+    alias: security-session
     required: false
     schema: security-audit-result/1.0
     role: primary

@@ -5,6 +5,7 @@ argument-hint: <issue> [--template performance|memory-leak|race-condition|regres
 contract:
   consumes:
   - kind: session
+    alias: debug-session
     required: false
     schema: session/1.0
     role: primary

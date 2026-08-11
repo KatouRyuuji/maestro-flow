@@ -5,6 +5,7 @@ argument-hint: <requirement> [-y] [-c] [-m progressive|direct|auto] [--from <sou
 contract:
   consumes:
   - kind: context-package
+    alias: upstream-context
     required: false
     schema: context-package/1.0
     role: attachment

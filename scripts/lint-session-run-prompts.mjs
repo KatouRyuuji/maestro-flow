@@ -394,6 +394,16 @@ export function validateConsumesSchema(contract, label) {
 }
 
 const prepareDir = join(root, 'prepare');
+export function validateProducesAliases(contract, label) {
+  const errors = [];
+  for (const [index, produce] of (contract?.produces ?? []).entries()) {
+    if (produce?.role === 'primary' && (typeof produce.alias !== 'string' || produce.alias.length === 0)) {
+      errors.push(`${label}: produces[${index}] kind=${produce.kind ?? '?'} is primary but declares no alias (an explicit alias is mandatory so consumers bind deterministically; defaultAlias inference is legacy-only)`);
+    }
+  }
+  return errors;
+}
+
 const contractSources = [];
 for (const file of readdirSync(prepareDir).filter((name) => name.endsWith('.md'))) {
   const path = join(prepareDir, file);
@@ -414,6 +424,7 @@ for (const { contract } of contractSources) {
 for (const { path, contract } of contractSources) {
   const label = relative(root, path);
   errors.push(...validateConsumesSchema(contract, label));
+  errors.push(...validateProducesAliases(contract, label));
   for (const item of contract.consumes ?? []) {
     if (typeof item?.alias === 'string' && item.alias.length > 0 && !producedAliases.has(item.alias)) {
       errors.push(`${label}: consumes alias '${item.alias}' (kind=${item.kind ?? '?'}) has no declared producer alias; the upstream can never bind (dead alias)`);

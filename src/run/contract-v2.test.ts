@@ -63,6 +63,18 @@ describe('command-contract/2.0', () => {
     expect(createContractSnapshot(contract).contract_version).toBe('command-contract/2.1');
   });
 
+  it('permits a consume to reuse a producer alias while producer aliases stay unique', () => {
+    const contract = parseCommandContract({
+      ...validV2(),
+      consumes: [{ ...validV2().consumes[0], alias: 'result' }],
+    });
+    expect(contract.consumes[0].alias).toBe('result');
+    expect(() => parseCommandContract({
+      ...validV2(),
+      produces: [validV2().produces[0], { ...validV2().produces[0], path: 'outputs/other.json' }],
+    })).toThrow(/duplicate contract alias/);
+  });
+
   it('fails closed on synonyms, duplicates, traversal and multiple required primary outputs', () => {
     expect(() => parseCommandContract({ ...validV2(), contract_version: 3 })).toThrow(/Unsupported/);
     expect(() => parseCommandContract({
