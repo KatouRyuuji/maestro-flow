@@ -41,8 +41,11 @@
     <div class="capsule" id="capsule" hidden data-tauri-drag-region>
       <span class="cap-logo" aria-hidden="true">◆</span>
       <button type="button" class="cap-main" id="capBody" title="回到卡片" aria-label="打开完整卡片视图">
-        <div class="cap-intent" id="capTitle">—</div>
-        <div class="cap-sub" id="capSub">—</div>
+        <div class="cap-row1">
+          <div class="cap-intent" id="capTitle">—</div>
+          <span class="bd bd-dim cap-status" id="capStatus">—</span>
+        </div>
+        <div class="cap-sub" id="capSub"><span class="dot"></span><span class="cap-sub-t" id="capSubT">—</span><span class="bd bd-dim" id="capVerdict" hidden></span><span class="cap-ago" id="capAgo"></span></div>
         <div class="cap-progress" id="capProgress" aria-hidden="true"><i id="capProgressBar"></i></div>
       </button>
       <div class="cap-chips">

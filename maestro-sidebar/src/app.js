@@ -45,6 +45,8 @@ let detail = null;            // 详情数据（CallDetail / SessionDetail）
 let detailStatus = 'idle';    // idle | loading | ready | not-found | error
 let detailRequestId = 0;
 let detailReturnFocus = null;
+const viewStack = [];       // 详情导航栈（主列表 → 知识列表 → 条目详情）
+const detailCache = {};     // key: `${kind}::${id}` → { detail }
 let menuTrigger = null;
 let expandedSessions = new Set(); // 列表里展开 run 明细的会话
 const runDisclosureState = new Map();
@@ -74,13 +76,13 @@ const TOOL_LABEL = {
 const VERDICT_COLOR = {
   ready: 'var(--ok)', done: 'var(--ok)',
   blocked: 'var(--danger)', failed: 'var(--danger)',
-  'needs-retry': 'var(--warn)', done_with_concerns: 'var(--warn)',
+  'needs-retry': 'var(--warn)', done_with_concerns: 'var(--warn)', ready_with_concerns: 'var(--warn)',
 };
 // verdict 中文语义（层次分明的状态语言）；原始英文保留在 title 中供技术读者查看
 const VERDICT_LABEL = {
   ready: '就绪', done: '完成',
   blocked: '卡住', failed: '失败',
-  'needs-retry': '需重试', done_with_concerns: '有疑虑',
+  'needs-retry': '需重试', done_with_concerns: '有疑虑', ready_with_concerns: '有疑虑',
 };
 function verdictLabel(v) {
   const s = String(v || '').toLowerCase();
@@ -541,6 +543,8 @@ function render() {
     $('listView').hidden = true;
     $('detailView').hidden = false;
     if (view.kind === 'call') renderCallDetail();
+    else if (view.kind === 'knowledge') renderKnowledgeDetail();
+    else if (view.kind === 'knowledge-item') renderKnowledgeItemDetail();
     else renderSessionDetail();
   } else {
     $('detailView').hidden = true;
@@ -915,7 +919,7 @@ function verdictClass(v) {
   const s = String(v).toLowerCase();
   if (s === 'ready' || s === 'done') return 'v-ready';
   if (s === 'blocked' || s === 'failed') return 'v-blocked';
-  if (s === 'needs-retry' || s === 'done_with_concerns') return 'v-retry';
+  if (s === 'needs-retry' || s === 'done_with_concerns' || s === 'ready_with_concerns') return 'v-retry';
   return 'default';
 }
 
@@ -958,11 +962,14 @@ function renderKnowledge() {
   const legend = el('div', 'legend');
   for (const [key, label, color] of KNOWLEDGE_ITEMS) {
     const value = knowledgeValue(k, key);
-    const kpi = el('div', 'kpi');
+    const kpi = el('button', 'kpi');
+    kpi.type = 'button';
     kpi.style.setProperty('--c', color);
-    kpi.title = `${key}：${value} 条`;
+    kpi.title = `${key}：${value} 条 · 点击查看条目`;
+    kpi.setAttribute('aria-label', `查看${label}条目`);
     kpi.appendChild(el('b', '', String(value)));
     kpi.appendChild(el('span', '', label));
+    kpi.addEventListener('click', () => openDetail('knowledge', 'all', kpi));
     kpis.appendChild(kpi);
     const pct = total ? (value / total) * 100 : 0;
     const seg = document.createElement('i');
@@ -983,30 +990,156 @@ function renderKnowledge() {
   body.appendChild(kpis);
   body.appendChild(stack);
   body.appendChild(legend);
+  const foot = el('div', 'kb-foot');
+  const all = el('button', 'expand-btn', '查看全部条目 ›');
+  all.type = 'button';
+  all.addEventListener('click', () => openDetail('knowledge', 'all', all));
+  foot.appendChild(all);
+  body.appendChild(foot);
+}
+
+// 知识条目状态徽章（参考 ref/sidebar.html：open→danger / draft→warn / 其余→ok）
+function kbStatusClass(status) {
+  const s = String(status || '').toLowerCase();
+  if (s === 'open' || s === 'failed' || s === 'blocked') return 'st-error';
+  if (s === 'draft' || s === 'pending' || s === 'paused' || s === 'optional') return 'st-cancel';
+  if (s === 'completed' || s === 'active' || s === 'required' || s === 'sealed' || s === 'done') return 'st-done';
+  return 'st-unknown';
+}
+const KB_KIND_ORDER = [['specs', '规范'], ['memory', '记忆'], ['knowhow', '诀窍'], ['learning', '学习'], ['issues', '问题']];
+
+function renderKnowledgeDetail() {
+  if (!renderDetailState('知识积累')) return;
+  const body = $('detailBody');
+  const items = Array.isArray(detail.items) ? detail.items : [];
+  $('detailTitle').textContent = '知识积累';
+  $('detailKind').textContent = 'KNOWLEDGE';
+  const sub = el('div', 'kb-sub');
+  sub.textContent = 'specs 规范 / memory 记忆 / knowhow 诀窍 / learning 学习 / issues 问题 · 点击条目复制 ID';
+  body.appendChild(sub);
+  if (!items.length) {
+    body.appendChild(el('div', 'detail-empty', '暂无知识条目。'));
+    return;
+  }
+  const colorOf = (key) => {
+    const found = KNOWLEDGE_ITEMS.find(([k]) => k === key);
+    return found ? found[2] : 'var(--text-dim)';
+  };
+  for (const [kind, label] of KB_KIND_ORDER) {
+    const group = items.filter((item) => item.kind === kind);
+    if (!group.length) continue;
+    const head = el('div', 'kg-h');
+    const dot = el('i', 'lg-dot');
+    dot.style.setProperty('--c', colorOf(kind));
+    head.appendChild(dot);
+    head.appendChild(el('span', '', label));
+    head.appendChild(el('span', 'pill', String(group.length)));
+    body.appendChild(head);
+    for (const item of group) {
+      const ke = el('button', 'ke');
+      ke.type = 'button';
+      ke.title = `${item.id} · ${item.status || ''}`;
+      ke.setAttribute('aria-label', `复制 ${item.id}`);
+      const kh = el('div', 'ke-h');
+      kh.appendChild(el('span', 'ke-id', item.id || ''));
+      kh.appendChild(el('span', 'ke-t', item.title || '未命名条目'));
+      ke.appendChild(kh);
+      if (item.summary) ke.appendChild(el('div', 'ke-s', oneLine(item.summary)));
+      const kf = el('div', 'ke-f');
+      for (const tag of (item.tags || []).slice(0, 4)) {
+        kf.appendChild(el('span', 'tag', String(tag)));
+      }
+      if (item.status) kf.appendChild(el('span', `bd ${kbStatusClass(item.status)}`, item.status));
+      if (item.updated) kf.appendChild(el('span', 'rt', `${fmtAgo(item.updated)} 更新`));
+      ke.appendChild(kf);
+      ke.addEventListener('click', () => openDetail('knowledge-item', `${item.kind}::${item.id}`, ke));
+      body.appendChild(ke);
+    }
+  }
+}
+
+/** 知识条目详情：meta 卡 + 全文（点击列表条目进入） */
+function renderKnowledgeItemDetail() {
+  if (!renderDetailState('知识条目')) return;
+  const body = $('detailBody');
+  const item = (detail && detail.item) || {};
+  $('detailTitle').textContent = item.title || item.id || '知识条目';
+  $('detailKind').textContent = String(item.kind || '').toUpperCase();
+  const meta = el('section', 'detail-card');
+  meta.appendChild(el('h2', 'd-sec-title', '条目信息'));
+  meta.appendChild(detailRow('ID', item.id));
+  meta.appendChild(detailRow('类型', item.kind));
+  meta.appendChild(detailRow('状态', item.status || '—'));
+  if (item.priority) meta.appendChild(detailRow('优先级', item.priority));
+  if (item.updated) meta.appendChild(detailRow('更新', fmtFull(item.updated)));
+  if (Array.isArray(item.tags) && item.tags.length) meta.appendChild(detailRow('标签', item.tags.join(' / ')));
+  const copyBtn = el('button', 'retry-btn', '复制 ID');
+  copyBtn.type = 'button';
+  copyBtn.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(item.id || '');
+      $('liveStatus').textContent = `已复制 ${item.id}`;
+    } catch { /* 剪贴板不可用 */ }
+  });
+  meta.appendChild(copyBtn);
+  body.appendChild(meta);
+  if (item.content) {
+    const card = el('section', 'detail-card full-width');
+    card.appendChild(el('h2', 'd-sec-title', '全文'));
+    card.appendChild(el('pre', 'd-prompt', String(item.content)));
+    body.appendChild(card);
+  } else {
+    body.appendChild(el('div', 'detail-empty', '该条目没有可展示的正文。'));
+  }
 }
 // ---------------------------------------------------------------------------
 // 详情视图
 // ---------------------------------------------------------------------------
 
-async function openDetail(kind, id, trigger = null) {
+async function openDetail(kind, id, trigger = null, fromStack = false) {
   const requestId = ++detailRequestId;
+  const key = `${kind}::${id}`;
   if (trigger) detailReturnFocus = trigger;
+  if (!fromStack) viewStack.push({ kind, id });
+  // 已缓存 → 直接展示（返回栈回退秒开）
+  if (detailCache[key]) {
+    view = { kind, id };
+    detail = detailCache[key];
+    detailStatus = 'ready';
+    render();
+    $('content').scrollTop = 0;
+    requestAnimationFrame(() => $('detailTitle').focus());
+    return;
+  }
   view = { kind, id };
   detail = null;
   detailStatus = 'loading';
   render();
+  // 详情从顶部开始（.content 是唯一滚动容器）
+  $('content').scrollTop = 0;
   requestAnimationFrame(() => $('detailTitle').focus());
   try {
-    const result = kind === 'call'
-      ? await invoke('get_call_detail', { execId: id })
-      : await invoke('get_session_detail', { sessionId: id });
+    let result;
+    if (kind === 'call') {
+      result = await invoke('get_call_detail', { execId: id });
+    } else if (kind === 'knowledge') {
+      result = await invoke('get_knowledge_items');
+    } else if (kind === 'knowledge-item') {
+      const sep = id.indexOf('::');
+      const k = sep > 0 ? id.slice(0, sep) : '';
+      const iid = sep > 0 ? id.slice(sep + 2) : id;
+      result = await invoke('get_knowledge_item_content', { kind: k, id: iid });
+    } else {
+      result = await invoke('get_session_detail', { sessionId: id });
+    }
     if (requestId !== detailRequestId || view?.kind !== kind || view?.id !== id) return;
     if (!result) {
       detailStatus = 'not-found';
       detail = null;
     } else {
       detailStatus = 'ready';
-      detail = result;
+      detail = kind === 'knowledge' ? { items: result } : kind === 'knowledge-item' ? { item: result } : result;
+      detailCache[key] = detail;
     }
   } catch (err) {
     if (requestId !== detailRequestId) return;
@@ -1019,10 +1152,19 @@ async function openDetail(kind, id, trigger = null) {
 
 function closeDetail() {
   detailRequestId += 1;
+  viewStack.pop();
+  // 返回栈回退：回到上一详情（知识列表等），而不是直接跳回主列表
+  const prev = viewStack[viewStack.length - 1] || null;
+  if (prev) {
+    openDetail(prev.kind, prev.id, null, true);
+    return;
+  }
   view = null;
   detail = null;
   detailStatus = 'idle';
   render();
+  // 回到列表后窗口高度重新自适应内容
+  fitWindow();
   requestAnimationFrame(() => {
     if (detailReturnFocus?.isConnected) detailReturnFocus.focus();
     detailReturnFocus = null;
@@ -1044,7 +1186,7 @@ function renderDetailState(kindLabel) {
     return false;
   }
   if (detailStatus === 'not-found') {
-    $('detailTitle').textContent = view?.kind === 'session' ? 'Session 不可用' : '调用记录不可用';
+    $('detailTitle').textContent = view?.kind === 'session' ? 'Session 不可用' : view?.kind === 'knowledge-item' ? '知识条目不可用' : '调用记录不可用';
     const missing = el('section', 'missing-state');
     missing.appendChild(svg('i-alert', 20));
     missing.appendChild(el('h2', 'missing-title', '未找到可读取的详情记录'));
@@ -1361,33 +1503,47 @@ function renderCapsule() {
   const capsule = $('capsule');
   const knowledgeTotal = (snapshot.knowledge || {}).total || 0;
   const sub = $('capSub');
+  const dot = sub.querySelector('.dot');
+  const subT = $('capSubT');
+  const vb = $('capVerdict');
+  const ago = $('capAgo');
   const progressBar = $('capProgressBar');
   if (active) {
     const run = active.latest_run || null;
+    const running = ['running', 'active', 'executing'].includes(String(active.status || '').toLowerCase());
     const signal = String(run?.verdict || run?.status || active.status || 'unknown').toLowerCase();
     const color = VERDICT_COLOR[signal]
-      || (['running', 'active', 'executing'].includes(signal) ? 'var(--ok)' : null)
+      || (running ? 'var(--ok)' : null)
       || (['sealed', 'completed'].includes(signal) ? 'var(--info)' : null)
       || (['paused'].includes(signal) ? 'var(--warn)' : null)
       || (['failed', 'blocked', 'error'].includes(signal) ? 'var(--danger)' : 'var(--text-dim)')
       || 'var(--text-dim)';
     capsule.dataset.kind = signal;
     capsule.style.setProperty('--cap-color', color);
+    // 行 1：意图 + 状态徽章
     $('capTitle').textContent = active.intent ? oneLine(active.intent) : active.session_id;
-    sub.innerHTML = '';
-    const dot = el('span', `dot${['running', 'active', 'executing'].includes(String(active.status || '').toLowerCase()) ? ' pulse' : ''}`);
+    const sm = sessionStatusMeta(active.status);
+    const stBadge = $('capStatus');
+    stBadge.className = `bd ${sm[0]} cap-status`;
+    stBadge.textContent = sm[1];
+    // 行 2：run 故事 + verdict 徽章 + 相对时间（静态元素原地更新）
     dot.style.setProperty('--c', color);
-    sub.appendChild(dot);
-    const text = el('span', 'cap-sub-t');
-    const statusZh = sessionStatusMeta(active.status)[1];
+    dot.classList.toggle('pulse', running);
     const step = run && run.sequence != null && active.run_count
       ? `第 ${run.sequence}/${active.run_count} 步`
       : `#${run?.sequence ?? '—'}`;
-    text.textContent = run
-      ? ` ${statusZh} · ${step} ${run.command || 'run'}`
-      : ` ${statusZh} · 等待 Run`;
-    text.title = run ? `${run.run_id || ''} · ${run.verdict || ''}` : '';
-    sub.appendChild(text);
+    subT.textContent = run ? `${step} · ${run.command || 'run'}` : '等待 Run';
+    subT.title = run ? `${run.run_id || ''} · ${run.verdict || ''}` : '';
+    if (run && run.verdict) {
+      vb.hidden = false;
+      vb.className = `bd ${verdictClass(run.verdict)}`;
+      vb.textContent = verdictLabel(run.verdict);
+      vb.title = run.verdict;
+    } else {
+      vb.hidden = true;
+    }
+    ago.textContent = run ? fmtAgo(run.started_at) : '';
+    // 行 3：进度
     if (run && run.sequence != null && active.run_count) {
       $('capProgress').hidden = false;
       progressBar.style.width = `${Math.min(100, Math.round((run.sequence / active.run_count) * 100))}%`;
@@ -1402,8 +1558,15 @@ function renderCapsule() {
     capsule.dataset.kind = 'idle';
     capsule.style.setProperty('--cap-color', 'var(--text-dim)');
     $('capTitle').textContent = snapshot.workspace || 'Maestro';
-    sub.innerHTML = '';
-    sub.appendChild(document.createTextNode('当前没有活动会话'));
+    const stBadge = $('capStatus');
+    stBadge.className = 'bd bd-dim cap-status';
+    stBadge.textContent = '空闲';
+    dot.style.setProperty('--c', 'var(--text-dim)');
+    dot.classList.remove('pulse');
+    subT.textContent = '当前没有活动会话';
+    subT.title = '';
+    vb.hidden = true;
+    ago.textContent = '';
     $('capProgress').hidden = true;
     progressBar.style.width = '0%';
     $('capSessions').textContent = '0 会话';
@@ -1486,12 +1649,13 @@ function updateFade() {
 }
 function scheduleFade() { setTimeout(updateFade, 60); }
 
-/** 内容自适应窗口高度（卡片模式）：测真实内容而非视口 */
+/** 内容自适应窗口高度（卡片模式，列表视图）：测真实内容而非视口；详情视图保持窗口高度内部滚动 */
 let fitTimer = null;
 function fitWindow() {
   clearTimeout(fitTimer);
   fitTimer = setTimeout(() => {
     if (document.body.dataset.mode !== 'card') return;
+    if (view) return; // 详情视图：不随内容拉高窗口，由 .content 内部滚动
     const content = document.querySelector('.content');
     const h = content ? content.scrollHeight + 46 + 32 + 22 : document.documentElement.scrollHeight;
     invoke('fit_window_height', { height: h }).catch(() => {});

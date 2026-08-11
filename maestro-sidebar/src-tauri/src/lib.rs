@@ -219,6 +219,59 @@ fn get_call_detail(exec_id: String) -> Option<activity::CallDetail> {
     activity::read_call_detail(&config::cli_history_dir(), &exec_id)
 }
 
+/// 知识条目列表（五类分组，跨工程合并，每类上限 50）
+#[tauri::command]
+fn get_knowledge_items(state: tauri::State<AppState>) -> Vec<knowledge::KnowledgeEntry> {
+    let cfg = state.config.lock().unwrap().clone();
+    let mut projects = workflow::discover_projects(&cfg.roots);
+    for auto_root in auto::auto_discover_roots() {
+        if let Some(wf) = workflow::find_workflow_root(&auto_root) {
+            projects.push(wf);
+        }
+    }
+    projects.sort();
+    projects.dedup();
+    let mut seen = std::collections::HashSet::new();
+    let mut items = Vec::new();
+    for wf in projects {
+        for entry in knowledge::scan_knowledge_items(&wf) {
+            if seen.insert(format!("{}:{}", entry.kind, entry.id)) {
+                items.push(entry);
+            }
+        }
+    }
+    items
+}
+
+/// 单条知识条目全文（kind + id）
+#[tauri::command]
+fn get_knowledge_item_content(
+    state: tauri::State<AppState>,
+    kind: String,
+    id: String,
+) -> Option<knowledge::KnowledgeItemContent> {
+    if !["specs", "memory", "knowhow", "learning", "issues"].contains(&kind.as_str())
+        || !is_safe_id(&id)
+    {
+        return None;
+    }
+    let cfg = state.config.lock().unwrap().clone();
+    let mut projects = workflow::discover_projects(&cfg.roots);
+    for auto_root in auto::auto_discover_roots() {
+        if let Some(wf) = workflow::find_workflow_root(&auto_root) {
+            projects.push(wf);
+        }
+    }
+    projects.sort();
+    projects.dedup();
+    for wf in projects {
+        if let Some(content) = knowledge::read_knowledge_item_content(&wf, &kind, &id) {
+            return Some(content);
+        }
+    }
+    None
+}
+
 #[tauri::command]
 fn get_config(state: tauri::State<AppState>) -> ConfigOut {
     config_out(&state.config.lock().unwrap())
@@ -447,6 +500,8 @@ pub fn run() {
             get_session_runs,
             get_session_detail,
             get_call_detail,
+            get_knowledge_items,
+            get_knowledge_item_content,
             get_config,
             complete_setup,
             add_root,
