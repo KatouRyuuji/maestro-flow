@@ -840,6 +840,14 @@ function collectReusableUpstream(
               && (acceptedRoles.length === 0 || acceptedRoles.includes(peer.artifact.role)),
           };
         });
+      const acceptsNegativeEvidence = consume.accepts_negative_evidence === true;
+      const producerCarriesNegativeEvidence = acceptsNegativeEvidence
+        && producer.status === 'sealed'
+        && item.artifact.status === 'sealed'
+        && (producer.output.verdict === 'blocked'
+          || producer.output.verdict === 'failed'
+          || producer.handoff?.verdict === 'blocked'
+          || producer.handoff?.verdict === 'failed');
       const assessmentInput = {
         candidate: {
           workspaceId: createTopicIdentity(projectRoot, session.intent, { source: 'legacy-intent' }).workspace_id,
@@ -871,23 +879,25 @@ function collectReusableUpstream(
             ? (aliasTargetId === item.artifactId ? 'fresh' : 'unknown')
             : currentSameRoleCandidates.length > 0 ? 'fresh' : 'unknown',
         quality: {
-          status: producer.status !== 'sealed'
-            || producer.output.verdict === 'blocked'
-            || producer.output.verdict === 'failed'
-            || producer.handoff?.verdict === 'blocked'
-            || producer.handoff?.verdict === 'failed'
-            || producer.gate_ids.some(id => {
-              const status = gates.gates[id]?.status;
-              return status !== undefined && !['passed', 'waived', 'skipped'].includes(status);
-            })
-            ? 'low'
-            : (producer.handoff?.concerns.length ?? 0) > 0
-              || producer.handoff?.verdict === 'ready_with_concerns'
-              || producer.output.verdict === 'ready_with_concerns'
-              ? 'medium'
-              : producer.handoff?.verdict === 'ready' && producer.output.verdict === 'ready'
-                ? 'high'
-                : 'unknown',
+          status: producerCarriesNegativeEvidence
+            ? 'high'
+            : producer.status !== 'sealed'
+              || producer.output.verdict === 'blocked'
+              || producer.output.verdict === 'failed'
+              || producer.handoff?.verdict === 'blocked'
+              || producer.handoff?.verdict === 'failed'
+              || producer.gate_ids.some(id => {
+                const status = gates.gates[id]?.status;
+                return status !== undefined && !['passed', 'waived', 'skipped'].includes(status);
+              })
+              ? 'low'
+              : (producer.handoff?.concerns.length ?? 0) > 0
+                || producer.handoff?.verdict === 'ready_with_concerns'
+                || producer.output.verdict === 'ready_with_concerns'
+                ? 'medium'
+                : producer.handoff?.verdict === 'ready' && producer.output.verdict === 'ready'
+                  ? 'high'
+                  : 'unknown',
           concernCodes: producer.handoff?.concerns ?? [],
         },
         supersession: {
@@ -2850,6 +2860,112 @@ function assertCompleteReplayInputs(
   }
 }
 
+type ReviewDisposition = 'PASS' | 'WARN' | 'BLOCK';
+
+function unknownRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function contractProducesReviewFindings(contract: CommandContract): boolean {
+  return contract.produces.some(output => (
+    output.kind === 'review-findings' || output.schema === 'review-findings/1.0'
+  ));
+}
+
+function readPrimaryReviewDisposition(
+  scan: ArtifactScanResult,
+  contract: CommandContract,
+  runDir: string,
+): ReviewDisposition | null {
+  const declared = contract.produces.filter(output => (
+    (output.kind === 'review-findings' || output.schema === 'review-findings/1.0')
+    && output.role === 'primary'
+  ));
+  if (declared.length !== 1 || !declared[0].path) {
+    scan.errors.push(`review contract must declare exactly one primary review-findings output path; found ${declared.length}`);
+    return null;
+  }
+  const declaredPath = declared[0].path.replaceAll('\\', '/').replace(/^\.\//, '');
+  const matches = scan.artifacts.filter(item => (
+    relative(runDir, item.absolutePath).replaceAll('\\', '/') === declaredPath
+  ));
+  if (matches.length !== 1) {
+    scan.errors.push(`${declaredPath}: expected exactly one canonical review-findings artifact; found ${matches.length}`);
+    return null;
+  }
+  const artifact = matches[0];
+  try {
+    const parsed = unknownRecord(JSON.parse(readFileSync(artifact.absolutePath, 'utf8')) as unknown);
+    const verdict = typeof parsed?.verdict === 'string' ? parsed.verdict.trim().toUpperCase() : '';
+    if (verdict === 'PASS' || verdict === 'WARN' || verdict === 'BLOCK') return verdict;
+    scan.errors.push(`${artifact.relativePath}: review-findings verdict must be PASS, WARN, or BLOCK`);
+  } catch (error) {
+    scan.errors.push(`${artifact.relativePath}: cannot read review-findings verdict (${(error as Error).message})`);
+  }
+  return null;
+}
+
+function immediateFormalDecision(bundle: SessionBundle, chainIndex: number): string | null {
+  if (chainIndex < 0) return null;
+  const current = bundle.session.orchestration.chain[chainIndex];
+  const step = bundle.session.orchestration.chain[chainIndex + 1];
+  if (!step || step.status !== 'pending' || !step.decision_ref) return null;
+  const point = bundle.session.orchestration.decision_points.find(candidate => (
+    candidate.point_id === step.decision_ref
+    && candidate.status === 'pending'
+    && (candidate.after_step_id === null || candidate.after_step_id === current.step_id)
+  ));
+  return point?.point_id ?? null;
+}
+
+function reviewRepairProposalErrors(
+  selected: ValidatedChainProposal,
+  bundle: SessionBundle,
+  chainIndex: number,
+): string[] {
+  const current = bundle.session.orchestration.chain[chainIndex];
+  if (!current) return ['current review chain step is missing'];
+  const operations = selected.proposal.operations;
+  const expected = [
+    { command: 'review', stage: 'repair-review', args: undefined },
+    { command: 'execute', stage: 'repair-execute', args: undefined },
+    { command: 'plan', stage: 'repair-plan', args: '--gaps' },
+  ] as const;
+  if (operations.length !== expected.length) {
+    return [`expected exactly ${expected.length} insert operations, received ${operations.length}`];
+  }
+  const errors: string[] = [];
+  const currentGoal = current.goal_ref ?? null;
+  for (const [index, expectedOperation] of expected.entries()) {
+    const operation = operations[index];
+    if (operation.op !== 'insert') {
+      errors.push(`operations[${index}] must be insert`);
+      continue;
+    }
+    if (operation.after !== current.step_id) {
+      errors.push(`operations[${index}].after must be ${current.step_id}`);
+    }
+    if (operation.command !== expectedOperation.command) {
+      errors.push(`operations[${index}].command must be ${expectedOperation.command}`);
+    }
+    if ((operation.stage ?? null) !== expectedOperation.stage) {
+      errors.push(`operations[${index}].stage must be ${expectedOperation.stage}`);
+    }
+    if (operation.args !== expectedOperation.args) {
+      errors.push(`operations[${index}].args must be ${expectedOperation.args ?? 'omitted'}`);
+    }
+    if ((operation.goal_ref ?? null) !== currentGoal) {
+      errors.push(`operations[${index}].goal_ref must inherit ${currentGoal ?? 'no goal binding'}`);
+    }
+    if (operation.decision_ref !== undefined && operation.decision_ref !== null) {
+      errors.push(`operations[${index}].decision_ref must be omitted`);
+    }
+  }
+  return errors;
+}
+
 /** Prepare report/output/state inputs and immutable hashes outside the transition lock. */
 export function prepareCompleteInputs(
   projectRoot: string,
@@ -2885,13 +3001,14 @@ export function prepareCompleteInputs(
   const resolved = contractForRun(projectRoot, located.run);
   const runDir = store.runDir(located.sessionId, runId);
   const sessionDir = store.sessionDir(located.sessionId);
+  const bundle = store.readBundle(located.sessionId);
   const scan = scanOutputs(runDir, sessionDir, resolved.contract);
   let chainProposal: ValidatedChainProposal | null = null;
   if (!isFailureVerdict(options.chainVerdict)) {
     validateStrictArtifactContract(runDir, resolved.contract, scan, options);
     const proposals = validateChainProposalArtifacts(
       runDir,
-      store.readBundle(located.sessionId),
+      bundle,
       located.run,
       resolved.contract,
       scan,
@@ -2929,6 +3046,46 @@ export function prepareCompleteInputs(
     ...extraArtifacts.map(item => item.absolutePath),
   ]);
   const frontmatter = readReportFrontmatter(runDir);
+  const chainIndex = bundle.session.orchestration.chain.findIndex(step => step.run_id === runId);
+  const immediateDecision = immediateFormalDecision(bundle, chainIndex);
+  const reviewContract = contractProducesReviewFindings(resolved.contract);
+  const reviewDisposition = reviewContract
+    ? readPrimaryReviewDisposition(scan, resolved.contract, runDir)
+    : null;
+  if (reviewDisposition) {
+    const expectedReportVerdict = reviewDisposition === 'PASS'
+      ? 'ready'
+      : reviewDisposition === 'WARN'
+        ? 'ready_with_concerns'
+        : 'blocked';
+    if (frontmatter.verdict !== expectedReportVerdict) {
+      scan.errors.push(
+        `review-findings verdict ${reviewDisposition} conflicts with report verdict ${frontmatter.verdict}`,
+      );
+    }
+    if (reviewDisposition === 'BLOCK' && immediateDecision && chainProposal) {
+      scan.errors.push(
+        `review BLOCK must not apply a chain proposal when formal decision ${immediateDecision} owns routing`,
+      );
+    } else if (reviewDisposition === 'BLOCK' && chainProposal) {
+      const routeErrors = reviewRepairProposalErrors(chainProposal, bundle, chainIndex);
+      if (routeErrors.length > 0) {
+        scan.errors.push(`review BLOCK repair proposal is incomplete: ${routeErrors.join('; ')}`);
+      }
+    } else if (reviewDisposition !== 'BLOCK' && chainProposal) {
+      scan.errors.push(`review verdict ${reviewDisposition} must not modify the chain`);
+    }
+  }
+  if (!isFailureVerdict(options.chainVerdict) && chainIndex >= 0) {
+    if (frontmatter.verdict === 'failed') {
+      scan.errors.push('report verdict failed requires a needs-retry or blocked chain verdict');
+    } else if ((reviewDisposition === 'BLOCK' || (!reviewContract && frontmatter.verdict === 'blocked'))
+      && !chainProposal && !immediateDecision) {
+      scan.errors.push(
+        'report verdict blocked cannot advance the existing chain without an applied chain proposal or immediate decision node',
+      );
+    }
+  }
   const knowledgeReconciliation = ensureKnowledgeReconciliation(
     projectRoot,
     located.sessionId,
@@ -3219,7 +3376,18 @@ function completionNextPointer(session: SessionState, completedRunId?: string): 
       preconditions: ['session_status=running', `chain_step=${reconcilable.step_id}`, `sealed_run_id=${completedRunId}`],
     };
   }
-  if (nextPendingIndex(session, true) !== null) {
+  const pendingExecution = nextPendingIndex(session, true);
+  const pendingDecision = nextPendingDecisionIndex(session);
+  if (pendingDecision !== null && (pendingExecution === null || pendingDecision < pendingExecution)) {
+    return {
+      suggest_only: true,
+      action: 'evaluate_decision',
+      command: `maestro run next --session ${sessionId}`,
+      reason: 'next node is a decision — the orchestrator evaluates it',
+      preconditions: ['session_status=running', 'decision remains pending'],
+    };
+  }
+  if (pendingExecution !== null) {
     return {
       suggest_only: true,
       action: 'dispatch_next',
@@ -3228,7 +3396,7 @@ function completionNextPointer(session: SessionState, completedRunId?: string): 
       preconditions: ['session_status=running', 'active_run_id=null', 'no earlier pending decision'],
     };
   }
-  if (nextPendingDecisionIndex(session) !== null) {
+  if (pendingDecision !== null) {
     return {
       suggest_only: true,
       action: 'evaluate_decision',

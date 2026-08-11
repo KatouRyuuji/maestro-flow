@@ -14,6 +14,18 @@ contract:
     required: false
     schema: diagnosis/1.0
     role: primary
+  - kind: review-findings
+    alias: latest-review
+    required: false
+    schema: review-findings/1.0
+    role: primary
+    accepts_negative_evidence: true
+  - kind: verification
+    alias: latest-verification
+    required: false
+    schema: verification/1.0
+    role: primary
+    accepts_negative_evidence: true
   - kind: blueprint
     alias: current-blueprint
     required: false
@@ -92,7 +104,7 @@ The output of plan is "task JSON an executor can follow to finish the work," not
 
 ## Input Interpretation
 
-- Where does the upstream come from? `current-analysis` (analyze's findings) takes priority; `--gaps` consumes `latest-debug`; no upstream reports E001. These aliases are injected by create — don't guess by mtime.
+- Where does the upstream come from? `current-analysis` (analyze's findings) takes priority; `--gaps` consumes registered issues plus injected `latest-review`, `latest-verification`, and `latest-debug` evidence; no usable source reports E001. These aliases are injected by create — don't guess by mtime.
 - How large is the scope? It determines single-agent vs 2+1 agent mode: ≤3 modules single agent (≤8 tasks); >3 modules 2+1 (2 parallel planners of ≤8 each + 1 synthesis agent, total ≤16). Module count is derived from milestone phase definitions and the analyze upstream.
 - Is it a special mode? `--revise` loads an existing plan for incremental changes (skips preceding phases); `--check` is read-only validation; `--tdd` generates a test-first task chain (read ref/tdd.md). All three bypass the standard create pipeline.
 
@@ -100,7 +112,7 @@ The output of plan is "task JSON an executor can follow to finish the work," not
 
 - With `session-priors` (injected by upstream): the spec / doc-index / wiki hits it lists are already resolved — reuse them directly and do **not** re-run `maestro spec load` or wiki search for the same ground. Only collect what priors does not cover (or when priors is absent).
 - With `current-analysis`: read `findings.json#decisions` — locked as inviolable constraints, free left to the implementer's discretion, deferred explicitly excluded; `findings[]` and recommendation as task-scope input. If upstream gave implementation_scope, 1 scope item → 1 task.
-- With `latest-debug` (--gaps): produce one fix task per gap, with issue_id bidirectionally back-linking issues.jsonl.
+- With `latest-review`/`latest-debug` (`--gaps`): preserve review finding IDs and severity, cluster shared root causes, and produce traceable fix tasks; issue-backed gaps keep bidirectional `issue_id` links.
 - Project specs (arch category): passed in as constraint context for the planner — load via `maestro spec load` only when `session-priors` did not already carry them.
 
 ## Boundaries and Invariants

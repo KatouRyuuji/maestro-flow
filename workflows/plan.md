@@ -27,7 +27,7 @@ Mode routing:
 
 ```
 --from <upstream alias>  → scope=standalone, seed task generation from the upstream findings' implementation_scope
---gaps                   → load latest-debug gaps, skip Step 1 exploration, only plan gap fixes
+--gaps                   → load issue/debug/review/verification/UAT gaps, skip Step 1 exploration, only plan gap fixes
 numeric arg              → scope=milestone, resolve slug from roadmap
 no arg + roadmap         → scope=milestone (current milestone)
 no arg + no roadmap      → find the most recent analyze artifact; if present standalone, if not E001
@@ -72,6 +72,7 @@ Collect all available context:
 
 1. **Upstream decisions**: read from injected aliases
    - `current-analysis` (findings): `decisions[class=locked]` immutable constraints, `[free]` implementer discretion, `[deferred]` exclusion; `findings[]`/recommendation → task scope. If implementation_scope exists: `scope.objective` → task titles, `scope.acceptance_criteria` → convergence.criteria (grep-ified), `scope.target_files` → files[] + read_first[], `scope.priority` → ordering. When present, skip parallel exploration.
+   - `latest-review` (review-findings): BLOCK findings retain finding IDs, severity, evidence, impact, suggestion, and affected files. Normalize each record as `finding_id = finding.id`, `affected_files = [finding.file]`, and `location = finding.file + ":" + finding.line` before deduplication. Cluster related findings by shared root cause/module before planning; do not flatten a cross-module review into ad-hoc execute args.
    - `current-blueprint`: requirements + architecture seed tasks
 2. **Project specs**: `maestro spec load --category arch` → pass to planner as constraints
 3. **Codebase docs**: read `.workflow/codebase/doc-index.json` (if it exists), extract relevant feature/component/requirement
@@ -79,7 +80,7 @@ Collect all available context:
 5. **Design reference** (if any): if `design-ref/MASTER.md` exists load design-tokens/animation-tokens/layout; each UI task's read_first[] must include these. Otherwise, when goal matches UI keywords (`landing|page|dashboard|frontend|UI|component|interface`), run `maestro-impeccable --chain build`
 6. **Parallel exploration** (skipped when `--gaps` or upstream findings already exist): 1-4 exploration angles (architecture/implementation/integration/risk), spawn 1-4 cli-explore-agent (mandatory, manual Read/Grep is not a substitute), each with goal + success_criteria + one angle → write `{run_dir}/outputs/exploration-{angle}.json`
 6b. **CLI supplementary context** (parallel with 6, skipped when `--gaps` or no CLI tool): `maestro delegate` collects implementation context (existing patterns, dependency graph, collision points), MODE analysis, after callback parsing merge into explorationContext's `cli_context`
-7. **Gap mode** (`--gaps`): gap source priority — `.workflow/issues/issues.jsonl` (by phase_ref + status in [registered,diagnosed], mark planning) → fallback `verification.json` gaps → additionally `uat.md` "Gaps" deduplicated → enrich root_cause/fix_direction/affected_files with `.debug/*/understanding.md`. Per gap: `{issue_id, description, fix_direction, severity, source, context}`. If all empty, report error. Set `explorationContext = all_gaps` (skip exploration agents).
+7. **Gap mode** (`--gaps`): merge gap sources in this priority order — `.workflow/issues/issues.jsonl` (by phase_ref + status in [registered,diagnosed], mark planning) → `latest-review.findings[]` → `verification.json` gaps → `uat.md` "Gaps" → `latest-debug`/`.debug/*/understanding.md` enrichment. Normalize review records with `finding_id = finding.id`, `affected_files = [finding.file]`, and `location = finding.file + ":" + finding.line`; then retain `{finding_id, description, suggestion as fix_direction, severity, evidence, impact, affected_files, location, source:"review"}`. Deduplicate by issue/finding ID first, then normalized root cause + affected files. Cluster review findings that share a root cause/module so the final plan remains within the normal task-count guardrails. If all sources are empty, report error. Set `explorationContext = all_gaps` (skip exploration agents).
 
 ### Step 2: Clarification (interactive)
 
@@ -119,7 +120,7 @@ Agent responsibilities:
 
 **Anti-splitting** (passed to the planner, re-prompt on violation): one feature one task (even across 3-5 files, never split by file); consolidate simple unrelated changes into a batch task; use depends_on only for real output dependencies; each task must be substantial (15-60 minutes), fold <5-minute trivial changes together; **UI vertical slice** — a user-visible feature is one end-to-end task/wave (backend endpoint + frontend wiring + integration), never split into pure-backend/pure-frontend; each UI delivery wave has ≥1 task with a `[UI-observable]` criterion.
 
-**Gap mode (`--gaps`)**: spawn workflow-planner, mode=`gap-fix`. One task per gap: `type: fix`, `description`, `action` (concrete fix_direction), `read_first` (affected files), `convergence.criteria` (grep-ified), `issue_id` (when source==issue); assign ID and wave. After the planner, the main flow back-links bidirectionally: matched issue → `status: planned`.
+**Gap mode (`--gaps`)**: spawn workflow-planner, mode=`gap-fix`. Use one task per independent gap or clustered root cause: `type: fix`, `description`, `action` (concrete fix_direction), `read_first` (affected files), `convergence.criteria` (grep-ified), `issue_id` (when source==issue), and `finding_refs[]` (when source includes review); assign ID and wave. After the planner, the main flow back-links bidirectionally: matched issue → `status: planned`; review finding IDs remain immutable requirement references in the generated tasks.
 
 ### Step 4: Plan Checking
 

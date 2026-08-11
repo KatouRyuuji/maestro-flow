@@ -292,16 +292,88 @@ export function createChainSession(
 // ── Chain edit verbs ─────────────────────────────────────────────────────────
 
 /**
- * The lowest chain index a new step may occupy. A step may only be inserted
- * after every completed / running / sealed / skipped step — i.e. into the still
- * -pending tail. This is one past the last non-pending step.
+ * The lowest chain index a new step may occupy. Sparse skipped markers after
+ * the first pending step (for example a pre-skipped legacy seal node) do not
+ * lock the pending head. Running/completed/sealed/failed steps remain an
+ * authority boundary even if an inconsistent pending step appears before them.
  */
 function activeBoundary(chain: OrchestrationStep[]): number {
   let boundary = 0;
-  for (let i = 0; i < chain.length; i++) {
-    if (chain[i].status !== 'pending') boundary = i + 1;
+  let pendingSeen = false;
+  for (let index = 0; index < chain.length; index++) {
+    const status = chain[index].status;
+    if (status === 'pending') {
+      pendingSeen = true;
+      continue;
+    }
+    if (pendingSeen && status === 'skipped') continue;
+    boundary = index + 1;
   }
   return boundary;
+}
+
+function recordObject(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function stepHasRecordedAttempt(session: SessionState, stepId: string): boolean {
+  return session.requests.some(request => {
+    if (request.type !== 'transition') return false;
+    const payload = recordObject(request.payload);
+    const subject = recordObject(payload?.subject);
+    return payload?.operation === 'complete'
+      && subject?.chain_step_id === stepId
+      && typeof subject.run_id === 'string'
+      && subject.run_id.length > 0;
+  });
+}
+
+function replacementChangesSemantics(step: OrchestrationStep, opts: ReplaceChainStepOpts): boolean {
+  return (opts.command !== undefined && opts.command !== step.command)
+    || (opts.args !== undefined && opts.args !== step.args)
+    || (opts.stage !== undefined && opts.stage !== (step.stage ?? null))
+    || (opts.goalRef !== undefined && opts.goalRef !== (step.goal_ref ?? null));
+}
+
+function assertKnownGoalRef(bundle: SessionBundle, goalRef: string | null | undefined): void {
+  if (goalRef === undefined || goalRef === null) return;
+  const decomposition = bundle.session.orchestration.decomposition;
+  if (decomposition && !decomposition.goals.some(goal => goal.id === goalRef)) {
+    throw new Error(`goal_ref ${goalRef} does not exist in Session decomposition`);
+  }
+}
+
+function assertInsertGoalBinding(
+  bundle: SessionBundle,
+  opts: InsertChainStepOpts,
+  decisionRef: string | null,
+  anchor: OrchestrationStep | undefined,
+): void {
+  if (bundle.session.orchestration.decomposition
+    && opts.stage !== undefined
+    && opts.stage !== null
+    && !decisionRef
+    && (opts.goalRef === undefined || opts.goalRef === null)
+    && (!anchor || (anchor.goal_ref ?? null) !== null)) {
+    throw new Error(`inserting staged step ${opts.command} requires an explicit goal_ref`);
+  }
+  assertKnownGoalRef(bundle, opts.goalRef);
+}
+
+function assertReplacementGoalBinding(
+  bundle: SessionBundle,
+  step: OrchestrationStep,
+  opts: ReplaceChainStepOpts,
+): void {
+  const decomposition = bundle.session.orchestration.decomposition;
+  if (!decomposition) return;
+  const stageChanges = opts.stage !== undefined && opts.stage !== (step.stage ?? null);
+  if (stageChanges && (opts.goalRef === undefined || opts.goalRef === null)) {
+    throw new Error(`changing stage for ${step.step_id} requires an explicit goal_ref`);
+  }
+  assertKnownGoalRef(bundle, opts.goalRef);
 }
 
 /** Resolve an `after` selector (step_id, numeric index, or start sentinel) to a chain index. */
@@ -373,6 +445,7 @@ export function applyChainMutation(bundle: SessionBundle, mutation: ChainMutatio
       );
     }
     const decisionRef = opts.decisionRef ?? null;
+    assertInsertGoalBinding(bundle, opts, decisionRef, chain[afterIdx]);
     const step: OrchestrationStep = {
       step_id: uniqueStepId(chain, insertPos, opts.command), command: opts.command, status: 'pending',
       run_id: null, inserted_by: opts.insertedBy, decision_ref: decisionRef,
@@ -403,6 +476,13 @@ export function applyChainMutation(bundle: SessionBundle, mutation: ChainMutatio
     step.run_id = null;
   } else {
     const opts = mutation.options;
+    if (stepHasRecordedAttempt(bundle.session, step.step_id)
+      && replacementChangesSemantics(step, opts)) {
+      throw new Error(
+        `cannot replace semantics of ${step.step_id} after a recorded Run attempt; insert a new step instead`,
+      );
+    }
+    assertReplacementGoalBinding(bundle, step, opts);
     if (opts.command !== undefined) {
       step.command = opts.command;
       step.step_id = uniqueStepId(chain, index, opts.command, step);

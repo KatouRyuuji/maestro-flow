@@ -61,6 +61,7 @@ const consumeV20Schema = z.object({
 
 const consumeV21Schema = consumeV20Schema.extend({
   role: z.enum(['primary', 'attachment', 'evidence', 'checkpoint']).optional(),
+  accepts_negative_evidence: z.boolean().optional(),
 }).strict();
 
 const commandArgumentSchema = z.object({
@@ -181,6 +182,7 @@ export interface CommandContractConsume {
   schema?: string;
   schema_range?: string;
   role?: 'primary' | 'attachment' | 'evidence' | 'checkpoint';
+  accepts_negative_evidence?: boolean;
 }
 
 export interface CommandArgumentContract {
@@ -292,6 +294,7 @@ export function normalizedCommandContract(contract: CommandContract): Record<str
         ...(item.schema ? { schema: item.schema } : {}),
         ...(item.schema_range ? { schema_range: item.schema_range } : {}),
         ...(v21 && item.role ? { role: item.role } : {}),
+        ...(v21 && item.accepts_negative_evidence ? { accepts_negative_evidence: true } : {}),
       })),
       produces: contract.produces.map(item => ({
         kind: item.kind,

@@ -229,6 +229,70 @@ Write outputs/review-findings.json:
 
 ---
 
+## Step 10.5: Route BLOCK atomically
+
+PASS and WARN do not modify the chain. For BLOCK, inspect the canonical Session queue:
+
+1. If the immediate next node is a formal decision node, do not emit a proposal. The decision evaluator owns `proceed|fix|escalate`.
+2. Otherwise write `outputs/chain-proposal.json` and insert a full repair loop immediately after the current review step.
+3. The proposal must use the current Run's `session_id`, `run_id`, Skill name `review`, current `chain_step_id`, and current step `goal_ref`.
+
+Because every operation inserts at the same anchor, write them in reverse order so the resulting chain is `plan → execute → review`:
+
+```json
+{
+  "_meta": {
+    "kind": "chain-proposal",
+    "schema": "chain-proposal/1.0",
+    "role": "attachment",
+    "alias": "chain-proposal"
+  },
+  "proposal_id": "review-repair-<run-id>",
+  "source": {
+    "session_id": "<session-id>",
+    "run_id": "<run-id>",
+    "skill": "review"
+  },
+  "reason": "BLOCK findings require a planned repair loop before the existing pending tail.",
+  "operations": [
+    {
+      "op": "insert",
+      "after": "<current-chain-step-id>",
+      "command": "review",
+      "stage": "repair-review",
+      "goal_ref": "<current-goal-ref>"
+    },
+    {
+      "op": "insert",
+      "after": "<current-chain-step-id>",
+      "command": "execute",
+      "stage": "repair-execute",
+      "goal_ref": "<current-goal-ref>"
+    },
+    {
+      "op": "insert",
+      "after": "<current-chain-step-id>",
+      "command": "plan",
+      "args": "--gaps",
+      "stage": "repair-plan",
+      "goal_ref": "<current-goal-ref>"
+    }
+  ]
+}
+```
+
+Omit `goal_ref` only when the current step has no goal binding. Never replace or repurpose an existing pending step to simulate this loop.
+
+Completion disposition:
+
+| BLOCK routing | Completion |
+|---|---|
+| valid proposal emitted | orchestrator accepts with `session done --verdict done-with-concerns --apply-proposal` |
+| immediate formal decision follows | complete with concerns, then dispatch that exact decision |
+| neither is available | `blocked`; do not advance the pre-existing tail |
+
+---
+
 ## report.md
 
 Write `report.md` with standard frontmatter + fixed five sections. frontmatter records scope, level, verdict, severity_distribution, findings_count, issue_candidate_count. report.md frontmatter `verdict` 使用 report 层 ready 词表：BLOCK→blocked、WARN→ready_with_concerns、PASS→ready；BLOCK/WARN/PASS 仅写进 review-findings 产物与正文。 Body contains a review results summary and handoff.
@@ -264,8 +328,7 @@ The verdict decides the downstream run; the report's needs includes `latest-revi
 |---------|------|
 | PASS | `test` (UAT), or proceed directly to session wrap-up |
 | WARN | acknowledge warnings then proceed to `test` |
-| BLOCK (≤3 findings, all medium/low) | lightweight fix loop: inline fix → re-run review on affected files only → loop until PASS/WARN (up to 2 rounds) |
-| BLOCK (>3 findings or has critical) | full fix loop: `plan --gaps` → `execute` → re-run `review` |
+| BLOCK | typed proposal: `plan --gaps` → `execute` → re-run `review`; a following formal decision may own this routing instead |
 | spec conflict found | `maestro spec conflict list` → knowledge audit |
 
 ---
@@ -280,6 +343,7 @@ The verdict decides the downstream run; the report's needs includes `latest-revi
 - [ ] Delta comparison with prior-review (if exists)
 - [ ] review-findings.json written with PASS/WARN/BLOCK verdict
 - [ ] issue-candidates.json written (if findings warrant)
+- [ ] BLOCK produced a validated repair-loop proposal, or the immediate formal decision owns routing
 
 ---
 
@@ -294,9 +358,12 @@ After review completes, inline-record one entry per declared gate (no separate g
 { "gate": "severity-triaged", "verdict": "PASS|WARN|BLOCK", "checked_at": now(),
   "evidence": { "critical": N, "high": N, "triaged": N },
   "artifact": "outputs/review-findings.json" }
+{ "gate": "repair-routing", "verdict": "PASS|BLOCK", "checked_at": now(),
+  "evidence": { "review_verdict": "PASS|WARN|BLOCK", "route": "none|decision|chain-proposal" },
+  "artifact": "outputs/chain-proposal.json|null" }
 ```
 
-BLOCKED conditions: `review-findings.json` missing, or there are unhandled UNMET spec compliance criteria.
+BLOCKED conditions: `review-findings.json` missing, there are unhandled UNMET spec compliance criteria, or verdict BLOCK has neither an immediate formal decision nor a valid repair-loop proposal.
 
 ---
 

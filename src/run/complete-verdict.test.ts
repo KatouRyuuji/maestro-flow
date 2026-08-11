@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
-import { checkRun, completeRunWithVerdict, createRun } from './runtime.js';
+import { briefRun, checkRun, completeRunWithVerdict, createRun } from './runtime.js';
 import { runNextStep } from './next.js';
 import { resolveRunningRun, runningChainStep } from './resolve.js';
 import { checkLease } from './lease.js';
@@ -68,6 +68,65 @@ gates:
 </contract>\n`, 'utf8');
 }
 
+function reviewProposalCommand(projectRoot: string, name = 'review'): void {
+  stepCommand(projectRoot, name);
+  writeFileSync(join(projectRoot, '.claude', 'commands', `${name}.md`), `<contract>\ncontract_version: 2
+orchestration:
+  chain_effects: [insert]
+consumes: []
+produces:
+  - kind: review-findings
+    path: outputs/review-findings.json
+    alias: latest-review
+    role: primary
+    required: true
+    schema: review-findings/1.0
+  - kind: chain-proposal
+    path: outputs/chain-proposal.json
+    alias: chain-proposal
+    role: attachment
+    required: false
+    schema: chain-proposal/1.0
+gates:
+  entry: []
+  exit: []
+</contract>\n`, 'utf8');
+}
+
+function negativeEvidencePlanCommand(projectRoot: string, name = 'plan'): void {
+  stepCommand(projectRoot, name);
+  writeFileSync(join(projectRoot, '.claude', 'commands', `${name}.md`), `<contract>\ncontract_version: 2.1
+consumes:
+  - kind: review-findings
+    alias: latest-review
+    required: false
+    schema: review-findings/1.0
+    role: primary
+    accepts_negative_evidence: true
+produces: []
+gates:
+  entry: []
+  exit: []
+</contract>\n`, 'utf8');
+}
+
+function writeReviewFindings(
+  projectRoot: string,
+  sessionId: string,
+  runId: string,
+  verdict: 'PASS' | 'WARN' | 'BLOCK',
+): void {
+  writeFileSync(
+    join(projectRoot, '.workflow', 'sessions', sessionId, 'runs', runId, 'outputs', 'review-findings.json'),
+    JSON.stringify({
+      _meta: { kind: 'review-findings', schema: 'review-findings/1.0', role: 'primary', alias: 'latest-review' },
+      verdict,
+      findings: [],
+    }, null, 2),
+    'utf8',
+  );
+}
+
 function writeChainProposal(
   projectRoot: string,
   sessionId: string,
@@ -110,6 +169,17 @@ function seedSession(
       inserted_by: 'test',
       decision_ref: s.decision_ref ?? null,
     }));
+    draft.session.orchestration.decision_points = steps.flatMap((step, index) => {
+      if (!step.decision_ref) return [];
+      return [{
+        point_id: step.decision_ref,
+        after_step_id: index > 0 ? `step-${String(index - 1).padStart(3, '0')}-${steps[index - 1].command}` : null,
+        status: 'pending' as const,
+        retry_count: 0,
+        max_retries: 2,
+        evidence_ref: null,
+      }];
+    });
     if (opts.lease !== undefined) draft.session.orchestration.lease = opts.lease;
     return null;
   });
@@ -286,6 +356,175 @@ describe('run complete — verdict chain transitions', () => {
     expect(result.chain?.step_status).toBe('sealed');
     const handoff = readRunHandoff(projectRoot, 's', runId);
     expect(handoff?.concerns).toContain('completed with concerns');
+  });
+
+  it('does not advance a blocked review without an applied proposal or immediate decision', () => {
+    const projectRoot = root();
+    reviewProposalCommand(projectRoot);
+    stepCommand(projectRoot, 'execute');
+    seedSession(projectRoot, 's', [{ command: 'review' }, { command: 'execute' }]);
+    const runId = startStep(projectRoot, 's', 0);
+    const report = join(projectRoot, '.workflow', 'sessions', 's', 'runs', runId, 'report.md');
+    writeFileSync(report, '---\nverdict: blocked\nsummary: findings block delivery\nconcerns: []\nnext: []\n---\n', 'utf8');
+    writeReviewFindings(projectRoot, 's', runId, 'BLOCK');
+
+    const result = completeRunWithVerdict(projectRoot, runId, 's', { verdict: 'done-with-concerns' });
+    expect(result.run_sealed).toBe(false);
+    expect(result.seal.errors).toContain(
+      'report verdict blocked cannot advance the existing chain without an applied chain proposal or immediate decision node',
+    );
+    expect(chainOf(projectRoot, 's')[0].status).toBe('running');
+  });
+
+  it('rejects disagreement between review-findings and report verdicts', () => {
+    const projectRoot = root();
+    reviewProposalCommand(projectRoot);
+    seedSession(projectRoot, 's', [{ command: 'review' }]);
+    const runId = startStep(projectRoot, 's', 0);
+    writeReviewFindings(projectRoot, 's', runId, 'BLOCK');
+
+    const result = completeRunWithVerdict(projectRoot, runId, 's', { verdict: 'done-with-concerns' });
+    expect(result.run_sealed).toBe(false);
+    expect(result.seal.errors).toContain('review-findings verdict BLOCK conflicts with report verdict ready');
+  });
+
+  it('allows a blocked review to hand off to the immediate formal decision', () => {
+    const projectRoot = root();
+    reviewProposalCommand(projectRoot);
+    stepCommand(projectRoot, 'execute');
+    seedSession(projectRoot, 's', [
+      { command: 'review' },
+      { command: 'post-review', decision_ref: 'post-review' },
+      { command: 'execute' },
+    ]);
+    const runId = startStep(projectRoot, 's', 0);
+    const report = join(projectRoot, '.workflow', 'sessions', 's', 'runs', runId, 'report.md');
+    writeFileSync(report, '---\nverdict: blocked\nsummary: decision required\nconcerns: []\nnext: []\n---\n', 'utf8');
+    writeReviewFindings(projectRoot, 's', runId, 'BLOCK');
+
+    const result = completeRunWithVerdict(projectRoot, runId, 's', { verdict: 'done-with-concerns' });
+    expect(result.run_sealed).toBe(true);
+    expect(result.chain?.step_status).toBe('sealed');
+    expect(result.next.action).toBe('evaluate_decision');
+  });
+
+  it('rejects a dangling decision_ref as BLOCK routing authority', () => {
+    const projectRoot = root();
+    reviewProposalCommand(projectRoot);
+    stepCommand(projectRoot, 'execute');
+    seedSession(projectRoot, 's', [
+      { command: 'review' },
+      { command: 'post-review', decision_ref: 'post-review' },
+      { command: 'execute' },
+    ]);
+    new SessionStore(projectRoot).update('s', draft => {
+      draft.session.orchestration.decision_points = [];
+      return null;
+    });
+    const runId = startStep(projectRoot, 's', 0);
+    const report = join(projectRoot, '.workflow', 'sessions', 's', 'runs', runId, 'report.md');
+    writeFileSync(report, '---\nverdict: blocked\nsummary: dangling decision\nconcerns: []\nnext: []\n---\n', 'utf8');
+    writeReviewFindings(projectRoot, 's', runId, 'BLOCK');
+
+    const result = completeRunWithVerdict(projectRoot, runId, 's', { verdict: 'done-with-concerns' });
+    expect(result.run_sealed).toBe(false);
+    expect(result.seal.errors).toContain(
+      'report verdict blocked cannot advance the existing chain without an applied chain proposal or immediate decision node',
+    );
+  });
+
+  it('rejects a repair proposal when the immediate formal decision owns BLOCK routing', () => {
+    const projectRoot = root();
+    reviewProposalCommand(projectRoot);
+    negativeEvidencePlanCommand(projectRoot);
+    stepCommand(projectRoot, 'execute');
+    seedSession(projectRoot, 's', [
+      { command: 'review' },
+      { command: 'post-review', decision_ref: 'post-review' },
+      { command: 'execute' },
+    ]);
+    const runId = startStep(projectRoot, 's', 0);
+    const report = join(projectRoot, '.workflow', 'sessions', 's', 'runs', runId, 'report.md');
+    writeFileSync(report, '---\nverdict: blocked\nsummary: decision owns routing\nconcerns: []\nnext: []\n---\n', 'utf8');
+    writeReviewFindings(projectRoot, 's', runId, 'BLOCK');
+    writeChainProposal(projectRoot, 's', runId, 'review', [
+      { op: 'insert', after: 'step-000-review', command: 'review', stage: 'repair-review' },
+      { op: 'insert', after: 'step-000-review', command: 'execute', stage: 'repair-execute' },
+      { op: 'insert', after: 'step-000-review', command: 'plan', args: '--gaps', stage: 'repair-plan' },
+    ]);
+
+    const result = completeRunWithVerdict(projectRoot, runId, 's', {
+      verdict: 'done-with-concerns', applyChainProposal: true,
+    });
+    expect(result.run_sealed).toBe(false);
+    expect(result.seal.errors).toContain(
+      'review BLOCK must not apply a chain proposal when formal decision post-review owns routing',
+    );
+  });
+
+  it('rejects an incomplete proposal for a blocked review', () => {
+    const projectRoot = root();
+    reviewProposalCommand(projectRoot);
+    negativeEvidencePlanCommand(projectRoot);
+    stepCommand(projectRoot, 'execute');
+    seedSession(projectRoot, 's', [{ command: 'review' }, { command: 'execute' }]);
+    const runId = startStep(projectRoot, 's', 0);
+    const report = join(projectRoot, '.workflow', 'sessions', 's', 'runs', runId, 'report.md');
+    writeFileSync(report, '---\nverdict: blocked\nsummary: repair required\nconcerns: []\nnext: []\n---\n', 'utf8');
+    writeReviewFindings(projectRoot, 's', runId, 'BLOCK');
+    writeFileSync(
+      join(projectRoot, '.workflow', 'sessions', 's', 'runs', runId, 'outputs', '000-shadow.json'),
+      JSON.stringify({
+        _meta: { kind: 'review-findings', schema: 'review-findings/1.0', role: 'primary' },
+        verdict: 'PASS', findings: [],
+      }, null, 2),
+      'utf8',
+    );
+    writeChainProposal(projectRoot, 's', runId, 'review', [
+      { op: 'insert', after: 'step-000-review', command: 'plan', args: '--gaps' },
+    ]);
+
+    const result = completeRunWithVerdict(projectRoot, runId, 's', {
+      verdict: 'done-with-concerns',
+      applyChainProposal: true,
+    });
+    expect(result.run_sealed).toBe(false);
+    expect(result.seal.errors).toContain(
+      'review BLOCK repair proposal is incomplete: expected exactly 3 insert operations, received 1',
+    );
+  });
+
+  it('applies the complete repair loop for a blocked review atomically', () => {
+    const projectRoot = root();
+    reviewProposalCommand(projectRoot);
+    negativeEvidencePlanCommand(projectRoot);
+    stepCommand(projectRoot, 'execute');
+    seedSession(projectRoot, 's', [{ command: 'review' }, { command: 'execute' }]);
+    const runId = startStep(projectRoot, 's', 0);
+    const report = join(projectRoot, '.workflow', 'sessions', 's', 'runs', runId, 'report.md');
+    writeFileSync(report, '---\nverdict: blocked\nsummary: repair required\nconcerns: []\nnext: []\n---\n', 'utf8');
+    writeReviewFindings(projectRoot, 's', runId, 'BLOCK');
+    writeChainProposal(projectRoot, 's', runId, 'review', [
+      { op: 'insert', after: 'step-000-review', command: 'review', stage: 'repair-review' },
+      { op: 'insert', after: 'step-000-review', command: 'execute', stage: 'repair-execute' },
+      { op: 'insert', after: 'step-000-review', command: 'plan', args: '--gaps', stage: 'repair-plan' },
+    ]);
+
+    const result = completeRunWithVerdict(projectRoot, runId, 's', {
+      verdict: 'done-with-concerns',
+      applyChainProposal: true,
+    });
+    expect(result.run_sealed).toBe(true);
+    expect(result.seal.chain_proposal?.status).toBe('applied');
+    expect(chainOf(projectRoot, 's').map(step => step.command))
+      .toEqual(['review', 'plan', 'execute', 'review', 'execute']);
+
+    const dispatched = runNextStep(projectRoot, { sessionId: 's' });
+    expect(dispatched.exitCode, dispatched.message).toBe(0);
+    const planRunId = dispatched.result?.run_id;
+    expect(planRunId).toBeTruthy();
+    const brief = briefRun(projectRoot, planRunId!, 's');
+    expect(brief.upstream['latest-review']).toMatchObject({ kind: 'review-findings', status: 'sealed' });
   });
 
   it('needs-retry → step pending, run_id cleared, retry.count incremented', () => {
@@ -603,6 +842,7 @@ describe('run complete — completion gate integrity', () => {
       payload: {
         run_id: runId, notes: [], extra_artifacts: [], summary_fallback: null,
         decisions: [], chain_verdict: 'needs-retry',
+        skip_artifact_metadata_validation: false,
         chain_proposal: null,
         completion_input_snapshot: (storedRequest as any).payload.payload.completion_input_snapshot,
       },
@@ -614,7 +854,7 @@ describe('run complete — completion gate integrity', () => {
     expect(Object.keys((storedRequest as any).payload.payload).sort()).toEqual([
       'chain_proposal', 'chain_verdict', 'completion_input_snapshot', 'decisions',
       'expected_activity_revision', 'expected_identity_revision', 'extra_artifacts',
-      'lease', 'notes', 'run_id', 'summary_fallback',
+      'lease', 'notes', 'run_id', 'skip_artifact_metadata_validation', 'summary_fallback',
     ]);
     const replay = completeRunWithVerdict(projectRoot, runId, 's', { verdict: 'needs-retry', transition });
     expect(first.seal.transition.status).toBe('applied');

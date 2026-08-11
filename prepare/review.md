@@ -36,10 +36,20 @@ contract:
     role: attachment
     required: false
     schema: issue-candidates/1.0
+  - path: outputs/chain-proposal.json
+    kind: chain-proposal
+    alias: chain-proposal
+    role: attachment
+    required: false
+    schema: chain-proposal/1.0
   gates:
     exit:
     - dimension-coverage
     - severity-triaged
+    - repair-routing
+  orchestration:
+    chain_effects:
+    - insert
   contract_version: 2.1
 refs:
 - path: ref/spec-conflict.md
@@ -84,6 +94,7 @@ Context injection (optional, may continue if missing):
 - Each dimension produces findings independently; one dimension's result must not suppress or override another's.
 - When a same-session `prior-review` exists, do a delta comparison; do not re-report already-resolved findings as new problems.
 - When code and a spec entry contradict: if the code is evolved practice (spec is outdated), suggest `maestro spec supersede`; if there's a genuine dispute, `maestro spec conflict mark`; never silently accept the contradiction or edit the spec in place.
+- A BLOCK result never falls through to the pre-existing pending tail. When no formal decision node follows this review, emit the typed repair-loop proposal required by the workflow; when a decision node follows, leave routing to that decision.
 
 ## Risk Checklist
 
@@ -97,3 +108,4 @@ Context injection (optional, may continue if missing):
 
 - `dimension-coverage`: the dimensions required by the level all produced findings (quick = correctness + security; standard/deep = all 6), and each finding is anchored to `file:line` with severity/evidence/impact/recommendation.
 - `severity-triaged`: every finding has a triaged severity and there are no unhandled UNMET spec-compliance criteria; the PASS/WARN/BLOCK verdict is driven by finding data, not preference.
+- `repair-routing`: BLOCK is followed by either a formal decision node or a validated `chain-proposal/1.0`; without either, complete the Run with a failure verdict instead of advancing the chain.

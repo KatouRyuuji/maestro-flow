@@ -342,7 +342,7 @@ session-mode: inherited | run | none
 ### 1. 设计
 
 - 加载适用 specs：`maestro load --type spec --category arch`（+ 涉及确认门控/wave 的 step 加载相关 knowhow）。
-- 定 contract：`contract_version: 2.1`（v1 下 consumes 的 schema/role 是 metadata-only，不生效）。consumes 每条声明上游 kind/alias 以及 producer 声明的 artifact `schema`/`role`（缺失 schema 会产生 `ARTIFACT_SCHEMA_UNKNOWN` 复用评估，每次运行都需人工 `maestro run accept-reuse` 才能打开入口门）；需要容忍 producer minor 升级时用 `schema_range: <kind>/<major>.x` 代替 `schema`（显式 major-compatible 承诺，二者互斥；producer 永远只声明精确 schema）；契约内 consumes+produce 的 alias 可相同（consume 绑定创建时的既有目标，seal 时才 supersede），produces 的 alias 必须唯一。produces 声明路径/kind/role/alias/schema；gates.exit（3–5 个出口条件 ID）。
+- 定 contract：`contract_version: 2.1`（v1 下 consumes 的 schema/role 是 metadata-only，不生效）。consumes 每条声明上游 kind/alias 以及 producer 声明的 artifact `schema`/`role`（缺失 schema 会产生 `ARTIFACT_SCHEMA_UNKNOWN` 复用评估，每次运行都需人工 `maestro run accept-reuse` 才能打开入口门）；需要容忍 producer minor 升级时用 `schema_range: <kind>/<major>.x` 代替 `schema`（显式 major-compatible 承诺，二者互斥；producer 永远只声明精确 schema）。仅当 blocked/failed 产物本身就是消费者所需的负面证据（例如 gap-plan 消费 BLOCK review 或 failed verification）时，consumes 可声明 `accepts_negative_evidence: true`；普通 execute/test 消费者禁止使用该字段。契约内 consumes+produce 的 alias 可相同（consume 绑定创建时的既有目标，seal 时才 supersede），produces 的 alias 必须唯一。produces 声明路径/kind/role/alias/schema；gates.exit（3–5 个出口条件 ID）。
 - 定 `commands:` alias 并确认全局唯一（与现有 step、独立命令、skill 无冲突）。
 
 ### 2. 三层写作（顺序固定：contract 先行，prepare 最后反推）
@@ -356,7 +356,7 @@ session-mode: inherited | run | none
 
 - [ ] gates.exit ID 在 contract / Gate Intent / Step Gates 三处一一对应
 - [ ] 每个 gate 全文件单一口径（注释/散文/Success Criteria 无第二种表述）
-- [ ] 每个 consumes 条目声明 `schema`/`role`（与 producer 声明一致）；consumes 与 produces 的 alias 全契约唯一
+- [ ] 每个 consumes 条目声明 `schema`/`role`（与 producer 声明一致）；`accepts_negative_evidence` 仅用于明确消费 blocked/failed 证据的规划或审计路径；consumes 与 produces 的 alias 全契约唯一
 - [ ] prepare 正文无步骤编号、无 agent prompt、无产物 JSON schema（产物 schema 属于 workflow 层；consumes 引用的 schema 标识符属于 contract 层）
 - [ ] workflow 无 contract 复制；frontmatter `prepare:` 无扩展名
 - [ ] 两层间逐字重复不超过一句
