@@ -5,7 +5,6 @@ argument-hint: '[topic|role-name] [--yes] [--count N] [--session ID] [--update] 
 contract:
   consumes:
   - kind: context-package
-    alias: upstream-context
     required: false
     schema: context-package/1.0
     role: attachment
@@ -28,7 +27,7 @@ contract:
     schema: analysis/1.0
   - path: outputs/context-package.json
     kind: context-package
-    alias: brainstorm-context
+    alias: upstream-context
     role: attachment
     required: false
     schema: context-package/1.0

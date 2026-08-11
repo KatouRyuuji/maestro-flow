@@ -5,10 +5,9 @@ description: 6-dimension visual experience audit with divergent exploration — 
 argument-hint: <target> [--dimensions <list>] [--skip-fix] [--skip-generalize] [-y] [-c]
 contract:
   consumes:
-  - kind: session
-    alias: prior-session
+  - kind: ui-audit
     required: false
-    schema: session/1.0
+    schema: ui-audit/1.0
     role: primary
   produces:
   - path: outputs/session.json

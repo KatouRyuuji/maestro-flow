@@ -54,7 +54,7 @@ const GUIDE_REQUIREMENTS = [
   {
     id: 'docs.prepare-authoring',
     path: 'guide/prepare-workflow-authoring-spec.md',
-    tokens: ['brief-result/1.1', 'briefResultV11Schema', 'knowledge reconciliation card'],
+    tokens: ['brief-result/1.1', 'briefResultV11Schema', 'knowledge reconciliation card', 'contract_version: 2.1', 'ARTIFACT_SCHEMA_UNKNOWN'],
   },
 ];
 

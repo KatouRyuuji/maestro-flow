@@ -15,7 +15,6 @@ contract:
     schema: verification/1.0
     role: primary
   - kind: review-findings
-    alias: prior-review
     required: false
     schema: review-findings/1.0
     role: primary

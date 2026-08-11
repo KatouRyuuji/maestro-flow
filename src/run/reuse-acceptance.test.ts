@@ -135,6 +135,16 @@ describe('explicit REVIEW reuse acceptance', () => {
     expect(replay.transition.status).toBe('replayed');
     expect(replay.transition.transition_id).toBe(first.transition.transition_id);
     expect(store.readRun('s', execute.run_id).input.consumes).toEqual([review!.source_fence.artifact_id]);
+
+    const afterSession = store.readBundle('s').session;
+    expect(() => acceptRunReuse(projectRoot, execute.run_id, review!.assessment_hash, 's', {
+      requestId: 'req-accept-reviewed-plan-again',
+      expectedIdentityRevision: afterSession.identity_revision,
+      expectedActivityRevision: afterSession.activity_revision,
+      actor: 'reviewer',
+      reason: 'duplicate acceptance attempt',
+      evidence: ['outputs/review.json'],
+    })).toThrow(/already accepted/);
     expect(first.entry_gates.blocking).toEqual([]);
     expect(inspectSessionContinuation(projectRoot, 's')).toMatchObject({
       action: 'load_run',
@@ -202,5 +212,71 @@ describe('explicit REVIEW reuse acceptance', () => {
     expect(() => acceptRunReuse(projectRoot, execute.run_id, review.assessment_hash, 's', {
       requestId: 'req-incomplete-acceptance', actor: '', reason: '', evidence: [],
     })).toThrow(/non-empty actor/);
+  });
+
+  function seedSealedExecution(projectRoot: string, consumerContract: string[]): ReturnType<typeof createRun> {
+    command(projectRoot, 'schema-producer-fixture', [
+      'contract_version: 2.1', 'arguments: []', 'consumes: []', 'produces:',
+      '  - kind: execution', '    alias: current-execution', '    role: primary',
+      '    required: true', '    schema: execution/1.0', '    path: outputs/execution.json',
+      'gates: { entry: [], exit: [] }',
+    ].join('\n'));
+    command(projectRoot, 'schema-consumer-fixture', consumerContract.join('\n'));
+    const producer = createRun({ projectRoot, command: 'schema-producer-fixture', sessionId: 's', intent: 'schema' });
+    const producerDir = join(projectRoot, '.workflow', 'sessions', 's', 'runs', producer.run_id);
+    writeFileSync(join(producerDir, 'outputs', 'execution.json'), JSON.stringify({
+      _meta: { kind: 'execution', schema: 'execution/1.0', role: 'primary', alias: 'current-execution' },
+    }), 'utf8');
+    writeFileSync(join(producerDir, 'report.md'), [
+      '---', 'verdict: ready', 'summary: sealed execution', 'constraints: []', 'decisions: []',
+      'concerns: []', 'next: []', '---', '',
+    ].join('\n'), 'utf8');
+    expect(completeRun(projectRoot, producer.run_id, 's').sealed).toBe(true);
+    return createRun({ projectRoot, command: 'schema-consumer-fixture', sessionId: 's', intent: 'schema' });
+  }
+
+  it('blocks a v2.1 consume missing schema with ARTIFACT_SCHEMA_UNKNOWN until explicit accept', () => {
+    const projectRoot = root();
+    const consumer = seedSealedExecution(projectRoot, [
+      'contract_version: 2.1', 'arguments: []', 'consumes:',
+      '  - kind: execution', '    alias: current-execution', '    required: true',
+      '    require_status: sealed', 'produces: []', 'gates: { entry: [], exit: [] }',
+    ]);
+    const review = consumer.reuse_assessments[0];
+    expect(review).toMatchObject({
+      decision: 'REVIEW',
+      reason_codes: expect.arrayContaining(['ARTIFACT_SCHEMA_UNKNOWN']),
+    });
+    expect(consumer.upstream).toEqual({});
+    expect(consumer.entry_gates.blocking).toHaveLength(1);
+
+    const store = new SessionStore(projectRoot);
+    const beforeSession = store.readBundle('s').session;
+    const accepted = acceptRunReuse(projectRoot, consumer.run_id, review!.assessment_hash, 's', {
+      requestId: 'req-accept-schema-review',
+      expectedIdentityRevision: beforeSession.identity_revision,
+      expectedActivityRevision: beforeSession.activity_revision,
+      actor: 'reviewer',
+      reason: 'producer schema execution/1.0 verified; consumer contract underspecified',
+      evidence: ['outputs/execution.json'],
+    });
+    expect(accepted.entry_gates.blocking).toEqual([]);
+    expect(store.readRun('s', consumer.run_id).input.consumes).toEqual([review!.source_fence.artifact_id]);
+  });
+
+  it('binds REUSE directly when the v2.1 consume declares the producer schema and role', () => {
+    const projectRoot = root();
+    const consumer = seedSealedExecution(projectRoot, [
+      'contract_version: 2.1', 'arguments: []', 'consumes:',
+      '  - kind: execution', '    alias: current-execution', '    required: true',
+      '    require_status: sealed', '    schema: execution/1.0', '    role: primary',
+      'produces: []', 'gates: { entry: [], exit: [] }',
+    ]);
+    expect(consumer.reuse_assessments[0]).toMatchObject({
+      decision: 'REUSE',
+      reason_codes: ['REUSE_ELIGIBLE'],
+    });
+    expect(consumer.upstream['current-execution']).toBeDefined();
+    expect(consumer.entry_gates.blocking).toEqual([]);
   });
 });

@@ -239,4 +239,24 @@ describe('reuse-assessment/1.0', () => {
       .toBe(assessArtifactReuse(right).assessment_hash);
     expect(left).toEqual(before);
   });
+
+  it('flags ARTIFACT_SCHEMA_UNKNOWN when the consumer declares no accepted schema', () => {
+    const input = compatibleInput();
+    input.acceptedArtifactSchemas = [];
+
+    expect(assessArtifactReuse(input)).toMatchObject({
+      decision: 'REVIEW',
+      reason_codes: expect.arrayContaining(['ARTIFACT_SCHEMA_UNKNOWN']),
+    });
+  });
+
+  it('flags ARTIFACT_SCHEMA_UNKNOWN when the artifact carries no schema', () => {
+    const input = compatibleInput();
+    input.candidate.artifactSchema = null as unknown as string;
+
+    expect(assessArtifactReuse(input)).toMatchObject({
+      decision: 'REVIEW',
+      reason_codes: expect.arrayContaining(['ARTIFACT_SCHEMA_UNKNOWN']),
+    });
+  });
 });

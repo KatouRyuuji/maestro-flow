@@ -5,10 +5,9 @@ description: Odyssey security mode — read-only tiered security audit (OWASP To
 argument-hint: <target> [--tier quick|standard|deep] [--skip-generalize] [-y] [-c]
 contract:
   consumes:
-  - kind: session
-    alias: prior-session
+  - kind: security-audit-result
     required: false
-    schema: session/1.0
+    schema: security-audit-result/1.0
     role: primary
   produces:
   - path: outputs/session.json

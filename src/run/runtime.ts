@@ -1093,6 +1093,12 @@ export function acceptRunReuse(
         `reuse assessment ${assessment.assessment_hash} no longer matches its REVIEW source fence`,
       );
     }
+    if (run.input.consumes.includes(assessment.source_fence.artifact_id)) {
+      throw new TransitionReceiptError(
+        'ALREADY_ACCEPTED',
+        `reuse assessment ${assessment.assessment_hash} was already accepted for Run ${runId}`,
+      );
+    }
     if (!run.input.consumes.includes(assessment.source_fence.artifact_id)) {
       run.input.consumes.push(assessment.source_fence.artifact_id);
     }

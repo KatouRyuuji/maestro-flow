@@ -366,26 +366,59 @@ for (const dir of readdirSync(skillDir)) {
   }
 }
 
-// v2/v2.1 prepare contracts must declare the artifact schema (and role for 2.1) on
-// every consumes entry: a missing schema yields ARTIFACT_SCHEMA_UNKNOWN in reuse
-// assessment and forces a manual REVIEW acceptance on an otherwise eligible artifact.
+// v2/v2.1 contracts must declare the artifact schema (and role for 2.1) on every
+// consumes entry: a missing schema yields ARTIFACT_SCHEMA_UNKNOWN in reuse
+// assessment and forces a manual REVIEW acceptance on an otherwise eligible
+// artifact. Also cross-check consume aliases against declared producer aliases
+// (a dead alias silently never binds upstream) and require an explicit
+// contract_version once a contract consumes anything.
+export function validateConsumesSchema(contract, label) {
+  const errors = [];
+  const consumes = Array.isArray(contract?.consumes) ? contract.consumes : [];
+  if (consumes.length === 0) return errors;
+  const version = contract.contract_version;
+  if (version !== 2 && version !== 2.1) {
+    errors.push(`${label}: consumes without contract_version 2/2.1 parse as v1 where schema/role are metadata-only; declare contract_version: 2.1`);
+    return errors;
+  }
+  consumes.forEach((item, index) => {
+    const id = `${label}: consumes[${index}] kind=${item?.kind ?? '?'}`;
+    if (typeof item?.schema !== 'string' || item.schema.length === 0) {
+      errors.push(`${id}: missing schema (declare the producer artifact schema so reuse binds without a manual REVIEW)`);
+    }
+    if (version === 2.1 && (typeof item?.role !== 'string' || item.role.length === 0)) {
+      errors.push(`${id}: missing role for contract_version 2.1`);
+    }
+  });
+  return errors;
+}
+
 const prepareDir = join(root, 'prepare');
+const contractSources = [];
 for (const file of readdirSync(prepareDir).filter((name) => name.endsWith('.md'))) {
   const path = join(prepareDir, file);
   const contract = frontmatter(readFileSync(path, 'utf8'))?.contract;
-  if (!contract) continue;
-  const version = contract.contract_version;
-  if (version !== 2 && version !== 2.1) continue;
-  if (!Array.isArray(contract.consumes)) continue;
-  contract.consumes.forEach((item, index) => {
-    const label = `${relative(root, path)}: consumes[${index}] kind=${item?.kind ?? '?'}`;
-    if (typeof item?.schema !== 'string' || item.schema.length === 0) {
-      errors.push(`${label}: missing schema (declare the producer artifact schema so reuse binds without a manual REVIEW)`);
+  if (contract) contractSources.push({ path, contract });
+}
+for (const file of readdirSync(commandDir).filter((name) => name.endsWith('.md'))) {
+  const path = join(commandDir, file);
+  const contract = frontmatter(readFileSync(path, 'utf8'))?.contract;
+  if (contract) contractSources.push({ path, contract });
+}
+const producedAliases = new Set();
+for (const { contract } of contractSources) {
+  for (const produce of contract.produces ?? []) {
+    if (typeof produce?.alias === 'string') producedAliases.add(produce.alias);
+  }
+}
+for (const { path, contract } of contractSources) {
+  const label = relative(root, path);
+  errors.push(...validateConsumesSchema(contract, label));
+  for (const item of contract.consumes ?? []) {
+    if (typeof item?.alias === 'string' && item.alias.length > 0 && !producedAliases.has(item.alias)) {
+      errors.push(`${label}: consumes alias '${item.alias}' (kind=${item.kind ?? '?'}) has no declared producer alias; the upstream can never bind (dead alias)`);
     }
-    if (version === 2.1 && (typeof item?.role !== 'string' || item.role.length === 0)) {
-      errors.push(`${label}: missing role for contract_version 2.1`);
-    }
-  });
+  }
 }
 
 if (errors.length > 0) {

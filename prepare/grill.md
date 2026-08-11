@@ -5,7 +5,6 @@ argument-hint: <topic|plan> [-y] [-c] [--from <source>] [--depth shallow|standar
 contract:
   consumes:
   - kind: context-package
-    alias: upstream-context
     required: false
     schema: context-package/1.0
     role: attachment
@@ -23,7 +22,7 @@ contract:
     schema: terminology/1.0
   - path: outputs/context-package.json
     kind: context-package
-    alias: grill-context
+    alias: upstream-context
     role: attachment
     required: false
     schema: context-package/1.0

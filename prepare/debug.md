@@ -38,6 +38,7 @@ contract:
     schema: reproduction/1.0
   - path: outputs/fix-directions.json
     kind: fix-directions
+    alias: latest-fix-directions
     role: attachment
     required: false
     schema: fix-directions/1.0

@@ -12,6 +12,7 @@ import {
 import { lintSessionRunMirrors } from '../lint-session-run-mirrors.mjs';
 import {
   validateCompanionRunCreate,
+  validateConsumesSchema,
   validateExecutorLifecycleBoundary,
   validateRunCreateArgumentChannels,
 } from '../lint-session-run-prompts.mjs';
@@ -286,4 +287,37 @@ test('package release gate orders source lint, generation, freshness, then parit
     pkg.scripts.prepublishOnly,
     /^node scripts\/lint-invocation-policy\.mjs && node scripts\/lint-session-run-prompts\.mjs/,
   );
+});
+
+test('validateConsumesSchema rejects v2.1 consumes missing schema/role and versionless contracts', () => {
+  const missingSchemaRole = validateConsumesSchema(
+    { contract_version: 2.1, consumes: [{ kind: 'execution', alias: 'current-execution', required: true }] },
+    'prepare/review.md',
+  );
+  assert.deepEqual(missingSchemaRole, [
+    'prepare/review.md: consumes[0] kind=execution: missing schema (declare the producer artifact schema so reuse binds without a manual REVIEW)',
+    'prepare/review.md: consumes[0] kind=execution: missing role for contract_version 2.1',
+  ]);
+
+  const versionless = validateConsumesSchema(
+    { consumes: [{ kind: 'execution', required: true }] },
+    'prepare/legacy.md',
+  );
+  assert.deepEqual(versionless, [
+    'prepare/legacy.md: consumes without contract_version 2/2.1 parse as v1 where schema/role are metadata-only; declare contract_version: 2.1',
+  ]);
+
+  const v2SchemaOnly = validateConsumesSchema(
+    { contract_version: 2, consumes: [{ kind: 'execution', alias: 'current-execution', schema: 'execution/1.0', required: true }] },
+    'prepare/v2.md',
+  );
+  assert.deepEqual(v2SchemaOnly, []);
+
+  const v21Complete = validateConsumesSchema(
+    { contract_version: 2.1, consumes: [{ kind: 'execution', alias: 'current-execution', schema: 'execution/1.0', role: 'primary', required: true }] },
+    'prepare/review.md',
+  );
+  assert.deepEqual(v21Complete, []);
+
+  assert.deepEqual(validateConsumesSchema({ contract_version: 2.1, consumes: [] }, 'prepare/empty.md'), []);
 });

@@ -5,7 +5,6 @@ argument-hint: <idea or @file> [-y] [-c] [--from <source>]
 contract:
   consumes:
   - kind: context-package
-    alias: upstream-context
     required: false
     schema: context-package/1.0
     role: attachment
@@ -63,7 +62,7 @@ contract:
     schema: blueprint-summary/1.0
   - path: outputs/context-package.json
     kind: context-package
-    alias: blueprint-context
+    alias: upstream-context
     role: attachment
     required: false
     schema: context-package/1.0

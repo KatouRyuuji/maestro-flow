@@ -146,7 +146,26 @@ describe('Session/Run runtime', () => {
       // own prepare file, never a user-global ~/.maestro mirror.
       expect(source.relativePath).toBe(`prepare/${step}.md`);
       expect(source.contract.produces.length).toBeGreaterThan(0);
+      for (const consume of source.contract.consumes) {
+        expect(consume.schema, `${command} consumes ${consume.kind} must declare schema`).toBeTruthy();
+        expect(consume.role, `${command} consumes ${consume.kind} must declare role`).toBeTruthy();
+      }
     }
+  });
+
+  it('declares schema and role on every v2/v2.1 consumes entry across all prepare contracts', () => {
+    const prepareDir = join(process.cwd(), 'prepare');
+    let checked = 0;
+    for (const file of readdirSync(prepareDir).filter((name) => name.endsWith('.md'))) {
+      const contract = resolveCommandSource(process.cwd(), file.replace(/\.md$/, '')).contract;
+      if ((contract.contract_version ?? 1) === 1) continue;
+      for (const consume of contract.consumes) {
+        checked++;
+        expect(consume.schema, `${file} consumes ${consume.kind} must declare schema`).toBeTruthy();
+        expect(consume.role, `${file} consumes ${consume.kind} must declare role`).toBeTruthy();
+      }
+    }
+    expect(checked).toBeGreaterThan(10);
   });
 
   it('loads installed global Claude contracts without losing project precedence', () => {

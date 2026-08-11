@@ -4,10 +4,9 @@ description: 6-dimension runtime quality audit → diagnose → fix → verify c
 argument-hint: <target> [--dimensions <list>] [--fix-threshold <severity>] [--skip-fix] [--skip-generalize] [-y] [-c]
 contract:
   consumes:
-  - kind: session
-    alias: prior-session
+  - kind: audit-result
     required: false
-    schema: session/1.0
+    schema: audit-result/1.0
     role: primary
   produces:
   - path: outputs/session.json
