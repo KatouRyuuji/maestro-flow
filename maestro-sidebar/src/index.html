@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark" />
+<title>Maestro Sidebar</title>
+<link rel="icon" href="icons.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="styles.css" />
+<link rel="stylesheet" href="v2.css" />
+<link rel="stylesheet" href="themes.css" />
+<script src="app.js" defer></script>
+</head>
+<body data-theme="graphite" data-mode="card">
+<div class="world" id="world">
+
+  <!-- 设置引导：首次启动 -->
+  <section class="setup" id="setup" hidden>
+    <div class="setup-card">
+      <div class="setup-logo">Maestro Sidebar</div>
+      <h1 class="setup-title">观察 Maestro 工作区</h1>
+      <p class="setup-desc">添加一个工程根目录（包含 <code>.workflow/</code>），之后可以在菜单中调整。</p>
+      <div class="setup-options" role="group" aria-label="接入方式">
+        <button type="button" class="setup-option" id="btnScanExisting">
+          <svg class="lucide" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-folder"/></svg>
+          <span class="setup-option-copy"><strong>选择工程目录</strong><small>自动发现其中的 .workflow 与 Agent 调用。</small></span>
+        </button>
+        <button type="button" class="setup-option" id="btnUseDefaults">
+          <svg class="lucide" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-activity"/></svg>
+          <span class="setup-option-copy"><strong>使用默认位置</strong><small>扫描 ~/.maestro 关联的工作区（若有）。</small></span>
+        </button>
+      </div>
+      <p class="setup-note" id="setupError" role="alert" hidden style="color:var(--danger)">目录无效，请重试。</p>
+    </div>
+  </section>
+
+  <!-- 主界面：卡片形态 -->
+  <div class="main-view" id="mainView" hidden>
+
+    <!-- 胶囊形态：极简状态条 -->
+    <div class="capsule" id="capsule" hidden data-tauri-drag-region>
+      <span class="cap-logo" aria-hidden="true">◆</span>
+      <button type="button" class="cap-main" id="capBody" title="回到卡片" aria-label="打开完整卡片视图">
+        <div class="cap-intent" id="capTitle">—</div>
+        <div class="cap-sub" id="capSub">—</div>
+      </button>
+      <div class="cap-chips">
+        <span class="cap-chip" id="capSessions">0 会话</span>
+        <span class="cap-chip" id="capKnowledge">0 知识</span>
+      </div>
+      <button type="button" class="ib cap-menu" id="btnCapMenu" title="胶囊菜单" aria-label="胶囊菜单" aria-expanded="false">
+        <svg class="lucide" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-more"/></svg>
+      </button>
+    </div>
+
+    <!-- 卡片形态 -->
+    <article class="card" id="card">
+
+      <!-- 顶栏 46px（整条可拖动） -->
+      <header class="topbar" data-tauri-drag-region>
+        <span class="logo" aria-hidden="true">◆</span>
+        <span class="tb-name">Maestro Sidebar</span>
+        <span class="chip" id="wsChip" title="工作区">—</span>
+        <div class="tb-btns">
+          <button type="button" class="ib" id="btnRefresh" title="刷新快照" aria-label="刷新快照">
+            <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><use href="icons.svg#i-refresh"/></svg>
+          </button>
+          <span class="tb-div" aria-hidden="true"></span>
+          <button type="button" class="ib" id="btnMenu" title="菜单" aria-label="打开菜单" aria-expanded="false" aria-controls="menuPop">
+            <svg class="lucide" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><use href="icons.svg#i-menu"/></svg>
+          </button>
+          <button type="button" class="ib" id="btnHideWin" title="隐藏到托盘" aria-label="隐藏到托盘">
+            <svg class="lucide" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-hide"/></svg>
+          </button>
+          <button type="button" class="ib" id="btnQuitWin" title="关闭（退出应用）" aria-label="关闭退出">
+            <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><use href="icons.svg#i-close"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- 菜单 -->
+      <div class="menu-scrim" id="menuScrim" hidden></div>
+      <div class="menu-pop" id="menuPop" role="dialog" aria-label="设置菜单" tabindex="-1" hidden>
+        <div class="mp-group">
+          <div class="mp-label">窗口</div>
+          <button type="button" class="mp-row setting" id="btnTop" role="switch" aria-checked="false">
+            <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-pin"/></svg>
+            <span>窗口置顶</span><i aria-hidden="true">关</i>
+          </button>
+          <button type="button" class="mp-row" id="btnCapsule">
+            <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-capsule"/></svg>
+            <span>切换到胶囊</span>
+          </button>
+          <button type="button" class="mp-row" id="btnHide">
+            <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-hide"/></svg>
+            <span>隐藏到托盘</span>
+          </button>
+        </div>
+        <div class="mp-group">
+          <div class="mp-label">主题</div>
+          <div class="theme-row" id="themeRow" role="radiogroup" aria-label="界面主题">
+            <button type="button" class="theme-dot" data-theme="graphite" role="radio" aria-checked="false" title="石墨" aria-label="主题：石墨"></button>
+            <button type="button" class="theme-dot" data-theme="mist" role="radio" aria-checked="false" title="雾白浅色" aria-label="主题：雾白浅色"></button>
+            <button type="button" class="theme-dot" data-theme="glass" role="radio" aria-checked="false" title="烟熏玻璃" aria-label="主题：烟熏玻璃"></button>
+            <button type="button" class="theme-dot" data-theme="ember" role="radio" aria-checked="false" title="余烬" aria-label="主题：余烬"></button>
+            <button type="button" class="theme-dot" data-theme="blueprint" role="radio" aria-checked="false" title="蓝图" aria-label="主题：蓝图"></button>
+          </div>
+        </div>
+        <div class="mp-group">
+          <div class="mp-label">工程</div>
+          <div id="rootList"></div>
+          <button type="button" class="mp-row" id="btnAddRoot">
+            <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-plus"/></svg>
+            <span>添加工程目录</span>
+          </button>
+        </div>
+        <div class="mp-group">
+          <button type="button" class="mp-row danger" id="btnQuit">
+            <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-x"/></svg>
+            <span>退出</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 内容 -->
+      <main class="content" id="content">
+        <!-- 详情视图（点击条目进入） -->
+        <div class="detail-view" id="detailView" hidden>
+          <div class="detail-head">
+            <button type="button" class="back-btn" id="btnBack" title="返回" aria-label="返回列表">
+              <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-back"/></svg>
+              <span>返回</span>
+            </button>
+            <h1 class="detail-title" id="detailTitle" tabindex="-1"></h1>
+            <span class="detail-kind" id="detailKind"></span>
+          </div>
+          <div class="detail-body" id="detailBody" aria-busy="false"></div>
+        </div>
+
+        <!-- 列表视图 -->
+        <div id="listView">
+        <!-- 区块 1：Agent 调用 -->
+        <section class="sec" id="secCalls">
+          <button type="button" class="sh" id="headCalls" data-sec="secCalls" aria-expanded="true" aria-controls="callsBody">
+            <span class="chev"><svg class="lucide" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-chevron"/></svg></span>
+            <span class="sh-ic"><svg class="lucide" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-activity"/></svg></span>
+            <span class="sh-t">Agent 调用</span><span class="pill" id="callsCount">0</span>
+          </button>
+          <div class="sb" id="callsBody"><div class="sbi">
+            <div class="rows" id="callsList"></div>
+            <div class="empty" id="callsEmpty" hidden>暂无 Agent 调用</div>
+            <div class="sec-f" id="callsFoot" hidden></div>
+          </div></div>
+        </section>
+
+        <!-- 区块 2：Session · Run -->
+        <section class="sec" id="secSess">
+          <button type="button" class="sh" id="headSessions" data-sec="secSess" aria-expanded="true" aria-controls="sessionsBody">
+            <span class="chev"><svg class="lucide" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-chevron"/></svg></span>
+            <span class="sh-ic"><svg class="lucide" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-session"/></svg></span>
+            <span class="sh-t">Session · Run</span><span class="pill" id="sessionsCount">0</span>
+          </button>
+          <div class="sb" id="sessionsBody"><div class="sbi">
+            <div class="rows" id="sessionsList"></div>
+            <div class="empty" id="sessionsEmpty" hidden>暂无会话</div>
+            <div class="sec-f" id="sessionsFoot" hidden></div>
+          </div></div>
+        </section>
+
+        <!-- 区块 3：知识积累 -->
+        <section class="sec" id="secKb">
+          <button type="button" class="sh" id="headKnowledge" data-sec="secKb" aria-expanded="true" aria-controls="knowledgeBody">
+            <span class="chev"><svg class="lucide" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-chevron"/></svg></span>
+            <span class="sh-ic"><svg class="lucide" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-book"/></svg></span>
+            <span class="sh-t">知识积累</span><span class="pill" id="knowledgeTotal">0</span>
+          </button>
+          <div class="sb" id="knowledgeBody"><div class="sbi" id="kbBody"></div></div>
+        </section>
+        </div>
+      </main>
+
+      <div id="fade" aria-hidden="true"></div>
+
+      <!-- 状态栏 32px -->
+      <footer class="statusbar">
+        <span class="sb-live" id="liveDot" aria-hidden="true"></span>
+        <span class="sb-status" id="liveStatus" role="status" aria-live="polite">实时监听</span>
+        <span class="sb-time clk" id="clk">--:--:--</span>
+        <span class="sb-spacer"></span>
+        <span class="sb-hint">关闭 = 隐藏托盘</span>
+      </footer>
+    </article>
+  </div>
+</div>
+</body>
+<!-- 启动错误显示（调试用） -->
+<div id="bootError" hidden style="position:fixed;bottom:8px;left:8px;right:8px;background:rgba(80,0,0,0.92);color:#ff8b8b;font-size:11px;padding:8px 10px;border-radius:8px;z-index:999;white-space:pre-wrap;word-break:break-all;font-family:monospace;pointer-events:none;"></div>
+</html>
