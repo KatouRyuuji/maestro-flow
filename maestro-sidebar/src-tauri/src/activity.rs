@@ -42,6 +42,14 @@ pub fn scan_calls(dir: &Path, limit: usize) -> Vec<AgentCall> {
         let Ok(mut call) = serde_json::from_str::<AgentCall>(&raw) else {
             continue;
         };
+        // 空壳 meta（写入中断/占位文件：关键字段全空）不展示
+        if call.started_at.is_empty()
+            && call.completed_at.is_none()
+            && call.prompt.is_empty()
+            && call.model.as_deref().unwrap_or("").is_empty()
+        {
+            continue;
+        }
         let mtime = fs::metadata(&path)
             .and_then(|m| m.modified())
             .ok()

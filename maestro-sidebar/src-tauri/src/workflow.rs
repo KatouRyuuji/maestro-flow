@@ -44,6 +44,8 @@ pub struct SessionSummary {
     pub session_id: String,
     pub intent: Option<String>,
     pub status: String,
+    /// 所属工程（state.json project_name；多工程合并时用于区分）
+    pub project: Option<String>,
     pub active_run_id: Option<String>,
     pub latest_completed_run_id: Option<String>,
     pub run_count: usize,
@@ -254,6 +256,7 @@ pub fn scan_session_detail(wf_root: &Path, session_id: &str) -> Option<SessionDe
         session_id: session_id.to_owned(),
         intent: str_field(&session_json, "intent"),
         status,
+        project: None,
         active_run_id: str_field(&session_json, "active_run_id"),
         latest_completed_run_id: str_field(&session_json, "latest_completed_run_id"),
         run_count,
@@ -293,6 +296,20 @@ fn load_latest_run(session_dir: &Path) -> (Option<RunSummary>, usize) {
 
 /// 合并 state.json 注册表与磁盘 sessions/ 目录，输出会话摘要（新→旧）。
 pub fn scan_sessions(wf_root: &Path) -> Vec<SessionSummary> {
+    scan_sessions_with_project(wf_root, None)
+}
+
+/// project 名用于多工程合并时标注归属；None 时从 state.json project_name 推导。
+pub fn scan_sessions_with_project(wf_root: &Path, project: Option<&str>) -> Vec<SessionSummary> {
+    scan_sessions_impl(wf_root, project)
+}
+
+fn scan_sessions_impl(wf_root: &Path, project: Option<&str>) -> Vec<SessionSummary> {
+    let project_name = match project {
+        Some(name) => Some(name.to_string()),
+        None => read_json(&wf_root.join("state.json"))
+            .and_then(|v| str_field(&v, "project_name")),
+    };
     let registry = read_registry(&wf_root.join("state.json"));
     let sessions_dir = wf_root.join("sessions");
 
@@ -328,7 +345,7 @@ pub fn scan_sessions(wf_root: &Path) -> Vec<SessionSummary> {
             let session_dir = sessions_dir.join(&id);
             let (latest_run, run_count) = load_latest_run(&session_dir);
             let session_json = read_json(&session_dir.join("session.json"));
-            let status = session_json
+            let raw_status = session_json
                 .as_ref()
                 .and_then(|v| str_field(v, "status"))
                 .or(reg_status)
@@ -336,7 +353,10 @@ pub fn scan_sessions(wf_root: &Path) -> Vec<SessionSummary> {
             SessionSummary {
                 session_id: id,
                 intent,
-                status,
+                // 展示状态：state.json/session.json 的 running 常为陈旧值（session 完成后未更新）；
+                // 以最新 run.json 的实际状态为准（运行时权威）。
+                status: effective_status(&raw_status, &latest_run, &session_dir),
+                project: project_name.clone(),
                 active_run_id: session_json
                     .as_ref()
                     .and_then(|v| str_field(v, "active_run_id")),
@@ -349,10 +369,70 @@ pub fn scan_sessions(wf_root: &Path) -> Vec<SessionSummary> {
         })
         .collect();
 
-    // 新 → 旧（session_id 前缀是日期，字典序倒序即最新在前）
-    sessions.sort_by(|a, b| b.session_id.cmp(&a.session_id));
+    // 排序：运行中 > 暂停 > 失败/阻塞 > 已封存，组内按 session_id 倒序（新在前）
+    sessions.sort_by(|a, b| {
+        status_rank(&a.status)
+            .cmp(&status_rank(&b.status))
+            .then_with(|| b.session_id.cmp(&a.session_id))
+    });
     sessions.truncate(40);
     sessions
+}
+
+/// 列表展示用状态：对 running/active 做最新 run 校正（陈旧 running 降级为实际状态）。
+/// 无 run 目录时：目录 24h 内有活动才视为真运行，否则视为陈旧（幽灵/已完成未更新的 session）。
+fn effective_status(raw: &str, latest: &Option<RunSummary>, dir: &Path) -> String {
+    let s = raw.to_ascii_lowercase();
+    if s != "running" && s != "active" && s != "executing" {
+        return raw.to_string();
+    }
+    match latest {
+        Some(run) => match run.status.to_ascii_lowercase().as_str() {
+            // run.json 的 running 也会陈旧（会话中断后未 seal）：started 超过 2 小时无
+            // 新活动即视为陈旧 → 已封存
+            "running" | "executing" | "active" => {
+                let stale = run.started_at.as_deref().and_then(|iso| {
+                    chrono::DateTime::parse_from_rfc3339(iso).ok()
+                }).map(|t| {
+                    t.signed_duration_since(chrono::Utc::now())
+                        .num_minutes()
+                        .unsigned_abs() > 120
+                }).unwrap_or(false);
+                if stale {
+                    "sealed".into()
+                } else {
+                    "running".into()
+                }
+            }
+            "sealed" | "completed" | "done" => "sealed".into(),
+            "failed" | "blocked" => "blocked".into(),
+            "paused" => "paused".into(),
+            // 异常 run 状态：保持原始状态
+            _ => raw.to_string(),
+        },
+        None => {
+            let fresh = fs::metadata(dir)
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.elapsed().ok())
+                .map(|e| e < std::time::Duration::from_secs(24 * 3600))
+                .unwrap_or(false);
+            if fresh {
+                raw.to_string()
+            } else {
+                "sealed".into()
+            }
+        }
+    }
+}
+
+pub(crate) fn status_rank(status: &str) -> u8 {
+    match status.to_ascii_lowercase().as_str() {
+        "running" | "active" | "executing" => 0,
+        "paused" => 1,
+        "blocked" | "failed" => 2,
+        _ => 3, // sealed / completed / unknown
+    }
 }
 
 /// 读取某会话的完整 run 列表（供前端展开）。
@@ -492,7 +572,8 @@ mod tests {
         let s = &sessions[0];
         assert_eq!(s.session_id, "20260723-alpha");
         assert_eq!(s.intent.as_deref(), Some("验证端到端"));
-        assert_eq!(s.status, "running");
+        // 有效状态：registry 标 running 但最新 run 已 sealed → 展示为 sealed
+        assert_eq!(s.status, "sealed");
         assert_eq!(s.active_run_id.as_deref(), Some("20260723-001-status"));
         assert_eq!(s.run_count, 1);
         let run = s.latest_run.as_ref().unwrap();

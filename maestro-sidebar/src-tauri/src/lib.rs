@@ -22,6 +22,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 use tauri::Manager;
+use tauri::{WebviewUrl, WebviewWindowBuilder};
 
 use config::AppConfig;
 use snapshot::{RuntimeSnapshot, snapshot_fingerprint};
@@ -35,9 +36,20 @@ struct RuntimeStore {
     last_emitted_fingerprint: Option<String>,
 }
 
+/// 独立 markdown 预览窗口的待渲染文档
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewDoc {
+    pub kind: String,
+    pub id: String,
+    pub title: String,
+    pub content: String,
+}
+
 struct AppState {
     config: Mutex<AppConfig>,
     runtime: Mutex<RuntimeStore>,
+    preview: Mutex<Option<PreviewDoc>>,
 }
 
 impl Default for RuntimeStore {
@@ -209,6 +221,65 @@ fn get_session_detail(
         }
     }
     None
+}
+
+/// 打开独立 markdown 预览窗口（重复打开同一窗口：聚焦 + 刷新内容）
+#[tauri::command]
+fn open_md_preview(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+    kind: String,
+    id: String,
+) -> Result<(), String> {
+    if !["specs", "memory", "knowhow"].contains(&kind.as_str()) || !is_safe_id(&id) {
+        return Err("不支持的条目类型".into());
+    }
+    let cfg = state.config.lock().unwrap().clone();
+    let mut projects = workflow::discover_projects(&cfg.roots);
+    for auto_root in auto::auto_discover_roots() {
+        if let Some(wf) = workflow::find_workflow_root(&auto_root) {
+            projects.push(wf);
+        }
+    }
+    projects.sort();
+    projects.dedup();
+    let mut doc = None;
+    for wf in projects {
+        if let Some(c) = knowledge::read_knowledge_item_content(&wf, &kind, &id) {
+            doc = Some(PreviewDoc {
+                kind: kind.clone(),
+                id: id.clone(),
+                title: c.title,
+                content: c.content,
+            });
+            break;
+        }
+    }
+    let Some(doc) = doc else {
+        return Err("条目不存在或不可读".into());
+    };
+    *state.preview.lock().unwrap() = Some(doc.clone());
+    let title = format!("MD 预览 · {}", doc.title);
+    if let Some(window) = app.get_webview_window("md-preview") {
+        let _ = window.set_title(&title);
+        let _ = window.show();
+        let _ = window.set_focus();
+        let _ = window.eval("window.location.reload()");
+        return Ok(());
+    }
+    WebviewWindowBuilder::new(&app, "md-preview", WebviewUrl::App("preview.html".into()))
+        .title(title)
+        .inner_size(720.0, 560.0)
+        .min_inner_size(420.0, 300.0)
+        .build()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// preview.html 拉取当前预览文档
+#[tauri::command]
+fn get_md_preview(state: tauri::State<AppState>) -> Option<PreviewDoc> {
+    state.preview.lock().unwrap().clone()
 }
 
 #[tauri::command]
@@ -443,6 +514,7 @@ pub fn run() {
             app.manage(AppState {
                 config: Mutex::new(cfg.clone()),
                 runtime: Mutex::new(RuntimeStore::default()),
+                preview: Mutex::new(None),
             });
 
             // 协调器 + watcher + 10s reconcile
@@ -502,6 +574,8 @@ pub fn run() {
             get_call_detail,
             get_knowledge_items,
             get_knowledge_item_content,
+            open_md_preview,
+            get_md_preview,
             get_config,
             complete_setup,
             add_root,

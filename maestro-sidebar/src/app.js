@@ -644,8 +644,11 @@ function callStatus(call) {
   if (delegate === 'queued') return 'queued';
   if (delegate === 'running') return 'running';
   if (call.completed_at) return call.exit_code === 0 ? 'done' : 'error';
-  if (delegate) return 'unknown';
-  return 'running';
+  // 无 completed_at 且无 delegate：仅当 started_at 新鲜（≤10 分钟）才算运行中；
+  // 陈旧记录（中断/测试探针/旧版 meta）显示未知，避免误报「运行中」
+  const t = call.started_at ? new Date(call.started_at).getTime() : NaN;
+  if (!Number.isNaN(t) && Date.now() - t < 10 * 60 * 1000) return 'running';
+  return 'unknown';
 }
 function callStatusClass(call) {
   switch (callStatus(call)) {
@@ -772,6 +775,12 @@ function renderSessions() {
     dot.style.setProperty('--c', sm[3]);
     rl.appendChild(dot);
     rl.appendChild(el('span', 'sid', s.session_id));
+    // 多工程合并：行内标注工程归属
+    if (s.project && s.project !== snapshot.workspace) {
+      const proj = el('span', 'bd bd-dim', s.project);
+      proj.title = `工程：${s.project}`;
+      rl.appendChild(proj);
+    }
     if (isActive) rl.appendChild(el('span', 'bd bd-accent', 'ACTIVE'));
     rl.appendChild(el('span', 'rl-spacer'));
     rl.appendChild(el('span', `bd ${sm[0]}`, sm[1]));
@@ -1082,6 +1091,20 @@ function renderKnowledgeItemDetail() {
     } catch { /* 剪贴板不可用 */ }
   });
   meta.appendChild(copyBtn);
+  // markdown 类条目：独立预览窗口
+  if (['specs', 'memory', 'knowhow'].includes(item.kind)) {
+    const pv = el('button', 'retry-btn primary', '预览 Markdown');
+    pv.type = 'button';
+    pv.title = '在独立窗口中打开渲染后的 Markdown';
+    pv.addEventListener('click', async () => {
+      try {
+        await invoke('open_md_preview', { kind: item.kind, id: item.id });
+      } catch {
+        $('liveStatus').textContent = '预览打开失败';
+      }
+    });
+    meta.appendChild(pv);
+  }
   body.appendChild(meta);
   if (item.content) {
     const card = el('section', 'detail-card full-width');

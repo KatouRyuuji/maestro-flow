@@ -36,12 +36,12 @@ pub fn build_snapshot(cfg: &AppConfig) -> RuntimeSnapshot {
     let mut active_session_id: Option<String> = None;
 
     for wf in projects {
+        let info: ProjectInfo = workflow::project_info(&wf);
         if workspace.is_none() {
-            let info: ProjectInfo = workflow::project_info(&wf);
-            workspace = Some(info.name);
-            active_session_id = info.active_session_id;
+            workspace = Some(info.name.clone());
+            active_session_id = info.active_session_id.clone();
         }
-        let s = workflow::scan_sessions(&wf);
+        let s = workflow::scan_sessions_with_project(&wf, Some(info.name.as_str()));
         sessions.extend(s);
         let k = knowledge::scan_knowledge(&wf);
         knowledge.specs += k.specs;
@@ -50,7 +50,12 @@ pub fn build_snapshot(cfg: &AppConfig) -> RuntimeSnapshot {
         knowledge.learning_rows += k.learning_rows;
         knowledge.issue_rows += k.issue_rows;
     }
-    sessions.sort_by(|a, b| b.session_id.cmp(&a.session_id));
+    // 跨工程合并后排序：运行中 > 暂停 > 失败/阻塞 > 已封存，组内 session_id 倒序（新在前）
+    sessions.sort_by(|a, b| {
+        workflow::status_rank(&a.status)
+            .cmp(&workflow::status_rank(&b.status))
+            .then_with(|| b.session_id.cmp(&a.session_id))
+    });
     sessions.truncate(40);
     knowledge.total = knowledge.specs
         + knowledge.memory
