@@ -19,6 +19,7 @@ export type ReuseReasonCode =
   | 'ARTIFACT_HASH_MISMATCH'
   | 'ARTIFACT_SCHEMA_UNKNOWN'
   | 'ARTIFACT_SCHEMA_MISMATCH'
+  | 'ARTIFACT_SCHEMA_MAJOR_COMPATIBLE'
   | 'ARTIFACT_ROLE_MISMATCH'
   | 'CONTRACT_BREAKING_DRIFT'
   | 'CONTRACT_PROMPT_ONLY_DRIFT'
@@ -88,6 +89,7 @@ export interface ReuseAssessmentInput {
     role: 'primary' | 'attachment' | 'evidence' | 'checkpoint' | null;
   };
   acceptedArtifactSchemas: readonly string[];
+  acceptedSchemaRanges?: readonly string[];
   acceptedArtifactRoles?: readonly string[];
   contract: ReuseContractEvidence;
   freshness: FreshnessStatus;
@@ -146,6 +148,7 @@ const REASON_ORDER: readonly ReuseReasonCode[] = [
   'ARTIFACT_HASH_MISMATCH',
   'ARTIFACT_SCHEMA_UNKNOWN',
   'ARTIFACT_SCHEMA_MISMATCH',
+  'ARTIFACT_SCHEMA_MAJOR_COMPATIBLE',
   'ARTIFACT_ROLE_MISMATCH',
   'CONTRACT_BREAKING_DRIFT',
   'CONTRACT_PROMPT_ONLY_DRIFT',
@@ -193,6 +196,43 @@ function uniqueSorted(values: readonly string[]): string[] {
   return [...new Set(values)].sort(compareStrings);
 }
 
+export type SchemaMatchResult = 'unknown' | 'exact' | 'major-compatible' | 'mismatch';
+
+const SCHEMA_EXACT_RE = /^([^/]+)\/([0-9]+)\.([0-9]+)$/;
+const SCHEMA_RANGE_RE = /^([^/]+)\/([0-9]+)\.x$/;
+
+/**
+ * Single implementation of consume-schema matching, shared by the main
+ * assessment and same-role candidate eligibility.
+ *
+ * Exact mode (acceptedSchemas): byte-equal match, unchanged semantics.
+ * Range mode (acceptedSchemaRanges, `<kind>/<major>.x`): accepts any
+ * producer schema of the same kind and major; it is an explicit
+ * compatibility commitment by the consumer author, never a runtime
+ * inference. A producer schema that does not parse as `<kind>/<major>.<minor>`
+ * is treated as unknown, not auto-completed.
+ */
+export function schemaMatch(
+  artifactSchema: string | null,
+  acceptedSchemas: readonly string[],
+  acceptedSchemaRanges: readonly string[] = [],
+): SchemaMatchResult {
+  if (artifactSchema === null || (acceptedSchemas.length === 0 && acceptedSchemaRanges.length === 0)) {
+    return 'unknown';
+  }
+  if (acceptedSchemas.includes(artifactSchema)) return 'exact';
+  if (acceptedSchemaRanges.length === 0) return 'mismatch';
+  const producer = SCHEMA_EXACT_RE.exec(artifactSchema);
+  if (producer === null) return 'unknown';
+  for (const range of acceptedSchemaRanges) {
+    const wanted = SCHEMA_RANGE_RE.exec(range);
+    if (wanted && wanted[1] === producer[1] && wanted[2] === producer[2]) {
+      return 'major-compatible';
+    }
+  }
+  return 'mismatch';
+}
+
 function normalizedSameRoleCandidates(
   candidates: readonly SameRoleReuseCandidate[],
 ): SameRoleReuseCandidate[] {
@@ -234,10 +274,14 @@ export function assessArtifactReuse(input: ReuseAssessmentInput): ReuseAssessmen
   }
 
   const acceptedSchemas = uniqueSorted(input.acceptedArtifactSchemas);
-  if (input.candidate.artifactSchema === null || acceptedSchemas.length === 0) {
+  const acceptedSchemaRanges = uniqueSorted(input.acceptedSchemaRanges ?? []);
+  const schemaMatchResult = schemaMatch(input.candidate.artifactSchema, acceptedSchemas, acceptedSchemaRanges);
+  if (schemaMatchResult === 'unknown') {
     add('ARTIFACT_SCHEMA_UNKNOWN', 'review');
-  } else if (!acceptedSchemas.includes(input.candidate.artifactSchema)) {
+  } else if (schemaMatchResult === 'mismatch') {
     add('ARTIFACT_SCHEMA_MISMATCH', 'reject');
+  } else if (schemaMatchResult === 'major-compatible') {
+    add('ARTIFACT_SCHEMA_MAJOR_COMPATIBLE', 'reuse');
   }
   const acceptedRoles = uniqueSorted(input.acceptedArtifactRoles ?? []);
   if (acceptedRoles.length > 0 && !acceptedRoles.includes(input.candidate.artifactRole)) {

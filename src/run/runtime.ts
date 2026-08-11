@@ -83,7 +83,7 @@ import {
   type ValidatedChainProposal,
 } from './chain-proposal.js';
 import { createTopicIdentity, normalizeTopic, sameTopicIdentity, type TopicIdentity } from './topic-identity.js';
-import { assessArtifactReuse, type ReuseAssessment } from './reuse-assessment.js';
+import { assessArtifactReuse, schemaMatch, type ReuseAssessment } from './reuse-assessment.js';
 import {
   buildIntentSection,
   buildBoundaryContractSection,
@@ -815,6 +815,7 @@ function collectReusableUpstream(
       const acceptedSchemas = consume.schema
         ? [consume.schema]
         : (contract.contract_version ?? 1) === 1 ? [item.artifact.schema_version] : [];
+      const acceptedSchemaRanges: string[] = consume.schema_range ? [consume.schema_range] : [];
       const acceptedRoles: string[] = consume.role ? [consume.role] : [];
       const currentSameRoleCandidates = matchingKind
         .filter(peer => peer.artifact.role === item.artifact.role)
@@ -822,15 +823,23 @@ function collectReusableUpstream(
         .filter(peer => !Object.values(registry.artifacts).some(candidate => candidate.replaces === peer.artifactId))
         .filter(peer => consume.alias ? peer.artifactId === aliasTargetId : true);
       const sameRoleCandidates = currentSameRoleCandidates
-        .map(peer => ({
-        artifactId: peer.artifactId,
-        artifactHash: peer.artifact.content_hash ? `sha256:${peer.artifact.content_hash}` : null,
-        eligible: peer.producer?.status === 'sealed'
-          && peer.artifact.status === 'sealed'
-          && peer.observedHash === `sha256:${peer.artifact.content_hash}`
-          && (acceptedSchemas.length === 0 || acceptedSchemas.includes(peer.artifact.schema_version))
-          && (acceptedRoles.length === 0 || acceptedRoles.includes(peer.artifact.role)),
-        }));
+        .map(peer => {
+          const schemaEligible = acceptedSchemas.length === 0 && acceptedSchemaRanges.length === 0
+            ? true
+            : (() => {
+              const match = schemaMatch(peer.artifact.schema_version, acceptedSchemas, acceptedSchemaRanges);
+              return match === 'exact' || match === 'major-compatible';
+            })();
+          return {
+            artifactId: peer.artifactId,
+            artifactHash: peer.artifact.content_hash ? `sha256:${peer.artifact.content_hash}` : null,
+            eligible: peer.producer?.status === 'sealed'
+              && peer.artifact.status === 'sealed'
+              && peer.observedHash === `sha256:${peer.artifact.content_hash}`
+              && schemaEligible
+              && (acceptedRoles.length === 0 || acceptedRoles.includes(peer.artifact.role)),
+          };
+        });
       const assessmentInput = {
         candidate: {
           workspaceId: createTopicIdentity(projectRoot, session.intent, { source: 'legacy-intent' }).workspace_id,
@@ -849,10 +858,11 @@ function collectReusableUpstream(
         consumer: {
           kind: consume.kind,
           alias: consume.alias ?? null,
-          schema: consume.schema ?? null,
+          schema: consume.schema ?? consume.schema_range ?? null,
           role: consume.role ?? null,
         },
         acceptedArtifactSchemas: acceptedSchemas,
+        acceptedSchemaRanges: acceptedSchemaRanges,
         acceptedArtifactRoles: acceptedRoles,
         contract: producerContractDrift(projectRoot, producer, item.artifact),
         freshness: item.artifact.status === 'superseded' || supersededBy.length > 0

@@ -296,7 +296,7 @@ test('validateConsumesSchema rejects v2.1 consumes missing schema/role and versi
     'prepare/review.md',
   );
   assert.deepEqual(missingSchemaRole, [
-    'prepare/review.md: consumes[0] kind=execution: missing schema (declare the producer artifact schema so reuse binds without a manual REVIEW)',
+    'prepare/review.md: consumes[0] kind=execution: missing schema or schema_range (declare the producer artifact schema, or schema_range \'<kind>/<major>.x\' for major-compatible reuse, so reuse binds without a manual REVIEW)',
     'prepare/review.md: consumes[0] kind=execution: missing role for contract_version 2.1',
   ]);
 
@@ -342,4 +342,30 @@ test('validateProducesAliases requires an explicit alias on primary produces', (
     'prepare/demo.md',
   );
   assert.deepEqual(attachment, []);
+});
+
+test('validateConsumesSchema enforces schema/schema_range exclusivity and range format', () => {
+  const both = validateConsumesSchema(
+    { contract_version: 2.1, consumes: [{ kind: 'execution', alias: 'current-execution', schema: 'execution/1.0', schema_range: 'execution/1.x', role: 'primary', required: true }] },
+    'prepare/demo.md',
+  );
+  assert.deepEqual(both, ['prepare/demo.md: consumes[0] kind=execution: declares both schema and schema_range; pick exactly one']);
+
+  const badRange = validateConsumesSchema(
+    { contract_version: 2.1, consumes: [{ kind: 'execution', alias: 'current-execution', schema_range: 'execution/01.x', role: 'primary', required: true }] },
+    'prepare/demo.md',
+  );
+  assert.match(badRange[0], /schema_range must match/);
+
+  const wrongKind = validateConsumesSchema(
+    { contract_version: 2.1, consumes: [{ kind: 'execution', alias: 'current-execution', schema_range: 'plan/1.x', role: 'primary', required: true }] },
+    'prepare/demo.md',
+  );
+  assert.match(wrongKind[0], /schema_range must match/);
+
+  const okRange = validateConsumesSchema(
+    { contract_version: 2.1, consumes: [{ kind: 'execution', alias: 'current-execution', schema_range: 'execution/1.x', role: 'primary', required: true }] },
+    'prepare/demo.md',
+  );
+  assert.deepEqual(okRange, []);
 });

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   assessArtifactReuse,
+  schemaMatch,
   type ReuseAssessmentInput,
 } from './reuse-assessment.js';
 
@@ -238,6 +239,54 @@ describe('reuse-assessment/1.0', () => {
     expect(assessArtifactReuse(left).assessment_hash)
       .toBe(assessArtifactReuse(right).assessment_hash);
     expect(left).toEqual(before);
+  });
+
+  it('schemaMatch accepts exact, major-compatible and rejects mismatched/unknown inputs', () => {
+    expect(schemaMatch('execution/1.0', ['execution/1.0'], [])).toBe('exact');
+    expect(schemaMatch('execution/1.1', ['execution/1.0'], [])).toBe('mismatch');
+    expect(schemaMatch('execution/1.1', ['execution/1.0'], ['execution/1.x'])).toBe('major-compatible');
+    expect(schemaMatch('execution/1.0', [], ['execution/1.x'])).toBe('major-compatible');
+    expect(schemaMatch('execution/2.0', [], ['execution/1.x'])).toBe('mismatch');
+    expect(schemaMatch('review-findings/1.0', [], ['execution/1.x'])).toBe('mismatch');
+    expect(schemaMatch('execution/1', [], ['execution/1.x'])).toBe('unknown');
+    expect(schemaMatch(null, [], ['execution/1.x'])).toBe('unknown');
+    expect(schemaMatch('execution/1.0', [], [])).toBe('unknown');
+    expect(schemaMatch('execution/1.0', ['execution/1.0'], ['execution/1.x'])).toBe('exact');
+  });
+
+  it('assesses a major-compatible range as REUSE with ARTIFACT_SCHEMA_MAJOR_COMPATIBLE', () => {
+    const input = compatibleInput();
+    input.acceptedArtifactSchemas = [];
+    input.acceptedSchemaRanges = ['architecture-report/1.x'];
+    input.candidate.artifactSchema = 'architecture-report/1.4';
+
+    expect(assessArtifactReuse(input)).toMatchObject({
+      decision: 'REUSE',
+      reason_codes: ['ARTIFACT_SCHEMA_MAJOR_COMPATIBLE', 'REUSE_ELIGIBLE'],
+    });
+  });
+
+  it('rejects a range whose major does not match the producer schema', () => {
+    const input = compatibleInput();
+    input.acceptedArtifactSchemas = [];
+    input.acceptedSchemaRanges = ['architecture-report/1.x'];
+    input.candidate.artifactSchema = 'architecture-report/2.0';
+
+    expect(assessArtifactReuse(input)).toMatchObject({
+      decision: 'REJECT',
+      reason_codes: expect.arrayContaining(['ARTIFACT_SCHEMA_MISMATCH']),
+    });
+  });
+
+  it('keeps exact schema semantics unchanged when no range is declared', () => {
+    const input = compatibleInput();
+    input.acceptedArtifactSchemas = ['architecture-report/1.0'];
+    input.candidate.artifactSchema = 'architecture-report/1.1';
+
+    expect(assessArtifactReuse(input)).toMatchObject({
+      decision: 'REJECT',
+      reason_codes: expect.arrayContaining(['ARTIFACT_SCHEMA_MISMATCH']),
+    });
   });
 
   it('flags ARTIFACT_SCHEMA_UNKNOWN when the consumer declares no accepted schema', () => {

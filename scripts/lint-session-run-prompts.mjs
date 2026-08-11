@@ -366,12 +366,13 @@ for (const dir of readdirSync(skillDir)) {
   }
 }
 
-// v2/v2.1 contracts must declare the artifact schema (and role for 2.1) on every
-// consumes entry: a missing schema yields ARTIFACT_SCHEMA_UNKNOWN in reuse
-// assessment and forces a manual REVIEW acceptance on an otherwise eligible
-// artifact. Also cross-check consume aliases against declared producer aliases
-// (a dead alias silently never binds upstream) and require an explicit
-// contract_version once a contract consumes anything.
+// v2/v2.1 contracts must declare the artifact schema or schema_range (and role
+// for 2.1) on every consumes entry: a missing constraint yields
+// ARTIFACT_SCHEMA_UNKNOWN in reuse assessment and forces a manual REVIEW
+// acceptance on an otherwise eligible artifact. Also cross-check consume
+// aliases against declared producer aliases (a dead alias silently never binds
+// upstream) and require an explicit contract_version once a contract consumes
+// anything.
 export function validateConsumesSchema(contract, label) {
   const errors = [];
   const consumes = Array.isArray(contract?.consumes) ? contract.consumes : [];
@@ -383,8 +384,19 @@ export function validateConsumesSchema(contract, label) {
   }
   consumes.forEach((item, index) => {
     const id = `${label}: consumes[${index}] kind=${item?.kind ?? '?'}`;
-    if (typeof item?.schema !== 'string' || item.schema.length === 0) {
-      errors.push(`${id}: missing schema (declare the producer artifact schema so reuse binds without a manual REVIEW)`);
+    const schema = typeof item?.schema === 'string' ? item.schema : '';
+    const schemaRange = typeof item?.schema_range === 'string' ? item.schema_range : '';
+    if (schema.length === 0 && schemaRange.length === 0) {
+      errors.push(`${id}: missing schema or schema_range (declare the producer artifact schema, or schema_range '<kind>/<major>.x' for major-compatible reuse, so reuse binds without a manual REVIEW)`);
+    } else if (schema.length > 0 && schemaRange.length > 0) {
+      errors.push(`${id}: declares both schema and schema_range; pick exactly one`);
+    }
+    if (schemaRange.length > 0) {
+      const match = /^([^/]+)\/([0-9]+)\.x$/.exec(schemaRange);
+      const majorNoLeadingZero = match ? match[2] === '0' || !match[2].startsWith('0') : false;
+      if (!match || !majorNoLeadingZero || match[1] !== item?.kind) {
+        errors.push(`${id}: schema_range must match '<kind>/<major>.x' with kind equal to consumes kind and major without leading zeros: ${schemaRange}`);
+      }
     }
     if (version === 2.1 && (typeof item?.role !== 'string' || item.role.length === 0)) {
       errors.push(`${id}: missing role for contract_version 2.1`);

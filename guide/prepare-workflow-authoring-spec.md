@@ -342,7 +342,7 @@ session-mode: inherited | run | none
 ### 1. 设计
 
 - 加载适用 specs：`maestro load --type spec --category arch`（+ 涉及确认门控/wave 的 step 加载相关 knowhow）。
-- 定 contract：`contract_version: 2.1`（v1 下 consumes 的 schema/role 是 metadata-only，不生效）。consumes 每条声明上游 kind/alias 以及 producer 声明的 artifact `schema`/`role`（缺失 schema 会产生 `ARTIFACT_SCHEMA_UNKNOWN` 复用评估，每次运行都需人工 `maestro run accept-reuse` 才能打开入口门）；契约内 consumes+produces 的 alias 必须全局唯一（解析器强制），复用自己的历史产物时 consumes 不带 alias，靠 kind 匹配 + 同 alias 注册的 supersede 链绑定。produces 声明路径/kind/role/alias/schema；gates.exit（3–5 个出口条件 ID）。
+- 定 contract：`contract_version: 2.1`（v1 下 consumes 的 schema/role 是 metadata-only，不生效）。consumes 每条声明上游 kind/alias 以及 producer 声明的 artifact `schema`/`role`（缺失 schema 会产生 `ARTIFACT_SCHEMA_UNKNOWN` 复用评估，每次运行都需人工 `maestro run accept-reuse` 才能打开入口门）；需要容忍 producer minor 升级时用 `schema_range: <kind>/<major>.x` 代替 `schema`（显式 major-compatible 承诺，二者互斥；producer 永远只声明精确 schema）；契约内 consumes+produce 的 alias 可相同（consume 绑定创建时的既有目标，seal 时才 supersede），produces 的 alias 必须唯一。produces 声明路径/kind/role/alias/schema；gates.exit（3–5 个出口条件 ID）。
 - 定 `commands:` alias 并确认全局唯一（与现有 step、独立命令、skill 无冲突）。
 
 ### 2. 三层写作（顺序固定：contract 先行，prepare 最后反推）

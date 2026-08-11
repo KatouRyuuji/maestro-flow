@@ -249,6 +249,35 @@ gates:
     expect(third.reuse_assessments[0]).toMatchObject({ decision: 'REUSE' });
   });
 
+  it('binds a producer through an explicit schema_range major-compatible consume', () => {
+    const rangeConsumer = `contract_version: 2.1
+arguments: []
+consumes:
+  - kind: context
+    alias: current-context
+    required: true
+    require_status: sealed
+    schema_range: context/1.x
+    role: primary
+produces: []
+gates:
+  entry: []
+  exit: []`;
+    const projectRoot = root();
+    commandFile(projectRoot, 'produce', producerContract);
+    commandFile(projectRoot, 'consume-range', rangeConsumer);
+    const producer = createRun({ projectRoot, command: 'produce', sessionId: 's', intent: 'range' });
+    sealContext(projectRoot, 's', producer.run_id, 'v');
+
+    const consumer = createRun({ projectRoot, command: 'consume-range', sessionId: 's', intent: 'range' });
+    expect(consumer.upstream['current-context']).toBeDefined();
+    expect(consumer.reuse_assessments[0]).toMatchObject({
+      decision: 'REUSE',
+      reason_codes: expect.arrayContaining(['ARTIFACT_SCHEMA_MAJOR_COMPATIBLE']),
+    });
+    expect(consumer.entry_gates.blocking).toEqual([]);
+  });
+
   it('warns when a consume alias has same-kind artifacts but no registered alias', () => {
     const projectRoot = root();
     commandFile(projectRoot, 'produce', producerContract);

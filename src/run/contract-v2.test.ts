@@ -63,6 +63,27 @@ describe('command-contract/2.0', () => {
     expect(createContractSnapshot(contract).contract_version).toBe('command-contract/2.1');
   });
 
+  it('parses schema_range and rejects ambiguous or malformed range declarations', () => {
+    const parsed = parseCommandContract({
+      ...validV2(),
+      consumes: [{ ...validV2().consumes[0], schema: undefined, schema_range: 'plan/1.x' }],
+    });
+    expect(parsed.consumes[0].schema_range).toBe('plan/1.x');
+    expect(parsed.consumes[0].schema).toBeUndefined();
+    expect(() => parseCommandContract({
+      ...validV2(),
+      consumes: [{ ...validV2().consumes[0], schema_range: 'plan/1.x' }],
+    })).toThrow(/both schema and schema_range/);
+    expect(() => parseCommandContract({
+      ...validV2(),
+      consumes: [{ ...validV2().consumes[0], schema: undefined, schema_range: 'plan/01.x' }],
+    })).toThrow(/schema_range must match/);
+    expect(() => parseCommandContract({
+      ...validV2(),
+      consumes: [{ ...validV2().consumes[0], schema: undefined, schema_range: 'other/1.x' }],
+    })).toThrow(/schema_range must match/);
+  });
+
   it('permits a consume to reuse a producer alias while producer aliases stay unique', () => {
     const contract = parseCommandContract({
       ...validV2(),

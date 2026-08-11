@@ -56,6 +56,7 @@ const consumeV20Schema = z.object({
   required: z.boolean(),
   require_status: z.literal('sealed').optional(),
   schema: z.string().min(1).optional(),
+  schema_range: z.string().min(1).optional(),
 }).strict();
 
 const consumeV21Schema = consumeV20Schema.extend({
@@ -101,7 +102,10 @@ const gateDefinitionV2Schema = z.union([
 ]);
 
 function refineStrictContract(
-  contract: { consumes: Array<{ alias?: string }>; produces: Array<{ alias?: string; path: string; role: string; required: boolean }> },
+  contract: {
+    consumes: Array<{ kind?: string; alias?: string; schema?: string; schema_range?: string }>;
+    produces: Array<{ alias?: string; path: string; role: string; required: boolean }>;
+  },
   context: z.RefinementCtx,
 ): void {
   // Producer aliases must be unique within one contract so registry.aliases[alias]
@@ -115,6 +119,23 @@ function refineStrictContract(
     if (aliases.has(item.alias)) context.addIssue({ code: z.ZodIssueCode.custom, message: `duplicate contract alias: ${item.alias}` });
     aliases.add(item.alias);
   }
+  contract.consumes.forEach((item, index) => {
+    if (item.schema && item.schema_range) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `consumes[${index}] declares both schema and schema_range; pick exactly one`,        });
+    }
+    if (item.schema_range) {
+      const match = /^([^/]+)\/([0-9]+)\.x$/.exec(item.schema_range);
+      const majorNoLeadingZero = match ? match[2] === '0' || !match[2].startsWith('0') : false;
+      if (!match || !majorNoLeadingZero || match[1] !== item.kind) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `consumes[${index}].schema_range must match '<kind>/<major>.x' with kind equal to consumes kind and major without leading zeros: ${item.schema_range}`,
+        });
+      }
+    }
+  });
   const paths = new Set<string>();
   for (const output of contract.produces) {
     const normalized = output.path.replaceAll('\\', '/');
@@ -158,6 +179,7 @@ export interface CommandContractConsume {
   required: boolean;
   require_status?: 'sealed';
   schema?: string;
+  schema_range?: string;
   role?: 'primary' | 'attachment' | 'evidence' | 'checkpoint';
 }
 
@@ -268,6 +290,7 @@ export function normalizedCommandContract(contract: CommandContract): Record<str
         required: item.required,
         ...(item.require_status ? { require_status: item.require_status } : {}),
         ...(item.schema ? { schema: item.schema } : {}),
+        ...(item.schema_range ? { schema_range: item.schema_range } : {}),
         ...(v21 && item.role ? { role: item.role } : {}),
       })),
       produces: contract.produces.map(item => ({
