@@ -1,6 +1,7 @@
 import { activeStepIndex } from './chain.js';
 import { inspectSessionContinuation } from './continuation.js';
 import type { ContinuationDirective } from './protocol-schemas.js';
+import { sessionStateV20Schema, type ExecutionState } from './schemas.js';
 import type { ResolvedSession } from './session-resolver.js';
 import { listRecoveryBlockers, nextRecoveryAction, type RecoveryBlocker, type RecoveryNext } from './session-transition.js';
 
@@ -32,8 +33,60 @@ export interface SessionStatusSummary {
   continuation: ContinuationDirective;
 }
 
-export function summarizeSession(projectRoot: string, resolved: ResolvedSession): SessionStatusSummary {
+export interface SessionStatusV20Summary {
+  schema_version: 'session/2.0';
+  session_id: string;
+  intent: string;
+  archived_at: string | null;
+  archived_by: string | null;
+  current_execution_id: string | null;
+  latest_execution_id: string | null;
+  latest_completed_run_id: string | null;
+  derived: {
+    availability: 'available' | 'archived';
+    execution_status: ExecutionState['status'] | null;
+    active_run_id: string | null;
+  };
+  progress: { terminal: number; total: number; pending: number };
+  revisions: { identity: number; activity: number };
+  registry: { artifacts: number; evidence: number; gates: number };
+}
+
+export type SessionStatusView = SessionStatusSummary | SessionStatusV20Summary;
+
+export function summarizeSession(projectRoot: string, resolved: ResolvedSession): SessionStatusView {
   const { session, artifacts, evidence, gates } = resolved.bundle;
+  if (resolved.record.schema_version === 'session/2.0') {
+    const identity = sessionStateV20Schema.parse(resolved.record);
+    const execution = resolved.currentExecution ?? resolved.latestExecution;
+    const chain = execution?.chain ?? [];
+    return {
+      schema_version: 'session/2.0',
+      session_id: resolved.sessionId,
+      intent: identity.intent,
+      archived_at: identity.archived_at,
+      archived_by: identity.archived_by,
+      current_execution_id: identity.current_execution_id,
+      latest_execution_id: identity.latest_execution_id,
+      latest_completed_run_id: identity.latest_completed_run_id,
+      derived: {
+        availability: identity.archived_at ? 'archived' : 'available',
+        execution_status: execution?.status ?? null,
+        active_run_id: resolved.currentExecution?.active_run_id ?? null,
+      },
+      progress: {
+        terminal: chain.filter(step => ['completed', 'sealed', 'skipped'].includes(step.status)).length,
+        total: chain.length,
+        pending: chain.filter(step => step.status === 'pending').length,
+      },
+      revisions: { identity: identity.identity_revision, activity: identity.activity_revision },
+      registry: {
+        artifacts: Object.keys(artifacts.artifacts).length,
+        evidence: Object.keys(evidence.records).length,
+        gates: Object.keys(gates.gates).length,
+      },
+    };
+  }
   const chain = session.orchestration.chain;
   const active = activeStepIndex(session);
   const terminal = chain.filter(step => ['completed', 'sealed', 'skipped'].includes(step.status)).length;

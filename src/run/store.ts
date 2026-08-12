@@ -14,40 +14,74 @@ import {
   unlinkSync,
   writeFileSync,
   appendFileSync,
+  chmodSync,
 } from 'node:fs';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { z } from 'zod';
 import { safeRename } from '../utils/state-schema.js';
+import { hashDirectory } from './artifacts.js';
+import {
+  assertExecutionLease,
+  hashExecutionLeaseId,
+  isExecutionLeaseStale,
+  type ExecutionLeaseClaim,
+} from './lease.js';
 import { loadWorkspaceConfig, resolveWorkspaceLinks } from '../config/index.js';
 import {
   artifactRegistrySchema,
   commandRunReadSchema,
   commandRunV13Schema,
+  commandRunV14Schema,
   evidenceStoreSchema,
+  executionLeaseSchema,
+  executionStateSchema,
   gateRegistrySchema,
   normalizeCommandRun,
+  normalizeSessionState,
+  projectSessionSchemaConfigSchema,
+  sessionSchemaSelectionSchema,
+  sessionStateReadSchema,
   sessionStateSchema,
   sessionStateV13Schema,
+  sessionStateV20Schema,
   targetPlatformSchema,
   type ArtifactRegistry,
   type CommandRun,
+  type CommandRunInput,
+  type CommandRunV14,
   type EvidenceStore,
+  type ExecutionState,
   type GateRegistry,
+  type SessionSchemaSelection,
   type SessionState,
+  type SessionStateRead,
+  type SessionIdentityV20,
 } from './schemas.js';
-import { createArtifactRegistry, createEvidenceStore, createGateRegistry, createSessionState } from './defaults.js';
+import {
+  DEFAULT_SESSION_SCHEMA_SELECTION,
+  createArtifactRegistry,
+  createEvidenceStore,
+  createGateRegistry,
+  createSessionIdentityV20,
+  createSessionState,
+} from './defaults.js';
 import { assertSafePathSegment } from './ids.js';
 import { canonicalWorkspaceId, createIntentIdentity, sameIntentIdentity } from './intent-identity.js';
 import {
+  executionSealReceiptSchema,
   recallConfirmationFinalTargetSchema,
-  recallConfirmationRecordSchema,
-  recallConfirmationRegistrySchema,
+  recallConfirmationRecordReadSchema,
+  recallConfirmationRegistryReadSchema as recallConfirmationRegistrySchema,
+  recallConfirmationRegistryV11Schema,
   recallReservationMarkerSchema,
   recallReservationObservationSchema,
   recallReservationReconciliationSchema,
+  persistedTransitionRecordV11Schema,
+  sessionArchiveReceiptSchema,
   transitionFenceSchema,
-  validatedRecallSourceSchema,
+  validatedRecallSourceReadSchema,
+  type ExecutionSealReceipt,
   type IntentIdentity,
   type RecallConfirmationFinalTarget,
   type RecallConfirmationOutcome,
@@ -58,7 +92,11 @@ import {
   type RecallReservationObservation,
   type RecallReservationReconciliation,
   type PersistedTransitionRecord,
+  type PersistedTransitionRecordV11,
+  type SessionArchiveReceipt,
   type SessionProvenance,
+  type SourceFenceRead,
+  type SourceFenceV11,
   type StaleRecallReservation,
   type TransitionFence,
   type TransitionOutcome,
@@ -82,7 +120,11 @@ import {
   type ReserveRecallConfirmationInput,
   type ReserveRecallConfirmationResult,
 } from './recall-confirmation-store.js';
-import { replayOrApplyTransition, stableJsonUtf8 } from './transition-receipts.js';
+import {
+  replayOrApplyTransition,
+  stableJsonUtf8,
+  validatePersistedTransitionRecordV11,
+} from './transition-receipts.js';
 
 const LOCK_WAIT_MS = 5_000;
 const LOCK_POLL_MS = 15;
@@ -223,8 +265,10 @@ export type SessionStoreReserveRecallResult = ReserveRecallConfirmationResult & 
 
 interface JsonWrite {
   path: string;
-  value: unknown;
+  value?: unknown;
+  raw?: string;
   schema?: z.ZodType;
+  mode?: number;
 }
 
 export interface SessionStoreLockTiming {
@@ -235,6 +279,56 @@ export interface SessionStoreLockTiming {
 export interface SessionStoreOptions {
   lockTiming?: Partial<SessionStoreLockTiming>;
 }
+
+export interface ExecutionAtomicOptions {
+  replayRequestId?: string;
+  expectedActivityRevision?: number;
+}
+
+export interface ExecutionRunSidecarAuthority {
+  executionId: string;
+  generation: number;
+  requestId: string;
+  expectedExecutionRevision: number;
+  lease: ExecutionLeaseClaim;
+}
+
+const executionRunSidecarReceiptSchema = z.object({
+  schema_version: z.literal('execution-run-sidecar-transition/1.0'),
+  request_id: z.string().min(1),
+  operation: z.enum(['knowledge-stage', 'knowledge-record']),
+  session_id: z.string().min(1),
+  execution_id: z.string().min(1),
+  generation: z.number().int().positive(),
+  run_id: z.string().min(1),
+  sidecar_path: z.string().min(1),
+  expected_execution_revision: z.number().int().nonnegative(),
+  lease: z.object({
+    owner_id: z.string().min(1),
+    owner_kind: executionLeaseSchema.shape.owner_kind,
+    epoch: z.number().int().positive(),
+    lease_id_hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  }).strict(),
+  request_hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  sidecar_revision_before: z.number().int().nonnegative(),
+  sidecar_revision_after: z.number().int().positive(),
+  applied_at: z.string().min(1),
+  result: z.union([
+    z.object({
+      session_id: z.string().min(1),
+      run_id: z.string().min(1),
+      candidate_id: z.string().min(1),
+      reused: z.boolean(),
+    }).strict(),
+    z.object({
+      session_id: z.string().min(1),
+      run_id: z.string().min(1),
+      recorded: z.number().int().nonnegative(),
+    }).strict(),
+  ]),
+}).strict();
+
+export type ExecutionRunSidecarReceipt = z.infer<typeof executionRunSidecarReceiptSchema>;
 
 const RETRYABLE_WINDOWS_LOCK_ERRORS = new Set(['EPERM', 'EACCES', 'EBUSY']);
 
@@ -368,6 +462,92 @@ function sha256Prefixed(value: string | Buffer): string {
   return `sha256:${sha256Hex(value)}`;
 }
 
+export type ExecutionSealReceiptInput = Omit<
+  ExecutionSealReceipt,
+  'schema_version' | 'overall_hash'
+>;
+
+export function executionSealReceiptHash(
+  receipt: ExecutionSealReceipt | ExecutionSealReceiptInput,
+): string {
+  const { overall_hash: _overallHash, ...content } = receipt as ExecutionSealReceipt;
+  return sha256Prefixed(stableJsonUtf8(content));
+}
+
+export function createExecutionSealReceipt(input: ExecutionSealReceiptInput): ExecutionSealReceipt {
+  const receipt = {
+    schema_version: 'execution-seal-receipt/1.0' as const,
+    ...input,
+    overall_hash: '',
+  };
+  receipt.overall_hash = executionSealReceiptHash(receipt);
+  return executionSealReceiptSchema.parse(receipt);
+}
+
+export type SessionArchiveReceiptInput = Omit<
+  SessionArchiveReceipt,
+  'schema_version' | 'receipt_hash'
+>;
+
+export function sessionArchiveReceiptHash(
+  receipt: SessionArchiveReceipt | SessionArchiveReceiptInput,
+): string {
+  const { receipt_hash: _receiptHash, ...content } = receipt as SessionArchiveReceipt;
+  return sha256Prefixed(stableJsonUtf8(content));
+}
+
+export function createSessionArchiveReceipt(input: SessionArchiveReceiptInput): SessionArchiveReceipt {
+  const receipt = {
+    schema_version: 'session-archive-receipt/1.0' as const,
+    ...input,
+    receipt_hash: '',
+  };
+  receipt.receipt_hash = sessionArchiveReceiptHash(receipt);
+  return sessionArchiveReceiptSchema.parse(receipt);
+}
+
+function assertExecutionLifecycleInvariants(execution: ExecutionState): void {
+  if (execution.lease
+    && (execution.lease.session_id !== execution.session_id
+      || execution.lease.execution_id !== execution.execution_id)) {
+    throw new Error(`Execution ${execution.execution_id} lease identity mismatch`);
+  }
+  if (execution.status !== 'active' && execution.lease) {
+    throw new Error(`${execution.status} Execution ${execution.execution_id} must not retain a lease`);
+  }
+  if (execution.status === 'paused' && execution.active_run_id) {
+    throw new Error(`paused Execution ${execution.execution_id} must not retain an active Run`);
+  }
+  if (execution.status === 'sealed') {
+    if (execution.active_run_id) throw new Error(`sealed Execution ${execution.execution_id} must not retain an active Run`);
+    if (!execution.sealed_at || execution.seal_summary === null || execution.final_outcome === null) {
+      throw new Error(`sealed Execution ${execution.execution_id} has incomplete lifecycle metadata`);
+    }
+    return;
+  }
+  if (execution.sealed_at !== null || execution.seal_summary !== null || execution.final_outcome !== null) {
+    throw new Error(`open Execution ${execution.execution_id} must not contain seal metadata`);
+  }
+}
+
+function assertExecutionSessionInvariants(session: SessionState, execution: ExecutionState): void {
+  assertExecutionLifecycleInvariants(execution);
+  if (execution.status === 'sealed') return;
+  if (execution.active_run_id !== session.active_run_id) {
+    throw new Error(`Execution ${execution.execution_id} active Run projection diverged from Session`);
+  }
+  if (stableJsonUtf8(execution.chain) !== stableJsonUtf8(session.orchestration.chain)
+    || stableJsonUtf8(execution.decision_points) !== stableJsonUtf8(session.orchestration.decision_points)) {
+    throw new Error(`Execution ${execution.execution_id} orchestration projection diverged from Session`);
+  }
+  if (execution.status === 'active' && session.status !== 'running') {
+    throw new Error(`active Execution ${execution.execution_id} requires a running Session`);
+  }
+  if (execution.status === 'paused' && session.status !== 'paused') {
+    throw new Error(`paused Execution ${execution.execution_id} requires a paused Session`);
+  }
+}
+
 export class SessionStore {
   readonly projectRoot: string;
   readonly workflowRoot: string;
@@ -385,6 +565,59 @@ export class SessionStore {
   sessionDir(sessionId: string): string {
     assertSafePathSegment(sessionId, 'session ID');
     return join(this.sessionsRoot, sessionId);
+  }
+
+  executionDir(sessionId: string, executionId: string): string {
+    assertSafePathSegment(executionId, 'execution ID');
+    return join(this.sessionDir(sessionId), 'executions', executionId);
+  }
+
+  executionPath(sessionId: string, executionId: string): string {
+    return join(this.executionDir(sessionId, executionId), 'execution.json');
+  }
+
+  executionTransitionPath(sessionId: string, executionId: string, requestId: string): string {
+    assertSafePathSegment(requestId, 'request ID');
+    return join(this.executionDir(sessionId, executionId), 'transitions', `${requestId}.json`);
+  }
+
+  executionRunSidecarReceiptPath(sessionId: string, executionId: string, requestId: string): string {
+    assertSafePathSegment(requestId, 'request ID');
+    return join(this.executionDir(sessionId, executionId), 'sidecar-transitions', `${requestId}.json`);
+  }
+
+  executionSealReceiptPath(sessionId: string, executionId: string): string {
+    return join(this.executionDir(sessionId, executionId), 'seal-receipt.json');
+  }
+
+  sessionCompatibilityPath(sessionId: string): string {
+    return join(this.sessionDir(sessionId), '.compat', 'session-1.3.json');
+  }
+
+  sessionArchiveReceiptPath(sessionId: string, activityRevision: number): string {
+    if (!Number.isSafeInteger(activityRevision) || activityRevision < 0) {
+      throw new Error(`invalid archive receipt activity revision: ${activityRevision}`);
+    }
+    return join(
+      this.sessionDir(sessionId),
+      'archive-receipts',
+      `${String(activityRevision).padStart(12, '0')}.json`,
+    );
+  }
+
+  sessionSchemaSelection(): SessionSchemaSelection {
+    const path = join(this.workflowRoot, 'config.json');
+    if (!existsSync(path)) return clone(DEFAULT_SESSION_SCHEMA_SELECTION);
+    let raw: unknown;
+    try {
+      raw = JSON.parse(readFileSync(path, 'utf8'));
+    } catch (error) {
+      throw new Error(`Invalid project Session schema config at ${path}: ${(error as Error).message}`);
+    }
+    const config = projectSessionSchemaConfigSchema.parse(raw);
+    return config.session_schema
+      ? sessionSchemaSelectionSchema.parse(config.session_schema)
+      : clone(DEFAULT_SESSION_SCHEMA_SELECTION);
   }
 
   runDir(sessionId: string, runId: string): string {
@@ -433,7 +666,7 @@ export class SessionStore {
         artifacts: createArtifactRegistry(),
         evidence: createEvidenceStore(),
       };
-      this.writeBundleUnlocked(sessionId, bundle);
+      this.writeFreshBundleUnlocked(sessionId, bundle, this.sessionSchemaSelection());
       this.ensureSessionProjections(sessionId, intent);
       return clone(bundle);
     });
@@ -446,17 +679,32 @@ export class SessionStore {
     if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) {
       throw new Error(`SessionStore recovery required: invalid Session shell at ${dir}`);
     }
-    const allowedDirectories = new Set(['runs', 'specs', 'knowhow']);
+    const allowedDirectories = new Set([
+      'runs', 'specs', 'knowhow', 'executions', 'archive-receipts', '.compat',
+    ]);
     for (const name of readdirSync(dir)) {
       const path = join(dir, name);
       const stats = lstatSync(path);
       if (stats.isSymbolicLink()) {
         throw new Error(`SessionStore recovery required: symbolic link in Session shell: ${path}`);
       }
+      if (name === '.recall-import-staging') {
+        if (!stats.isDirectory()) {
+          throw new Error(`SessionStore recovery required: invalid recall import staging directory: ${path}`);
+        }
+        continue;
+      }
       if (allowedDirectories.has(name)) {
         if (!stats.isDirectory() || readdirSync(path).length > 0) {
           throw new Error(`SessionStore recovery required: non-empty or invalid projection directory: ${path}`);
         }
+        continue;
+      }
+      if (name === '.recall-reservation.json') {
+        if (!stats.isFile()) {
+          throw new Error(`SessionStore recovery required: invalid recall reservation marker: ${path}`);
+        }
+        this.readValidated(path, recallReservationMarkerSchema);
         continue;
       }
       if (name === 'events.ndjson') {
@@ -481,7 +729,7 @@ export class SessionStore {
     if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) {
       throw new Error(`SessionStore recovery required: invalid canonical Session directory: ${dir}`);
     }
-    for (const name of ['runs', 'specs', 'knowhow']) {
+    for (const name of ['runs', 'specs', 'knowhow', 'executions']) {
       const path = join(dir, name);
       if (!existsSync(path)) {
         mkdirSync(path);
@@ -515,14 +763,355 @@ export class SessionStore {
     return this.readBundleUnlocked(sessionId);
   }
 
+  readSessionRecord(sessionId: string): SessionStateRead {
+    if (!this.lock.isHeld) return this.withLock(() => this.readSessionRecordUnlocked(sessionId));
+    return this.readSessionRecordUnlocked(sessionId);
+  }
+
+  /** Strict read of canonical session.json with no cross-version normalization. */
+  readSessionRecordReadOnly(sessionId: string): SessionStateRead {
+    return this.readSessionRecordUnlocked(sessionId);
+  }
+
+  private readSessionRecordUnlocked(sessionId: string): SessionStateRead {
+    const session = this.readValidated(
+      join(this.sessionDir(sessionId), 'session.json'),
+      sessionStateReadSchema,
+    );
+    if (session.session_id !== sessionId) {
+      throw new Error(`Session identity does not match its canonical path: ${sessionId}`);
+    }
+    return session;
+  }
+
   private readBundleUnlocked(sessionId: string): SessionBundle {
     const dir = this.sessionDir(sessionId);
+    const record = this.readSessionRecordUnlocked(sessionId);
+    const session = record.schema_version === 'session/2.0'
+      ? this.readValidated(this.sessionCompatibilityPath(sessionId), sessionStateV13Schema)
+      : normalizeSessionState(record);
+    if (session.session_id !== sessionId) {
+      throw new Error(`Session compatibility identity does not match its canonical path: ${sessionId}`);
+    }
     return {
-      session: this.readValidated(join(dir, 'session.json'), sessionStateSchema),
+      session,
       gates: this.readValidated(join(dir, 'gates.json'), gateRegistrySchema),
       artifacts: this.readValidated(join(dir, 'artifacts.json'), artifactRegistrySchema),
       evidence: this.readValidated(join(dir, 'evidence.json'), evidenceStoreSchema),
     };
+  }
+
+  readExecution(sessionId: string, executionId: string): ExecutionState {
+    if (!this.lock.isHeld) return this.withLock(() => this.readExecutionUnlocked(sessionId, executionId));
+    return this.readExecutionUnlocked(sessionId, executionId);
+  }
+
+  /** Validate an Execution without lock acquisition or recovery writes. */
+  readExecutionReadOnly(sessionId: string, executionId: string): ExecutionState {
+    return this.readExecutionUnlocked(sessionId, executionId);
+  }
+
+  private readExecutionUnlocked(sessionId: string, executionId: string): ExecutionState {
+    const execution = this.readValidated(this.executionPath(sessionId, executionId), executionStateSchema);
+    if (execution.session_id !== sessionId || execution.execution_id !== executionId) {
+      throw new Error(`Execution identity does not match its canonical path: ${sessionId}/${executionId}`);
+    }
+    assertExecutionLifecycleInvariants(execution);
+    return execution;
+  }
+
+  readExecutionSealReceipt(sessionId: string, executionId: string): ExecutionSealReceipt | null {
+    if (!this.lock.isHeld) {
+      return this.withLock(() => this.readExecutionSealReceiptUnlocked(sessionId, executionId));
+    }
+    return this.readExecutionSealReceiptUnlocked(sessionId, executionId);
+  }
+
+  private readExecutionSealReceiptUnlocked(
+    sessionId: string,
+    executionId: string,
+  ): ExecutionSealReceipt | null {
+    const path = this.executionSealReceiptPath(sessionId, executionId);
+    if (!existsSync(path)) return null;
+    const receipt = this.readValidated(path, executionSealReceiptSchema);
+    if (receipt.session_id !== sessionId || receipt.execution_id !== executionId) {
+      throw new Error(`Execution seal receipt identity does not match its canonical path: ${sessionId}/${executionId}`);
+    }
+    if (executionSealReceiptHash(receipt) !== receipt.overall_hash) {
+      throw new Error(`Execution seal receipt overall hash mismatch: ${sessionId}/${executionId}`);
+    }
+    return receipt;
+  }
+
+  writeExecutionSealReceipt(receiptInput: ExecutionSealReceipt): ExecutionSealReceipt {
+    return this.withLock(() => {
+      const receipt = executionSealReceiptSchema.parse(receiptInput);
+      const existing = this.readExecutionSealReceiptUnlocked(receipt.session_id, receipt.execution_id);
+      if (existing) {
+        if (stableJsonUtf8(existing) !== stableJsonUtf8(receipt)) {
+          throw new Error(`Execution seal receipt is immutable: ${receipt.execution_id}`);
+        }
+        return clone(existing);
+      }
+      this.assertExecutionSealReceiptSnapshotUnlocked(receipt);
+      this.writeBatchUnlocked([{
+        path: this.executionSealReceiptPath(receipt.session_id, receipt.execution_id),
+        value: receipt,
+        schema: executionSealReceiptSchema,
+        mode: 0o600,
+      }]);
+      return clone(receipt);
+    });
+  }
+
+  private assertExecutionSealReceiptSnapshotUnlocked(receipt: ExecutionSealReceipt): void {
+    if (executionSealReceiptHash(receipt) !== receipt.overall_hash) {
+      throw new Error('Execution seal receipt overall hash mismatch');
+    }
+    if (sha256Prefixed(stableJsonUtf8(receipt.chain_snapshot)) !== receipt.chain_hash) {
+      throw new Error('Execution seal receipt chain hash mismatch');
+    }
+    const execution = this.readExecutionUnlocked(receipt.session_id, receipt.execution_id);
+    if (execution.status !== 'sealed'
+      || execution.generation !== receipt.generation
+      || execution.revision !== receipt.execution_revision
+      || execution.sealed_at !== receipt.sealed_at) {
+      throw new Error('Execution seal receipt does not match sealed Execution authority');
+    }
+    if (stableJsonUtf8(execution.chain) !== stableJsonUtf8(receipt.chain_snapshot)) {
+      throw new Error('Execution seal receipt chain snapshot changed');
+    }
+    const session = this.readSessionRecordUnlocked(receipt.session_id);
+    if (session.schema_version !== 'session/2.0' && !session.schema_version.startsWith('session/1.')) {
+      throw new Error(`Unsupported Session version for Execution seal receipt: ${session.schema_version}`);
+    }
+    if (session.identity_revision !== receipt.session_identity_revision
+      || session.activity_revision !== receipt.session_activity_revision) {
+      throw new Error('Execution seal receipt Session revisions changed');
+    }
+    for (const runSnapshot of receipt.runs) {
+      const path = join(this.runDir(receipt.session_id, runSnapshot.run_id), 'run.json');
+      const run = this.readValidated(path, commandRunReadSchema);
+      if (run.schema_version !== runSnapshot.schema_version || run.status !== 'sealed'
+        || sha256Prefixed(readFileSync(path)) !== runSnapshot.content_hash) {
+        throw new Error(`Execution seal receipt Run snapshot changed: ${runSnapshot.run_id}`);
+      }
+    }
+    const dir = this.sessionDir(receipt.session_id);
+    const gatesPath = join(dir, 'gates.json');
+    const artifactsPath = join(dir, 'artifacts.json');
+    const evidencePath = join(dir, 'evidence.json');
+    const gates = this.readValidated(gatesPath, gateRegistrySchema);
+    const artifacts = this.readValidated(artifactsPath, artifactRegistrySchema);
+    const evidence = this.readValidated(evidencePath, evidenceStoreSchema);
+    const blockingGateIds = Object.entries(gates.gates)
+      .filter(([, gate]) => gate.blocking && ['pending', 'running', 'failed', 'blocked'].includes(gate.status))
+      .map(([gateId]) => gateId)
+      .sort();
+    if (receipt.gates.registry_revision !== gates.revision
+      || receipt.gates.registry_hash !== sha256Prefixed(readFileSync(gatesPath))
+      || receipt.gates.clean !== (blockingGateIds.length === 0)
+      || stableJsonUtf8(receipt.gates.blocking_gate_ids) !== stableJsonUtf8(blockingGateIds)) {
+      throw new Error('Execution seal receipt gate snapshot changed');
+    }
+    const artifactHashes = Object.fromEntries(
+      Object.entries(artifacts.artifacts)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([artifactId, artifact]) => [artifactId, `sha256:${artifact.content_hash}`]),
+    );
+    if (receipt.artifacts.registry_revision !== artifacts.revision
+      || receipt.artifacts.registry_hash !== sha256Prefixed(readFileSync(artifactsPath))
+      || stableJsonUtf8(receipt.artifacts.content_hashes) !== stableJsonUtf8(artifactHashes)) {
+      throw new Error('Execution seal receipt Artifact snapshot changed');
+    }
+    const evidenceRefs = Object.keys(evidence.records).sort();
+    if (receipt.evidence.store_revision !== evidence.revision
+      || receipt.evidence.store_hash !== sha256Prefixed(readFileSync(evidencePath))
+      || stableJsonUtf8(receipt.evidence.record_refs) !== stableJsonUtf8(evidenceRefs)) {
+      throw new Error('Execution seal receipt Evidence snapshot changed');
+    }
+  }
+
+  listExecutions(sessionId: string): ExecutionState[] {
+    return this.withLock(() => this.listExecutionsUnlocked(sessionId));
+  }
+
+  private listExecutionsUnlocked(sessionId: string): ExecutionState[] {
+    const root = join(this.sessionDir(sessionId), 'executions');
+    if (!existsSync(root)) return [];
+    const executions: ExecutionState[] = [];
+    for (const executionId of readdirSync(root).sort()) {
+      const path = join(root, executionId);
+      const stats = lstatSync(path);
+      if (stats.isSymbolicLink() || !stats.isDirectory()) {
+        throw new Error(`Corrupt Execution storage entry: ${path}`);
+      }
+      if (!existsSync(join(path, 'execution.json'))) {
+        throw new Error(`Corrupt Execution storage entry: missing execution.json at ${path}`);
+      }
+      executions.push(this.readExecutionUnlocked(sessionId, executionId));
+    }
+    return executions.sort((left, right) => left.generation - right.generation
+      || left.execution_id.localeCompare(right.execution_id));
+  }
+
+  readOpenExecution(sessionId: string): ExecutionState | null {
+    if (!this.lock.isHeld) return this.withLock(() => this.readOpenExecutionUnlocked(sessionId));
+    return this.readOpenExecutionUnlocked(sessionId);
+  }
+
+  private readOpenExecutionUnlocked(sessionId: string): ExecutionState | null {
+    const open = this.listExecutionsUnlocked(sessionId).filter(execution => execution.status !== 'sealed');
+    if (open.length > 1) throw new Error(`Corrupt Execution storage: Session ${sessionId} has multiple open Executions`);
+    return open[0] ?? null;
+  }
+
+  createExecution(execution: ExecutionState): ExecutionState {
+    return this.withLock(() => {
+      const sessionRecord = this.readSessionRecordUnlocked(execution.session_id);
+      if (sessionRecord.schema_version === 'session/2.0'
+        && sessionStateV20Schema.parse(sessionRecord).archived_at !== null) {
+        throw new Error(`Session ${execution.session_id} is archived; unarchive it before creating an Execution`);
+      }
+      const bundle = this.readBundleUnlocked(execution.session_id);
+      const executions = this.listExecutionsUnlocked(execution.session_id);
+      if (executions.some(item => item.execution_id === execution.execution_id)) {
+        throw new Error(`Execution already exists: ${execution.execution_id}`);
+      }
+      if (executions.some(item => item.generation === execution.generation)) {
+        throw new Error(`Execution generation already exists: ${execution.generation}`);
+      }
+      if (execution.status !== 'sealed' && executions.some(item => item.status !== 'sealed')) {
+        throw new Error(`Session ${execution.session_id} already has an open Execution`);
+      }
+      executionStateSchema.parse(execution);
+      assertExecutionSessionInvariants(bundle.session, execution);
+      this.writeBatchUnlocked([{
+        path: this.executionPath(execution.session_id, execution.execution_id),
+        value: execution,
+        schema: executionStateSchema,
+        mode: 0o600,
+      }]);
+      return clone(execution);
+    });
+  }
+
+  updateExecution<T>(
+    sessionId: string,
+    executionId: string,
+    expectedRevision: number | undefined,
+    mutator: (draft: ExecutionState, tx: ExecutionStoreTransaction) => T,
+  ): T {
+    return this.withLock(() => {
+      const current = this.readExecutionUnlocked(sessionId, executionId);
+      if (expectedRevision !== undefined && current.revision !== expectedRevision) {
+        throw new Error(`execution revision conflict: expected ${expectedRevision}, current ${current.revision}`);
+      }
+      const draft = clone(current);
+      const tx = new ExecutionStoreTransaction(this, sessionId, executionId);
+      const result = mutator(draft, tx);
+      if (current.status === 'sealed' && stableJsonUtf8(draft) !== stableJsonUtf8(current)) {
+        throw new Error(`Execution ${executionId} is sealed and immutable`);
+      }
+      if (draft.session_id !== sessionId || draft.execution_id !== executionId
+        || draft.generation !== current.generation) {
+        throw new Error('Execution identity and generation are immutable');
+      }
+      if (draft.status !== 'sealed') {
+        const sibling = this.listExecutionsUnlocked(sessionId)
+          .find(item => item.execution_id !== executionId && item.status !== 'sealed');
+        if (sibling) throw new Error(`Session ${sessionId} already has open Execution ${sibling.execution_id}`);
+      }
+      executionStateSchema.parse(draft);
+      assertExecutionSessionInvariants(this.readBundleUnlocked(sessionId).session, draft);
+      tx.writeExecution(draft);
+      this.writeBatchUnlocked(tx.writes);
+      return result;
+    });
+  }
+
+  listExecutionTransitions(sessionId: string, executionId: string): PersistedTransitionRecordV11[] {
+    if (!this.lock.isHeld) return this.withLock(() => this.listExecutionTransitionsUnlocked(sessionId, executionId));
+    return this.listExecutionTransitionsUnlocked(sessionId, executionId);
+  }
+
+  private listExecutionTransitionsUnlocked(sessionId: string, executionId: string): PersistedTransitionRecordV11[] {
+    const root = join(this.executionDir(sessionId, executionId), 'transitions');
+    if (!existsSync(root)) return [];
+    return readdirSync(root)
+      .filter(name => name.endsWith('.json'))
+      .sort()
+      .map(name => validatePersistedTransitionRecordV11(
+        this.readValidated(join(root, name), persistedTransitionRecordV11Schema),
+      ));
+  }
+
+  readExecutionTransition(
+    sessionId: string,
+    executionId: string,
+    requestId: string,
+  ): PersistedTransitionRecordV11 | null {
+    if (!this.lock.isHeld) {
+      return this.withLock(() => this.readExecutionTransitionUnlocked(sessionId, executionId, requestId));
+    }
+    return this.readExecutionTransitionUnlocked(sessionId, executionId, requestId);
+  }
+
+  readExecutionTransitionReadOnly(
+    sessionId: string,
+    executionId: string,
+    requestId: string,
+  ): PersistedTransitionRecordV11 | null {
+    return this.readExecutionTransitionUnlocked(sessionId, executionId, requestId);
+  }
+
+  private readExecutionTransitionUnlocked(
+    sessionId: string,
+    executionId: string,
+    requestId: string,
+  ): PersistedTransitionRecordV11 | null {
+    const path = this.executionTransitionPath(sessionId, executionId, requestId);
+    if (!existsSync(path)) return null;
+    return validatePersistedTransitionRecordV11(this.readValidated(path, persistedTransitionRecordV11Schema));
+  }
+
+  readExecutionRun(sessionId: string, runId: string): CommandRunV14 {
+    if (!this.lock.isHeld) return this.withLock(() => this.readExecutionRunUnlocked(sessionId, runId));
+    return this.readExecutionRunUnlocked(sessionId, runId);
+  }
+
+  private readExecutionRunUnlocked(sessionId: string, runId: string): CommandRunV14 {
+    const raw = this.readValidated(join(this.runDir(sessionId, runId), 'run.json'), commandRunReadSchema);
+    if (raw.schema_version !== 'command-run/1.4') {
+      throw new Error(`Run ${runId} is not bound to an Execution`);
+    }
+    return commandRunV14Schema.parse(raw);
+  }
+
+  listBoundExecutionRuns(sessionId: string, executionId: string, generation: number): CommandRunV14[] {
+    if (!this.lock.isHeld) {
+      return this.withLock(() => this.listBoundExecutionRunsUnlocked(sessionId, executionId, generation));
+    }
+    return this.listBoundExecutionRunsUnlocked(sessionId, executionId, generation);
+  }
+
+  private listBoundExecutionRunsUnlocked(
+    sessionId: string,
+    executionId: string,
+    generation: number,
+  ): CommandRunV14[] {
+    const root = join(this.sessionDir(sessionId), 'runs');
+    if (!existsSync(root)) return [];
+    const runs: CommandRunV14[] = [];
+    for (const runId of readdirSync(root).sort()) {
+      const path = join(root, runId, 'run.json');
+      if (!existsSync(path)) continue;
+      const raw = this.readValidated(path, commandRunReadSchema);
+      if (raw.schema_version !== 'command-run/1.4') continue;
+      const run = commandRunV14Schema.parse(raw);
+      if (run.execution_id === executionId && run.generation === generation) runs.push(run);
+    }
+    return runs;
   }
 
   readRun(sessionId: string, runId: string): CommandRun {
@@ -538,14 +1127,117 @@ export class SessionStore {
   private readRunUnlocked(sessionId: string, runId: string): CommandRun {
     const raw = this.readValidated(join(this.runDir(sessionId, runId), 'run.json'), commandRunReadSchema);
     if (raw.schema_version === 'command-run/1.3') return raw as CommandRun;
-    const session = this.readValidated(join(this.sessionDir(sessionId), 'session.json'), sessionStateSchema);
+    const session = this.readBundleUnlocked(sessionId).session;
     const executorPlatform = targetPlatformSchema.safeParse(session.orchestration.executor?.platform);
     return normalizeCommandRun(raw, executorPlatform.success ? executorPlatform.data : 'claude');
   }
 
-  update<T>(sessionId: string, mutator: (draft: SessionBundle, tx: StoreTransaction) => T): T {
+  createExecutionAtomic<T>(
+    sessionId: string,
+    builder: (
+      draft: SessionBundle,
+      existing: readonly ExecutionState[],
+      tx: StoreTransaction,
+    ) => { execution: ExecutionState | null; result: T },
+    options: Pick<ExecutionAtomicOptions, 'expectedActivityRevision'> = {},
+  ): T {
+    return this.withLock(() => {
+      const currentRecord = this.readSessionRecordUnlocked(sessionId);
+      if (currentRecord.schema_version === 'session/2.0'
+        && sessionStateV20Schema.parse(currentRecord).archived_at !== null) {
+        throw new Error(`Session ${sessionId} is archived; unarchive it before starting an Execution`);
+      }
+      const draft = clone(this.readBundleUnlocked(sessionId));
+      this.prepareExecutionCompatibilityDraft(currentRecord, draft);
+      this.assertExpectedActivityRevision(currentRecord, options.expectedActivityRevision);
+      const existing = this.listExecutionsUnlocked(sessionId);
+      const tx = new StoreTransaction(this, sessionId);
+      const built = builder(draft, existing, tx);
+      if (!built.execution) return built.result;
+      const execution = executionStateSchema.parse(built.execution);
+      if (execution.session_id !== sessionId) throw new Error('Execution Session identity mismatch');
+      if (existing.some(item => item.execution_id === execution.execution_id)) {
+        throw new Error(`Execution already exists: ${execution.execution_id}`);
+      }
+      if (existing.some(item => item.generation === execution.generation)) {
+        throw new Error(`Execution generation already exists: ${execution.generation}`);
+      }
+      if (execution.status !== 'sealed' && existing.some(item => item.status !== 'sealed')) {
+        throw new Error(`Session ${sessionId} already has an open Execution`);
+      }
+      assertExecutionSessionInvariants(draft.session, execution);
+      draft.session.schema_version = 'session/1.3';
+      sessionStateV13Schema.parse(draft.session);
+      const nextRecord = this.addExecutionAtomicBundleWrites(currentRecord, draft, execution, tx);
+      tx.writeExecution(execution);
+      this.assertPendingExecutionSealReceiptUnlocked(tx, execution, nextRecord, draft);
+      this.writeBatchUnlocked(tx.writes);
+      return built.result;
+    });
+  }
+
+  updateExecutionAtomic<T>(
+    sessionId: string,
+    executionId: string,
+    expectedRevision: number | undefined,
+    mutator: (draft: SessionBundle, execution: ExecutionState, tx: StoreTransaction) => T,
+    options: ExecutionAtomicOptions = {},
+  ): T {
+    return this.withLock(() => {
+      const currentRecord = this.readSessionRecordUnlocked(sessionId);
+      const draft = clone(this.readBundleUnlocked(sessionId));
+      this.prepareExecutionCompatibilityDraft(currentRecord, draft);
+      const current = this.readExecutionUnlocked(sessionId, executionId);
+      assertExecutionSessionInvariants(draft.session, current);
+      const replayReceipt = options.replayRequestId
+        ? this.readExecutionTransitionUnlocked(sessionId, executionId, options.replayRequestId)
+        : null;
+      if (!replayReceipt && expectedRevision !== undefined && current.revision !== expectedRevision) {
+        throw new Error(`execution revision conflict: expected ${expectedRevision}, current ${current.revision}`);
+      }
+      if (!replayReceipt) {
+        this.assertExpectedActivityRevision(currentRecord, options.expectedActivityRevision);
+      }
+      const execution = clone(current);
+      const tx = new StoreTransaction(this, sessionId);
+      const result = mutator(draft, execution, tx);
+      if (current.status === 'sealed' && stableJsonUtf8(execution) !== stableJsonUtf8(current)) {
+        throw new Error(`Execution ${executionId} is sealed and immutable`);
+      }
+      if (execution.session_id !== sessionId || execution.execution_id !== executionId
+        || execution.generation !== current.generation) {
+        throw new Error('Execution identity and generation are immutable');
+      }
+      if (execution.status !== 'sealed') {
+        const sibling = this.listExecutionsUnlocked(sessionId)
+          .find(item => item.execution_id !== executionId && item.status !== 'sealed');
+        if (sibling) throw new Error(`Session ${sessionId} already has open Execution ${sibling.execution_id}`);
+      }
+      executionStateSchema.parse(execution);
+      assertExecutionSessionInvariants(draft.session, execution);
+      draft.session.schema_version = 'session/1.3';
+      sessionStateV13Schema.parse(draft.session);
+      const nextRecord = this.addExecutionAtomicBundleWrites(currentRecord, draft, execution, tx);
+      tx.writeExecution(execution);
+      this.assertPendingExecutionSealReceiptUnlocked(tx, execution, nextRecord, draft);
+      this.writeBatchUnlocked(tx.writes);
+      return result;
+    });
+  }
+
+  update<T>(
+    sessionId: string,
+    mutator: (draft: SessionBundle, tx: StoreTransaction) => T,
+    options: { allowOpenExecution?: boolean } = {},
+  ): T {
     return this.withLock(() => {
       const current = this.readBundle(sessionId);
+      const openExecution = this.readOpenExecutionUnlocked(sessionId);
+      if (openExecution && !options.allowOpenExecution) {
+        throw new Error(
+          `Session ${sessionId} has open Execution ${openExecution.execution_id}; execution binding and lease are required`,
+        );
+      }
       if (current.session.status === 'sealed' || current.session.status === 'archived') {
         throw new Error(`Session ${sessionId} is ${current.session.status} and immutable`);
       }
@@ -586,6 +1278,24 @@ export class SessionStore {
   }
 
   /**
+   * Commit knowledge sidecars and corpus files under one SessionStore lock and
+   * one recoverable transaction intent. The caller performs its final CAS
+   * reads inside the callback before queueing writes.
+   */
+  updateKnowledgeTransaction<T>(
+    sessionId: string,
+    mutator: (tx: StoreTransaction) => T,
+  ): T {
+    return this.withLock(() => {
+      this.readSessionRecordUnlocked(sessionId);
+      const tx = new StoreTransaction(this, sessionId);
+      const result = mutator(tx);
+      if (tx.writes.length > 0) this.writeBatchUnlocked(tx.writes);
+      return result;
+    });
+  }
+
+  /**
    * Mutate one Run-owned sidecar only while that Run remains the canonical
    * active Run. This avoids rewriting the coordinated Session bundle for
    * high-frequency knowledge relation/candidate updates.
@@ -601,6 +1311,12 @@ export class SessionStore {
     const safePath = this.assertWorkflowPath(path);
     return this.withLock(() => {
       const bundle = this.readBundleUnlocked(sessionId);
+      const openExecution = this.readOpenExecutionUnlocked(sessionId);
+      if (openExecution) {
+        throw new Error(
+          `Session ${sessionId} has open Execution ${openExecution.execution_id}; explicit Execution sidecar authority is required`,
+        );
+      }
       if (bundle.session.status !== 'running' || bundle.session.active_run_id !== runId) {
         throw new Error(
           `Run ${runId} is not the active Run for Session ${sessionId} `
@@ -622,6 +1338,162 @@ export class SessionStore {
     });
   }
 
+  /**
+   * Mutate one Run-owned sidecar under exact active Execution authority. The
+   * sidecar and its idempotency receipt are committed in the same recoverable
+   * store transaction; the private lease token is represented only by a hash.
+   */
+  updateActiveExecutionRunSidecar<T, R extends Record<string, unknown>>(input: {
+    sessionId: string;
+    runId: string;
+    path: string;
+    schema: z.ZodType<T>;
+    initial: T;
+    authority: ExecutionRunSidecarAuthority;
+    operation: 'knowledge-stage' | 'knowledge-record';
+    requestPayload: unknown;
+    revisionOf: (value: T) => number;
+    mutator: (draft: T) => R;
+    now?: Date;
+    staleAfterMs?: number;
+  }): { result: R; replayed: boolean } {
+    const safePath = this.assertWorkflowPath(input.path);
+    const runRoot = resolve(this.runDir(input.sessionId, input.runId));
+    const sidecarRelative = relative(runRoot, safePath);
+    if (!sidecarRelative || sidecarRelative.startsWith('..') || isAbsolute(sidecarRelative)) {
+      throw new Error(`Execution sidecar path is not owned by Run ${input.runId}`);
+    }
+    const normalizedSidecarPath = sidecarRelative.replaceAll('\\', '/');
+    const receiptPath = this.executionRunSidecarReceiptPath(
+      input.sessionId,
+      input.authority.executionId,
+      input.authority.requestId,
+    );
+    const requestHash = sha256Prefixed(stableJsonUtf8({
+      operation: input.operation,
+      session_id: input.sessionId,
+      execution_id: input.authority.executionId,
+      generation: input.authority.generation,
+      run_id: input.runId,
+      sidecar_path: normalizedSidecarPath,
+      expected_execution_revision: input.authority.expectedExecutionRevision,
+      lease: {
+        owner_id: input.authority.lease.ownerId,
+        owner_kind: input.authority.lease.ownerKind,
+        epoch: input.authority.lease.epoch,
+        lease_id_hash: hashExecutionLeaseId(input.authority.lease.leaseId),
+      },
+      payload: input.requestPayload,
+    }));
+
+    return this.withLock(() => {
+      const bundle = this.readBundleUnlocked(input.sessionId);
+      const execution = this.readExecutionUnlocked(input.sessionId, input.authority.executionId);
+      const openExecution = this.readOpenExecutionUnlocked(input.sessionId);
+      if (execution.generation !== input.authority.generation) {
+        throw new Error(
+          `Execution generation conflict: expected ${input.authority.generation}, current ${execution.generation}`,
+        );
+      }
+      if (execution.status !== 'active') {
+        throw new Error(`Execution ${execution.execution_id} is ${execution.status}; active authority is required`);
+      }
+      if (!openExecution || openExecution.execution_id !== execution.execution_id) {
+        throw new Error(`Execution ${execution.execution_id} is not the active Execution for Session ${input.sessionId}`);
+      }
+      if (execution.revision !== input.authority.expectedExecutionRevision) {
+        throw new Error(
+          `execution revision conflict: expected ${input.authority.expectedExecutionRevision}, current ${execution.revision}`,
+        );
+      }
+      if (bundle.session.status !== 'running'
+        || bundle.session.active_run_id !== input.runId
+        || execution.active_run_id !== input.runId) {
+        throw new Error(
+          `Run ${input.runId} is not the active Run for Execution ${execution.execution_id} `
+          + `and Session ${input.sessionId}`,
+        );
+      }
+      const lease = assertExecutionLease(execution.lease, input.authority.lease);
+      if (isExecutionLeaseStale(lease, input.now ?? new Date(), input.staleAfterMs)) {
+        throw new Error('Execution lease is stale; heartbeat or recover it before mutating Run knowledge');
+      }
+      const run = this.readExecutionRunUnlocked(input.sessionId, input.runId);
+      if (run.execution_id !== execution.execution_id || run.generation !== execution.generation) {
+        throw new Error(`Run ${input.runId} belongs to a different Execution generation`);
+      }
+      if (run.status === 'sealed' || run.status === 'completed') {
+        throw new Error(`Run ${input.runId} is ${run.status} and cannot mutate Run sidecars`);
+      }
+
+      const current = existsSync(safePath)
+        ? this.readValidated(safePath, input.schema)
+        : input.schema.parse(input.initial);
+      const currentRevision = input.revisionOf(current);
+      if (!Number.isInteger(currentRevision) || currentRevision < 0) {
+        throw new Error(`Run ${input.runId} sidecar has an invalid revision`);
+      }
+      if (existsSync(receiptPath)) {
+        const receipt = this.readValidated(receiptPath, executionRunSidecarReceiptSchema);
+        if (receipt.operation !== input.operation
+          || receipt.session_id !== input.sessionId
+          || receipt.execution_id !== execution.execution_id
+          || receipt.generation !== execution.generation
+          || receipt.run_id !== input.runId
+          || receipt.sidecar_path !== normalizedSidecarPath
+          || receipt.expected_execution_revision !== input.authority.expectedExecutionRevision
+          || receipt.lease.owner_id !== lease.owner_id
+          || receipt.lease.owner_kind !== lease.owner_kind
+          || receipt.lease.epoch !== lease.epoch
+          || receipt.lease.lease_id_hash !== hashExecutionLeaseId(lease.lease_id)
+          || receipt.request_hash !== requestHash) {
+          throw new Error(`request_id ${input.authority.requestId} was already used with different sidecar inputs`);
+        }
+        if (currentRevision < receipt.sidecar_revision_after) {
+          throw new Error(`request_id ${input.authority.requestId} receipt diverged from the Run sidecar`);
+        }
+        return { result: clone(receipt.result) as unknown as R, replayed: true };
+      }
+
+      const draft = clone(current);
+      const result = input.mutator(draft);
+      input.schema.parse(draft);
+      const nextRevision = input.revisionOf(draft);
+      if (nextRevision !== currentRevision + 1) {
+        throw new Error(
+          `Execution Run sidecar revision must advance exactly once: ${currentRevision} -> ${nextRevision}`,
+        );
+      }
+      const receipt = executionRunSidecarReceiptSchema.parse({
+        schema_version: 'execution-run-sidecar-transition/1.0',
+        request_id: input.authority.requestId,
+        operation: input.operation,
+        session_id: input.sessionId,
+        execution_id: execution.execution_id,
+        generation: execution.generation,
+        run_id: input.runId,
+        sidecar_path: normalizedSidecarPath,
+        expected_execution_revision: input.authority.expectedExecutionRevision,
+        lease: {
+          owner_id: lease.owner_id,
+          owner_kind: lease.owner_kind,
+          epoch: lease.epoch,
+          lease_id_hash: hashExecutionLeaseId(lease.lease_id),
+        },
+        request_hash: requestHash,
+        sidecar_revision_before: currentRevision,
+        sidecar_revision_after: nextRevision,
+        applied_at: (input.now ?? new Date()).toISOString(),
+        result,
+      });
+      this.writeBatchUnlocked([
+        { path: safePath, value: draft, schema: input.schema },
+        { path: receiptPath, value: receipt, schema: executionRunSidecarReceiptSchema, mode: 0o600 },
+      ]);
+      return { result, replayed: false };
+    });
+  }
+
   /** Replace one active Run sidecar atomically after validating Run authority. */
   writeActiveRunSidecar<T>(
     sessionId: string,
@@ -633,6 +1505,12 @@ export class SessionStore {
     const safePath = this.assertWorkflowPath(path);
     this.withLock(() => {
       const bundle = this.readBundleUnlocked(sessionId);
+      const openExecution = this.readOpenExecutionUnlocked(sessionId);
+      if (openExecution) {
+        throw new Error(
+          `Session ${sessionId} has open Execution ${openExecution.execution_id}; explicit Execution sidecar authority is required`,
+        );
+      }
       if (bundle.session.status !== 'running' || bundle.session.active_run_id !== runId) {
         throw new Error(
           `Run ${runId} is not the active Run for Session ${sessionId} `
@@ -778,8 +1656,15 @@ export class SessionStore {
 
   issueRecallConfirmation(input: IssueRecallConfirmationInput): { token: string; record: RecallConfirmationRecord } {
     return this.withLock(() => {
-      const registry = this.readRecallRegistryUnlocked();
+      let registry = this.readRecallRegistryUnlocked();
       const issued = issueRecallConfirmationRecord(input);
+      if (issued.record.schema_version === 'recall-confirmation/1.1'
+        && registry.schema_version === 'recall-confirmations/1.0') {
+        registry = recallConfirmationRegistryV11Schema.parse({
+          ...registry,
+          schema_version: 'recall-confirmations/1.1',
+        });
+      }
       if (registry.records[issued.record.token_hash]) throw new Error('recall confirmation token hash collision');
       registry.records[issued.record.token_hash] = issued.record;
       registry.revision++;
@@ -870,7 +1755,7 @@ export class SessionStore {
         }
         mkdirSync(targetDir, { recursive: true });
       }
-      const claimed = recallConfirmationRecordSchema.parse({
+      const claimed = recallConfirmationRecordReadSchema.parse({
         ...located.record,
         reservation: { ...reservation, phase: 'target-claimed' },
       });
@@ -1023,7 +1908,7 @@ export class SessionStore {
       const phase = decision === 'resume_finalize'
         ? 'resume-finalize'
         : decision === 'rollback_partial' ? 'rollback-partial' : 'conflict';
-      const updated = recallConfirmationRecordSchema.parse({
+      const updated = recallConfirmationRecordReadSchema.parse({
         ...located.record,
         reservation: { ...reservation, phase, reconcile_expires_at: reconcileExpiresAt },
       });
@@ -1063,7 +1948,7 @@ export class SessionStore {
       if (actual.marker.state !== 'missing' || actual.target.state !== 'absent') {
         throw new RecallConfirmationError('FENCE_CONFLICT', 'rollback target or reservation marker still exists');
       }
-      registry.records[located.tokenHash] = recallConfirmationRecordSchema.parse({
+      registry.records[located.tokenHash] = recallConfirmationRecordReadSchema.parse({
         ...located.record,
         reservation: null,
       });
@@ -1136,9 +2021,16 @@ export class SessionStore {
     request: TransitionRequest,
     apply: (draft: SessionBundle, tx: StoreTransaction) => TransitionOutcome,
     validateReplay?: (record: PersistedTransitionRecord) => void,
+    options: { allowOpenExecution?: boolean } = {},
   ): { outcome: TransitionOutcome; replayed: boolean } {
     return this.withLock(() => {
       const current = this.readBundleUnlocked(sessionId);
+      const openExecution = this.readOpenExecutionUnlocked(sessionId);
+      if (openExecution && !options.allowOpenExecution) {
+        throw new Error(
+          `Session ${sessionId} has open Execution ${openExecution.execution_id}; execution binding and lease are required`,
+        );
+      }
       const currentFence = this.sessionFenceForBundle(current, request.subject.run_id);
       const records = current.session.requests
         .filter(item => item.type === 'transition' && 'outcome' in item)
@@ -1164,6 +2056,416 @@ export class SessionStore {
       this.writeBatchUnlocked(tx.writes);
       return { outcome: clone(evaluated.outcome), replayed: false };
     });
+  }
+
+  listSessionArchiveReceipts(sessionId: string): SessionArchiveReceipt[] {
+    if (!this.lock.isHeld) return this.withLock(() => this.listSessionArchiveReceiptsUnlocked(sessionId));
+    return this.listSessionArchiveReceiptsUnlocked(sessionId);
+  }
+
+  private listSessionArchiveReceiptsUnlocked(sessionId: string): SessionArchiveReceipt[] {
+    const root = join(this.sessionDir(sessionId), 'archive-receipts');
+    if (!existsSync(root)) return [];
+    return readdirSync(root)
+      .filter(name => name.endsWith('.json'))
+      .sort()
+      .map(name => this.readValidated(join(root, name), sessionArchiveReceiptSchema));
+  }
+
+  applySessionArchiveReceipt(receiptInput: SessionArchiveReceipt): SessionIdentityV20 {
+    return this.withLock<SessionIdentityV20>(() => {
+      if (this.sessionSchemaSelection().writer !== 'session/2.0') {
+        throw new Error('session/2.0 archive writes require the explicit project Session schema feature');
+      }
+      const receipt = sessionArchiveReceiptSchema.parse(receiptInput);
+      if (sessionArchiveReceiptHash(receipt) !== receipt.receipt_hash) {
+        throw new Error('Session archive receipt hash mismatch');
+      }
+      const currentRecord = this.readSessionRecordUnlocked(receipt.session_id);
+      if (currentRecord.schema_version !== 'session/2.0') {
+        throw new Error(`Session ${receipt.session_id} is not session/2.0`);
+      }
+      const current = sessionStateV20Schema.parse(currentRecord);
+      const isArchive = receipt.operation === 'archive';
+      if (isArchive) {
+        const openExecutions = this.listExecutionsUnlocked(receipt.session_id)
+          .filter(execution => execution.status === 'active' || execution.status === 'paused');
+        if (current.current_execution_id !== null || openExecutions.length > 0) {
+          const openIds = openExecutions.map(execution => execution.execution_id).sort();
+          throw new Error(
+            `Session ${receipt.session_id} cannot be archived while an Execution is current or open`
+            + (openIds.length > 0 ? `: ${openIds.join(', ')}` : ''),
+          );
+        }
+      }
+      const receiptPath = this.sessionArchiveReceiptPath(receipt.session_id, receipt.after.activity_revision);
+      if (existsSync(receiptPath)) {
+        const existing = this.readValidated(receiptPath, sessionArchiveReceiptSchema);
+        if (stableJsonUtf8(existing) !== stableJsonUtf8(receipt)) {
+          throw new Error(`Session archive receipt is immutable: ${receipt.receipt_id}`);
+        }
+        const currentState = {
+          identity_revision: current.identity_revision,
+          activity_revision: current.activity_revision,
+          archived_at: current.archived_at,
+          archived_by: current.archived_by,
+        };
+        if (stableJsonUtf8(currentState) !== stableJsonUtf8(receipt.after)) {
+          throw new Error('Session archive receipt replay diverged from canonical state');
+        }
+        return clone(current);
+      }
+      const before = {
+        identity_revision: current.identity_revision,
+        activity_revision: current.activity_revision,
+        archived_at: current.archived_at,
+        archived_by: current.archived_by,
+      };
+      if (stableJsonUtf8(before) !== stableJsonUtf8(receipt.before)) {
+        throw new Error('Session archive receipt CAS conflict');
+      }
+      if (receipt.after.identity_revision !== receipt.before.identity_revision
+        || receipt.after.activity_revision !== receipt.before.activity_revision + 1) {
+        throw new Error('Session archive receipt revisions are not a deterministic CAS successor');
+      }
+      const existingReceipts = this.listSessionArchiveReceiptsUnlocked(receipt.session_id);
+      const previousHash = existingReceipts.at(-1)?.receipt_hash ?? null;
+      if (receipt.previous_receipt_hash !== previousHash) {
+        throw new Error('Session archive receipt history hash conflict');
+      }
+      if (isArchive
+        ? receipt.after.archived_at !== receipt.recorded_at || receipt.after.archived_by !== receipt.actor
+        : receipt.after.archived_at !== null || receipt.after.archived_by !== null) {
+        throw new Error('Session archive receipt operation does not match its post-state');
+      }
+      const next = sessionStateV20Schema.parse({
+        ...current,
+        identity_revision: receipt.after.identity_revision,
+        activity_revision: receipt.after.activity_revision,
+        archived_at: receipt.after.archived_at,
+        archived_by: receipt.after.archived_by,
+      });
+      this.writeBatchUnlocked([
+        {
+          path: join(this.sessionDir(receipt.session_id), 'session.json'),
+          value: next,
+          schema: sessionStateV20Schema,
+        },
+        { path: receiptPath, value: receipt, schema: sessionArchiveReceiptSchema },
+      ]);
+      return clone(next);
+    });
+  }
+
+  migrateLegacySessionToV20(input: {
+    identity: SessionIdentityV20;
+    compatibility: SessionState;
+    legacyExecution?: ExecutionState;
+    archiveReceipt?: SessionArchiveReceipt;
+    sourceIdentityRevision: number;
+    sourceActivityRevision: number;
+  }): void {
+    this.withLock(() => {
+      if (this.sessionSchemaSelection().writer !== 'session/2.0') {
+        throw new Error('session/2.0 migration requires the explicit project Session schema feature');
+      }
+      const current = this.readSessionRecordUnlocked(input.identity.session_id);
+      if (current.schema_version === 'session/2.0') return;
+      if (!current.schema_version.startsWith('session/1.')) {
+        throw new Error(`Cannot migrate unsupported Session version: ${current.schema_version}`);
+      }
+      const identity = sessionStateV20Schema.parse(input.identity);
+      const compatibility = sessionStateV13Schema.parse(input.compatibility);
+      const lockedCompatibility = this.readBundleUnlocked(identity.session_id).session;
+      if (lockedCompatibility.identity_revision !== input.sourceIdentityRevision
+        || lockedCompatibility.activity_revision !== input.sourceActivityRevision) {
+        throw new Error(
+          `session/2.0 migration source revision conflict: expected `
+          + `${input.sourceIdentityRevision}/${input.sourceActivityRevision}, current `
+          + `${lockedCompatibility.identity_revision}/${lockedCompatibility.activity_revision}`,
+        );
+      }
+      if (identity.session_id !== compatibility.session_id) {
+        throw new Error('session/2.0 migration Session identity mismatch');
+      }
+
+      const persistedExecutions = this.listExecutionsUnlocked(identity.session_id);
+      let executions = persistedExecutions;
+      let legacyExecution: ExecutionState | null = null;
+      if (executions.length === 0) {
+        if (!input.legacyExecution) {
+          throw new Error('session/2.0 migration requires a legacy generation-1 Execution fallback');
+        }
+        legacyExecution = executionStateSchema.parse(input.legacyExecution);
+        if (legacyExecution.session_id !== identity.session_id || legacyExecution.generation !== 1) {
+          throw new Error('session/2.0 migration legacy Execution identity or generation mismatch');
+        }
+        executions = [legacyExecution];
+      } else if (input.legacyExecution) {
+        throw new Error('session/2.0 migration must not synthesize over existing Execution projections');
+      }
+
+      const executionIds = new Set<string>();
+      const generations = new Set<number>();
+      for (const execution of executions) {
+        if (execution.session_id !== identity.session_id) {
+          throw new Error(`Execution ${execution.execution_id} belongs to Session ${execution.session_id}`);
+        }
+        if (executionIds.has(execution.execution_id)) {
+          throw new Error(`Duplicate Execution identity during migration: ${execution.execution_id}`);
+        }
+        if (generations.has(execution.generation)) {
+          throw new Error(`Duplicate Execution generation during migration: ${execution.generation}`);
+        }
+        executionIds.add(execution.execution_id);
+        generations.add(execution.generation);
+      }
+      const openExecutions = executions.filter(execution => execution.status !== 'sealed');
+      if (openExecutions.length > 1) {
+        throw new Error(
+          `Session ${identity.session_id} has multiple nonsealed Executions: `
+          + openExecutions.map(execution => execution.execution_id).sort().join(', '),
+        );
+      }
+      if (identity.archived_at !== null && openExecutions.length > 0) {
+        throw new Error(`Archived Session ${identity.session_id} cannot retain a nonsealed Execution`);
+      }
+      const latestExecution = executions.reduce((latest, execution) => (
+        execution.generation > latest.generation ? execution : latest
+      ));
+      const currentExecutionId = openExecutions[0]?.execution_id ?? null;
+      if (persistedExecutions.length > 0 && openExecutions[0]) {
+        assertExecutionSessionInvariants(compatibility, openExecutions[0]);
+      }
+      if (identity.current_execution_id !== currentExecutionId
+        || identity.latest_execution_id !== latestExecution.execution_id) {
+        throw new Error('session/2.0 migration Execution pointers do not match reconciled generations');
+      }
+
+      const runRoot = join(this.sessionDir(identity.session_id), 'runs');
+      const runRecords: Array<{ path: string; run: CommandRunInput }> = [];
+      if (existsSync(runRoot)) {
+        for (const runId of readdirSync(runRoot).sort()) {
+          const path = join(runRoot, runId, 'run.json');
+          if (!existsSync(path)) continue;
+          const run = this.readValidated(path, commandRunReadSchema);
+          if (!('run_id' in run) || run.run_id !== runId) {
+            throw new Error(`Run identity does not match its canonical path during migration: ${runId}`);
+          }
+          if (run.schema_version === 'command-run/1.4') {
+            const owner = executions.find(execution => execution.execution_id === run.execution_id);
+            if (!owner || owner.generation !== run.generation) {
+              throw new Error(
+                `Run ${runId} references unknown Execution generation ${run.execution_id}/${run.generation}`,
+              );
+            }
+          }
+          runRecords.push({ path, run });
+        }
+      }
+      if (['sealed', 'archived'].includes(compatibility.status)) {
+        const unsealedRunIds = runRecords
+          .filter(({ run }) => !('status' in run) || run.status !== 'sealed')
+          .map(({ run }) => 'run_id' in run ? String(run.run_id) : '<unknown>');
+        if (unsealedRunIds.length > 0) {
+          throw new Error(
+            `Cannot migrate sealed Session ${identity.session_id}; unsealed Runs: ${unsealedRunIds.join(', ')}`,
+          );
+        }
+      }
+
+      const writes: JsonWrite[] = [];
+      if (legacyExecution) {
+        writes.push({
+          path: this.executionPath(identity.session_id, legacyExecution.execution_id),
+          value: legacyExecution,
+          schema: executionStateSchema,
+          mode: 0o600,
+        });
+      }
+      for (const execution of executions.filter(item => item.status === 'sealed')) {
+        const existingReceipt = this.readExecutionSealReceiptUnlocked(identity.session_id, execution.execution_id);
+        const executionRuns = runRecords.filter(({ run }) => run.schema_version === 'command-run/1.4'
+          && run.execution_id === execution.execution_id
+          && run.generation === execution.generation);
+        if (existingReceipt) {
+          if (existingReceipt.generation !== execution.generation
+            || existingReceipt.execution_revision !== execution.revision
+            || existingReceipt.sealed_at !== execution.sealed_at
+            || existingReceipt.chain_hash !== sha256Prefixed(stableJsonUtf8(execution.chain))
+            || stableJsonUtf8(existingReceipt.chain_snapshot) !== stableJsonUtf8(execution.chain)) {
+            throw new Error(`Existing seal receipt does not match Execution ${execution.execution_id}`);
+          }
+          const expectedRunIds = executionRuns.map(({ run }) => String(run.run_id)).sort();
+          const receiptRunIds = existingReceipt.runs.map(run => run.run_id).sort();
+          if (stableJsonUtf8(expectedRunIds) !== stableJsonUtf8(receiptRunIds)) {
+            throw new Error(`Existing seal receipt Run ownership changed: ${execution.execution_id}`);
+          }
+          for (const snapshot of existingReceipt.runs) {
+            const record = executionRuns.find(({ run }) => run.run_id === snapshot.run_id);
+            if (!record || !('status' in record.run) || record.run.status !== 'sealed'
+              || record.run.schema_version !== snapshot.schema_version
+              || sha256Prefixed(readFileSync(record.path)) !== snapshot.content_hash) {
+              throw new Error(`Existing seal receipt Run snapshot changed: ${snapshot.run_id}`);
+            }
+          }
+          continue;
+        }
+        const boundRuns = legacyExecution ? runRecords : executionRuns;
+        const unsealedRuns = boundRuns
+          .filter(({ run }) => !('status' in run) || run.status !== 'sealed')
+          .map(({ run }) => 'run_id' in run ? String(run.run_id) : '<unknown>');
+        if (unsealedRuns.length > 0) {
+          throw new Error(
+            `Cannot migrate sealed Execution ${execution.execution_id}; unsealed Runs: ${unsealedRuns.join(', ')}`,
+          );
+        }
+        const receipt = this.createHistoricalExecutionSealReceiptUnlocked(identity, execution, boundRuns);
+        writes.push({
+          path: this.executionSealReceiptPath(identity.session_id, execution.execution_id),
+          value: receipt,
+          schema: executionSealReceiptSchema,
+          mode: 0o600,
+        });
+      }
+
+      writes.push(
+        {
+          path: join(this.sessionDir(identity.session_id), 'session.json'),
+          value: identity,
+          schema: sessionStateV20Schema,
+        },
+        {
+          path: this.sessionCompatibilityPath(identity.session_id),
+          value: compatibility,
+          schema: sessionStateV13Schema,
+          mode: 0o600,
+        },
+      );
+      if (input.archiveReceipt) {
+        const receipt = sessionArchiveReceiptSchema.parse(input.archiveReceipt);
+        if (receipt.session_id !== identity.session_id
+          || receipt.after.activity_revision !== identity.activity_revision
+          || receipt.after.archived_at !== identity.archived_at
+          || receipt.after.archived_by !== identity.archived_by
+          || receipt.previous_receipt_hash !== null
+          || sessionArchiveReceiptHash(receipt) !== receipt.receipt_hash) {
+          throw new Error('historical Session archive receipt does not match migrated identity');
+        }
+        writes.push({
+          path: this.sessionArchiveReceiptPath(identity.session_id, receipt.after.activity_revision),
+          value: receipt,
+          schema: sessionArchiveReceiptSchema,
+        });
+      }
+      this.writeBatchUnlocked(writes);
+    });
+  }
+
+  private createHistoricalExecutionSealReceiptUnlocked(
+    identity: SessionIdentityV20,
+    execution: ExecutionState,
+    runs: Array<{ path: string; run: CommandRunInput }>,
+  ): ExecutionSealReceipt {
+    if (!execution.sealed_at) {
+      throw new Error(`Cannot migrate sealed Execution ${execution.execution_id}; sealed_at is missing`);
+    }
+    const dir = this.sessionDir(identity.session_id);
+    const gatesPath = join(dir, 'gates.json');
+    const artifactsPath = join(dir, 'artifacts.json');
+    const evidencePath = join(dir, 'evidence.json');
+    const gates = this.readValidated(gatesPath, gateRegistrySchema);
+    const artifacts = this.readValidated(artifactsPath, artifactRegistrySchema);
+    const evidence = this.readValidated(evidencePath, evidenceStoreSchema);
+    const blockingGateIds = Object.entries(gates.gates)
+      .filter(([, gate]) => gate.blocking && ['pending', 'running', 'failed', 'blocked'].includes(gate.status))
+      .map(([gateId]) => gateId)
+      .sort();
+    const artifactHashes = Object.fromEntries(
+      Object.entries(artifacts.artifacts)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([artifactId, artifact]) => [artifactId, `sha256:${artifact.content_hash}`]),
+    );
+    const corpusRefs = new Map<string, ExecutionSealReceipt['corpus_refs'][number]>();
+    for (const { run } of runs) {
+      if (run.schema_version !== 'command-run/1.3' && run.schema_version !== 'command-run/1.4') continue;
+      const receiptRun = run.schema_version === 'command-run/1.4'
+        ? commandRunV14Schema.parse(run)
+        : commandRunV13Schema.parse(run);
+      const snapshot = receiptRun.guidance_snapshot;
+      if (!snapshot) continue;
+      const source = snapshot.source_path || 'inline';
+      const prefix = `${receiptRun.run_id}:${source}`;
+      const candidates = [
+        ['command-guidance', prefix, snapshot.content_hash],
+        ['resolved-prompt', prefix, snapshot.resolved_prompt_hash],
+        ['prepare-guidance', `${prefix}#prepare`, snapshot.prepare_hash],
+        ['workflow-guidance', `${prefix}#workflow`, snapshot.workflow_hash],
+        ['run-mode-guidance', `${prefix}#run-mode`, snapshot.run_mode_hash],
+      ] as const;
+      for (const [kind, id, contentHash] of candidates) {
+        if (!contentHash) continue;
+        corpusRefs.set(`${kind}\0${id}\0${contentHash}`, { kind, id, content_hash: contentHash });
+      }
+    }
+    const chainSnapshot = clone(execution.chain);
+    return createExecutionSealReceipt({
+      session_id: identity.session_id,
+      execution_id: execution.execution_id,
+      generation: execution.generation,
+      sealed_at: execution.sealed_at,
+      execution_revision: execution.revision,
+      session_identity_revision: identity.identity_revision,
+      session_activity_revision: identity.activity_revision,
+      runs: runs.map(({ path, run }) => {
+        if (!('run_id' in run) || ![
+          'command-run/1.0',
+          'command-run/1.1',
+          'command-run/1.2',
+          'command-run/1.3',
+          'command-run/1.4',
+        ].includes(run.schema_version)) {
+          throw new Error(`Cannot seal unsupported Run snapshot during migration: ${run.schema_version}`);
+        }
+        return {
+          run_id: String(run.run_id),
+          schema_version: run.schema_version as 'command-run/1.0' | 'command-run/1.1' | 'command-run/1.2' | 'command-run/1.3' | 'command-run/1.4',
+          content_hash: sha256Prefixed(readFileSync(path)),
+        };
+      }),
+      chain_snapshot: chainSnapshot,
+      chain_hash: sha256Prefixed(stableJsonUtf8(chainSnapshot)),
+      gates: {
+        clean: blockingGateIds.length === 0,
+        blocking_gate_ids: blockingGateIds,
+        registry_revision: gates.revision,
+        registry_hash: sha256Prefixed(readFileSync(gatesPath)),
+      },
+      artifacts: {
+        registry_revision: artifacts.revision,
+        registry_hash: sha256Prefixed(readFileSync(artifactsPath)),
+        content_hashes: artifactHashes,
+      },
+      evidence: {
+        store_revision: evidence.revision,
+        store_hash: sha256Prefixed(readFileSync(evidencePath)),
+        record_refs: Object.keys(evidence.records).sort(),
+      },
+      corpus_refs: [...corpusRefs.values()].sort((left, right) => (
+        left.kind.localeCompare(right.kind)
+        || left.id.localeCompare(right.id)
+        || left.content_hash.localeCompare(right.content_hash)
+      )),
+    });
+  }
+
+  assertLegacySessionMutationAllowed(sessionId: string): void {
+    const current = this.readSessionRecordUnlocked(sessionId);
+    if (current.schema_version === 'session/2.0') {
+      throw new Error(
+        `Session ${sessionId} uses session/2.0; use the statusless Session/Execution store primitives`,
+      );
+    }
   }
 
   clearCache(): void {
@@ -1375,8 +2677,10 @@ export class SessionStore {
       : new SessionStore(sourceProjectRoot);
     const validate = () => sourceStore.validateSourceFenceAtRootUnlocked(source);
     const validated = sourceStore === this ? validate() : sourceStore.withLock(validate);
-    return validatedRecallSourceSchema.parse({
-      schema_version: 'validated-recall-source/1.0',
+    return validatedRecallSourceReadSchema.parse({
+      schema_version: 'schema_version' in validated.fence
+        ? 'validated-recall-source/1.1'
+        : 'validated-recall-source/1.0',
       scope,
       workspace_link_name: source.workspace_link_name,
       source_project_root: resolve(sourceProjectRoot),
@@ -1392,12 +2696,13 @@ export class SessionStore {
   }
 
   private validateSourceFenceAtRootUnlocked(
-    source: NonNullable<RecallConfirmationRecord['source_fence']>,
+    source: SourceFenceRead,
   ): {
-    fence: NonNullable<RecallConfirmationRecord['source_fence']>;
-    session_status: 'sealed' | 'archived';
+    fence: SourceFenceRead;
+    session_status: 'sealed' | 'archived' | null;
     session_intent_identity: IntentIdentity | null;
   } {
+    if ('schema_version' in source) return this.validateReceiptSourceFenceAtRootUnlocked(source);
     const sessionPath = join(this.sessionDir(source.session_id), 'session.json');
     const runPath = join(this.runDir(source.session_id, source.run_id), 'run.json');
     if (!existsSync(sessionPath) || !existsSync(runPath)) {
@@ -1445,6 +2750,104 @@ export class SessionStore {
     return {
       fence: source,
       session_status: bundle.session.status as 'sealed' | 'archived',
+      session_intent_identity: bundle.session.intent_identity,
+    };
+  }
+
+  private validateReceiptSourceFenceAtRootUnlocked(source: SourceFenceV11): {
+    fence: SourceFenceV11;
+    session_status: null;
+    session_intent_identity: IntentIdentity | null;
+  } {
+    const sessionPath = join(this.sessionDir(source.session_id), 'session.json');
+    const runPath = join(this.runDir(source.session_id, source.run_id), 'run.json');
+    if (!existsSync(sessionPath) || !existsSync(runPath)) {
+      throw new RecallConfirmationError('FENCE_CONFLICT', 'receipt-backed source authority is missing');
+    }
+    const session = this.readSessionRecordUnlocked(source.session_id);
+    if (session.schema_version !== source.session_schema_version) {
+      throw new RecallConfirmationError('FENCE_CONFLICT', 'source Session schema identity changed');
+    }
+    const locator = source.execution_seal_receipt;
+    const expectedReceiptPath = `executions/${locator.execution_id}/seal-receipt.json`;
+    if (locator.relative_path.replaceAll('\\', '/') !== expectedReceiptPath) {
+      throw new RecallConfirmationError('FENCE_CONFLICT', 'Execution seal receipt path changed');
+    }
+    let receipt: ExecutionSealReceipt | null;
+    let execution: ExecutionState;
+    try {
+      receipt = this.readExecutionSealReceiptUnlocked(source.session_id, locator.execution_id);
+      execution = this.readExecutionUnlocked(source.session_id, locator.execution_id);
+    } catch (error) {
+      throw new RecallConfirmationError(
+        'FENCE_CONFLICT',
+        `Execution seal receipt is corrupt: ${(error as Error).message}`,
+      );
+    }
+    if (!receipt) throw new RecallConfirmationError('FENCE_CONFLICT', 'Execution seal receipt is missing');
+    if (receipt.overall_hash !== locator.overall_hash
+      || receipt.session_id !== source.session_id
+      || receipt.execution_id !== locator.execution_id
+      || receipt.generation !== locator.generation
+      || receipt.sealed_at !== locator.sealed_at
+      || execution.status !== 'sealed'
+      || execution.session_id !== source.session_id
+      || execution.execution_id !== locator.execution_id
+      || execution.generation !== locator.generation
+      || execution.revision !== receipt.execution_revision
+      || execution.sealed_at !== locator.sealed_at) {
+      throw new RecallConfirmationError('FENCE_CONFLICT', 'sealed Execution source anchor changed');
+    }
+    const runRaw = readFileSync(runPath);
+    const runHash = sha256Prefixed(runRaw);
+    const run = this.readValidated(runPath, commandRunReadSchema);
+    const runSnapshot = receipt.runs.find(item => item.run_id === source.run_id);
+    if (!runSnapshot
+      || run.status !== 'sealed'
+      || run.schema_version !== source.run_schema_version
+      || runSnapshot.schema_version !== source.run_schema_version
+      || runSnapshot.content_hash !== source.run_hash
+      || runHash !== source.run_hash) {
+      throw new RecallConfirmationError('FENCE_CONFLICT', 'sealed Run content or receipt binding changed');
+    }
+    if (run.schema_version === 'command-run/1.4'
+      && (run.execution_id !== locator.execution_id || run.generation !== locator.generation)) {
+      throw new RecallConfirmationError('FENCE_CONFLICT', 'Run belongs to a different Execution generation');
+    }
+    const bundle = this.readBundleUnlocked(source.session_id);
+    for (const expected of source.selected_artifacts) {
+      const matches = Object.entries(bundle.artifacts.artifacts).filter(([, artifact]) => (
+        artifact.producer_run_id === source.run_id
+        && artifact.kind === expected.kind
+        && artifact.relative_path === expected.relative_path
+        && artifact.status === 'sealed'
+        && `sha256:${artifact.content_hash}` === expected.content_hash
+      ));
+      if (matches.length !== 1) {
+        throw new RecallConfirmationError('FENCE_CONFLICT', 'sealed source artifact registry binding changed');
+      }
+      const [artifactId] = matches[0];
+      if (receipt.artifacts.content_hashes[artifactId] !== expected.content_hash) {
+        throw new RecallConfirmationError('FENCE_CONFLICT', 'source artifact is not sealed by the Execution receipt');
+      }
+      const artifactPath = this.assertWorkflowPath(join(this.sessionDir(source.session_id), expected.relative_path));
+      if (!existsSync(artifactPath)) {
+        throw new RecallConfirmationError('FENCE_CONFLICT', 'sealed source artifact is missing');
+      }
+      const stat = lstatSync(artifactPath);
+      if (stat.isSymbolicLink()) {
+        throw new RecallConfirmationError('FENCE_CONFLICT', 'sealed source artifact cannot be a symbolic link');
+      }
+      const observedHash = stat.isDirectory()
+        ? `sha256:${hashDirectory(artifactPath).hash}`
+        : sha256Prefixed(readFileSync(artifactPath));
+      if (observedHash !== expected.content_hash) {
+        throw new RecallConfirmationError('FENCE_CONFLICT', 'sealed source artifact content hash changed');
+      }
+    }
+    return {
+      fence: source,
+      session_status: null,
       session_intent_identity: bundle.session.intent_identity,
     };
   }
@@ -1589,8 +2992,33 @@ export class SessionStore {
     return data;
   }
 
-  private writeBundleUnlocked(sessionId: string, bundle: SessionBundle): void {
+  private writeFreshBundleUnlocked(
+    sessionId: string,
+    bundle: SessionBundle,
+    selection: SessionSchemaSelection,
+  ): void {
     const dir = this.sessionDir(sessionId);
+    if (selection.writer === 'session/2.0') {
+      const identity = createSessionIdentityV20(sessionId, bundle.session.intent, {
+        topicIdentity: bundle.session.topic_identity,
+        identityRevision: bundle.session.identity_revision,
+        activityRevision: bundle.session.activity_revision,
+        latestCompletedRunId: bundle.session.latest_completed_run_id,
+      });
+      this.writeBatchUnlocked([
+        { path: join(dir, 'session.json'), value: identity, schema: sessionStateV20Schema },
+        {
+          path: this.sessionCompatibilityPath(sessionId),
+          value: bundle.session,
+          schema: sessionStateV13Schema,
+          mode: 0o600,
+        },
+        { path: join(dir, 'gates.json'), value: bundle.gates, schema: gateRegistrySchema },
+        { path: join(dir, 'artifacts.json'), value: bundle.artifacts, schema: artifactRegistrySchema },
+        { path: join(dir, 'evidence.json'), value: bundle.evidence, schema: evidenceStoreSchema },
+      ]);
+      return;
+    }
     this.writeBatchUnlocked([
       { path: join(dir, 'session.json'), value: bundle.session, schema: sessionStateV13Schema },
       { path: join(dir, 'gates.json'), value: bundle.gates, schema: gateRegistrySchema },
@@ -1599,10 +3027,128 @@ export class SessionStore {
     ]);
   }
 
+  private prepareExecutionCompatibilityDraft(current: SessionStateRead, draft: SessionBundle): void {
+    if (current.schema_version !== 'session/2.0') return;
+    const identity = sessionStateV20Schema.parse(current);
+    draft.session.session_id = identity.session_id;
+    draft.session.intent = identity.intent;
+    draft.session.topic_identity = clone(identity.topic_identity);
+    draft.session.identity_revision = identity.identity_revision;
+    draft.session.activity_revision = identity.activity_revision;
+    draft.session.latest_completed_run_id = identity.latest_completed_run_id;
+  }
+
+  private assertExpectedActivityRevision(
+    current: SessionStateRead,
+    expectedActivityRevision: number | undefined,
+  ): void {
+    if (current.schema_version !== 'session/2.0' || expectedActivityRevision === undefined) return;
+    const identity = sessionStateV20Schema.parse(current);
+    if (identity.activity_revision !== expectedActivityRevision) {
+      throw new Error(
+        `session activity revision conflict: expected ${expectedActivityRevision}, current ${identity.activity_revision}`,
+      );
+    }
+  }
+
+  private addExecutionAtomicBundleWrites(
+    current: SessionStateRead,
+    draft: SessionBundle,
+    execution: ExecutionState,
+    tx: StoreTransaction,
+  ): { identity_revision: number; activity_revision: number } {
+    if (current.schema_version !== 'session/2.0') {
+      tx.addBundle(draft);
+      return draft.session;
+    }
+    const identity = sessionStateV20Schema.parse(current);
+    if (draft.session.activity_revision < identity.activity_revision) {
+      throw new Error('session activity revision must not move backwards');
+    }
+    const next = sessionStateV20Schema.parse({
+      ...identity,
+      activity_revision: draft.session.activity_revision,
+      current_execution_id: execution.status === 'sealed' ? null : execution.execution_id,
+      latest_execution_id: execution.execution_id,
+      latest_completed_run_id: draft.session.latest_completed_run_id,
+    });
+    tx.addStatuslessBundle(draft, next);
+    return next;
+  }
+
+  private assertPendingExecutionSealReceiptUnlocked(
+    tx: StoreTransaction,
+    execution: ExecutionState,
+    session: { identity_revision: number; activity_revision: number },
+    bundle: SessionBundle,
+  ): void {
+    const receipt = tx.pendingExecutionSealReceipt(execution.execution_id);
+    if (!receipt) return;
+    if (receipt.session_id !== execution.session_id
+      || receipt.execution_id !== execution.execution_id
+      || receipt.generation !== execution.generation
+      || execution.status !== 'sealed'
+      || receipt.execution_revision !== execution.revision
+      || receipt.sealed_at !== execution.sealed_at) {
+      throw new Error('Execution seal receipt does not match atomic sealed Execution authority');
+    }
+    if (receipt.session_identity_revision !== session.identity_revision
+      || receipt.session_activity_revision !== session.activity_revision) {
+      throw new Error('Execution seal receipt does not match atomic Session revisions');
+    }
+    if (sha256Prefixed(stableJsonUtf8(receipt.chain_snapshot)) !== receipt.chain_hash
+      || stableJsonUtf8(receipt.chain_snapshot) !== stableJsonUtf8(execution.chain)) {
+      throw new Error('Execution seal receipt chain snapshot changed');
+    }
+    for (const runSnapshot of receipt.runs) {
+      const path = join(this.runDir(receipt.session_id, runSnapshot.run_id), 'run.json');
+      const run = this.readValidated(path, commandRunReadSchema);
+      if (run.schema_version !== runSnapshot.schema_version || run.status !== 'sealed'
+        || sha256Prefixed(readFileSync(path)) !== runSnapshot.content_hash) {
+        throw new Error(`Execution seal receipt Run snapshot changed: ${runSnapshot.run_id}`);
+      }
+    }
+    const blockingGateIds = Object.entries(bundle.gates.gates)
+      .filter(([, gate]) => gate.blocking && ['pending', 'running', 'failed', 'blocked'].includes(gate.status))
+      .map(([gateId]) => gateId)
+      .sort();
+    const registryBytes = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`;
+    if (receipt.gates.registry_revision !== bundle.gates.revision
+      || receipt.gates.registry_hash !== sha256Prefixed(registryBytes(bundle.gates))
+      || receipt.gates.clean !== (blockingGateIds.length === 0)
+      || stableJsonUtf8(receipt.gates.blocking_gate_ids) !== stableJsonUtf8(blockingGateIds)) {
+      throw new Error('Execution seal receipt gate snapshot changed');
+    }
+    const artifactHashes = Object.fromEntries(
+      Object.entries(bundle.artifacts.artifacts)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([artifactId, artifact]) => [artifactId, `sha256:${artifact.content_hash}`]),
+    );
+    if (receipt.artifacts.registry_revision !== bundle.artifacts.revision
+      || receipt.artifacts.registry_hash !== sha256Prefixed(registryBytes(bundle.artifacts))
+      || stableJsonUtf8(receipt.artifacts.content_hashes) !== stableJsonUtf8(artifactHashes)) {
+      throw new Error('Execution seal receipt Artifact snapshot changed');
+    }
+    const evidenceRefs = Object.keys(bundle.evidence.records).sort();
+    if (receipt.evidence.store_revision !== bundle.evidence.revision
+      || receipt.evidence.store_hash !== sha256Prefixed(registryBytes(bundle.evidence))
+      || stableJsonUtf8(receipt.evidence.record_refs) !== stableJsonUtf8(evidenceRefs)) {
+      throw new Error('Execution seal receipt Evidence snapshot changed');
+    }
+  }
+
   private writeBatchUnlocked(writes: JsonWrite[]): void {
     const unique = new Map(writes.map(write => [write.path, write]));
     const entries = [...unique.values()];
-    for (const entry of entries) entry.schema?.parse(entry.value);
+    for (const entry of entries) {
+      if (entry.raw !== undefined && entry.value !== undefined) {
+        throw new Error(`Transaction write cannot contain both JSON and raw content: ${entry.path}`);
+      }
+      if (entry.raw === undefined && entry.value === undefined) {
+        throw new Error(`Transaction write has no content: ${entry.path}`);
+      }
+      entry.schema?.parse(entry.value);
+    }
 
     const originals = new Map<string, Buffer | null>();
     const staged: Array<{ tmp: string; path: string; content: string }> = [];
@@ -1612,7 +3158,11 @@ export class SessionStore {
         mkdirSync(dirname(entry.path), { recursive: true });
         originals.set(entry.path, existsSync(entry.path) ? readFileSync(entry.path) : null);
         const tmp = `${entry.path}.tmp-${process.pid}-${Date.now()}-${staged.length}`;
-        staged.push({ tmp, path: entry.path, content: `${JSON.stringify(entry.value, null, 2)}\n` });
+        staged.push({
+          tmp,
+          path: entry.path,
+          content: entry.raw ?? `${JSON.stringify(entry.value, null, 2)}\n`,
+        });
       }
       const transactionId = `tx_${randomUUID()}`;
       const intent = transactionIntentSchema.parse({
@@ -1635,7 +3185,9 @@ export class SessionStore {
       intentWritten = true;
       for (const item of staged) {
         if (existsSync(item.path)) this.backup(item.path);
+        const entry = entries.find(candidate => candidate.path === item.path);
         writeFileSync(item.tmp, item.content, 'utf8');
+        if (entry?.mode !== undefined) chmodSync(item.tmp, entry.mode);
       }
       for (const item of staged) safeRename(item.tmp, item.path);
       rmSync(this.transactionIntentPath(), { force: true });
@@ -1677,29 +3229,179 @@ export class SessionStore {
   }
 }
 
-export class StoreTransaction {
+export class ExecutionStoreTransaction {
   readonly writes: JsonWrite[] = [];
 
-  constructor(private readonly store: SessionStore, private readonly sessionId: string) {}
+  constructor(
+    private readonly store: SessionStore,
+    private readonly sessionId: string,
+    private readonly executionId: string,
+  ) {}
 
-  readRun(runId: string): CommandRun {
-    return this.store.readRun(this.sessionId, runId);
+  writeExecution(execution: ExecutionState): void {
+    this.writes.push({
+      path: this.store.executionPath(this.sessionId, this.executionId),
+      value: execution,
+      schema: executionStateSchema,
+      mode: 0o600,
+    });
   }
 
-  writeRun(run: CommandRun): void {
-    commandRunV13Schema.parse(run);
+  writeTransition(record: PersistedTransitionRecordV11, schema: z.ZodType<PersistedTransitionRecordV11>): void {
     this.writes.push({
-      path: join(this.store.runDir(this.sessionId, run.run_id), 'run.json'),
-      value: run,
-      schema: commandRunV13Schema,
+      path: this.store.executionTransitionPath(this.sessionId, this.executionId, record.request_id),
+      value: record,
+      schema,
+    });
+  }
+
+  writeSealReceipt(receipt: ExecutionSealReceipt): void {
+    if (executionSealReceiptHash(receipt) !== receipt.overall_hash) {
+      throw new Error('Execution seal receipt overall hash mismatch');
+    }
+    const existing = this.store.readExecutionSealReceipt(this.sessionId, this.executionId);
+    if (existing) {
+      if (stableJsonUtf8(existing) !== stableJsonUtf8(receipt)) {
+        throw new Error(`Execution seal receipt is immutable: ${this.executionId}`);
+      }
+      return;
+    }
+    this.writes.push({
+      path: this.store.executionSealReceiptPath(this.sessionId, this.executionId),
+      value: receipt,
+      schema: executionSealReceiptSchema,
+      mode: 0o600,
     });
   }
 
   writeJson(path: string, value: unknown, schema?: z.ZodType): void {
     this.writes.push({ path, value, schema });
   }
+}
+
+export class StoreTransaction {
+  readonly writes: JsonWrite[] = [];
+
+  constructor(private readonly store: SessionStore, private readonly sessionId: string) {}
+
+  readExecution(executionId: string): ExecutionState {
+    return this.store.readExecutionReadOnly(this.sessionId, executionId);
+  }
+
+  readRun(runId: string): CommandRun {
+    return this.store.readRun(this.sessionId, runId);
+  }
+
+  readExecutionRun(runId: string): CommandRunV14 {
+    return this.store.readExecutionRun(this.sessionId, runId);
+  }
+
+  readJson<T>(path: string, schema: z.ZodType<T>, fallback?: T): T {
+    return this.store.readJsonFileReadOnly(path, schema, fallback);
+  }
+
+  listExecutionTransitions(executionId: string): PersistedTransitionRecordV11[] {
+    return this.store.listExecutionTransitions(this.sessionId, executionId);
+  }
+
+  readExecutionTransition(executionId: string, requestId: string): PersistedTransitionRecordV11 | null {
+    return this.store.readExecutionTransitionReadOnly(this.sessionId, executionId, requestId);
+  }
+
+  listBoundExecutionRuns(executionId: string, generation: number): CommandRunV14[] {
+    return this.store.listBoundExecutionRuns(this.sessionId, executionId, generation);
+  }
+
+  gates(): GateRegistry {
+    return this.store.readBundle(this.sessionId).gates;
+  }
+
+  writeRun(run: CommandRun | CommandRunV14): void {
+    const schema = run.schema_version === 'command-run/1.4' ? commandRunV14Schema : commandRunV13Schema;
+    schema.parse(run);
+    this.writes.push({
+      path: join(this.store.runDir(this.sessionId, run.run_id), 'run.json'),
+      value: run,
+      schema,
+    });
+  }
+
+  writeExecution(execution: ExecutionState): void {
+    this.writes.push({
+      path: this.store.executionPath(this.sessionId, execution.execution_id),
+      value: execution,
+      schema: executionStateSchema,
+      mode: 0o600,
+    });
+  }
+
+  writeExecutionTransition(executionId: string, record: PersistedTransitionRecordV11): void {
+    this.writes.push({
+      path: this.store.executionTransitionPath(this.sessionId, executionId, record.request_id),
+      value: record,
+      schema: persistedTransitionRecordV11Schema,
+    });
+  }
+
+  writeExecutionSealReceipt(executionId: string, receipt: ExecutionSealReceipt): void {
+    if (receipt.session_id !== this.sessionId || receipt.execution_id !== executionId) {
+      throw new Error('Execution seal receipt transaction identity mismatch');
+    }
+    if (executionSealReceiptHash(receipt) !== receipt.overall_hash) {
+      throw new Error('Execution seal receipt overall hash mismatch');
+    }
+    const existing = this.store.readExecutionSealReceipt(this.sessionId, executionId);
+    if (existing) {
+      if (stableJsonUtf8(existing) !== stableJsonUtf8(receipt)) {
+        throw new Error(`Execution seal receipt is immutable: ${executionId}`);
+      }
+      return;
+    }
+    this.writes.push({
+      path: this.store.executionSealReceiptPath(this.sessionId, executionId),
+      value: receipt,
+      schema: executionSealReceiptSchema,
+      mode: 0o600,
+    });
+  }
+
+  writeJson(path: string, value: unknown, schema?: z.ZodType, mode?: number): void {
+    this.writes.push({ path, value, schema, mode });
+  }
+
+  writeText(path: string, content: string, mode?: number): void {
+    this.writes.push({ path, raw: content, mode });
+  }
+
+  pendingText(path: string): string | null {
+    const pending = [...this.writes].reverse().find(write => write.path === path && write.raw !== undefined);
+    return pending?.raw ?? null;
+  }
+
+  pendingExecutionSealReceipt(executionId: string): ExecutionSealReceipt | null {
+    const path = this.store.executionSealReceiptPath(this.sessionId, executionId);
+    const pending = this.writes.find(write => write.path === path);
+    return pending ? executionSealReceiptSchema.parse(pending.value) : null;
+  }
+
+  addStatuslessBundle(bundle: SessionBundle, identity: SessionIdentityV20): void {
+    const dir = this.store.sessionDir(this.sessionId);
+    this.writes.push(
+      { path: join(dir, 'session.json'), value: identity, schema: sessionStateV20Schema },
+      {
+        path: this.store.sessionCompatibilityPath(this.sessionId),
+        value: bundle.session,
+        schema: sessionStateV13Schema,
+        mode: 0o600,
+      },
+      { path: join(dir, 'gates.json'), value: bundle.gates, schema: gateRegistrySchema },
+      { path: join(dir, 'artifacts.json'), value: bundle.artifacts, schema: artifactRegistrySchema },
+      { path: join(dir, 'evidence.json'), value: bundle.evidence, schema: evidenceStoreSchema },
+    );
+  }
 
   addBundle(bundle: SessionBundle): void {
+    this.store.assertLegacySessionMutationAllowed(this.sessionId);
     const dir = this.store.sessionDir(this.sessionId);
     this.writes.push(
       { path: join(dir, 'session.json'), value: bundle.session, schema: sessionStateV13Schema },

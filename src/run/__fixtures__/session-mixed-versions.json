@@ -1,0 +1,51 @@
+[
+  {
+    "schema_version": "session/1.0",
+    "session_id": "fixture-v1-running",
+    "intent": "legacy running fixture",
+    "status": "running",
+    "identity_revision": 2,
+    "activity_revision": 3,
+    "active_run_id": "run-legacy",
+    "latest_completed_run_id": null,
+    "boundary_contract": {
+      "in_scope": [],
+      "out_of_scope": [],
+      "constraints": [],
+      "definition_of_done": ""
+    },
+    "orchestration": {
+      "engine": "manual",
+      "quality_mode": "standard",
+      "auto_mode": false,
+      "chain": [],
+      "decision_points": []
+    },
+    "requests": [],
+    "lifecycle": {
+      "sealed_at": null,
+      "seal_summary": null,
+      "promoted_spec_ids": [],
+      "promoted_knowhow_ids": [],
+      "forked_from": null
+    },
+    "refs": {
+      "gates": "gates.json",
+      "artifacts": "artifacts.json",
+      "evidence": "evidence.json"
+    }
+  },
+  {
+    "schema_version": "session/2.0",
+    "session_id": "fixture-v2-statusless",
+    "intent": "statusless fixture",
+    "topic_identity": null,
+    "identity_revision": 4,
+    "activity_revision": 7,
+    "current_execution_id": "execution-7",
+    "latest_execution_id": "execution-7",
+    "latest_completed_run_id": "run-6",
+    "archived_at": null,
+    "archived_by": null
+  }
+]

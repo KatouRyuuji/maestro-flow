@@ -116,7 +116,18 @@ export interface MilestoneHistoryEntry {
 export interface ProjectSessionEntry {
   session_id: string;
   intent: string;
-  status: 'planned' | 'running' | 'paused' | 'sealed' | 'archived' | 'failed';
+  /** Discriminator for authoritative fields in this projection entry. */
+  session_schema_version?: 'session/1.0' | 'session/1.1' | 'session/1.2' | 'session/1.3' | 'session/2.0';
+  /** session/1.x lifecycle authority. Absent for statusless session/2.0. */
+  status?: 'planned' | 'running' | 'paused' | 'sealed' | 'archived' | 'failed';
+  /** session/1.x active Run authority. Absent for statusless session/2.0. */
+  active_run_id?: string | null;
+  /** session/2.0 current Execution pointer. Absent for session/1.x. */
+  current_execution_id?: string | null;
+  /** session/2.0 historical Execution pointer. Absent for session/1.x. */
+  latest_execution_id?: string | null;
+  /** session/2.0 archive marker. Absent for session/1.x. */
+  archived_at?: string | null;
   depends_on: string[];
   roadmap_artifact_id: string | null;
   seed_ref: string | null;

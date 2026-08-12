@@ -1,8 +1,9 @@
 import { checkLease, type LeaseClaim } from './lease.js';
 import { sessionTransitionSchema, type SessionTransition, type TransitionRequest } from './protocol-schemas.js';
-import { SessionStore } from './store.js';
+import { createSessionArchiveReceipt, SessionStore } from './store.js';
+import type { SessionArchiveReceipt } from './protocol-schemas.js';
 import { createTransitionOutcome, createTransitionRequest } from './transition-receipts.js';
-import type { SessionState } from './schemas.js';
+import { sessionStateV20Schema, type SessionIdentityV20, type SessionState } from './schemas.js';
 
 export type ResolutionTarget =
   | { kind: 'decision'; id: string; disposition: 'proceed' | 'retry' }
@@ -185,6 +186,116 @@ function assertNoResumeBlockers(
   if (failed) throw new Error(`unresolved failed chain step: ${failed.step_id}`);
 }
 
+export interface SessionArchiveOptions {
+  requestId: string;
+  actor: string;
+  reason: string;
+  evidence: string[];
+  expectedIdentityRevision: number;
+  expectedActivityRevision: number;
+  now?: Date;
+}
+
+export interface SessionArchiveResult {
+  session: SessionIdentityV20;
+  receipt: SessionArchiveReceipt;
+  replayed: boolean;
+}
+
+function applyArchiveOperation(
+  projectRoot: string,
+  sessionId: string,
+  operation: 'archive' | 'unarchive',
+  options: SessionArchiveOptions,
+): SessionArchiveResult {
+  const store = new SessionStore(projectRoot);
+  if (!store.sessionExists(sessionId)) throw new Error(`session not found: ${sessionId}`);
+  const requestId = required(options.requestId, 'request id');
+  const actor = required(options.actor, 'actor');
+  const reason = required(options.reason, 'reason');
+  const evidence = normalizedEvidence(options);
+  expectedRevision(options.expectedIdentityRevision, 'expected identity revision');
+  expectedRevision(options.expectedActivityRevision, 'expected activity revision');
+
+  const prior = store.listSessionArchiveReceipts(sessionId);
+  const replay = prior.find(receipt => receipt.receipt_id === requestId);
+  if (replay) {
+    if (replay.operation !== operation
+      || replay.actor !== actor
+      || replay.reason !== reason
+      || JSON.stringify(replay.evidence_refs) !== JSON.stringify(evidence)
+      || replay.before.identity_revision !== options.expectedIdentityRevision
+      || replay.before.activity_revision !== options.expectedActivityRevision) {
+      throw new Error(`request_id ${requestId} was already used with different archive inputs`);
+    }
+    return { session: store.applySessionArchiveReceipt(replay), receipt: replay, replayed: true };
+  }
+
+  const record = store.readSessionRecord(sessionId);
+  if (record.schema_version !== 'session/2.0') {
+    throw new Error(`Session ${sessionId} is ${record.schema_version}; archive receipts require session/2.0`);
+  }
+  const identity = sessionStateV20Schema.parse(record);
+  if (identity.identity_revision !== options.expectedIdentityRevision) {
+    throw new Error(`stale identity revision: expected ${options.expectedIdentityRevision}, current ${identity.identity_revision}`);
+  }
+  if (identity.activity_revision !== options.expectedActivityRevision) {
+    throw new Error(`stale activity revision: expected ${options.expectedActivityRevision}, current ${identity.activity_revision}`);
+  }
+  if (operation === 'archive') {
+    if (identity.archived_at) throw new Error(`Session ${sessionId} is already archived`);
+    if (identity.current_execution_id) {
+      const current = store.readExecution(sessionId, identity.current_execution_id);
+      if (current.status === 'active' || current.status === 'paused') {
+        throw new Error(`Session ${sessionId} has ${current.status} current Execution ${current.execution_id}`);
+      }
+    }
+  } else if (!identity.archived_at) {
+    throw new Error(`Session ${sessionId} is not archived`);
+  }
+
+  const recordedAt = (options.now ?? new Date()).toISOString();
+  const receipt = createSessionArchiveReceipt({
+    receipt_id: requestId,
+    operation,
+    session_id: sessionId,
+    actor,
+    reason,
+    evidence_refs: evidence,
+    recorded_at: recordedAt,
+    before: {
+      identity_revision: identity.identity_revision,
+      activity_revision: identity.activity_revision,
+      archived_at: identity.archived_at,
+      archived_by: identity.archived_by,
+    },
+    after: {
+      identity_revision: identity.identity_revision,
+      activity_revision: identity.activity_revision + 1,
+      archived_at: operation === 'archive' ? recordedAt : null,
+      archived_by: operation === 'archive' ? actor : null,
+    },
+    previous_receipt_hash: prior.at(-1)?.receipt_hash ?? null,
+  });
+  return { session: store.applySessionArchiveReceipt(receipt), receipt, replayed: false };
+}
+
+export function archiveSession(
+  projectRoot: string,
+  sessionId: string,
+  options: SessionArchiveOptions,
+): SessionArchiveResult {
+  return applyArchiveOperation(projectRoot, sessionId, 'archive', options);
+}
+
+export function unarchiveSession(
+  projectRoot: string,
+  sessionId: string,
+  options: SessionArchiveOptions,
+): SessionArchiveResult {
+  return applyArchiveOperation(projectRoot, sessionId, 'unarchive', options);
+}
+
 export function resolveSession(
   projectRoot: string,
   sessionId: string,
@@ -192,6 +303,9 @@ export function resolveSession(
 ): SessionTransition {
   const store = new SessionStore(projectRoot);
   if (!store.sessionExists(sessionId)) throw new Error(`session not found: ${sessionId}`);
+  if (store.readSessionRecord(sessionId).schema_version === 'session/2.0') {
+    throw new Error(`Session ${sessionId} uses session/2.0; use maestro execution resolve with the current Execution`);
+  }
   const payload = { ...commonPayload(options), target: options.target };
   const request = requestFor(store, sessionId, 'resolve', options, payload);
   const evaluated = store.replayOrApplyTransition(sessionId, request, (draft) => {
@@ -249,6 +363,9 @@ export function resumeSession(
 ): SessionTransition {
   const store = new SessionStore(projectRoot);
   if (!store.sessionExists(sessionId)) throw new Error(`session not found: ${sessionId}`);
+  if (store.readSessionRecord(sessionId).schema_version === 'session/2.0') {
+    throw new Error(`Session ${sessionId} uses session/2.0; use maestro execution resume with the current Execution`);
+  }
   const payload = commonPayload(options);
   const request = requestFor(store, sessionId, 'resume', options, payload);
   const evaluated = store.replayOrApplyTransition(sessionId, request, (draft) => {

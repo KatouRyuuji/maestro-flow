@@ -4,12 +4,20 @@
 // idempotency; running-step rejection; step_details → chain step mapping;
 // completion_*/context are never carried; verification_ledger stays in ralph-meta.
 
+import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createRun, completeRun, sealSession } from './runtime.js';
+import { attachExecution, sealExecution, startExecution } from './execution.js';
+import { buildSourceFence } from './recall.js';
 import { sessionStateSchema } from './schemas.js';
-import { SessionStore } from './store.js';
+import {
+  SessionStore,
+  createExecutionSealReceipt,
+  createSessionArchiveReceipt,
+} from './store.js';
 import { migrateSession } from './migrate.js';
 
 let tmpRoot: string;
@@ -58,6 +66,34 @@ function writeSession(sessionId: string, opts: WriteSessionOpts = {}): void {
   writeFileSync(join(dir, 'evidence.json'), JSON.stringify(evidence, null, 2));
   writeFileSync(join(dir, 'events.ndjson'), '');
   writeFileSync(join(dir, 'context.md'), '# test\n');
+}
+
+function enableSessionV20(): void {
+  const workflowRoot = join(tmpRoot, '.workflow');
+  mkdirSync(workflowRoot, { recursive: true });
+  writeFileSync(join(workflowRoot, 'config.json'), JSON.stringify({
+    session_schema: {
+      schema_version: 'session-schema-selection/1.0',
+      writer: 'session/2.0',
+      features: { session_statusless: true },
+    },
+  }, null, 2));
+}
+
+function sha256(value: string | Buffer): string {
+  return `sha256:${createHash('sha256').update(value).digest('hex')}`;
+}
+
+function commandFile(name = 'migration-empty'): void {
+  const directory = join(tmpRoot, '.claude', 'commands');
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, `${name}.md`), [
+    '<contract>',
+    'consumes: []',
+    'produces: []',
+    'gates: { entry: [], exit: [] }',
+    '</contract>',
+  ].join('\n'));
 }
 
 function writeRalphMeta(sessionId: string, meta: unknown): void {
@@ -284,5 +320,333 @@ describe('migrateSession', () => {
     expect(readSessionRaw(sessionId).schema_version).toBe('session/1.3');
     // Second run recognizes it as already migrated.
     expect(migrateSession(tmpRoot, sessionId).status).toBe('already-migrated');
+  });
+});
+
+describe('session/2.0 historical migration', () => {
+  it.each([
+    ['running', 'active'],
+    ['paused', 'paused'],
+    ['failed', 'paused'],
+    ['sealed', 'sealed'],
+    ['archived', 'sealed'],
+  ] as const)('maps legacy %s deterministically to a %s generation-1 Execution', (legacyStatus, executionStatus) => {
+    const sessionId = `migrate-v2-${legacyStatus}`;
+    writeSession(sessionId, { version: 'session/1.0', status: legacyStatus });
+    const artifactPath = join(sessionDir(sessionId), 'artifacts.json');
+    const artifactBytes = readFileSync(artifactPath);
+    const runPath = join(sessionDir(sessionId), 'runs', 'legacy-run.json');
+    writeFileSync(runPath, '{"immutable":"run-hash"}\n');
+    const runBytes = readFileSync(runPath);
+    enableSessionV20();
+
+    const result = migrateSession(tmpRoot, sessionId);
+    expect(result).toMatchObject({
+      status: 'migrated-to-2.0',
+      target_version: 'session/2.0',
+      legacy_execution_id: 'execution-legacy-g1',
+    });
+    const store = new SessionStore(tmpRoot);
+    const identity = store.readSessionRecord(sessionId);
+    expect(identity).toMatchObject({
+      schema_version: 'session/2.0',
+      current_execution_id: executionStatus === 'sealed' ? null : 'execution-legacy-g1',
+      latest_execution_id: 'execution-legacy-g1',
+    });
+    expect(identity).not.toHaveProperty('status');
+    expect(identity).not.toHaveProperty('orchestration');
+    expect(store.readExecution(sessionId, 'execution-legacy-g1')).toMatchObject({
+      generation: 1,
+      status: executionStatus,
+    });
+    expect(store.readBundle(sessionId).session.status).toBe(legacyStatus);
+    expect(readFileSync(artifactPath)).toEqual(artifactBytes);
+    expect(readFileSync(runPath)).toEqual(runBytes);
+
+    if (legacyStatus === 'archived') {
+      expect(identity).toMatchObject({
+        archived_at: '1970-01-01T00:00:00.000Z',
+        archived_by: 'legacy-migration',
+      });
+      const receipts = store.listSessionArchiveReceipts(sessionId);
+      expect(receipts).toHaveLength(1);
+      expect(receipts[0]).toMatchObject({
+        actor: 'legacy-migration',
+        reason: 'Historical session/1.x archived status migration',
+        evidence_refs: [expect.stringMatching(/^legacy-session:sha256:/)],
+      });
+    } else {
+      expect(identity).toMatchObject({ archived_at: null, archived_by: null });
+      expect(store.listSessionArchiveReceipts(sessionId)).toEqual([]);
+    }
+    expect(migrateSession(tmpRoot, sessionId).status).toBe('already-migrated');
+  });
+
+  it('migrates a session/1.3 after a Wave1 Execution starts and seals without rewriting projections', () => {
+    const sessionId = 'migrate-v2-wave1-sealed';
+    const store = new SessionStore(tmpRoot);
+    store.createSession(sessionId, 'Wave1 migration');
+    const started = startExecution(tmpRoot, sessionId, {
+      requestId: 'req-wave1-start',
+      ownerId: 'wave1-worker',
+      ownerKind: 'codex',
+    });
+    sealExecution(tmpRoot, {
+      sessionId,
+      executionId: started.execution.execution_id,
+      requestId: 'req-wave1-seal',
+      expectedExecutionRevision: 1,
+      lease: {
+        ownerId: started.lease_claim.owner_id,
+        ownerKind: started.lease_claim.owner_kind,
+        epoch: started.lease_claim.epoch,
+        leaseId: started.lease_claim.lease_id,
+      },
+      summary: 'Wave1 complete',
+      outcome: 'done',
+    });
+    const executionPath = store.executionPath(sessionId, started.execution.execution_id);
+    const transitionPath = store.executionTransitionPath(sessionId, started.execution.execution_id, 'req-wave1-start');
+    const receiptPath = store.executionSealReceiptPath(sessionId, started.execution.execution_id);
+    const preserved = [executionPath, transitionPath, receiptPath].map(path => readFileSync(path));
+
+    enableSessionV20();
+    expect(migrateSession(tmpRoot, sessionId)).toMatchObject({
+      status: 'migrated-to-2.0',
+      legacy_execution_id: started.execution.execution_id,
+    });
+    expect([executionPath, transitionPath, receiptPath].map(path => readFileSync(path))).toEqual(preserved);
+    expect(store.readSessionRecord(sessionId)).toMatchObject({
+      current_execution_id: null,
+      latest_execution_id: started.execution.execution_id,
+    });
+    expect(store.listExecutions(sessionId)).toHaveLength(1);
+    expect(migrateSession(tmpRoot, sessionId).status).toBe('already-migrated');
+  });
+
+  it('builds a missing receipt for an existing sealed Wave1 Execution during migration', () => {
+    const sessionId = 'migrate-v2-wave1-missing-receipt';
+    const store = new SessionStore(tmpRoot);
+    store.createSession(sessionId, 'Wave1 missing receipt');
+    const started = startExecution(tmpRoot, sessionId, {
+      requestId: 'req-wave1-start-missing', ownerId: 'wave1-worker', ownerKind: 'codex',
+    });
+    sealExecution(tmpRoot, {
+      sessionId,
+      executionId: started.execution.execution_id,
+      requestId: 'req-wave1-seal-missing',
+      expectedExecutionRevision: 1,
+      lease: {
+        ownerId: started.lease_claim.owner_id,
+        ownerKind: started.lease_claim.owner_kind,
+        epoch: started.lease_claim.epoch,
+        leaseId: started.lease_claim.lease_id,
+      },
+      summary: 'Wave1 complete',
+      outcome: 'done',
+    });
+    const executionPath = store.executionPath(sessionId, started.execution.execution_id);
+    const executionBytes = readFileSync(executionPath);
+    rmSync(store.executionSealReceiptPath(sessionId, started.execution.execution_id));
+
+    enableSessionV20();
+    migrateSession(tmpRoot, sessionId);
+    expect(readFileSync(executionPath)).toEqual(executionBytes);
+    expect(store.readExecutionSealReceipt(sessionId, started.execution.execution_id)).toMatchObject({
+      schema_version: 'execution-seal-receipt/1.0',
+      execution_id: started.execution.execution_id,
+      generation: 1,
+      runs: [],
+    });
+  });
+
+  it('migrates a sealed legacy Run into an immediately recallable receipt-backed source', () => {
+    const sessionId = 'migrate-v2-legacy-sealed-run';
+    commandFile();
+    const store = new SessionStore(tmpRoot);
+    store.createSession(sessionId, 'sealed legacy source');
+    const created = createRun({
+      projectRoot: tmpRoot,
+      sessionId,
+      command: 'migration-empty',
+      intent: 'sealed legacy source',
+    });
+    expect(completeRun(tmpRoot, created.run_id, sessionId).sealed).toBe(true);
+    sealSession(tmpRoot, sessionId, 'legacy source complete');
+    const runPath = join(store.runDir(sessionId, created.run_id), 'run.json');
+    const runBytes = readFileSync(runPath);
+
+    enableSessionV20();
+    migrateSession(tmpRoot, sessionId);
+    const receipt = store.readExecutionSealReceipt(sessionId, 'execution-legacy-g1');
+    expect(receipt).toMatchObject({
+      schema_version: 'execution-seal-receipt/1.0',
+      execution_id: 'execution-legacy-g1',
+      runs: [{
+        run_id: created.run_id,
+        schema_version: 'command-run/1.3',
+        content_hash: sha256(runBytes),
+      }],
+    });
+    expect(readFileSync(runPath)).toEqual(runBytes);
+    expect(buildSourceFence(tmpRoot, sessionId, created.run_id)).toMatchObject({
+      schema_version: 'source-fence/1.1',
+      execution_seal_receipt: {
+        execution_id: 'execution-legacy-g1',
+        overall_hash: receipt?.overall_hash,
+      },
+    });
+  });
+
+  it('fails closed when a sealed legacy source contains an unsealed Run', () => {
+    const sessionId = 'migrate-v2-legacy-unsealed-run';
+    commandFile('migration-unsealed');
+    const store = new SessionStore(tmpRoot);
+    store.createSession(sessionId, 'invalid sealed legacy source');
+    const created = createRun({
+      projectRoot: tmpRoot,
+      sessionId,
+      command: 'migration-unsealed',
+      intent: 'invalid sealed legacy source',
+    });
+    store.update(sessionId, draft => {
+      draft.session.status = 'sealed';
+      draft.session.active_run_id = null;
+      draft.session.lifecycle.sealed_at = '2026-07-20T00:00:00.000Z';
+      draft.session.lifecycle.seal_summary = 'invalid historical seal';
+    });
+    enableSessionV20();
+    expect(() => migrateSession(tmpRoot, sessionId))
+      .toThrow(new RegExp(`sealed Session ${sessionId}; unsealed Runs: ${created.run_id}`));
+    expect(store.readSessionRecord(sessionId).schema_version).toBe('session/1.3');
+    expect(store.readExecutionSealReceipt(sessionId, 'execution-legacy-g1')).toBeNull();
+  });
+
+  it('allows a running legacy chain only on the explicit 2.0 migration path', () => {
+    const sessionId = 'migrate-v2-running-chain';
+    writeSession(sessionId, {
+      version: 'session/1.0',
+      status: 'running',
+      chain: [{
+        step_id: 'step-running', command: 'demo', status: 'running', run_id: 'run-1',
+        inserted_by: 'legacy', decision_ref: null,
+      }],
+    });
+    enableSessionV20();
+    expect(migrateSession(tmpRoot, sessionId).status).toBe('migrated-to-2.0');
+    expect(new SessionStore(tmpRoot).readExecution(sessionId, 'execution-legacy-g1').status).toBe('active');
+  });
+
+  it('records deterministic archive CAS history and refuses stale successors', () => {
+    const sessionId = 'migrate-v2-cas';
+    writeSession(sessionId, { version: 'session/1.0', status: 'running' });
+    enableSessionV20();
+    migrateSession(tmpRoot, sessionId);
+    const store = new SessionStore(tmpRoot);
+    const attached = attachExecution(tmpRoot, {
+      sessionId,
+      executionId: 'execution-legacy-g1',
+      requestId: 'req-attach-before-archive',
+      expectedExecutionRevision: 0,
+      ownerId: 'migration-test',
+      ownerKind: 'codex',
+    });
+    sealExecution(tmpRoot, {
+      sessionId,
+      executionId: 'execution-legacy-g1',
+      requestId: 'req-seal-before-archive',
+      expectedExecutionRevision: 1,
+      lease: {
+        ownerId: attached.lease_claim.owner_id,
+        ownerKind: attached.lease_claim.owner_kind,
+        epoch: attached.lease_claim.epoch,
+        leaseId: attached.lease_claim.lease_id,
+      },
+      summary: 'ready to archive',
+      outcome: 'done',
+    });
+    const current = store.readSessionRecord(sessionId);
+    if (current.schema_version !== 'session/2.0') throw new Error('expected session/2.0');
+    const receipt = createSessionArchiveReceipt({
+      receipt_id: 'archive-000000000001',
+      operation: 'archive',
+      session_id: sessionId,
+      actor: 'operator',
+      reason: 'completed',
+      evidence_refs: ['execution-seal:execution-legacy-g1'],
+      recorded_at: '2026-07-21T00:00:00.000Z',
+      before: {
+        identity_revision: current.identity_revision,
+        activity_revision: current.activity_revision,
+        archived_at: null,
+        archived_by: null,
+      },
+      after: {
+        identity_revision: current.identity_revision,
+        activity_revision: current.activity_revision + 1,
+        archived_at: '2026-07-21T00:00:00.000Z',
+        archived_by: 'operator',
+      },
+      previous_receipt_hash: null,
+    });
+    expect(store.applySessionArchiveReceipt(receipt)).toMatchObject({ archived_by: 'operator' });
+    expect(store.listSessionArchiveReceipts(sessionId)).toEqual([receipt]);
+    expect(store.applySessionArchiveReceipt(receipt)).toMatchObject({ archived_by: 'operator' });
+    const stale = createSessionArchiveReceipt({
+      ...receipt,
+      receipt_id: 'archive-000000000002',
+      before: receipt.before,
+      after: { ...receipt.after, activity_revision: receipt.after.activity_revision + 1 },
+      previous_receipt_hash: receipt.receipt_hash,
+    });
+    expect(() => store.applySessionArchiveReceipt(stale)).toThrow(/CAS conflict/);
+  });
+
+  it('writes and replay-reads one immutable, hash-verified Execution seal receipt', () => {
+    const sessionId = 'migrate-v2-seal-receipt';
+    writeSession(sessionId, { version: 'session/1.0', status: 'sealed' });
+    enableSessionV20();
+    migrateSession(tmpRoot, sessionId);
+    const store = new SessionStore(tmpRoot);
+    const identity = store.readSessionRecord(sessionId);
+    if (identity.schema_version !== 'session/2.0') throw new Error('expected session/2.0');
+    const execution = store.readExecution(sessionId, 'execution-legacy-g1');
+    const dir = sessionDir(sessionId);
+    const receipt = createExecutionSealReceipt({
+      session_id: sessionId,
+      execution_id: execution.execution_id,
+      generation: execution.generation,
+      sealed_at: execution.sealed_at!,
+      execution_revision: execution.revision,
+      session_identity_revision: identity.identity_revision,
+      session_activity_revision: identity.activity_revision,
+      runs: [],
+      chain_snapshot: execution.chain,
+      chain_hash: sha256(JSON.stringify(execution.chain)),
+      gates: {
+        clean: true,
+        blocking_gate_ids: [],
+        registry_revision: 0,
+        registry_hash: sha256(readFileSync(join(dir, 'gates.json'))),
+      },
+      artifacts: {
+        registry_revision: 0,
+        registry_hash: sha256(readFileSync(join(dir, 'artifacts.json'))),
+        content_hashes: {},
+      },
+      evidence: {
+        store_revision: 0,
+        store_hash: sha256(readFileSync(join(dir, 'evidence.json'))),
+        record_refs: [],
+      },
+      corpus_refs: [],
+    });
+    expect(store.writeExecutionSealReceipt(receipt)).toEqual(receipt);
+    expect(store.writeExecutionSealReceipt(receipt)).toEqual(receipt);
+    expect(store.readExecutionSealReceipt(sessionId, execution.execution_id)).toEqual(receipt);
+    expect(() => store.writeExecutionSealReceipt({
+      ...receipt,
+      overall_hash: `sha256:${'f'.repeat(64)}`,
+    })).toThrow(/immutable|hash mismatch/);
   });
 });

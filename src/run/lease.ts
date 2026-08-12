@@ -11,12 +11,107 @@
 // owner) imposes zero verification — non-leased sessions are unaffected.
 // ---------------------------------------------------------------------------
 
-import type { OrchestrationLease } from './schemas.js';
+import { createHash, randomBytes } from 'node:crypto';
+import type { ExecutionLease, OrchestrationLease } from './schemas.js';
 
 export interface LeaseClaim {
   executionOwner?: string;
   ownerEpoch?: number;
   leaseId?: string;
+}
+
+export const DEFAULT_EXECUTION_LEASE_STALE_MS = 30_000;
+
+export interface ExecutionLeaseClaim {
+  ownerId: string;
+  ownerKind: ExecutionLease['owner_kind'];
+  epoch: number;
+  leaseId: string;
+}
+
+export interface ExecutionLeaseStatus {
+  state: 'unleased' | 'active' | 'stale' | 'handoff';
+  stale: boolean;
+  heartbeat_age_ms: number | null;
+  lease: Omit<ExecutionLease, 'lease_id'> | null;
+  lease_id_hash: string | null;
+}
+
+function required(value: string, label: string): string {
+  const normalized = value.trim();
+  if (!normalized) throw new Error(`${label} is required`);
+  return normalized;
+}
+
+export function hashExecutionLeaseId(leaseId: string): string {
+  return `sha256:${createHash('sha256').update(required(leaseId, 'lease id')).digest('hex')}`;
+}
+
+export function mintExecutionLeaseId(): string {
+  return randomBytes(32).toString('base64url');
+}
+
+export function executionLeaseClaim(lease: ExecutionLease): ExecutionLeaseClaim {
+  return {
+    ownerId: lease.owner_id,
+    ownerKind: lease.owner_kind,
+    epoch: lease.epoch,
+    leaseId: lease.lease_id,
+  };
+}
+
+/** Require the complete execution lease tuple and reject an old owner after takeover. */
+export function assertExecutionLease(
+  lease: ExecutionLease | null,
+  claim: ExecutionLeaseClaim,
+  options: { allowHandoff?: boolean } = {},
+): ExecutionLease {
+  if (!lease) throw new Error('execution lease fence conflict: Execution is unleased');
+  if (!claim || !claim.ownerId || !claim.ownerKind || !claim.leaseId || !Number.isInteger(claim.epoch)) {
+    throw new Error('execution lease fence requires owner_id, owner_kind, epoch, and lease_id');
+  }
+  if (lease.owner_id !== claim.ownerId
+    || lease.owner_kind !== claim.ownerKind
+    || lease.epoch !== claim.epoch
+    || lease.lease_id !== claim.leaseId) {
+    throw new Error('execution lease fence conflict: stale owner, epoch, kind, or token');
+  }
+  if (lease.handoff_to && !options.allowHandoff) {
+    throw new Error(`execution lease handoff in progress to ${lease.handoff_to}`);
+  }
+  return lease;
+}
+
+export function isExecutionLeaseStale(
+  lease: ExecutionLease,
+  now = new Date(),
+  staleAfterMs = DEFAULT_EXECUTION_LEASE_STALE_MS,
+): boolean {
+  if (!Number.isFinite(staleAfterMs) || staleAfterMs < 1) throw new Error('staleAfterMs must be positive');
+  const heartbeat = Date.parse(lease.heartbeat_at);
+  if (!Number.isFinite(heartbeat)) return true;
+  return now.getTime() - heartbeat >= staleAfterMs;
+}
+
+export function describeExecutionLease(
+  lease: ExecutionLease | null,
+  now = new Date(),
+  staleAfterMs = DEFAULT_EXECUTION_LEASE_STALE_MS,
+): ExecutionLeaseStatus {
+  if (!lease) {
+    return { state: 'unleased', stale: false, heartbeat_age_ms: null, lease: null, lease_id_hash: null };
+  }
+  const heartbeat = Date.parse(lease.heartbeat_at);
+  const age = Number.isFinite(heartbeat) ? Math.max(0, now.getTime() - heartbeat) : Number.MAX_SAFE_INTEGER;
+  const stale = isExecutionLeaseStale(lease, now, staleAfterMs);
+  const { lease_id: _privateToken, ...publicLease } = lease;
+  return {
+    state: stale ? 'stale' : lease.handoff_to ? 'handoff' : 'active',
+    stale,
+    heartbeat_age_ms: age,
+    lease: publicLease,
+    lease_id_hash: hashExecutionLeaseId(lease.lease_id),
+  };
 }
 
 /**

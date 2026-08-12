@@ -7,6 +7,7 @@ import {
   intentIdentitySchema,
   persistedTransitionRecordSchema,
   ralphAuthoritySchema,
+  reuseAssessmentReadSchema,
   reuseAssessmentSchema,
   sessionProvenanceSchema,
   topicIdentitySchema,
@@ -149,6 +150,42 @@ const decisionPointSchema = z.object({
   evidence_ref: z.string().nullable(),
 }).strict();
 
+export const executionLeaseSchema = z.object({
+  schema_version: z.literal('execution-lease/1.0'),
+  session_id: nonEmptyString,
+  execution_id: nonEmptyString,
+  owner_id: nonEmptyString,
+  owner_kind: z.enum(['pi', 'claude', 'codex', 'agy', 'manual']),
+  epoch: z.number().int().positive(),
+  lease_id: nonEmptyString,
+  acquired_at: nonEmptyString,
+  heartbeat_at: nonEmptyString,
+  handoff_to: z.string().min(1).nullable(),
+}).strict();
+
+export const executionStateSchema = z.object({
+  schema_version: z.literal('execution/1.0'),
+  execution_id: nonEmptyString,
+  session_id: nonEmptyString,
+  generation: z.number().int().positive(),
+  status: z.enum(['active', 'paused', 'sealed']),
+  revision: z.number().int().nonnegative(),
+  active_run_id: z.string().min(1).nullable(),
+  chain: z.array(orchestrationStepSchema),
+  decision_points: z.array(decisionPointSchema),
+  gates_ref: nonEmptyString,
+  artifacts_ref: nonEmptyString,
+  evidence_ref: nonEmptyString,
+  lease: executionLeaseSchema.nullable(),
+  started_at: nonEmptyString,
+  sealed_at: z.string().min(1).nullable(),
+  seal_summary: z.string().nullable(),
+  final_outcome: z.enum(['done', 'done_with_concerns', 'failed']).nullable(),
+}).strict();
+
+/** Canonical execution/1.0 writer schema. */
+export const executionSchema = executionStateSchema;
+
 const legacySessionRequestSchema = z.object({
   request_id: nonEmptyString,
   type: nonEmptyString,
@@ -217,6 +254,53 @@ export const sessionStateV13Schema = sessionStateV12Schema
   .strict();
 
 /**
+ * Statusless Session identity/index authority. Execution lifecycle, chain,
+ * gates, artifacts, and evidence deliberately live outside this strict shape.
+ */
+export const sessionStateV20Schema = z.object({
+  schema_version: z.literal('session/2.0'),
+  session_id: nonEmptyString,
+  intent: nonEmptyString,
+  topic_identity: topicIdentitySchema.nullable(),
+  identity_revision: z.number().int().nonnegative(),
+  activity_revision: z.number().int().nonnegative(),
+  current_execution_id: z.string().min(1).nullable(),
+  latest_execution_id: z.string().min(1).nullable(),
+  latest_completed_run_id: z.string().min(1).nullable(),
+  archived_at: z.string().min(1).nullable(),
+  archived_by: z.string().min(1).nullable(),
+}).strict().superRefine((session, ctx) => {
+  if ((session.archived_at === null) !== (session.archived_by === null)) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['archived_at'],
+      message: 'archived_at and archived_by must both be null or both be present',
+    });
+  }
+});
+
+export const sessionSchemaSelectionSchema = z.object({
+  schema_version: z.literal('session-schema-selection/1.0'),
+  writer: z.enum(['session/1.3', 'session/2.0']),
+  features: z.object({
+    session_statusless: z.boolean(),
+  }).strict(),
+}).strict().superRefine((selection, ctx) => {
+  const enabled = selection.writer === 'session/2.0';
+  if (selection.features.session_statusless !== enabled) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['features', 'session_statusless'],
+      message: 'session_statusless must be enabled exactly when writer is session/2.0',
+    });
+  }
+});
+
+export const projectSessionSchemaConfigSchema = z.object({
+  session_schema: sessionSchemaSelectionSchema.optional(),
+}).passthrough();
+
+/**
  * Passthrough fallback for unknown future session schema versions.
  * Preserves all fields without validation so older CLI versions can read
  * session.json written by newer versions without crashing.
@@ -224,7 +308,9 @@ export const sessionStateV13Schema = sessionStateV12Schema
  * The refinement ensures this fallback ONLY matches truly unknown versions —
  * known versions with invalid data still fail the union (correct behavior).
  */
-const KNOWN_SESSION_VERSIONS = new Set(['session/1.0', 'session/1.1', 'session/1.2', 'session/1.3']);
+const KNOWN_SESSION_VERSIONS = new Set([
+  'session/1.0', 'session/1.1', 'session/1.2', 'session/1.3', 'session/2.0',
+]);
 const sessionStateUnknownSchema = z.object({
   schema_version: z.string(),
 }).passthrough().refine(
@@ -262,9 +348,26 @@ export function normalizeSessionState(session: SessionStateInput): z.infer<typeo
   return session as unknown as z.infer<typeof sessionStateV13Schema>;
 }
 
-export const sessionStateReadSchema = z.union([sessionStateV13Schema, sessionStateV12Schema, sessionStateV1ReadSchema, sessionStateUnknownSchema]);
-/** Backward-compatible read schema. New writes must use sessionStateV13Schema. */
-export const sessionStateSchema = sessionStateReadSchema.transform(session => normalizeSessionState(session));
+/** Strict known-version reader with schema_version as the type discriminator. */
+export const knownSessionStateReadSchema = z.discriminatedUnion('schema_version', [
+  sessionStateV20Schema,
+  sessionStateV13Schema,
+  sessionStateV12Schema,
+  sessionStateV1ReadSchema,
+]);
+
+/** Typed reader for known generations plus the existing future-version fallback. */
+export const sessionStateReadSchema = z.union([
+  knownSessionStateReadSchema,
+  sessionStateUnknownSchema,
+]);
+/** Backward-compatible legacy reader. It intentionally rejects session/2.0. */
+export const sessionStateSchema = z.union([
+  sessionStateV13Schema,
+  sessionStateV12Schema,
+  sessionStateV1ReadSchema,
+  sessionStateUnknownSchema,
+]).transform(session => normalizeSessionState(session));
 
 const gateCheckSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('session'), field: nonEmptyString, equals: z.unknown() }).strict(),
@@ -487,11 +590,23 @@ export const commandRunV13Schema = commandRunV12Schema
   })
   .strict();
 
+export const commandRunV14Schema = commandRunV13Schema
+  .omit({ schema_version: true, input: true })
+  .extend({
+    schema_version: z.literal('command-run/1.4'),
+    input: commandRunBaseSchema.shape.input.extend({
+      reuse_assessments: z.array(reuseAssessmentReadSchema),
+    }).strict(),
+    execution_id: nonEmptyString,
+    generation: z.number().int().positive(),
+  })
+  .strict();
+
 /**
  * Passthrough fallback for unknown future command-run schema versions.
  * The refinement ensures this fallback ONLY matches truly unknown versions.
  */
-const KNOWN_RUN_VERSIONS = new Set(['command-run/1.0', 'command-run/1.1', 'command-run/1.2', 'command-run/1.3']);
+const KNOWN_RUN_VERSIONS = new Set(['command-run/1.0', 'command-run/1.1', 'command-run/1.2', 'command-run/1.3', 'command-run/1.4']);
 const commandRunUnknownSchema = z.object({
   schema_version: z.string(),
 }).passthrough().refine(
@@ -499,14 +614,26 @@ const commandRunUnknownSchema = z.object({
   { message: 'Known run version with invalid data should not match the passthrough fallback' },
 );
 
-export const commandRunReadSchema = z.union([commandRunV13Schema, commandRunV12Schema, commandRunV11Schema, commandRunV1Schema, commandRunUnknownSchema]);
+export const commandRunReadSchema = z.union([
+  commandRunV14Schema,
+  commandRunV13Schema,
+  commandRunV12Schema,
+  commandRunV11Schema,
+  commandRunV1Schema,
+  commandRunUnknownSchema,
+]);
 export type CommandRunInput = z.infer<typeof commandRunReadSchema>;
 export type CommandRun = z.infer<typeof commandRunV13Schema>;
+export type CommandRunV14 = z.infer<typeof commandRunV14Schema>;
 
 export function normalizeCommandRun(
   run: CommandRunInput,
   fallbackPlatform: z.infer<typeof targetPlatformSchema> = 'claude',
 ): CommandRun {
+  if (run.schema_version === 'command-run/1.4') {
+    const { execution_id: _executionId, generation: _generation, ...compatibilityRun } = run;
+    return { ...compatibilityRun, schema_version: 'command-run/1.3' } as CommandRun;
+  }
   if (run.schema_version === 'command-run/1.3') return run as CommandRun;
   if (run.schema_version === 'command-run/1.2') {
     return commandRunV13Schema.parse({
@@ -552,7 +679,30 @@ export function normalizeCommandRun(
   return run as unknown as CommandRun;
 }
 
-/** Backward-compatible read schema. New writes must use commandRunV13Schema. */
+/**
+ * Promote either compatibility or execution-bound input to command-run/1.4.
+ * Callers reading a legacy Run must supply its resolved Execution binding;
+ * no synthetic execution identity is inferred at the schema boundary.
+ */
+export function normalizeCommandRunV14(
+  run: CommandRunInput,
+  binding?: { execution_id: string; generation: number },
+  fallbackPlatform: z.infer<typeof targetPlatformSchema> = 'claude',
+): CommandRunV14 {
+  if (run.schema_version === 'command-run/1.4') return commandRunV14Schema.parse(run);
+  if (!binding) {
+    throw new Error('execution binding is required to normalize a legacy command Run to command-run/1.4');
+  }
+  const compatibilityRun = normalizeCommandRun(run, fallbackPlatform);
+  return commandRunV14Schema.parse({
+    ...compatibilityRun,
+    schema_version: 'command-run/1.4',
+    execution_id: binding.execution_id,
+    generation: binding.generation,
+  });
+}
+
+/** Backward-compatible read schema. New legacy-path writes must use commandRunV13Schema. */
 export const commandRunSchema = commandRunReadSchema.transform(run => normalizeCommandRun(run));
 
 export const artifactMetaSchema = z.object({
@@ -661,6 +811,12 @@ export const reportFrontmatterSchema = z.object({
 }));
 
 export type SessionState = z.infer<typeof sessionStateV13Schema>;
+export type SessionIdentityV20 = z.infer<typeof sessionStateV20Schema>;
+export type SessionStateRead = z.infer<typeof sessionStateReadSchema>;
+export type SessionSchemaSelection = z.infer<typeof sessionSchemaSelectionSchema>;
+export type Execution = z.infer<typeof executionSchema>;
+export type ExecutionState = Execution;
+export type ExecutionLease = z.infer<typeof executionLeaseSchema>;
 export type OrchestrationStep = z.infer<typeof orchestrationStepSchema>;
 export type PendingRetryToken = z.infer<typeof pendingRetryTokenSchema>;
 export type OrchestrationPosition = z.infer<typeof positionSchema>;

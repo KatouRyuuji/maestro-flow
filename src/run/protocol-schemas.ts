@@ -5,6 +5,14 @@ const sha256Schema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const nullableSha256Schema = sha256Schema.nullable();
 const commandHashSchema = z.string().regex(/^[a-f0-9]{64}$/);
 
+export const executionSealReceiptFenceSchema = z.object({
+  execution_id: nonEmptyString,
+  generation: z.number().int().positive(),
+  sealed_at: nonEmptyString,
+  relative_path: nonEmptyString,
+  overall_hash: sha256Schema,
+}).strict();
+
 export const chainEffectSchema = z.enum(['insert', 'replace', 'skip', 'decide']);
 
 export const intentIdentitySchema = z.object({
@@ -77,6 +85,23 @@ export const reuseAssessmentSchema = z.object({
   assessment_hash: sha256Schema,
 }).strict();
 
+export const reuseAssessmentV11Schema = reuseAssessmentSchema
+  .omit({ source_fence: true })
+  .extend({
+    schema_version: z.literal('reuse-assessment/1.1'),
+    source_fence: reuseAssessmentSchema.shape.source_fence
+      .omit({ schema_version: true })
+      .extend({
+        schema_version: z.literal('reuse-source-fence/1.1'),
+        execution_seal_receipt: executionSealReceiptFenceSchema,
+      })
+      .strict(),
+  })
+  .strict();
+
+/** Additive compatibility reader; reuseAssessmentSchema remains the strict 1.0 shape. */
+export const reuseAssessmentReadSchema = z.union([reuseAssessmentV11Schema, reuseAssessmentSchema]);
+
 export const sessionLocatorSchema = z.object({
   workspace_id: sha256Schema,
   session_id: nonEmptyString,
@@ -101,6 +126,92 @@ export const sourceFenceSchema = z.object({
   run_hash: sha256Schema,
   artifact_registry_revision: z.number().int().nonnegative(),
   selected_artifacts: z.array(artifactFenceSchema),
+}).strict();
+
+export const sourceFenceV11Schema = sourceFenceSchema
+  .omit({ session_schema_version: true, run_schema_version: true })
+  .extend({
+    schema_version: z.literal('source-fence/1.1'),
+    session_schema_version: z.enum([
+      'session/1.0', 'session/1.1', 'session/1.2', 'session/1.3', 'session/2.0',
+    ]),
+    run_schema_version: z.enum([
+      'command-run/1.0', 'command-run/1.1', 'command-run/1.2', 'command-run/1.3', 'command-run/1.4',
+    ]),
+    execution_seal_receipt: executionSealReceiptFenceSchema,
+  })
+  .strict();
+
+/** Additive compatibility reader; sourceFenceSchema remains the strict legacy shape. */
+export const sourceFenceReadSchema = z.union([sourceFenceV11Schema, sourceFenceSchema]);
+
+export const sessionArchiveReceiptSchema = z.object({
+  schema_version: z.literal('session-archive-receipt/1.0'),
+  receipt_id: nonEmptyString,
+  operation: z.enum(['archive', 'unarchive']),
+  session_id: nonEmptyString,
+  actor: nonEmptyString,
+  reason: nonEmptyString,
+  evidence_refs: z.array(nonEmptyString),
+  recorded_at: nonEmptyString,
+  before: z.object({
+    identity_revision: z.number().int().nonnegative(),
+    activity_revision: z.number().int().nonnegative(),
+    archived_at: z.string().min(1).nullable(),
+    archived_by: z.string().min(1).nullable(),
+  }).strict(),
+  after: z.object({
+    identity_revision: z.number().int().nonnegative(),
+    activity_revision: z.number().int().nonnegative(),
+    archived_at: z.string().min(1).nullable(),
+    archived_by: z.string().min(1).nullable(),
+  }).strict(),
+  previous_receipt_hash: nullableSha256Schema,
+  receipt_hash: sha256Schema,
+}).strict();
+
+const sealedRunSnapshotSchema = z.object({
+  run_id: nonEmptyString,
+  schema_version: z.enum([
+    'command-run/1.0', 'command-run/1.1', 'command-run/1.2', 'command-run/1.3', 'command-run/1.4',
+  ]),
+  content_hash: sha256Schema,
+}).strict();
+
+export const executionSealReceiptSchema = z.object({
+  schema_version: z.literal('execution-seal-receipt/1.0'),
+  session_id: nonEmptyString,
+  execution_id: nonEmptyString,
+  generation: z.number().int().positive(),
+  sealed_at: nonEmptyString,
+  execution_revision: z.number().int().nonnegative(),
+  session_identity_revision: z.number().int().nonnegative(),
+  session_activity_revision: z.number().int().nonnegative(),
+  runs: z.array(sealedRunSnapshotSchema),
+  chain_snapshot: z.array(z.unknown()),
+  chain_hash: sha256Schema,
+  gates: z.object({
+    clean: z.boolean(),
+    blocking_gate_ids: z.array(nonEmptyString),
+    registry_revision: z.number().int().nonnegative(),
+    registry_hash: sha256Schema,
+  }).strict(),
+  artifacts: z.object({
+    registry_revision: z.number().int().nonnegative(),
+    registry_hash: sha256Schema,
+    content_hashes: z.record(z.string(), sha256Schema),
+  }).strict(),
+  evidence: z.object({
+    store_revision: z.number().int().nonnegative(),
+    store_hash: sha256Schema,
+    record_refs: z.array(nonEmptyString),
+  }).strict(),
+  corpus_refs: z.array(z.object({
+    kind: nonEmptyString,
+    id: nonEmptyString,
+    content_hash: sha256Schema,
+  }).strict()),
+  overall_hash: sha256Schema,
 }).strict();
 
 export const targetFenceSchema = z.object({
@@ -170,6 +281,26 @@ export const transitionFenceSchema = z.object({
   artifact_registry_revision: z.number().int().nonnegative().nullable(),
 }).strict();
 
+export const executionLocatorSchema = z.object({
+  session_id: nonEmptyString,
+  execution_id: nonEmptyString,
+  generation: z.number().int().positive(),
+  run_id: z.string().min(1).nullable(),
+}).strict();
+
+export const transitionFenceV11Schema = z.object({
+  session_identity_revision: z.number().int().nonnegative(),
+  session_activity_revision: z.number().int().nonnegative(),
+  execution_id: z.string().min(1).nullable(),
+  execution_generation: z.number().int().positive().nullable(),
+  execution_revision: z.number().int().nonnegative().nullable(),
+  execution_status: z.enum(['active', 'paused', 'sealed']).nullable(),
+  lease_epoch: z.number().int().nonnegative().nullable(),
+  active_run_id: z.string().min(1).nullable(),
+  run_hash: nullableSha256Schema,
+  artifact_registry_revision: z.number().int().nonnegative().nullable(),
+}).strict();
+
 export const completeInputSnapshotSchema = z.object({
   schema_version: z.literal('complete-input-snapshot/1.0'),
   files: z.array(z.object({
@@ -221,6 +352,75 @@ export const persistedTransitionRecordSchema = z.object({
   claimed_by_run_id: z.string().nullable(),
   outcome: transitionOutcomeSchema,
 }).strict();
+
+export const transitionOperationV11Schema = z.enum([
+  'create', 'next', 'complete', 'resolve', 'resume', 'fork', 'import', 'ralph-retry',
+  'chain-insert', 'chain-replace', 'chain-skip', 'meta-update', 'decide', 'accept-reuse',
+  'session-create', 'session-archive', 'session-unarchive',
+  'execution-start', 'execution-chain-bootstrap', 'execution-attach', 'execution-pause', 'execution-resolve',
+  'execution-resume', 'execution-seal', 'execution-handoff-prepare',
+  'execution-handoff-accept', 'execution-handoff-cancel', 'execution-lease-heartbeat',
+  'execution-lease-release', 'execution-lease-recover',
+]);
+
+const transitionSubjectV11Schema = z.object({
+  session_id: nonEmptyString,
+  execution_id: z.string().min(1).nullable(),
+  generation: z.number().int().positive().nullable(),
+  run_id: z.string().min(1).nullable(),
+  chain_step_id: z.string().min(1).nullable(),
+}).strict();
+
+export const transitionRequestV11Schema = z.object({
+  schema_version: z.literal('transition-request/1.1'),
+  request_id: nonEmptyString,
+  operation: transitionOperationV11Schema,
+  subject: transitionSubjectV11Schema,
+  normalized_request_hash: sha256Schema,
+  requested_at: nonEmptyString,
+  preconditions: transitionFenceV11Schema,
+  payload: z.record(z.string(), z.unknown()),
+}).strict().superRefine((request, ctx) => {
+  for (const path of rawLeaseIdPaths(request.payload, ['payload'])) {
+    ctx.addIssue({
+      code: 'custom',
+      path,
+      message: 'transition requests must persist lease_id_hash, not raw lease_id',
+    });
+  }
+});
+
+export const transitionOutcomeV11Schema = z.object({
+  schema_version: z.literal('transition-outcome/1.1'),
+  transition_id: nonEmptyString,
+  request_id: nonEmptyString,
+  request_hash: sha256Schema,
+  operation: transitionOperationV11Schema,
+  status: z.enum(['applied', 'rejected']),
+  applied_at: nonEmptyString,
+  subject: transitionSubjectV11Schema,
+  postconditions: transitionFenceV11Schema,
+  exit_code: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]),
+  error_code: z.string().min(1).nullable(),
+  result_hash: sha256Schema,
+  result: z.record(z.string(), z.unknown()),
+}).strict();
+
+export const persistedTransitionRecordV11Schema = z.object({
+  request_id: nonEmptyString,
+  type: z.literal('transition'),
+  status: z.enum(['applied', 'rejected']),
+  payload: transitionRequestV11Schema,
+  claimed_by_run_id: z.string().nullable(),
+  outcome: transitionOutcomeV11Schema,
+}).strict();
+
+export const transitionRequestReadSchema = z.union([transitionRequestV11Schema, transitionRequestSchema]);
+export const transitionOutcomeReadSchema = z.union([transitionOutcomeV11Schema, transitionOutcomeSchema]);
+export const persistedTransitionRecordReadSchema = z.union([
+  persistedTransitionRecordV11Schema,
+  persistedTransitionRecordSchema,
+]);
 
 export const transitionPointerSchema = z.object({
   transition_id: nonEmptyString,
@@ -342,7 +542,19 @@ export const executionContractV11Schema = executionContractV10Schema
   })
   .strict();
 
-export const executionContractSchema = z.union([executionContractV11Schema, executionContractV10Schema]);
+export const executionContractV12Schema = executionContractV11Schema
+  .omit({ schema_version: true, reuse_assessments: true })
+  .extend({
+    schema_version: z.literal('execution-contract/1.2'),
+    reuse_assessments: z.array(reuseAssessmentReadSchema),
+  })
+  .strict();
+
+export const executionContractSchema = z.union([
+  executionContractV12Schema,
+  executionContractV11Schema,
+  executionContractV10Schema,
+]);
 
 const briefTargetPlatformSchema = z.enum(['claude', 'codex', 'agy', 'agents-standard', 'pi']);
 const briefRunStatusSchema = z.enum(['created', 'running', 'blocked', 'failed', 'completed', 'sealed']);
@@ -521,6 +733,14 @@ export const briefResultV11Schema = briefResultV10Schema.extend({
   knowledge_context: knowledgeReconciliationCardSchema,
 }).strict();
 
+export const briefResultV12Schema = briefResultV11Schema
+  .omit({ schema_version: true, execution_contract: true })
+  .extend({
+    schema_version: z.literal('brief-result/1.2'),
+    execution_contract: executionContractV12Schema,
+  })
+  .strict();
+
 const recallExactCandidateSchema = z.object({
   candidate_id: nonEmptyString,
   session_id: nonEmptyString,
@@ -590,7 +810,13 @@ export const runRecallV11Schema = runRecallBaseSchema.extend({
   reuse_assessments: z.array(reuseAssessmentSchema),
 }).strict();
 
-export const runRecallSchema = z.union([runRecallV11Schema, runRecallV10Schema]);
+export const runRecallV12Schema = runRecallBaseSchema.extend({
+  schema_version: z.literal('run-recall/1.2'),
+  topic_identity: topicIdentitySchema,
+  reuse_assessments: z.array(reuseAssessmentReadSchema),
+}).strict();
+
+export const runRecallSchema = z.union([runRecallV12Schema, runRecallV11Schema, runRecallV10Schema]);
 
 export const recallConfirmationTargetIdentitySchema = z.object({
   workspace_id: sha256Schema,
@@ -616,6 +842,21 @@ export const validatedRecallSourceSchema = z.object({
   session_intent_identity: intentIdentitySchema.nullable(),
   fence: sourceFenceSchema,
 }).strict();
+
+export const validatedRecallSourceV11Schema = validatedRecallSourceSchema
+  .omit({ session_status: true, fence: true })
+  .extend({
+    schema_version: z.literal('validated-recall-source/1.1'),
+    session_status: z.enum(['sealed', 'archived']).nullable(),
+    fence: sourceFenceV11Schema,
+  })
+  .strict();
+
+/** Strict validatedRecallSourceSchema remains the historical 1.0 reader. */
+export const validatedRecallSourceReadSchema = z.union([
+  validatedRecallSourceV11Schema,
+  validatedRecallSourceSchema,
+]);
 
 export const recallReservationMarkerSchema = z.object({
   schema_version: z.literal('recall-reservation-marker/1.0'),
@@ -656,6 +897,19 @@ export const recallConfirmationReservationSchema = z.object({
   expires_at: nonEmptyString,
   reconcile_expires_at: z.string().nullable().optional().default(null),
 }).strict();
+
+export const recallConfirmationReservationV11Schema = recallConfirmationReservationSchema
+  .omit({ source_fence: true })
+  .extend({
+    schema_version: z.literal('recall-confirmation-reservation/1.1'),
+    source_fence: sourceFenceV11Schema.nullable(),
+  })
+  .strict();
+
+export const recallConfirmationReservationReadSchema = z.union([
+  recallConfirmationReservationV11Schema,
+  recallConfirmationReservationSchema,
+]);
 
 export const staleRecallReservationSchema = z.object({
   schema_version: z.literal('stale-recall-reservation/1.0'),
@@ -710,11 +964,36 @@ export const recallConfirmationRecordSchema = z.object({
   outcome: recallConfirmationOutcomeSchema.nullable().optional().default(null),
 }).strict();
 
+export const recallConfirmationRecordV11Schema = recallConfirmationRecordSchema
+  .omit({ source_fence: true, reservation: true })
+  .extend({
+    schema_version: z.literal('recall-confirmation/1.1'),
+    source_fence: sourceFenceV11Schema.nullable(),
+    reservation: recallConfirmationReservationV11Schema.nullable().optional().default(null),
+  })
+  .strict();
+
+export const recallConfirmationRecordReadSchema = z.union([
+  recallConfirmationRecordV11Schema,
+  recallConfirmationRecordSchema,
+]);
+
 export const recallConfirmationRegistrySchema = z.object({
   schema_version: z.literal('recall-confirmations/1.0'),
   revision: z.number().int().nonnegative(),
   records: z.record(z.string(), recallConfirmationRecordSchema),
 }).strict();
+
+export const recallConfirmationRegistryV11Schema = z.object({
+  schema_version: z.literal('recall-confirmations/1.1'),
+  revision: z.number().int().nonnegative(),
+  records: z.record(z.string(), recallConfirmationRecordReadSchema),
+}).strict();
+
+export const recallConfirmationRegistryReadSchema = z.union([
+  recallConfirmationRegistryV11Schema,
+  recallConfirmationRegistrySchema,
+]);
 
 export const runErrorCodeSchema = z.enum([
   'COMMANDER_USAGE', 'SESSION_NOT_FOUND', 'SESSION_AMBIGUOUS', 'SESSION_NOT_RUNNING',
@@ -728,11 +1007,31 @@ export const runErrorCodeSchema = z.enum([
   'SESSION_SEAL_BLOCKED', 'INVALID_ARGUMENT', 'INTERNAL_ERROR',
 ]);
 
+export const runErrorCodeV11Schema = z.enum([
+  ...runErrorCodeSchema.options,
+  'SESSION_ARCHIVED', 'SESSION_ARCHIVE_BLOCKED',
+  'EXECUTION_NOT_FOUND', 'EXECUTION_ALREADY_ACTIVE', 'EXECUTION_PAUSED',
+  'EXECUTION_PAUSE_BLOCKED', 'EXECUTION_SEAL_BLOCKED', 'EXECUTION_SEALED',
+  'EXECUTION_REVISION_CONFLICT', 'LEASE_BUSY', 'LEASE_FENCE_CONFLICT',
+  'LEASE_HANDOFF_IN_PROGRESS', 'LEASE_HANDOFF_TOKEN_INVALID',
+  'LEASE_STALE_RECOVERY_REQUIRED', 'LEASE_RELEASE_BLOCKED', 'CAPABILITY_REQUIRED',
+]);
+
 export const runOperationSchema = z.enum([
   'create', 'next', 'complete', 'brief', 'recall', 'resolve', 'resume', 'fork', 'import',
   'check', 'decide', 'seal-session', 'chain-insert', 'chain-replace', 'chain-skip', 'meta-update', 'accept-reuse',
   'plan-publish',
 ]);
+
+export const runOperationV11Schema = z.enum([
+  ...runOperationSchema.options,
+  'capabilities', 'session-create', 'session-archive', 'session-unarchive',
+  'execution-start', 'execution-attach', 'execution-status', 'execution-pause',
+  'execution-resolve', 'execution-resume', 'execution-seal', 'execution-handoff-prepare',
+  'execution-handoff-accept', 'execution-handoff-cancel', 'execution-lease-status',
+  'execution-lease-heartbeat', 'execution-lease-release', 'execution-lease-recover',
+]);
+
 const responseCommonSchema = z.object({
   schema_version: z.literal('run-response/1.0'),
   operation: runOperationSchema,
@@ -754,7 +1053,7 @@ export const runResponseSuccessSchema = z.union([
     operation: z.literal('brief'),
     ok: z.literal(true),
     exit_code: z.literal(0),
-    result: z.union([briefResultV10Schema, briefResultV11Schema]),
+    result: z.union([briefResultV10Schema, briefResultV11Schema, briefResultV12Schema]),
     error: z.null(),
   }).strict(),
   responseCommonSchema.extend({
@@ -777,7 +1076,146 @@ export const runResponseErrorSchema = responseCommonSchema.extend({
   }).strict(),
 }).strict();
 
-export const runResponseSchema = z.union([runResponseSuccessSchema, runResponseErrorSchema]);
+/** Strict legacy envelope. It deliberately has no disposition, fence, or warnings fields. */
+export const runResponseV10Schema = z.union([runResponseSuccessSchema, runResponseErrorSchema]);
+
+export const responseLocatorV11Schema = z.object({
+  session_id: z.string().min(1).nullable(),
+  execution_id: z.string().min(1).nullable(),
+  generation: z.number().int().positive().nullable(),
+  run_id: z.string().min(1).nullable(),
+}).strict();
+
+export const responseFenceV11Schema = z.object({
+  session_identity_revision: z.number().int().nonnegative().nullable(),
+  session_activity_revision: z.number().int().nonnegative().nullable(),
+  execution_revision: z.number().int().nonnegative().nullable(),
+  lease_epoch: z.number().int().nonnegative().nullable(),
+}).strict();
+
+export const runResponseDispositionSchema = z.enum([
+  'success', 'domain_error', 'control_flow', 'usage_error',
+]);
+
+export const responseWarningV11Schema = z.object({
+  code: nonEmptyString,
+  message: nonEmptyString,
+  replacement_command: z.string().min(1).nullable(),
+}).strict();
+
+export const continuationDirectiveV11Schema = continuationDirectiveSchema
+  .omit({ schema_version: true })
+  .extend({
+    schema_version: z.literal('run-continuation/1.1'),
+    execution_id: z.string().min(1).nullable(),
+    generation: z.number().int().positive().nullable(),
+  })
+  .strict();
+
+const responseCommonV11Schema = z.object({
+  schema_version: z.literal('run-response/1.1'),
+  operation: runOperationV11Schema,
+  request_id: z.string().min(1).nullable(),
+  locator: responseLocatorV11Schema.nullable(),
+  fence: responseFenceV11Schema.nullable(),
+  next: briefNextSchema.nullable(),
+  continuation: continuationDirectiveV11Schema.nullable(),
+  replay: z.object({ status: z.enum(['applied', 'replayed']), transition_id: nonEmptyString }).strict().nullable(),
+  warnings: z.array(responseWarningV11Schema),
+});
+
+export const runResponseSuccessV11Schema = responseCommonV11Schema.extend({
+  ok: z.literal(true),
+  exit_code: z.literal(0),
+  disposition: z.literal('success'),
+  result: z.unknown(),
+  error: z.null(),
+}).strict();
+
+const runResponseErrorDetailV11Schema = z.object({
+  code: runErrorCodeV11Schema,
+  message: nonEmptyString,
+  retryable: z.boolean(),
+  details: z.record(z.string(), z.unknown()),
+  recovery_command: z.string().min(1).nullable(),
+}).strict();
+
+export const runResponseErrorV11Schema = z.union([
+  responseCommonV11Schema.extend({
+    ok: z.literal(false),
+    exit_code: z.literal(1),
+    disposition: z.literal('domain_error'),
+    result: z.null(),
+    error: runResponseErrorDetailV11Schema,
+  }).strict(),
+  responseCommonV11Schema.extend({
+    ok: z.literal(false),
+    exit_code: z.union([z.literal(2), z.literal(3)]),
+    disposition: z.literal('control_flow'),
+    result: z.null(),
+    error: runResponseErrorDetailV11Schema,
+  }).strict(),
+  responseCommonV11Schema.extend({
+    ok: z.literal(false),
+    exit_code: z.literal(2),
+    disposition: z.literal('usage_error'),
+    result: z.null(),
+    error: runResponseErrorDetailV11Schema,
+  }).strict(),
+]);
+
+const acquisitionOperations = new Set([
+  'execution-start', 'execution-attach', 'execution-resume',
+  'execution-handoff-accept', 'execution-lease-recover',
+]);
+
+function rawLeaseIdPaths(value: unknown, path: string[] = []): string[][] {
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) => rawLeaseIdPaths(item, [...path, String(index)]));
+  }
+  if (!value || typeof value !== 'object') return [];
+  return Object.entries(value as Record<string, unknown>).flatMap(([key, item]) => (
+    key === 'lease_id'
+      ? [[...path, key]]
+      : rawLeaseIdPaths(item, [...path, key])
+  ));
+}
+
+export const runResponseV11Schema = z.union([
+  runResponseSuccessV11Schema,
+  runResponseErrorV11Schema,
+]).superRefine((response, ctx) => {
+  for (const path of rawLeaseIdPaths(response)) {
+    const authorizedClaim = response.ok
+      && acquisitionOperations.has(response.operation)
+      && path.join('.') === 'result.lease_claim.lease_id';
+    if (!authorizedClaim) {
+      ctx.addIssue({
+        code: 'custom',
+        path,
+        message: 'raw lease_id is only allowed in result.lease_claim for an acquisition operation',
+      });
+    }
+  }
+});
+
+/** Compatibility reader for both strict envelope generations. */
+export const runResponseSchema = z.union([runResponseV11Schema, runResponseV10Schema]);
+
+export const maestroCapabilitiesSchema = z.object({
+  schema_version: z.literal('maestro-capabilities/1.0'),
+  cli_version: nonEmptyString,
+  session_schema_writes: z.array(z.enum(['session/1.3', 'session/2.0'])),
+  execution_schema_writes: z.array(z.literal('execution/1.0')),
+  run_response_writes: z.array(z.enum(['run-response/1.0', 'run-response/1.1'])),
+  features: z.object({
+    execution_generation: z.boolean(),
+    core_execution_lease: z.boolean(),
+    execution_handoff: z.boolean(),
+    session_statusless: z.boolean(),
+    legacy_session_aliases: z.boolean(),
+  }).strict(),
+}).strict();
 
 export const sessionTransitionSchema = z.object({
   schema_version: z.literal('session-transition/1.0'),
@@ -816,7 +1254,14 @@ export const importManifestSchema = z.object({
 export type IntentIdentity = z.infer<typeof intentIdentitySchema>;
 export type TopicIdentityProtocol = z.infer<typeof topicIdentitySchema>;
 export type ArgumentRequirement = z.infer<typeof argumentRequirementSchema>;
-export type ReuseAssessmentProtocol = z.infer<typeof reuseAssessmentSchema>;
+export type ReuseAssessmentProtocolV10 = z.infer<typeof reuseAssessmentSchema>;
+export type ReuseAssessmentProtocolV11 = z.infer<typeof reuseAssessmentV11Schema>;
+export type ReuseAssessmentProtocol = z.infer<typeof reuseAssessmentReadSchema>;
+export type SourceFence = z.infer<typeof sourceFenceSchema>;
+export type SourceFenceV11 = z.infer<typeof sourceFenceV11Schema>;
+export type SourceFenceRead = z.infer<typeof sourceFenceReadSchema>;
+export type SessionArchiveReceipt = z.infer<typeof sessionArchiveReceiptSchema>;
+export type ExecutionSealReceipt = z.infer<typeof executionSealReceiptSchema>;
 export type SessionProvenance = z.infer<typeof sessionProvenanceSchema>;
 export type CreationDecision = z.infer<typeof creationDecisionSchema>;
 export type CreationProvenance = z.infer<typeof creationProvenanceSchema>;
@@ -824,27 +1269,54 @@ export type ContractSnapshot = z.infer<typeof contractSnapshotSchema>;
 export type GuidanceSnapshot = z.infer<typeof guidanceSnapshotSchema>;
 export type CommandRebindAudit = z.infer<typeof commandRebindAuditSchema>;
 export type TransitionFence = z.infer<typeof transitionFenceSchema>;
+export type TransitionFenceV11 = z.infer<typeof transitionFenceV11Schema>;
+export type ExecutionLocator = z.infer<typeof executionLocatorSchema>;
 export type CompleteInputSnapshot = z.infer<typeof completeInputSnapshotSchema>;
 export type TransitionRequest = z.infer<typeof transitionRequestSchema>;
+export type TransitionRequestV11 = z.infer<typeof transitionRequestV11Schema>;
+export type TransitionRequestRead = z.infer<typeof transitionRequestReadSchema>;
 export type TransitionOutcome = z.infer<typeof transitionOutcomeSchema>;
+export type TransitionOutcomeV11 = z.infer<typeof transitionOutcomeV11Schema>;
+export type TransitionOutcomeRead = z.infer<typeof transitionOutcomeReadSchema>;
 export type PersistedTransitionRecord = z.infer<typeof persistedTransitionRecordSchema>;
+export type PersistedTransitionRecordV11 = z.infer<typeof persistedTransitionRecordV11Schema>;
+export type PersistedTransitionRecordRead = z.infer<typeof persistedTransitionRecordReadSchema>;
 export type TransitionPointer = z.infer<typeof transitionPointerSchema>;
-export type ExecutionContract = z.infer<typeof executionContractV11Schema>;
-export type BriefResult = z.infer<typeof briefResultV11Schema>;
-export type RunRecall = z.infer<typeof runRecallV11Schema>;
+export type ExecutionContract = z.infer<typeof executionContractV11Schema> | z.infer<typeof executionContractV12Schema>;
+export type BriefResult = z.infer<typeof briefResultV11Schema> | z.infer<typeof briefResultV12Schema>;
+export type RunRecall = z.infer<typeof runRecallSchema>;
 export type RecallConfirmationTargetIdentity = z.infer<typeof recallConfirmationTargetIdentitySchema>;
 export type RecallConfirmationFinalTarget = z.infer<typeof recallConfirmationFinalTargetSchema>;
-export type ValidatedRecallSource = z.infer<typeof validatedRecallSourceSchema>;
+export type ValidatedRecallSourceV10 = z.infer<typeof validatedRecallSourceSchema>;
+export type ValidatedRecallSourceV11 = z.infer<typeof validatedRecallSourceV11Schema>;
+export type ValidatedRecallSource = z.infer<typeof validatedRecallSourceReadSchema>;
 export type RecallReservationMarker = z.infer<typeof recallReservationMarkerSchema>;
 export type RecallReservationObservation = z.infer<typeof recallReservationObservationSchema>;
-export type RecallConfirmationReservation = z.infer<typeof recallConfirmationReservationSchema>;
+export type RecallConfirmationReservationV10 = z.infer<typeof recallConfirmationReservationSchema>;
+export type RecallConfirmationReservationV11 = z.infer<typeof recallConfirmationReservationV11Schema>;
+export type RecallConfirmationReservation = z.infer<typeof recallConfirmationReservationReadSchema>;
 export type StaleRecallReservation = z.infer<typeof staleRecallReservationSchema>;
 export type RecallReservationReconciliation = z.infer<typeof recallReservationReconciliationSchema>;
 export type RecallConfirmationOutcome = z.infer<typeof recallConfirmationOutcomeSchema>;
-export type RecallConfirmationRecord = z.infer<typeof recallConfirmationRecordSchema>;
-export type RecallConfirmationRegistry = z.infer<typeof recallConfirmationRegistrySchema>;
-export type RunResponse = z.infer<typeof runResponseSchema>;
+export type RecallConfirmationRecordV10 = z.infer<typeof recallConfirmationRecordSchema>;
+export type RecallConfirmationRecordV11 = z.infer<typeof recallConfirmationRecordV11Schema>;
+export type RecallConfirmationRecord = z.infer<typeof recallConfirmationRecordReadSchema>;
+export type RecallConfirmationRegistryV10 = z.infer<typeof recallConfirmationRegistrySchema>;
+export type RecallConfirmationRegistryV11 = z.infer<typeof recallConfirmationRegistryV11Schema>;
+export type RecallConfirmationRegistry = z.infer<typeof recallConfirmationRegistryReadSchema>;
+export type RunResponse = z.infer<typeof runResponseV10Schema>;
+export type RunResponseRead = z.infer<typeof runResponseSchema>;
+export type RunResponseV10 = z.infer<typeof runResponseV10Schema>;
+export type RunResponseV11 = z.infer<typeof runResponseV11Schema>;
 export type RunResponseErrorCode = z.infer<typeof runErrorCodeSchema>;
+export type RunResponseErrorCodeV11 = z.infer<typeof runErrorCodeV11Schema>;
+export type RunOperationV11 = z.infer<typeof runOperationV11Schema>;
+export type RunResponseDisposition = z.infer<typeof runResponseDispositionSchema>;
+export type ResponseLocatorV11 = z.infer<typeof responseLocatorV11Schema>;
+export type ResponseFenceV11 = z.infer<typeof responseFenceV11Schema>;
+export type ResponseWarningV11 = z.infer<typeof responseWarningV11Schema>;
+export type ContinuationDirectiveV11 = z.infer<typeof continuationDirectiveV11Schema>;
+export type MaestroCapabilities = z.infer<typeof maestroCapabilitiesSchema>;
 export type ContinuationAction = z.infer<typeof continuationActionSchema>;
 export type ContinuationAuthority = z.infer<typeof continuationAuthoritySchema>;
 export type ContinuationDirective = z.infer<typeof continuationDirectiveSchema>;
