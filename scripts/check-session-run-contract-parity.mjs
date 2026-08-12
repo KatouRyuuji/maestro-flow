@@ -2,14 +2,51 @@
 
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import ts from 'typescript';
 
-const REQUIRED_OPERATIONS = [
+const LEGACY_OPERATIONS = [
   'create', 'next', 'complete', 'brief', 'recall', 'resolve', 'resume', 'fork', 'import',
   'check', 'decide', 'seal-session', 'chain-insert', 'chain-replace', 'chain-skip', 'meta-update', 'accept-reuse',
   'plan-publish',
 ];
 
+const EXECUTION_OPERATIONS = [
+  'capabilities', 'session-create', 'session-archive', 'session-unarchive',
+  'execution-start', 'execution-attach', 'execution-status', 'execution-pause',
+  'execution-resolve', 'execution-resume', 'execution-seal', 'execution-handoff-prepare',
+  'execution-handoff-accept', 'execution-handoff-cancel', 'execution-lease-status',
+  'execution-lease-heartbeat', 'execution-lease-release', 'execution-lease-recover',
+];
+
+const REQUIRED_OPERATIONS = [...LEGACY_OPERATIONS, ...EXECUTION_OPERATIONS];
+
 const RELEASE_MACHINE_COMMAND = 'node scripts/check-session-run-release-machine.mjs';
+
+const EXPECTED_FOCUSED_RELEASE_TESTS = [
+  'commits the seal before lock release so release failure cannot roll it back',
+  'commits the lease release before lock release so release failure cannot roll it back and remains replayable',
+  'revalidates the same Execution anchor for reuse while aliases and later activity stay Session-global',
+  'promotes a reviewed session candidate without sealing the Session',
+];
+
+const REQUIRED_RELEASE_MACHINE_OPERATION_TOKENS = [
+  "'execution', 'seal'",
+  "'execution', 'lease', 'release'",
+  "'execution-chain-bootstrap'",
+  "'plan', 'publish'",
+  "'run', 'next'",
+  "'run', 'complete'",
+  "'step-000-execute'",
+  "'step-001-verify'",
+];
+
+const WAVE2_GUIDE_TOKENS = [
+  'session/2.0', 'session-schema-selection/1.0', 'session_statusless=true',
+  '--to session/2.0', 'session-archive-receipt/1.0', 'previous_receipt_hash',
+  'derived_status', 'current_execution_id', 'execution-seal-receipt/1.0',
+  'source-fence/1.1', 'reuse-source-fence/1.1', 'session-source',
+  'permanent Session seal', 'Session-global', 'session/1.x',
+];
 
 const GUIDE_REQUIREMENTS = [
   {
@@ -25,22 +62,35 @@ const GUIDE_REQUIREMENTS = [
   {
     id: 'docs.architecture',
     path: 'guide/session-run-architecture.md',
-    tokens: ['session/1.3', 'command-run/1.3', 'run-response/1.0', ...REQUIRED_OPERATIONS],
+    tokens: [
+      'session/1.3', 'command-run/1.3', 'command-run/1.4', 'execution/1.0',
+      'execution-lease/1.0', 'run-response/1.0', 'run-response/1.1',
+      'session_statusless=true', 'opaque/best-effort read compatibility', 'fail-closed mutation boundary',
+      ...WAVE2_GUIDE_TOKENS,
+      ...REQUIRED_OPERATIONS,
+    ],
   },
   {
     id: 'docs.structure',
     path: 'guide/session-run-structure-guide.md',
     tokens: [
-      'session/1.3', 'command-run/1.3', 'run-response/1.0',
-      'brief-result/1.1', 'knowledge_context', ...REQUIRED_OPERATIONS,
+      'session/1.3', 'command-run/1.3', 'command-run/1.4', 'execution/1.0',
+      'execution-lease/1.0', 'run-response/1.0', 'run-response/1.1',
+      '--expected-execution-revision', '--lease-epoch', 'session_statusless=true',
+      'opaque/best-effort read compatibility', 'fail-closed mutation boundary',
+      'brief-result/1.1', 'knowledge_context', ...WAVE2_GUIDE_TOKENS, ...REQUIRED_OPERATIONS,
     ],
   },
   {
     id: 'docs.cli.zh',
     path: 'guide/cli-commands-guide.md',
     tokens: [
-      'session/1.3', 'command-run/1.3', 'run-response/1.0',
-      'brief-result/1.1', 'knowledge_context',
+      'session/1.3', 'command-run/1.3', 'command-run/1.4', 'execution/1.0',
+      'execution-lease/1.0', 'run-response/1.0', 'run-response/1.1',
+      'maestro capabilities --json', 'maestro execution start',
+      '--expected-execution-revision', '--lease-epoch', '--claim-output', 'session_statusless=true',
+      'opaque/best-effort read compatibility', 'fail-closed mutation boundary',
+      'brief-result/1.1', 'knowledge_context', '绝不会静默切换默认值', ...WAVE2_GUIDE_TOKENS,
       'maestro knowledge stage', 'maestro knowledge record', 'maestro knowledge review',
       'maestro knowledge promote',
       ...REQUIRED_OPERATIONS,
@@ -49,7 +99,25 @@ const GUIDE_REQUIREMENTS = [
   {
     id: 'docs.cli.en',
     path: 'guide/cli-commands-guide.en.md',
-    tokens: ['session/1.3', 'command-run/1.3', 'run-response/1.0', ...REQUIRED_OPERATIONS],
+    tokens: [
+      'session/1.3', 'command-run/1.3', 'command-run/1.4', 'execution/1.0',
+      'execution-lease/1.0', 'run-response/1.0', 'run-response/1.1',
+      'maestro capabilities --json', 'maestro execution start',
+      '--expected-execution-revision', '--lease-epoch', '--claim-output', 'session_statusless=true',
+      'opaque/best-effort read compatibility', 'fail-closed mutation boundary',
+      'There is no silent default switch.',
+      ...WAVE2_GUIDE_TOKENS,
+      ...REQUIRED_OPERATIONS,
+    ],
+  },
+  {
+    id: 'docs.knowledge-wave2-supersession',
+    path: 'docs/knowledge-system-architecture.md',
+    tokens: [
+      'Wave 2 supersession', 'session-source',
+      'promotion without a permanent Session seal',
+      'execution-seal-receipt/1.0', 'Run-source candidate',
+    ],
   },
   {
     id: 'docs.prepare-authoring',
@@ -73,6 +141,319 @@ function read(relativePath) {
   } catch {
     return null;
   }
+}
+
+const sourceCache = new Map();
+
+function source(relativePath) {
+  if (sourceCache.has(relativePath)) return sourceCache.get(relativePath);
+  const text = read(relativePath);
+  const parsed = text === null
+    ? null
+    : ts.createSourceFile(relativePath, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  sourceCache.set(relativePath, parsed);
+  return parsed;
+}
+
+function findVariable(relativePath, name) {
+  const parsed = source(relativePath);
+  if (!parsed) return null;
+  let initializer = null;
+  const visit = node => {
+    if (initializer) return;
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name) {
+      initializer = node.initializer ?? null;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(parsed);
+  return initializer;
+}
+
+function unwrapExpression(node) {
+  let current = node;
+  while (current && (ts.isParenthesizedExpression(current)
+    || ts.isAsExpression(current)
+    || ts.isSatisfiesExpression(current))) current = current.expression;
+  return current;
+}
+
+function callChain(node) {
+  const calls = [];
+  let current = unwrapExpression(node);
+  while (current && ts.isCallExpression(current)) {
+    const expression = current.expression;
+    if (ts.isPropertyAccessExpression(expression)) {
+      calls.push({ name: expression.name.text, args: current.arguments, node: current });
+      current = unwrapExpression(expression.expression);
+    } else {
+      break;
+    }
+  }
+  return calls;
+}
+
+function objectFromCallChain(node) {
+  for (const call of callChain(node)) {
+    const candidate = unwrapExpression(call.args[0]);
+    if (call.name === 'object' && candidate && ts.isObjectLiteralExpression(candidate)) return candidate;
+  }
+  return null;
+}
+
+function propertyName(property) {
+  if (!property.name) return null;
+  if (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name) || ts.isNumericLiteral(property.name)) {
+    return property.name.text;
+  }
+  return null;
+}
+
+function objectProperty(object, name) {
+  if (!object) return null;
+  const property = object.properties.find(item => ts.isPropertyAssignment(item) && propertyName(item) === name);
+  return property && ts.isPropertyAssignment(property) ? unwrapExpression(property.initializer) : null;
+}
+
+function literalValue(node) {
+  const value = unwrapExpression(node);
+  if (!value) return undefined;
+  if (ts.isStringLiteral(value) || ts.isNoSubstitutionTemplateLiteral(value)) return value.text;
+  if (ts.isNumericLiteral(value)) return Number(value.text);
+  if (value.kind === ts.SyntaxKind.TrueKeyword) return true;
+  if (value.kind === ts.SyntaxKind.FalseKeyword) return false;
+  if (value.kind === ts.SyntaxKind.NullKeyword) return null;
+  if (ts.isArrayLiteralExpression(value)) return value.elements.map(literalValue);
+  if (ts.isObjectLiteralExpression(value)) {
+    return Object.fromEntries(value.properties
+      .filter(ts.isPropertyAssignment)
+      .map(property => [propertyName(property), literalValue(property.initializer)]));
+  }
+  return undefined;
+}
+
+function zodLiteral(relativePath, variableName, property = 'schema_version') {
+  const initializer = findVariable(relativePath, variableName);
+  let result = null;
+  const visit = node => {
+    if (result !== null) return;
+    if (ts.isPropertyAssignment(node) && propertyName(node) === property) {
+      const literalCall = callChain(node.initializer).find(call => call.name === 'literal');
+      const value = literalCall ? literalValue(literalCall.args[0]) : undefined;
+      if (typeof value === 'string') result = value;
+    }
+    ts.forEachChild(node, visit);
+  };
+  if (initializer) visit(initializer);
+  return result;
+}
+
+function zodObjectContract(relativePath, variableName) {
+  const initializer = findVariable(relativePath, variableName);
+  const properties = new Set();
+  const calls = [];
+  const visit = node => {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      calls.push(node.expression.name.text);
+    }
+    if (ts.isObjectLiteralExpression(node)) {
+      for (const property of node.properties) {
+        const name = propertyName(property);
+        if (name) properties.add(name);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  if (initializer) visit(initializer);
+  return { properties: [...properties], calls };
+}
+
+function zodArray(relativePath, variableName, callName = 'enum') {
+  const initializer = findVariable(relativePath, variableName);
+  const call = callChain(initializer).find(candidate => candidate.name === callName);
+  return call ? literalValue(call.args[0]) ?? null : null;
+}
+
+function zodEnumMembers(relativePath, variableName, seen = new Set()) {
+  if (seen.has(variableName)) return [];
+  seen.add(variableName);
+  const initializer = findVariable(relativePath, variableName);
+  const call = callChain(initializer).find(candidate => candidate.name === 'enum');
+  const array = call ? unwrapExpression(call.args[0]) : null;
+  if (!array || !ts.isArrayLiteralExpression(array)) return [];
+  const values = [];
+  for (const element of array.elements) {
+    if (ts.isSpreadElement(element)
+      && ts.isPropertyAccessExpression(element.expression)
+      && element.expression.name.text === 'options'
+      && ts.isIdentifier(element.expression.expression)) {
+      values.push(...zodEnumMembers(relativePath, element.expression.expression.text, seen));
+      continue;
+    }
+    const value = literalValue(element);
+    if (typeof value === 'string') values.push(value);
+  }
+  return values;
+}
+
+function zodPropertyCalls(relativePath, variableName, property) {
+  const initializer = findVariable(relativePath, variableName);
+  let calls = [];
+  const visit = node => {
+    if (ts.isPropertyAssignment(node) && propertyName(node) === property) {
+      calls = callChain(node.initializer).map(call => call.name);
+      return;
+    }
+    if (calls.length === 0) ts.forEachChild(node, visit);
+  };
+  if (initializer) visit(initializer);
+  return calls;
+}
+
+function zodPropertyCallArgument(relativePath, variableName, property, callName) {
+  const initializer = findVariable(relativePath, variableName);
+  let result = null;
+  const visit = node => {
+    if (result !== null) return;
+    if (ts.isPropertyAssignment(node) && propertyName(node) === property) {
+      const call = callChain(node.initializer).find(candidate => candidate.name === callName);
+      if (call) result = literalValue(call.args[0]) ?? null;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  if (initializer) visit(initializer);
+  return result;
+}
+
+function unionMembers(relativePath, variableName) {
+  const initializer = findVariable(relativePath, variableName);
+  const call = callChain(initializer).find(candidate => candidate.name === 'union');
+  const array = call ? unwrapExpression(call.args[0]) : null;
+  if (!array || !ts.isArrayLiteralExpression(array)) return [];
+  return array.elements.map(element => ts.isIdentifier(unwrapExpression(element)) ? unwrapExpression(element).text : null);
+}
+
+function discriminatedUnionPropertyMembers(
+  relativePath,
+  variableName,
+  discriminator,
+  discriminatorValue,
+  property,
+) {
+  const initializer = findVariable(relativePath, variableName);
+  const unionCall = callChain(initializer).find(candidate => candidate.name === 'union');
+  const branches = unionCall ? unwrapExpression(unionCall.args[0]) : null;
+  if (!branches || !ts.isArrayLiteralExpression(branches)) return [];
+  for (const branch of branches.elements) {
+    const extendCall = callChain(branch).find(candidate => candidate.name === 'extend');
+    const object = extendCall ? unwrapExpression(extendCall.args[0]) : null;
+    if (!object || !ts.isObjectLiteralExpression(object)) continue;
+    const discriminatorNode = objectProperty(object, discriminator);
+    const discriminatorCall = callChain(discriminatorNode).find(candidate => candidate.name === 'literal');
+    if (literalValue(discriminatorCall?.args[0]) !== discriminatorValue) continue;
+    const propertyNode = objectProperty(object, property);
+    const propertyCall = callChain(propertyNode).find(candidate => candidate.name === 'union');
+    const members = propertyCall ? unwrapExpression(propertyCall.args[0]) : null;
+    if (!members || !ts.isArrayLiteralExpression(members)) return [];
+    return members.elements.map(element => {
+      const member = unwrapExpression(element);
+      return ts.isIdentifier(member) ? member.text : null;
+    });
+  }
+  return [];
+}
+
+function parsedObjectArgument(relativePath, functionName, parserName) {
+  const parsed = source(relativePath);
+  if (!parsed) return null;
+  let functionNode = null;
+  let object = null;
+  const visit = node => {
+    if (!functionNode && ts.isFunctionDeclaration(node) && node.name?.text === functionName) functionNode = node;
+    if (functionNode && !object && ts.isCallExpression(node)
+      && ts.isPropertyAccessExpression(node.expression)
+      && node.expression.name.text === 'parse'
+      && ts.isIdentifier(node.expression.expression)
+      && node.expression.expression.text === parserName) {
+      const candidate = unwrapExpression(node.arguments[0]);
+      if (candidate && ts.isObjectLiteralExpression(candidate)) object = candidate;
+    }
+    if (!object) ts.forEachChild(node, visit);
+  };
+  visit(parsed);
+  return object ? literalValue(object) : null;
+}
+
+function arrayLiteralFromVariable(relativePath, variableName) {
+  const initializer = unwrapExpression(findVariable(relativePath, variableName));
+  const frozen = initializer && ts.isCallExpression(initializer)
+    && ts.isPropertyAccessExpression(initializer.expression)
+    && initializer.expression.expression.getText() === 'Object'
+    && initializer.expression.name.text === 'freeze'
+    ? unwrapExpression(initializer.arguments[0])
+    : initializer;
+  return frozen && ts.isArrayLiteralExpression(frozen) ? literalValue(frozen) : null;
+}
+
+function functionAst(relativePath, functionName) {
+  const parsed = source(relativePath);
+  if (!parsed) return null;
+  let match = null;
+  const visit = node => {
+    if (!match && ts.isFunctionDeclaration(node) && node.name?.text === functionName) match = node;
+    if (!match) ts.forEachChild(node, visit);
+  };
+  visit(parsed);
+  return match;
+}
+
+function functionPropertyLiterals(relativePath, functionName, property) {
+  const fn = functionAst(relativePath, functionName);
+  if (!fn) return [];
+  const values = [];
+  const visit = node => {
+    if (ts.isPropertyAssignment(node) && propertyName(node) === property) {
+      const value = literalValue(node.initializer);
+      if (value !== undefined) values.push(value);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(fn);
+  return values;
+}
+
+function functionObjectKeys(relativePath, functionName) {
+  const fn = functionAst(relativePath, functionName);
+  if (!fn) return [];
+  const keys = new Set();
+  const visit = node => {
+    if (ts.isObjectLiteralExpression(node)) {
+      for (const property of node.properties) {
+        const name = propertyName(property);
+        if (name) keys.add(name);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(fn);
+  return [...keys];
+}
+
+function callStringArguments(relativePath, functionName) {
+  const parsed = source(relativePath);
+  if (!parsed) return [];
+  const values = [];
+  const visit = node => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === functionName) {
+      const value = literalValue(node.arguments.at(-1));
+      if (typeof value === 'string') values.push(value);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(parsed);
+  return values;
 }
 
 function block(text, start, end) {
@@ -108,18 +489,129 @@ function addCheck(id, actual, expected, pass) {
   checks.push({ id, actual, expected, pass });
 }
 
-const writer = read('src/run/schemas.ts');
+const writerPath = 'src/run/schemas.ts';
+const sessionWriterVersion = zodLiteral(writerPath, 'sessionStateV13Schema');
+const legacyRunWriterVersion = zodLiteral(writerPath, 'commandRunV13Schema');
+addCheck('writer.session.current', sessionWriterVersion, 'session/1.3', sessionWriterVersion === 'session/1.3');
 addCheck(
-  'writer.session.current',
-  schemaLiteral(writer, 'export const sessionStateV13Schema', 'export type SessionStateInput'),
-  'session/1.3',
-  schemaLiteral(writer, 'export const sessionStateV13Schema', 'export type SessionStateInput') === 'session/1.3',
+  'writer.command-run.legacy-default',
+  legacyRunWriterVersion,
+  'command-run/1.3',
+  legacyRunWriterVersion === 'command-run/1.3',
+);
+
+const sessionV20Contract = zodObjectContract(writerPath, 'sessionStateV20Schema');
+const sessionWriterSelection = zodPropertyCallArgument(
+  writerPath,
+  'sessionSchemaSelectionSchema',
+  'writer',
+  'enum',
+);
+const defaultSessionSelection = literalValue(findVariable('src/run/defaults.ts', 'DEFAULT_SESSION_SCHEMA_SELECTION'));
+const expectedDefaultSessionSelection = {
+  schema_version: 'session-schema-selection/1.0',
+  writer: 'session/1.3',
+  features: { session_statusless: false },
+};
+addCheck(
+  'writer.session.statusless-explicit',
+  {
+    version: zodLiteral(writerPath, 'sessionStateV20Schema'),
+    strict: sessionV20Contract.calls.includes('strict'),
+    properties: sessionV20Contract.properties,
+  },
+  {
+    version: 'session/2.0',
+    strict: true,
+    requiredProperties: ['current_execution_id', 'latest_execution_id', 'archived_at', 'archived_by'],
+    forbiddenProperties: ['status', 'active_run_id'],
+  },
+  zodLiteral(writerPath, 'sessionStateV20Schema') === 'session/2.0'
+    && sessionV20Contract.calls.includes('strict')
+    && ['current_execution_id', 'latest_execution_id', 'archived_at', 'archived_by']
+      .every(name => sessionV20Contract.properties.includes(name))
+    && ['status', 'active_run_id'].every(name => !sessionV20Contract.properties.includes(name)),
 );
 addCheck(
-  'writer.command-run.current',
-  schemaLiteral(writer, 'export const commandRunV13Schema', 'export const commandRunReadSchema'),
-  'command-run/1.3',
-  schemaLiteral(writer, 'export const commandRunV13Schema', 'export const commandRunReadSchema') === 'command-run/1.3',
+  'writer.session.selection-default',
+  { supported: sessionWriterSelection, default: defaultSessionSelection },
+  { supported: ['session/1.3', 'session/2.0'], default: expectedDefaultSessionSelection },
+  sameValues(sessionWriterSelection ?? [], ['session/1.3', 'session/2.0'])
+    && JSON.stringify(defaultSessionSelection) === JSON.stringify(expectedDefaultSessionSelection),
+);
+
+const executionStateContract = zodObjectContract(writerPath, 'executionStateSchema');
+const executionLeaseContract = zodObjectContract(writerPath, 'executionLeaseSchema');
+const executionAlias = unwrapExpression(findVariable(writerPath, 'executionSchema'));
+addCheck(
+  'writer.execution.strict',
+  {
+    version: zodLiteral(writerPath, 'executionStateSchema'),
+    strict: executionStateContract.calls.includes('strict'),
+    canonical: ts.isIdentifier(executionAlias) ? executionAlias.text : null,
+  },
+  { version: 'execution/1.0', strict: true, canonical: 'executionStateSchema' },
+  zodLiteral(writerPath, 'executionStateSchema') === 'execution/1.0'
+    && executionStateContract.calls.includes('strict')
+    && ts.isIdentifier(executionAlias)
+    && executionAlias.text === 'executionStateSchema',
+);
+addCheck(
+  'writer.execution-lease.strict',
+  {
+    version: zodLiteral(writerPath, 'executionLeaseSchema'),
+    strict: executionLeaseContract.calls.includes('strict'),
+  },
+  { version: 'execution-lease/1.0', strict: true },
+  zodLiteral(writerPath, 'executionLeaseSchema') === 'execution-lease/1.0'
+    && executionLeaseContract.calls.includes('strict'),
+);
+
+const commandRunV14Contract = zodObjectContract(writerPath, 'commandRunV14Schema');
+const commandRunReaderMembers = unionMembers(writerPath, 'commandRunReadSchema');
+const expectedRunReaderMembers = [
+  'commandRunV14Schema', 'commandRunV13Schema', 'commandRunV12Schema',
+  'commandRunV11Schema', 'commandRunV1Schema', 'commandRunUnknownSchema',
+];
+const generationCalls = zodPropertyCalls(writerPath, 'commandRunV14Schema', 'generation');
+addCheck(
+  'writer.command-run.execution-explicit',
+  {
+    version: zodLiteral(writerPath, 'commandRunV14Schema'),
+    properties: commandRunV14Contract.properties,
+    generationCalls,
+    readerMembers: commandRunReaderMembers,
+  },
+  {
+    version: 'command-run/1.4',
+    requiredProperties: ['schema_version', 'execution_id', 'generation'],
+    generationCalls: ['positive', 'int', 'number'],
+    readerMembers: expectedRunReaderMembers,
+  },
+  zodLiteral(writerPath, 'commandRunV14Schema') === 'command-run/1.4'
+    && ['schema_version', 'execution_id', 'generation'].every(name => commandRunV14Contract.properties.includes(name))
+    && sameValues(generationCalls, ['positive', 'int', 'number'])
+    && sameValues(commandRunReaderMembers, expectedRunReaderMembers),
+);
+
+const createRunSchemaVersions = functionPropertyLiterals('src/run/runtime.ts', 'createRun', 'schema_version');
+const executionCreateKeys = functionObjectKeys('src/run/runtime.ts', 'createExecutionRun');
+addCheck(
+  'runtime.command-run.writer-split',
+  {
+    createRunSchemaVersions,
+    executionDelegatesAuthority: executionCreateKeys.includes('execution'),
+    sessionVersion: sessionWriterVersion,
+  },
+  {
+    createRunSchemaVersions: ['command-run/1.3', 'command-run/1.4'],
+    executionDelegatesAuthority: true,
+    sessionVersion: 'session/1.3',
+  },
+  createRunSchemaVersions.includes('command-run/1.3')
+    && createRunSchemaVersions.includes('command-run/1.4')
+    && executionCreateKeys.includes('execution')
+    && sessionWriterVersion === 'session/1.3',
 );
 
 const wikiReader = read('dashboard/src/server/wiki/virtual-wiki-adapters.ts');
@@ -144,14 +636,139 @@ const wikiIndexer = read('dashboard/src/server/wiki/wiki-indexer.ts');
 const cacheVersion = Number(wikiIndexer?.match(/const\s+SEARCH_CACHE_VERSION\s*=\s*(\d+)\s*;/)?.[1] ?? Number.NaN);
 addCheck('cache.search.version', Number.isNaN(cacheVersion) ? null : cacheVersion, 5, cacheVersion === 5);
 
-const protocolSchemas = read('src/run/protocol-schemas.ts');
-const operations = enumLiterals(protocolSchemas, 'export const runOperationSchema', 'const responseCommonSchema');
-addCheck('response.operations.complete', operations, REQUIRED_OPERATIONS, sameValues(operations, REQUIRED_OPERATIONS));
+const protocolPath = 'src/run/protocol-schemas.ts';
+const legacyOperations = zodEnumMembers(protocolPath, 'runOperationSchema');
+const allV11Operations = zodEnumMembers(protocolPath, 'runOperationV11Schema');
+const additiveOperations = allV11Operations.filter(operation => !legacyOperations.includes(operation));
+const responseSchemaContract = {
+  legacyVersion: zodLiteral(protocolPath, 'responseCommonSchema'),
+  executionVersion: zodLiteral(protocolPath, 'responseCommonV11Schema'),
+  v10Members: unionMembers(protocolPath, 'runResponseV10Schema'),
+  v11Members: unionMembers(protocolPath, 'runResponseV11Schema'),
+  compatibilityMembers: unionMembers(protocolPath, 'runResponseSchema'),
+};
+addCheck('response.operations.legacy', legacyOperations, LEGACY_OPERATIONS, sameValues(legacyOperations, LEGACY_OPERATIONS));
+addCheck(
+  'response.operations.execution-additive',
+  additiveOperations,
+  EXECUTION_OPERATIONS,
+  sameValues(additiveOperations, EXECUTION_OPERATIONS),
+);
+addCheck(
+  'response.schemas.compatibility',
+  responseSchemaContract,
+  {
+    legacyVersion: 'run-response/1.0',
+    executionVersion: 'run-response/1.1',
+    v10Members: ['runResponseSuccessSchema', 'runResponseErrorSchema'],
+    v11Members: ['runResponseSuccessV11Schema', 'runResponseErrorV11Schema'],
+    compatibilityMembers: ['runResponseV11Schema', 'runResponseV10Schema'],
+  },
+  responseSchemaContract.legacyVersion === 'run-response/1.0'
+    && responseSchemaContract.executionVersion === 'run-response/1.1'
+    && sameValues(responseSchemaContract.v10Members, ['runResponseSuccessSchema', 'runResponseErrorSchema'])
+    && sameValues(responseSchemaContract.v11Members, ['runResponseSuccessV11Schema', 'runResponseErrorV11Schema'])
+    && sameValues(responseSchemaContract.compatibilityMembers, ['runResponseV11Schema', 'runResponseV10Schema']),
+);
+
+const capabilities = parsedObjectArgument(
+  'src/commands/execution.ts',
+  'registerCapabilitiesCommand',
+  'maestroCapabilitiesSchema',
+);
+const expectedCapabilityFeatures = {
+  execution_generation: true,
+  core_execution_lease: true,
+  execution_handoff: true,
+  session_statusless: true,
+  legacy_session_aliases: true,
+};
+const capabilityContract = capabilities && {
+  schema_version: capabilities.schema_version,
+  session_schema_writes: capabilities.session_schema_writes,
+  execution_schema_writes: capabilities.execution_schema_writes,
+  run_response_writes: capabilities.run_response_writes,
+  features: capabilities.features,
+};
+const expectedCapabilityContract = {
+  schema_version: 'maestro-capabilities/1.0',
+  session_schema_writes: ['session/1.3', 'session/2.0'],
+  execution_schema_writes: ['execution/1.0'],
+  run_response_writes: ['run-response/1.0', 'run-response/1.1'],
+  features: expectedCapabilityFeatures,
+};
+addCheck(
+  'capabilities.exact',
+  capabilityContract,
+  expectedCapabilityContract,
+  JSON.stringify(capabilityContract) === JSON.stringify(expectedCapabilityContract),
+);
+
+const executionCommands = read('src/commands/execution.ts');
+const protocolSchemas = read(protocolPath);
+const receiptFenceContract = {
+  sourceFence: zodLiteral(protocolPath, 'sourceFenceV11Schema'),
+  reuseAssessment: zodLiteral(protocolPath, 'reuseAssessmentV11Schema'),
+  reuseSourceFence: block(
+    protocolSchemas,
+    'export const reuseAssessmentV11Schema',
+    '/** Additive compatibility reader; reuseAssessmentSchema remains the strict 1.0 shape. */',
+  ).includes("schema_version: z.literal('reuse-source-fence/1.1')"),
+  executionSealReceipt: zodLiteral(protocolPath, 'executionSealReceiptSchema'),
+  sessionArchiveReceipt: zodLiteral(protocolPath, 'sessionArchiveReceiptSchema'),
+};
+addCheck(
+  'response.receipt-fences.wave2',
+  receiptFenceContract,
+  {
+    sourceFence: 'source-fence/1.1',
+    reuseAssessment: 'reuse-assessment/1.1',
+    reuseSourceFence: true,
+    executionSealReceipt: 'execution-seal-receipt/1.0',
+    sessionArchiveReceipt: 'session-archive-receipt/1.0',
+  },
+  receiptFenceContract.sourceFence === 'source-fence/1.1'
+    && receiptFenceContract.reuseAssessment === 'reuse-assessment/1.1'
+    && receiptFenceContract.reuseSourceFence
+    && receiptFenceContract.executionSealReceipt === 'execution-seal-receipt/1.0'
+    && receiptFenceContract.sessionArchiveReceipt === 'session-archive-receipt/1.0',
+);
+
+const cli = read('src/cli.ts');
+const executionCliContract = {
+  executionLoader: cli?.includes("execution:  async () => (await import('./commands/execution.js')).registerExecutionCommand") ?? false,
+  capabilitiesLoader: cli?.includes("capabilities: async () => (await import('./commands/execution.js')).registerCapabilitiesCommand") ?? false,
+  executionCommand: executionCommands?.includes("program.command('execution')") ?? false,
+  completeTree: [
+    ".command('start')", ".command('attach')", ".command('status')", ".command('pause')",
+    ".command('resolve')", ".command('resume')", ".command('seal')", ".command('handoff')",
+    ".command('prepare')", ".command('accept')", ".command('cancel')", ".command('lease')",
+    ".command('heartbeat')", ".command('release')", ".command('recover')",
+  ].every(token => executionCommands?.includes(token)),
+};
+addCheck(
+  'cli.execution.registration',
+  executionCliContract,
+  { executionLoader: true, capabilitiesLoader: true, executionCommand: true, completeTree: true },
+  Object.values(executionCliContract).every(Boolean),
+);
 const knowledgeCardVersion = schemaLiteral(
   protocolSchemas,
   'export const knowledgeReconciliationCardSchema',
   'export const briefResultV10Schema',
 );
+const briefResultReaderMembers = discriminatedUnionPropertyMembers(
+  protocolPath,
+  'runResponseSuccessSchema',
+  'operation',
+  'brief',
+  'result',
+);
+const expectedBriefResultReaderMembers = [
+  'briefResultV10Schema',
+  'briefResultV11Schema',
+  'briefResultV12Schema',
+];
 addCheck(
   'brief.knowledge-context.schema',
   {
@@ -161,24 +778,23 @@ addCheck(
       'export const briefResultV11Schema',
       'const recallExactCandidateSchema',
     ).includes('knowledge_context: knowledgeReconciliationCardSchema'),
-    legacyAccepted: block(
-      protocolSchemas,
-      'export const runResponseSuccessSchema',
-      'export const runResponseErrorSchema',
-    ).includes('z.union([briefResultV10Schema, briefResultV11Schema])'),
+    readerMembers: briefResultReaderMembers,
+    legacyAccepted: briefResultReaderMembers.includes('briefResultV10Schema'),
   },
-  { version: 'knowledge-reconciliation-card/1.0', attached: true, legacyAccepted: true },
+  {
+    version: 'knowledge-reconciliation-card/1.0',
+    attached: true,
+    readerMembers: expectedBriefResultReaderMembers,
+    legacyAccepted: true,
+  },
   knowledgeCardVersion === 'knowledge-reconciliation-card/1.0'
     && block(
       protocolSchemas,
       'export const briefResultV11Schema',
       'const recallExactCandidateSchema',
     ).includes('knowledge_context: knowledgeReconciliationCardSchema')
-    && block(
-      protocolSchemas,
-      'export const runResponseSuccessSchema',
-      'export const runResponseErrorSchema',
-    ).includes('z.union([briefResultV10Schema, briefResultV11Schema])'),
+    && sameValues(briefResultReaderMembers, expectedBriefResultReaderMembers)
+    && briefResultReaderMembers.includes('briefResultV10Schema'),
 );
 
 const knowledgeCommands = read('src/commands/knowledge.ts');
@@ -269,22 +885,72 @@ addCheck(
   Object.values(planPublishMachineHandler).every(Boolean),
 );
 
-const releaseMachine = read('scripts/check-session-run-release-machine.mjs');
+const expectedReleaseProofs = [
+  'capabilities-exact',
+  'statusless-create-migration-gate',
+  'archive-unarchive-cas-receipt-chain',
+  'lease-acquisition-handoff-stale-release-seal',
+  'execution-seal-lock-release-failure-ordering',
+  'execution-lease-release-lock-release-failure-ordering',
+  'execution-seal-receipt-source-fence-1.1',
+  'execution-aware-create-complete',
+  'execution-aware-next',
+  'plan-publish-execution-run-audit-redaction',
+  'plan-publish-execution-applied-replayed-fences',
+  'plan-publish-empty-execution-bootstrap-chain',
+  'plan-publish-legacy-1.x-fallback',
+  'session-seal-execution-alias-applied-replayed-conflict',
+  'session-seal-legacy-1.x-fallback',
+  'run-seal-session-execution-alias-applied-replayed-conflict',
+  'run-seal-session-legacy-1.x-fallback',
+  'complete-needs-retry',
+  'complete-blocked',
+  'decide-terminal-escalate-replay',
+  'commander-real-secret-redaction',
+  'legacy-1.0-create',
+  'session-source-promotion-without-session-seal',
+  'transition-secret-persistence-redaction',
+];
+const declaredReleaseProofs = arrayLiteralFromVariable(
+  'scripts/check-session-run-release-machine.mjs',
+  'REQUIRED_BEHAVIOR_PROOFS',
+) ?? [];
+const recordedReleaseProofs = callStringArguments(
+  'scripts/check-session-run-release-machine.mjs',
+  'recordProof',
+);
 const releaseMachineCoverage = {
-  childProcess: releaseMachine?.includes('spawnSync') ?? false,
-  acceptReuse: releaseMachine?.includes("'accept-reuse'") ?? false,
-  planPublish: releaseMachine?.includes("'plan', 'publish'") ?? false,
-  sourceDrift: releaseMachine?.includes("assert.equal(planDrift.error?.code, 'FENCE_CONFLICT')") ?? false,
-  mutations: releaseMachine?.includes("'mutations'") ?? false,
-  commanderUsage: releaseMachine?.includes("'COMMANDER_USAGE'") ?? false,
-  applied: releaseMachine?.includes("'applied'") ?? false,
-  replayed: releaseMachine?.includes("'replayed'") ?? false,
+  declared: declaredReleaseProofs,
+  recorded: recordedReleaseProofs,
 };
 addCheck(
   'release-machine.coverage',
   releaseMachineCoverage,
-  { childProcess: true, acceptReuse: true, planPublish: true, sourceDrift: true, mutations: true, commanderUsage: true, applied: true, replayed: true },
-  Object.values(releaseMachineCoverage).every(Boolean),
+  { declared: expectedReleaseProofs, recorded: expectedReleaseProofs },
+  sameValues(declaredReleaseProofs, expectedReleaseProofs)
+    && sameValues(recordedReleaseProofs, expectedReleaseProofs),
+);
+
+const focusedReleaseTests = callStringArguments(
+  'scripts/check-session-run-release-machine.mjs',
+  'runFocusedVitest',
+);
+addCheck(
+  'release-machine.focused-fault-injection',
+  focusedReleaseTests,
+  EXPECTED_FOCUSED_RELEASE_TESTS,
+  sameValues(focusedReleaseTests, EXPECTED_FOCUSED_RELEASE_TESTS),
+);
+
+const releaseMachineText = read('scripts/check-session-run-release-machine.mjs');
+const missingReleaseMachineOperationTokens = releaseMachineText === null
+  ? [...REQUIRED_RELEASE_MACHINE_OPERATION_TOKENS]
+  : REQUIRED_RELEASE_MACHINE_OPERATION_TOKENS.filter(token => !releaseMachineText.includes(token));
+addCheck(
+  'release-machine.operation-tokens',
+  { missing: missingReleaseMachineOperationTokens },
+  { missing: [] },
+  missingReleaseMachineOperationTokens.length === 0,
 );
 
 for (const requirement of GUIDE_REQUIREMENTS) {

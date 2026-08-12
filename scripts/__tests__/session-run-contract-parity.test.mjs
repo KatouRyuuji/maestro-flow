@@ -9,7 +9,11 @@ const gatePath = join(repoRoot, 'scripts', 'check-session-run-contract-parity.mj
 const fixtureFiles = [
   'package.json',
   'src/run/schemas.ts',
+  'src/run/defaults.ts',
   'src/run/protocol-schemas.ts',
+  'src/run/runtime.ts',
+  'src/commands/execution.ts',
+  'src/commands/execution-cli-shared.ts',
   'src/commands/run.ts',
   'src/commands/plan.ts',
   'src/cli.ts',
@@ -22,6 +26,7 @@ const fixtureFiles = [
   'guide/session-run-structure-guide.md',
   'guide/cli-commands-guide.md',
   'guide/cli-commands-guide.en.md',
+  'docs/knowledge-system-architecture.md',
 ];
 const tempRoots = [];
 
@@ -50,6 +55,13 @@ function replaceOnce(root, relativePath, before, after) {
   writeFileSync(path, text.replace(before, after));
 }
 
+function replacePattern(root, relativePath, pattern, replacement) {
+  const path = join(root, relativePath);
+  const text = readFileSync(path, 'utf8');
+  expect(pattern.test(text)).toBe(true);
+  writeFileSync(path, text.replace(pattern, replacement));
+}
+
 afterEach(() => {
   while (tempRoots.length > 0) rmSync(tempRoots.pop(), { recursive: true, force: true });
 });
@@ -59,13 +71,29 @@ describe('Session Run contract parity release gate', () => {
     const result = runGate();
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.stdout).toContain('PASS writer.session.current');
+    expect(result.stdout).toContain('PASS writer.session.statusless-explicit');
+    expect(result.stdout).toContain('PASS writer.session.selection-default');
+    expect(result.stdout).toContain('PASS writer.command-run.legacy-default');
+    expect(result.stdout).toContain('PASS writer.execution.strict');
+    expect(result.stdout).toContain('PASS writer.execution-lease.strict');
+    expect(result.stdout).toContain('PASS writer.command-run.execution-explicit');
+    expect(result.stdout).toContain('PASS runtime.command-run.writer-split');
     expect(result.stdout).toContain('PASS reader.session.compatibility');
     expect(result.stdout).toContain('PASS cache.search.version');
-    expect(result.stdout).toContain('PASS response.operations.complete');
+    expect(result.stdout).toContain('PASS response.operations.legacy');
+    expect(result.stdout).toContain('PASS response.operations.execution-additive');
+    expect(result.stdout).toContain('PASS response.schemas.compatibility');
+    expect(result.stdout).toContain('PASS response.receipt-fences.wave2');
+    expect(result.stdout).toContain('PASS capabilities.exact');
+    expect(result.stdout).toContain('PASS cli.execution.registration');
+    expect(result.stdout).toContain('PASS brief.knowledge-context.schema');
     expect(result.stdout).toContain('PASS cli.accept-reuse.machine-handler');
     expect(result.stdout).toContain('PASS cli.plan-publish.machine-handler');
     expect(result.stdout).toContain('PASS release-machine.coverage');
+    expect(result.stdout).toContain('PASS release-machine.focused-fault-injection');
+    expect(result.stdout).toContain('PASS release-machine.operation-tokens');
     expect(result.stdout).toContain('PASS docs.search.zh');
+    expect(result.stdout).toContain('PASS docs.knowledge-wave2-supersession');
     expect(result.stdout).toContain('PASS package.prepublish.order');
     expect(result.stdout).toContain('PASS package.release-machine.command');
   });
@@ -80,6 +108,65 @@ describe('Session Run contract parity release gate', () => {
         },
       },
       {
+        dimension: 'statusless-writer',
+        id: 'writer.session.statusless-explicit',
+        mutate(root) {
+          replaceOnce(root, 'src/run/schemas.ts', "schema_version: z.literal('session/2.0')", "schema_version: z.literal('session/9.9')");
+        },
+      },
+      {
+        dimension: 'session-writer-default-inversion',
+        id: 'writer.session.selection-default',
+        mutate(root) {
+          replaceOnce(root, 'src/run/defaults.ts', "writer: 'session/1.3',", "writer: 'session/2.0',");
+        },
+      },
+      {
+        dimension: 'execution-writer',
+        id: 'writer.execution.strict',
+        mutate(root) {
+          replaceOnce(root, 'src/run/schemas.ts', "schema_version: z.literal('execution/1.0')", "schema_version: z.literal('execution/9.9')");
+        },
+      },
+      {
+        dimension: 'execution-writer-strictness',
+        id: 'writer.execution.strict',
+        mutate(root) {
+          replacePattern(
+            root,
+            'src/run/schemas.ts',
+            /(export const executionStateSchema = z\.object\(\{[\s\S]*?final_outcome:[\s\S]*?\}\))\.strict\(\);/,
+            '$1;',
+          );
+        },
+      },
+      {
+        dimension: 'execution-lease-writer',
+        id: 'writer.execution-lease.strict',
+        mutate(root) {
+          replaceOnce(root, 'src/run/schemas.ts', "schema_version: z.literal('execution-lease/1.0')", "schema_version: z.literal('execution-lease/9.9')");
+        },
+      },
+      {
+        dimension: 'command-run-execution-writer',
+        id: 'writer.command-run.execution-explicit',
+        mutate(root) {
+          replaceOnce(root, 'src/run/schemas.ts', "schema_version: z.literal('command-run/1.4')", "schema_version: z.literal('command-run/9.9')");
+        },
+      },
+      {
+        dimension: 'command-run-execution-reader-membership',
+        id: 'writer.command-run.execution-explicit',
+        mutate(root) {
+          replacePattern(
+            root,
+            'src/run/schemas.ts',
+            /export const commandRunReadSchema = z\.union\(\[\s*commandRunV14Schema,\s*/,
+            'export const commandRunReadSchema = z.union([\n',
+          );
+        },
+      },
+      {
         dimension: 'reader',
         id: 'reader.session.compatibility',
         mutate(root) {
@@ -90,12 +177,12 @@ describe('Session Run contract parity release gate', () => {
         dimension: 'cache',
         id: 'cache.search.version',
         mutate(root) {
-          replaceOnce(root, 'dashboard/src/server/wiki/wiki-indexer.ts', 'const SEARCH_CACHE_VERSION = 3;', 'const SEARCH_CACHE_VERSION = 2;');
+          replaceOnce(root, 'dashboard/src/server/wiki/wiki-indexer.ts', 'const SEARCH_CACHE_VERSION = 5;', 'const SEARCH_CACHE_VERSION = 4;');
         },
       },
       {
         dimension: 'operation',
-        id: 'response.operations.complete',
+        id: 'response.operations.legacy',
         mutate(root) {
           replaceOnce(
             root,
@@ -106,12 +193,81 @@ describe('Session Run contract parity release gate', () => {
         },
       },
       {
+        dimension: 'operation-execution',
+        id: 'response.operations.execution-additive',
+        mutate(root) {
+          replaceOnce(
+            root,
+            'src/run/protocol-schemas.ts',
+            "'execution-lease-heartbeat', 'execution-lease-release', 'execution-lease-recover',",
+            "'execution-lease-heartbeat', 'execution-lease-release',",
+          );
+        },
+      },
+      {
+        dimension: 'response-v11',
+        id: 'response.schemas.compatibility',
+        mutate(root) {
+          replaceOnce(root, 'src/run/protocol-schemas.ts', "schema_version: z.literal('run-response/1.1')", "schema_version: z.literal('run-response/9.9')");
+        },
+      },
+      {
+        dimension: 'brief-result-reader-membership',
+        id: 'brief.knowledge-context.schema',
+        mutate(root) {
+          replacePattern(
+            root,
+            'src/run/protocol-schemas.ts',
+            /result:\s*z\.union\(\[\s*briefResultV10Schema,\s*briefResultV11Schema,\s*briefResultV12Schema\s*\]\)/,
+            'result: z.union([briefResultV10Schema, briefResultV11Schema])',
+          );
+        },
+      },
+      {
+        dimension: 'receipt-source-fence',
+        id: 'response.receipt-fences.wave2',
+        mutate(root) {
+          replaceOnce(root, 'src/run/protocol-schemas.ts', "schema_version: z.literal('source-fence/1.1')", "schema_version: z.literal('source-fence/9.9')");
+        },
+      },
+      {
+        dimension: 'capabilities-feature-inversion',
+        id: 'capabilities.exact',
+        mutate(root) {
+          replaceOnce(root, 'src/commands/execution.ts', 'session_statusless: true,', 'session_statusless: false,');
+        },
+      },
+      {
+        dimension: 'capabilities-writer-list',
+        id: 'capabilities.exact',
+        mutate(root) {
+          replaceOnce(
+            root,
+            'src/commands/execution.ts',
+            "session_schema_writes: ['session/1.3', 'session/2.0'],",
+            "session_schema_writes: ['session/1.3'],",
+          );
+        },
+      },
+      {
+        dimension: 'cli-execution-registration',
+        id: 'cli.execution.registration',
+        mutate(root) {
+          replaceOnce(root, 'src/cli.ts',
+            "execution:  async () => (await import('./commands/execution.js')).registerExecutionCommand,",
+            "execution:  async () => (await import('./commands/execution.js')).registerCapabilitiesCommand,");
+        },
+      },
+      {
         dimension: 'commander-json',
         id: 'cli.accept-reuse.machine-handler',
         mutate(root) {
-          replaceOnce(root, 'src/commands/run.ts',
-            ".option('--json', 'emit one run-response/1.0 envelope on stdout')\n    .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())\n    .action((runId: string, opts: any) => {",
-            ".option('--workflow-root <path>', 'project root containing .workflow', process.cwd())\n    .action((runId: string, opts: any) => {");
+          replacePattern(
+            root,
+            'src/commands/run.ts',
+            /(\.command\('accept-reuse <run-id>'\)[\s\S]*?)\s*\.option\('--json', 'emit one run-response\/1\.0 envelope on stdout'\)/,
+            '$1',
+          );
         },
       },
       {
@@ -137,8 +293,91 @@ describe('Session Run contract parity release gate', () => {
         id: 'release-machine.coverage',
         mutate(root) {
           replaceOnce(root, 'scripts/check-session-run-release-machine.mjs',
-            "assert.equal(planDrift.error?.code, 'FENCE_CONFLICT');",
-            "assert.equal(planDrift.error?.code, 'REQUEST_CONFLICT');");
+            "    recordProof(proofs, 'complete-blocked');",
+            "    recordProof(proofs, 'complete-needs-retry');");
+        },
+      },
+      {
+        dimension: 'release-machine-plan-publish-coverage',
+        id: 'release-machine.coverage',
+        mutate(root) {
+          replaceOnce(root, 'scripts/check-session-run-release-machine.mjs',
+            "    recordProof(proofs, 'plan-publish-execution-applied-replayed-fences');",
+            "    // Plan publication proof intentionally omitted by drift fixture");
+        },
+      },
+      {
+        dimension: 'release-machine-empty-execution-bootstrap-coverage',
+        id: 'release-machine.coverage',
+        mutate(root) {
+          replaceOnce(root, 'scripts/check-session-run-release-machine.mjs',
+            "    recordProof(proofs, 'plan-publish-empty-execution-bootstrap-chain');",
+            '    // Empty Execution bootstrap proof intentionally omitted by drift fixture');
+        },
+      },
+      {
+        dimension: 'release-machine-focused-fault-injection',
+        id: 'release-machine.focused-fault-injection',
+        mutate(root) {
+          replaceOnce(root, 'scripts/check-session-run-release-machine.mjs',
+            'commits the lease release before lock release so release failure cannot roll it back and remains replayable',
+            'lease release filter drifted');
+        },
+      },
+      {
+        dimension: 'release-machine-bootstrap-operation-token',
+        id: 'release-machine.operation-tokens',
+        mutate(root) {
+          replaceOnce(root, 'scripts/check-session-run-release-machine.mjs',
+            "'execution-chain-bootstrap'",
+            "'chain-bootstrap-drifted'");
+        },
+      },
+      {
+        dimension: 'release-machine-seal-alias-coverage',
+        id: 'release-machine.coverage',
+        mutate(root) {
+          replaceOnce(root, 'scripts/check-session-run-release-machine.mjs',
+            "    recordProof(proofs, 'run-seal-session-execution-alias-applied-replayed-conflict');",
+            "    // Seal alias proof intentionally omitted by drift fixture");
+        },
+      },
+      {
+        dimension: 'docs-wave2-statusless',
+        id: 'docs.architecture',
+        mutate(root) {
+          replaceOnce(root, 'guide/session-run-architecture.md', 'session_statusless=true', 'session_statusless=false');
+        },
+      },
+      {
+        dimension: 'docs-default-switch-inversion',
+        id: 'docs.cli.en',
+        mutate(root) {
+          replaceOnce(root, 'guide/cli-commands-guide.en.md', 'There is no silent default switch.', 'The default silently switches.');
+        },
+      },
+      {
+        dimension: 'docs-knowledge-no-seal-supersession',
+        id: 'docs.knowledge-wave2-supersession',
+        mutate(root) {
+          replaceOnce(
+            root,
+            'docs/knowledge-system-architecture.md',
+            'promotion without a permanent Session seal',
+            'promotion only after a permanent Session seal',
+          );
+        },
+      },
+      {
+        dimension: 'docs-unknown-read-compatibility',
+        id: 'docs.architecture',
+        mutate(root) {
+          replaceOnce(
+            root,
+            'guide/session-run-architecture.md',
+            'opaque/best-effort read compatibility',
+            'unknown reads always fail closed',
+          );
         },
       },
       {
@@ -182,5 +421,5 @@ describe('Session Run contract parity release gate', () => {
       expect(result.status, `${testCase.dimension}: ${result.stdout}\n${result.stderr}`).not.toBe(0);
       expect(result.stdout, testCase.dimension).toContain(`FAIL ${testCase.id}`);
     }
-  }, 30_000);
+  }, 45_000);
 });
