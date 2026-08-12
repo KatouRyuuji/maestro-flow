@@ -140,11 +140,14 @@ v0.5.56 起，Maestro 与 Ralph 共享同一套 **canonical Session/Run 链协�
 创建 Session 并派发第一步（单步或命令链）。这是 v0.5.56 起的**推荐人类入口**，取代已废弃的 `maestro run start`。
 
 ```bash
-# 单步：在已有 Session 上跑一个命令
-maestro session start "理解认证流程" --session 20260721-learn-auth --chain learn --arg "src/auth"
-
 # 命令链：创建简单链 Session，默认派发第一步
 maestro session start "修复登录链路" --chain analyze plan execute review
+
+# 新建 Session 并显式命名：用 --id（--session 不能用于新建）
+maestro session start "理解认证流程" --chain learn --id learn-auth --arg "src/auth"
+
+# 单步：在已存在的 Session 上追加一个 Run；--session 指向的 Session 必须已存在，否则报错
+maestro session start "理解认证流程" --session 20260721-learn-auth --chain learn --arg "src/auth"
 
 # 高级 JSON 链定义
 maestro session start "重构认证" --chain-file chain.json
@@ -157,8 +160,8 @@ maestro session start "重构认证" --chain analyze plan execute --no-dispatch
 |------|------|
 | `--chain <commands...>` | 简单命令链，如 `--chain companion` 或 `--chain analyze execute review` |
 | `--chain-file <path>` | 高级链定义 JSON 文件；`-` 读取 stdin |
-| `--id <slug>` | 显式 Session ID/slug |
-| `--session <id>` | 在已有 Session 上跑单个 Run（不建链） |
+| `--id <slug>` | 为**新建**的 Session 显式指定 ID/slug（仅创建时有效） |
+| `--session <id>` | 在**已存在**的 Session 上跑单个 Run（不建链；Session 不存在会报错，新建命名请用 `--id`） |
 | `--topic <text>` | 命令无关的 Session topic；默认为 intent |
 | `--arg <value>` | 命令输入，存入 Run input.args（可重复） |
 | `--platform <name>` | 为该 Run 持久化目标平台 |

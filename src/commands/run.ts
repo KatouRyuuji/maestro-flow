@@ -512,9 +512,14 @@ export function registerRunCommand(program: Command): void {
         }
 
         const storeBeforeResolution = new SessionStore(projectRoot);
+        if (opts.session && !storeBeforeResolution.sessionExists(opts.session)) {
+          throw new Error(
+            `Session not found: ${opts.session}. `
+            + '--session references an existing Session; to create a new Session with an explicit ID, use --id <slug>',
+          );
+        }
         const createStatuslessIdentity = storeBeforeResolution.sessionSchemaSelection().writer === 'session/2.0'
-          && ((opts.session && !storeBeforeResolution.sessionExists(opts.session))
-            || (!opts.session && storeBeforeResolution.listSessionsReadOnly().candidates.length === 0));
+          && !opts.session && storeBeforeResolution.listSessionsReadOnly().candidates.length === 0;
         if (createStatuslessIdentity) {
           if (fileDefinition || (opts.chain?.length ?? 0) > 1) {
             throw new InvalidArgumentError(
@@ -535,7 +540,7 @@ export function registerRunCommand(program: Command): void {
           if (missing.length > 0) {
             throw new InvalidArgumentError(`Execution start requires ${missing.map(([flag]) => flag).join(', ')}`);
           }
-          const sessionId = opts.session ?? deriveSessionId(opts.id ?? slugifySessionTopic(intent));
+          const sessionId = deriveSessionId(opts.id ?? slugifySessionTopic(intent));
           storeBeforeResolution.createSession(sessionId, intent, { ifExists: 'error' });
           opts.session = sessionId;
         }

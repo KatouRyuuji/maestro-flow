@@ -1300,9 +1300,14 @@ export function registerSessionCommand(program: Command): void {
         if (!intent && !opts.session) throw new Error('session start requires an intent or --session');
         const platform = opts.platform ? targetPlatformSchema.parse(opts.platform) : undefined;
         const storeBeforeResolution = new SessionStore(root);
+        if (opts.session && !storeBeforeResolution.sessionExists(opts.session)) {
+          throw new Error(
+            `Session not found: ${opts.session}. `
+            + '--session references an existing Session; to create a new Session with an explicit ID, use --id <slug>',
+          );
+        }
         const createStatuslessIdentity = storeBeforeResolution.sessionSchemaSelection().writer === 'session/2.0'
-          && ((opts.session && !storeBeforeResolution.sessionExists(opts.session))
-            || (!opts.session && storeBeforeResolution.listSessionsReadOnly().candidates.length === 0));
+          && !opts.session && storeBeforeResolution.listSessionsReadOnly().candidates.length === 0;
         if (createStatuslessIdentity) {
           if (opts.chainFile || (opts.chain?.length ?? 0) > 1) {
             throw new InvalidArgumentError(

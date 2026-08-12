@@ -140,25 +140,28 @@ Since v0.5.56, Maestro and Ralph share the same **canonical Session/Run chain pr
 Create a Session and dispatch the first step (a single step or a command chain). This is the **recommended human entry point** since v0.5.56, replacing the deprecated `maestro run start`.
 
 ```bash
-# 单步：在已有 Session 上跑一个命令
-maestro session start "理解认证流程" --session 20260721-learn-auth --chain learn --arg "src/auth"
+# Command chain: create a simple chain Session; dispatches the first step by default
+maestro session start "fix login flow" --chain analyze plan execute review
 
-# 命令链：创建简单链 Session，默认派发第一步
-maestro session start "修复登录链路" --chain analyze plan execute review
+# Create a new Session with an explicit name: use --id (--session cannot create)
+maestro session start "understand auth flow" --chain learn --id learn-auth --arg "src/auth"
 
-# 高级 JSON 链定义
-maestro session start "重构认证" --chain-file chain.json
+# Single step: append one Run to an EXISTING Session; --session errors if the Session does not exist
+maestro session start "understand auth flow" --session 20260721-learn-auth --chain learn --arg "src/auth"
 
-# 只建链不派发
-maestro session start "重构认证" --chain analyze plan execute --no-dispatch
+# Advanced JSON chain definition
+maestro session start "refactor auth" --chain-file chain.json
+
+# Create the chain without dispatching
+maestro session start "refactor auth" --chain analyze plan execute --no-dispatch
 ```
 
 | Option | Description |
 |------|------|
 | `--chain <commands...>` | Simple command chain, e.g. `--chain companion` or `--chain analyze execute review` |
 | `--chain-file <path>` | Advanced chain definition JSON file; `-` reads from stdin |
-| `--id <slug>` | Explicit Session ID/slug |
-| `--session <id>` | Run a single Run on an existing Session (no chain created) |
+| `--id <slug>` | Explicit ID/slug for a **newly created** Session (only applies when creating) |
+| `--session <id>` | Run a single Run on an **existing** Session (no chain created; errors if the Session does not exist — use `--id` to name a new one) |
 | `--topic <text>` | Command-agnostic Session topic; defaults to the intent |
 | `--arg <value>` | Command input, stored in Run input.args (repeatable) |
 | `--platform <name>` | Persist the target platform for this Run |
