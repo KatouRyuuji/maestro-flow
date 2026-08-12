@@ -56,3 +56,21 @@ search-cache.json
 
 # Pi platform local config (permissions/model mapping), same nature as .claude/settings.local.json
 .pi/
+
+# Local debug screenshots & scratch UI captures (root-level)
+/after-click.png
+/collapsed.png
+/cur-layout.png
+/cur2.png
+/cur3.png
+/editor-win.png
+/editor-win2.png
+/ws-pop.png
+# Packed npm tarballs (local install artifacts)
+/maestro-flow-*.tgz
+# Windows redirect/pipe artifact
+/nul
+# Local analysis/research checkouts and reports
+/artifacts/
+/test-ui/
+/ref/sidebar.html
