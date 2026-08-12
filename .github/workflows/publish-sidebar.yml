@@ -201,13 +201,13 @@ jobs:
             remote_commit="$(git ls-remote origin "refs/tags/$SIDEBAR_TAG" | awk '{print $1}')"
           fi
           test "$remote_commit" = "$SIDEBAR_COMMIT"
-          jq -Rs '{body:.}' release-notes.md \
-            | gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --input - > release-with-notes.json
-          node scripts/sidebar-release.mjs verify-release \
-            --tag "$SIDEBAR_TAG" \
-            --release-json release-with-notes.json
-          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
-            -F draft=false -f make_latest=false > published-release.json
+          jq -n \
+            --arg tag "$SIDEBAR_TAG" \
+            --arg commit "$SIDEBAR_COMMIT" \
+            --arg name "Maestro Sidebar v${SIDEBAR_TAG#sidebar-v}" \
+            --rawfile body release-notes.md \
+            '{tag_name:$tag,target_commitish:$commit,name:$name,body:$body,draft:false,prerelease:false,make_latest:"false"}' \
+            | gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --input - > published-release.json
           node scripts/sidebar-release.mjs verify-release \
             --tag "$SIDEBAR_TAG" \
             --release-json published-release.json \

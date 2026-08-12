@@ -9,7 +9,7 @@ This runbook covers local validation, multi-platform packaging, GitHub Release p
 - `.github/workflows/publish-sidebar.yml` builds Windows x64, Linux x64, macOS arm64, and macOS x64 bundles.
 - The prepare job proves that the exact `refs/tags/sidebar-vX.Y.Z` commit is checked out, exports that immutable full commit SHA, then creates or reuses exactly one draft GitHub Release and exposes its numeric release ID.
 - Every matrix build checks out the exported commit SHA and uploads into that shared numeric release ID. The finalizer also checks out and records the same SHA, then revalidates the remote tag immediately before publication. Per-tag workflow concurrency prevents a tag push and manual rerun from mutating the same draft simultaneously.
-- The finalizer reads the draft by numeric release ID, not by the draft-incompatible tag endpoint. It writes every `browser_download_url` into the Release Note, verifies the links and all four required targets, and only then publishes the release.
+- The finalizer reads the draft by numeric release ID, not by the draft-incompatible tag endpoint. Draft asset API URLs may contain a temporary `untagged-*` segment, so the final note derives canonical URLs from the real asset names and `sidebar-vX.Y.Z`. One atomic publish PATCH restores the canonical tag/commit/title, writes the complete note, and sets `draft=false`; only that returned representation is verified.
 - A Sidebar release is published with `latest=false`, so it does not replace the main `maestro-flow` release as the repository's Latest release.
 - Missing Windows x64, Linux x64, macOS arm64, or macOS x64 assets; invalid asset URLs; missing Release Note links; or a remaining draft state fail the workflow.
 
@@ -65,11 +65,11 @@ The workflow performs these stages:
 
 1. `prepare`: verify the exact tag commit and all six version surfaces; export the immutable full commit SHA; create or reuse one draft Release and output its numeric ID.
 2. `build`: check out that exported SHA, run four Tauri builds, and pass the same `releaseId` to every matrix leg.
-3. `finalize`: check out and record the same SHA; read the draft with `GET /releases/{release_id}`, group actual assets by operating system and architecture, and generate direct Markdown download links.
-4. `verify`: require Windows x64, Linux x64, macOS arm64, and macOS x64 coverage; require a `Downloads` section and every uploaded asset URL in the Release Note.
-5. `publish`: verify the remote tag still points to the prepared SHA, patch that exact release ID to `draft=false` and `make_latest=false`, then verify the returned published representation.
+3. `finalize`: check out and record the same SHA; read the draft with `GET /releases/{release_id}` and validate the actual asset names and target coverage. Draft `browser_download_url` values may use `untagged-*`, so generate final links as `https://github.com/<repo>/releases/download/<canonical-tag>/<encoded-asset-name>`.
+4. `publish`: verify the remote tag still points to the prepared SHA, then use one PATCH containing canonical `tag_name`, `target_commitish`, title, complete body, `draft=false`, `prerelease=false`, and `make_latest="false"`.
+5. `verify`: require Windows x64, Linux x64, macOS arm64, and macOS x64 coverage; require a `Downloads` section and every canonical published asset URL in the returned Release representation.
 
-The finalizer intentionally derives links from `browser_download_url`. Do not hard-code Tauri filenames: bundle names and extensions may change with Tauri, target, or packaging configuration.
+The finalizer derives links from actual GitHub asset names. Draft `browser_download_url` values are not suitable for the final note because GitHub may expose them under a temporary `untagged-*` path until publication. Do not hard-code Tauri filenames or copy temporary draft URLs: bundle names and extensions may change with Tauri, target, or packaging configuration.
 
 ## 5. Verify the Published Release
 

@@ -122,6 +122,31 @@ describe("Sidebar release contract", () => {
     expect(body).toContain("## Changes");
   });
 
+  it("renders canonical tag downloads from temporary draft asset URLs", () => {
+    const draftRelease = {
+      ...release,
+      tag_name: "untagged-a898e95cb01673682b52",
+      assets: release.assets.map((asset) => ({
+        ...asset,
+        browser_download_url: asset.browser_download_url.replace(
+          "/sidebar-v0.1.0/",
+          "/untagged-a898e95cb01673682b52/",
+        ),
+      })),
+    };
+    const body = renderReleaseNotes({
+      release: draftRelease,
+      generatedNotes: null,
+      repository: "catlog22/maestro-flow",
+      tag: "sidebar-v0.1.0",
+      commit: "1234567890abcdef",
+    });
+    expect(body).not.toContain("untagged-a898e95cb01673682b52");
+    for (const asset of release.assets) {
+      expect(body).toContain(asset.browser_download_url);
+    }
+  });
+
   it("fails when assets, target coverage, or release-note links are missing", () => {
     expect(() =>
       renderReleaseNotes({
@@ -217,17 +242,15 @@ describe("Sidebar release contract", () => {
     expect(workflow).toContain("releaseDraft: true");
     expect(workflow).toContain("needs: [prepare, build]");
     expect(workflow).toContain("scripts/sidebar-release.mjs render-notes");
-    expect(workflow).toContain("scripts/sidebar-release.mjs verify-release");
-    expect(workflow).toContain("-F draft=false -f make_latest=false");
+    expect(workflow).toContain("--rawfile body release-notes.md");
+    expect(workflow).toContain(
+      "'{tag_name:$tag,target_commitish:$commit,name:$name,body:$body,draft:false,prerelease:false,make_latest:\"false\"}'",
+    );
     expect(workflow).toContain("--require-published");
 
-    const firstVerification = workflow.indexOf(
-      "scripts/sidebar-release.mjs verify-release",
-    );
-    const publication = workflow.indexOf("-F draft=false -f make_latest=false");
+    const publication = workflow.indexOf("--rawfile body release-notes.md");
     const publishedVerification = workflow.indexOf("--require-published");
-    expect(firstVerification).toBeGreaterThan(-1);
-    expect(firstVerification).toBeLessThan(publication);
+    expect(publication).toBeGreaterThan(-1);
     expect(publication).toBeLessThan(publishedVerification);
   });
 });

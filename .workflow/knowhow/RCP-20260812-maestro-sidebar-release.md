@@ -63,10 +63,10 @@ git push origin sidebar-vX.Y.Z
 
 1. `prepare`：显式 checkout `refs/tags/sidebar-vX.Y.Z`，证明 tag commit 等于 `HEAD`，验证六处版本一致；输出 immutable full commit SHA；创建或复用且仅复用一个 draft Release，输出 numeric `release-id`。
 2. `build`：全部按 prepare 输出的 SHA checkout；Windows x64、Linux x64、macOS arm64、macOS x64 并行执行 Tauri build，所有矩阵 leg 都把同一个 `releaseId` 传给 `tauri-action`。per-tag concurrency 禁止 tag push 与手动重跑并发修改同一 draft。
-3. `finalize`：同样按 prepare SHA checkout 并把该 SHA 写入 Release Note；通过 `GET /releases/{release_id}` 读取 draft 的实际 assets；draft 不能依赖 `/releases/tags/{tag}` 查找。
-4. `render-notes`：按平台分组，把每个 asset 的 `browser_download_url` 写入 `## Downloads`。
+3. `finalize`：同样按 prepare SHA checkout 并把该 SHA 写入 Release Note；通过 `GET /releases/{release_id}` 读取 draft 的实际 assets；draft 不能依赖 `/releases/tags/{tag}` 查找。draft asset API 的 `browser_download_url` 可能包含临时 `untagged-*`，所以只信任真实 asset name，并据 canonical tag 生成最终 URL。
+4. `render-notes`：按平台分组，把每个 asset 生成为 `https://github.com/<repo>/releases/download/<canonical-tag>/<encoded-asset-name>`。
 5. `verify-release`：要求 Windows x64、Linux x64、macOS arm64、macOS x64 全部存在，每个 URL 合法，Release Note 包含每个资产 URL。
-6. publish：再次读取远端 tag 并确认仍指向 prepare SHA；PATCH 同一个 numeric release ID，设置 `draft=false` 且 `make_latest=false`，避免 Sidebar 覆盖主 `maestro-flow` 的 Latest Release。
+6. publish：再次读取远端 tag 并确认仍指向 prepare SHA；用一次 PATCH 同时提交 canonical `tag_name`、`target_commitish`、title、完整 body、`draft=false`、`prerelease=false`、`make_latest="false"`，避免正文 PATCH 把 draft tag 临时化或留下正文/状态半提交。
 7. post-publish verify：验证 PATCH 返回的 Release 已非 draft 且所有链接仍存在。
 
 稳定发布只接受严格 `sidebar-vX.Y.Z`，不接受 prerelease suffix 或带前导零的版本段。
@@ -79,7 +79,7 @@ Release Note 不能只写“从下方下载”或依赖 GitHub 页面自动展�
 https://github.com/catlog22/maestro-flow/releases/download/sidebar-vX.Y.Z/<asset-name>
 ```
 
-直链必须来自 GitHub Release API 的 `browser_download_url`。不要硬编码 Tauri 文件名，因为 bundle 名称、架构后缀和扩展名可能随 target 或 Tauri 版本变化。
+直链必须由 GitHub Release API 返回的真实 asset name 与 canonical tag 组合生成。draft 的 `browser_download_url` 可能指向临时 `untagged-*`，不能直接写入最终 Release Note。不要硬编码 Tauri 文件名，因为 bundle 名称、架构后缀和扩展名可能随 target 或 Tauri 版本变化。
 
 ## Post-Release Verification
 
@@ -108,4 +108,4 @@ gh release delete sidebar-vX.Y.Z --yes
 
 ## Why This Matters
 
-Tauri 的矩阵 job 可以成功上传资产，但静态 Release body 不知道最终文件名。若四个 job 各自按 tag 发现或创建 draft，还会产生并发竞态；draft 也不能可靠通过 REST tag endpoint 获取。因此必须先创建唯一 draft 并把 numeric release ID 传给所有 build/finalize 步骤。若没有 finalize 阶段，Release Note 很容易只有泛化文案，用户必须自己寻找 Assets，且自动化无法证明四平台与链接完整。先 draft 汇总、再从 GitHub API 生成链接并做二次验证，可将“构建成功”和“用户可下载”合并为同一个发布完成条件。
+Tauri 的矩阵 job 可以成功上传资产，但静态 Release body 不知道最终文件名。若四个 job 各自按 tag 发现或创建 draft，还会产生并发竞态；draft 也不能可靠通过 REST tag endpoint 获取，而且 draft 下载地址可能使用临时 `untagged-*`。因此必须先创建唯一 draft 并把 numeric release ID 传给所有 build/finalize 步骤，最终按真实 asset name 生成 canonical tag URL，并用单次 PATCH 原子公开。若没有 finalize 阶段，Release Note 很容易只有泛化文案，用户必须自己寻找 Assets，且自动化无法证明四平台与链接完整。

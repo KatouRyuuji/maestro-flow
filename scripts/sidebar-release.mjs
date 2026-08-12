@@ -141,9 +141,18 @@ function formatBytes(value) {
   return ` (${size.toFixed(unit === 0 ? 0 : 1)} ${units[unit]})`;
 }
 
-function normalizedAssets(release, tag) {
-  if (release.tag_name !== tag)
+function normalizedAssets(release, tag, options = {}) {
+  const allowDraftTag = options.allowDraftTag === true;
+  if (
+    release.tag_name !== tag &&
+    !(
+      allowDraftTag &&
+      release.draft === true &&
+      /^untagged-[0-9a-f]+$/.test(release.tag_name ?? "")
+    )
+  ) {
     fail(`release tag mismatch: ${release.tag_name ?? "<missing>"}`);
+  }
   if (!Array.isArray(release.assets) || release.assets.length === 0) {
     fail(`release ${tag} has no downloadable assets`);
   }
@@ -190,7 +199,12 @@ export function renderReleaseNotes({
   commit,
 }) {
   const version = versionFromTag(tag);
-  const assets = normalizedAssets(release, tag);
+  const assets = normalizedAssets(release, tag, { allowDraftTag: true }).map(
+    (asset) => ({
+      ...asset,
+      url: `https://github.com/${repository}/releases/download/${tag}/${encodeURIComponent(asset.name)}`,
+    }),
+  );
   const groups = new Map();
   for (const asset of assets) {
     const entries = groups.get(asset.platform) ?? [];
