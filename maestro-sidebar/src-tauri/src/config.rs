@@ -18,6 +18,8 @@ pub struct AppConfig {
     pub wallpaper_opacity: Option<f64>,
     /// 当前激活的工作空间（.workflow 目录的归一化路径；None = 自动选第一个）
     pub active_root: Option<String>,
+    /// 全局模式：扫描全部可用工程（默认 false = 单工程模式）
+    pub global_mode: bool,
 }
 
 impl AppConfig {

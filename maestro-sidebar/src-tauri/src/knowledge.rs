@@ -149,17 +149,15 @@ pub fn read_knowledge_item_content(
                             continue;
                         };
                         let row_id = v.get("id").and_then(|x| x.as_str()).unwrap_or("");
-                        // learning 行无自有 id：支持合成 id `{command}-{frequency}` 匹配
+                        // learning 行无自有 id：支持合成 id `{command}-{稳定 hash}` 匹配
+                        // （hash 由 command 派生，不随 frequency 变化；旧 `{command}-{freq}` 格式不再匹配）
                         let matches = if kind == "learning" {
                             let synth = row_id.is_empty()
                                 && id
                                     .rsplit_once('-')
-                                    .map(|(cmd, freq)| {
+                                    .map(|(cmd, suffix)| {
                                         v.get("command").and_then(|x| x.as_str()) == Some(cmd)
-                                            && v.get("frequency")
-                                                .and_then(|x| x.as_f64())
-                                                .map(|f| f.to_string() == freq)
-                                                .unwrap_or(false)
+                                            && learning_synth_id(cmd).ends_with(suffix)
                                     })
                                     .unwrap_or(false);
                             row_id == id || synth
@@ -314,6 +312,12 @@ fn jsonl_issue_entry(v: &serde_json::Value, kind: &str) -> KnowledgeEntry {
     }
 }
 
+/// learning 合成 id：`{command}-{fnv1a64(command) 前 8 hex}`。
+/// 稳定于 command（不随 frequency 变化），避免频次更新后详情/编辑 id 失效。
+fn learning_synth_id(command: &str) -> String {
+    format!("{command}-{}", &fnv1a64_hex(command.as_bytes())[..8])
+}
+
 /// learning 行（CLI 使用统计）→ 条目
 fn jsonl_learning_entry(v: &serde_json::Value, kind: &str) -> KnowledgeEntry {
     let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
@@ -336,7 +340,7 @@ fn jsonl_learning_entry(v: &serde_json::Value, kind: &str) -> KnowledgeEntry {
         .unwrap_or_default();
     KnowledgeEntry {
         kind: kind.to_string(),
-        id: format!("{}-{}", s("command"), freq),
+        id: learning_synth_id(&s("command")),
         title: s("command"),
         summary,
         tags,
@@ -432,7 +436,7 @@ fn read_md_entry(path: &Path) -> (String, String, String, Vec<String>, String, O
                     title = v.trim().trim_matches('"').trim().to_string();
                 } else if let Some(v) = line.strip_prefix("keywords:") {
                     // 后续缩进行均为列表项
-                    tags = v.trim().trim_start_matches('-').trim().to_string().split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                    tags = v.trim().trim_start_matches('-').trim().split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
                 } else if let Some(v) = line.strip_prefix("status:") {
                     status = v.trim().trim_matches('"').to_string();
                 } else if let Some(v) = line.strip_prefix("readMode:") {
@@ -491,10 +495,9 @@ fn read_md_entry(path: &Path) -> (String, String, String, Vec<String>, String, O
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(0);
             // 与前端 fmtAgo 兼容的 ISO 字符串
-            let dt = chrono::DateTime::from_timestamp(secs, 0)
+            chrono::DateTime::from_timestamp(secs, 0)
                 .map(|d| d.to_rfc3339())
-                .unwrap_or_default();
-            dt
+                .unwrap_or_default()
         });
     (id, title, summary, tags, status, updated)
 }
@@ -649,6 +652,126 @@ pub fn create_knowledge_md(
     Ok(id)
 }
 
+/// 待沉淀候选（run 级 knowledge-delta.json 的 KDC 行）
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PendingCandidate {
+    pub session_id: String,
+    pub run_id: String,
+    pub candidate_id: String,
+    pub target: String, // spec | knowhow
+    pub action: String, // propose | ...
+    pub title: String,
+    pub summary: String,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PendingCandidates {
+    pub total: usize,
+    pub items: Vec<PendingCandidate>,
+}
+
+const PENDING_CANDIDATE_LIMIT: usize = 50;
+const PENDING_SUMMARY_CHARS: usize = 220;
+
+/// 扫描全部 run 级 knowledge-delta.json 的候选（KDC-*），按 updated_at 倒序。
+/// 处置状态（已 promote）由会话详情 lifecycle 收据判断；此处聚合待展示候选。
+pub fn scan_pending_candidates(wf_root: &Path) -> PendingCandidates {
+    let sessions_dir = wf_root.join("sessions");
+    let Ok(sessions) = fs::read_dir(&sessions_dir) else {
+        return PendingCandidates::default();
+    };
+    let mut all: Vec<PendingCandidate> = Vec::new();
+    for s in sessions.flatten() {
+        let session_path = s.path();
+        if !session_path.is_dir() {
+            continue;
+        }
+        let Some(session_id) = s.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let runs_dir = session_path.join("runs");
+        let Ok(runs) = fs::read_dir(&runs_dir) else {
+            continue;
+        };
+        for r in runs.flatten() {
+            let delta_path = r.path().join("knowledge-delta.json");
+            let Ok(raw) = fs::read_to_string(&delta_path) else {
+                continue;
+            };
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) else {
+                continue;
+            };
+            let Some(cands) = v.get("candidates").and_then(|c| c.as_array()) else {
+                continue;
+            };
+            let run_id = v
+                .get("run_id")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            let updated_at = v
+                .get("updated_at")
+                .and_then(|x| x.as_str())
+                .map(str::to_owned);
+            for c in cands {
+                let cid = c
+                    .get("candidate_id")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if cid.is_empty() {
+                    continue;
+                }
+                let content = c
+                    .get("content")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let summary = content
+                    .chars()
+                    .take(PENDING_SUMMARY_CHARS)
+                    .collect::<String>()
+                    .replace(['\n', '\r'], " ");
+                all.push(PendingCandidate {
+                    session_id: session_id.clone(),
+                    run_id: run_id.clone(),
+                    candidate_id: cid,
+                    target: c
+                        .get("target")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    action: c
+                        .get("action")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    title: c
+                        .get("title")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    summary,
+                    updated_at: updated_at.clone(),
+                });
+            }
+        }
+    }
+    // 确定性排序：updated_at 倒序 → session_id 倒序 → candidate_id
+    all.sort_by(|a, b| {
+        b.updated_at
+            .cmp(&a.updated_at)
+            .then_with(|| b.session_id.cmp(&a.session_id))
+            .then_with(|| a.candidate_id.cmp(&b.candidate_id))
+    });
+    let total = all.len();
+    all.truncate(PENDING_CANDIDATE_LIMIT);
+    PendingCandidates { total, items: all }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -672,6 +795,35 @@ mod tests {
             out.push('\n');
         }
         fs::write(dir.join("learning/patterns.jsonl"), out).unwrap();
+    }
+
+    #[test]
+    fn scan_pending_candidates_aggregates_deltas() {
+        let dir = tmp_dir("pending");
+        let wf = dir.join(".workflow");
+        fs::create_dir_all(wf.join("sessions/s1/runs/r1")).unwrap();
+        fs::create_dir_all(wf.join("sessions/s2/runs/r1")).unwrap();
+        fs::write(
+            wf.join("sessions/s1/runs/r1/knowledge-delta.json"),
+            r#"{"schema_version":"run-knowledge-delta/1.0","session_id":"s1","run_id":"r1","updated_at":"2026-08-01T00:00:00Z","candidates":[{"candidate_id":"KDC-a","target":"spec","action":"propose","title":"Pattern A","content":"body A"}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            wf.join("sessions/s2/runs/r1/knowledge-delta.json"),
+            r#"{"schema_version":"run-knowledge-delta/1.0","session_id":"s2","run_id":"r1","updated_at":"2026-08-02T00:00:00Z","candidates":[{"candidate_id":"KDC-b","target":"knowhow","action":"propose","title":"Pattern B","content":"body B"},{"candidate_id":"KDC-c","target":"spec","action":"propose","title":"Pattern C"}]}"#,
+        )
+        .unwrap();
+
+        let result = scan_pending_candidates(&wf);
+        assert_eq!(result.total, 3);
+        assert_eq!(result.items.len(), 3);
+        // updated_at 倒序：s2 在前
+        assert_eq!(result.items[0].candidate_id, "KDC-b");
+        assert_eq!(result.items[0].target, "knowhow");
+        assert_eq!(result.items[0].session_id, "s2");
+        assert_eq!(result.items[2].candidate_id, "KDC-a");
+        assert_eq!(result.items[2].summary, "body A");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -728,14 +880,35 @@ mod tests {
     fn read_learning_content_by_synthetic_id() {
         let dir = tmp_dir("synth");
         write_learning(&dir, &[("gemini", 3), ("claude-code", 9)]);
-        let item = read_knowledge_item_content(&dir, "learning", "claude-code-9");
+        let item = read_knowledge_item_content(&dir, "learning", &learning_synth_id("claude-code"));
         assert!(item.is_some());
         let item = item.unwrap();
-        assert_eq!(item.id, "claude-code-9");
+        assert_eq!(item.id, learning_synth_id("claude-code"));
         assert_eq!(item.title, "claude-code");
         assert!(item.content.contains("claude-code"));
         // 不存在的合成 id → None
-        assert!(read_knowledge_item_content(&dir, "learning", "claude-code-99").is_none());
+        assert!(read_knowledge_item_content(&dir, "learning", &learning_synth_id("claude-codeX")).is_none());
+        // 旧 `{command}-{frequency}` 格式不再匹配
+        assert!(read_knowledge_item_content(&dir, "learning", "claude-code-9").is_none());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn learning_synth_id_is_stable_across_frequency_changes() {
+        // frequency 变化后合成 id 不变：详情/编辑引用不会失效（原 {command}-{freq} 缺陷回归）
+        assert_eq!(learning_synth_id("claude-code"), learning_synth_id("claude-code"));
+        let dir = tmp_dir("stable");
+        fs::create_dir_all(dir.join("learning")).unwrap();
+        let row = |freq: u64| {
+            format!(
+                r#"{{"command":"gemini","frequency":{freq},"successRate":1,"avgDuration":1000,"lastUsed":"2026-07-01T00:00:00Z"}}"#
+            )
+        };
+        fs::write(dir.join("learning/patterns.jsonl"), format!("{}\n{}\n", row(3), row(9))).unwrap();
+        // 同一 command 两行共享同一合成 id，任一频率下都能读到（取最先匹配行）
+        let item = read_knowledge_item_content(&dir, "learning", &learning_synth_id("gemini"));
+        assert!(item.is_some());
+        assert_eq!(item.unwrap().title, "gemini");
         let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -25,6 +25,9 @@ pub struct AgentCall {
     pub last_activity_ms: Option<u64>,
     pub last_entry_type: Option<String>,
     pub last_output_preview: Option<String>,
+    /// token_usage 条目累计（视窗内：快照用 64KB 尾部，详情用全量/1MB）。
+    pub input_tokens: u64,
+    pub output_tokens: u64,
 }
 
 #[derive(Debug, Default)]
@@ -33,6 +36,8 @@ struct StreamSummary {
     modified_ms: Option<u64>,
     last_entry_type: Option<String>,
     output_preview: Option<String>,
+    input_tokens: u64,
+    output_tokens: u64,
 }
 
 const STREAM_TAIL_BYTES: u64 = 64 * 1024;
@@ -45,9 +50,11 @@ fn tail_chars(value: &str, limit: usize) -> String {
     chars[start..].iter().collect::<String>().trim().to_owned()
 }
 
-/// Read only the tail of the JSONL stream. Size/mtime make stream progress part
-/// of the snapshot fingerprint while the preview gives the UI useful live text.
-fn read_stream_summary(path: &Path) -> StreamSummary {
+/// Read only the tail of the JSONL stream (or the full stream when `tail` is
+/// None). Size/mtime make stream progress part of the snapshot fingerprint
+/// while the preview gives the UI useful live text; token_usage rows are
+/// accumulated into the token totals.
+fn read_stream_summary(path: &Path, tail: Option<u64>) -> StreamSummary {
     let Ok(mut file) = fs::File::open(path) else {
         return StreamSummary::default();
     };
@@ -60,7 +67,10 @@ fn read_stream_summary(path: &Path) -> StreamSummary {
         .ok()
         .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|value| value.as_millis() as u64);
-    let start = bytes.saturating_sub(STREAM_TAIL_BYTES);
+    let start = match tail {
+        Some(limit) => bytes.saturating_sub(limit),
+        None => 0,
+    };
     if file.seek(SeekFrom::Start(start)).is_err() {
         return StreamSummary {
             bytes,
@@ -86,6 +96,8 @@ fn read_stream_summary(path: &Path) -> StreamSummary {
 
     let mut assistant_output = String::new();
     let mut last_entry_type = None;
+    let mut input_tokens = 0u64;
+    let mut output_tokens = 0u64;
     for line in raw.lines() {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
@@ -94,10 +106,23 @@ fn read_stream_summary(path: &Path) -> StreamSummary {
         if let Some(entry_type) = entry_type {
             last_entry_type = Some(entry_type.to_owned());
         }
-        if entry_type == Some("assistant_message") {
-            if let Some(content) = value.get("content").and_then(|item| item.as_str()) {
-                assistant_output.push_str(content);
+        match entry_type {
+            Some("assistant_message") => {
+                if let Some(content) = value.get("content").and_then(|item| item.as_str()) {
+                    assistant_output.push_str(content);
+                }
             }
+            Some("token_usage") => {
+                input_tokens += value
+                    .get("inputTokens")
+                    .and_then(|item| item.as_u64())
+                    .unwrap_or(0);
+                output_tokens += value
+                    .get("outputTokens")
+                    .and_then(|item| item.as_u64())
+                    .unwrap_or(0);
+            }
+            _ => {}
         }
     }
 
@@ -107,6 +132,8 @@ fn read_stream_summary(path: &Path) -> StreamSummary {
         modified_ms,
         last_entry_type,
         output_preview: (!output_preview.is_empty()).then_some(output_preview),
+        input_tokens,
+        output_tokens,
     }
 }
 
@@ -159,11 +186,13 @@ pub fn scan_calls(dir: &Path, limit: usize) -> Vec<AgentCall> {
             continue;
         };
         call.exec_id = name.trim_end_matches(".meta.json").to_owned();
-        let stream = read_stream_summary(&dir.join(format!("{}.jsonl", call.exec_id)));
+        let stream = read_stream_summary(&dir.join(format!("{}.jsonl", call.exec_id)), Some(STREAM_TAIL_BYTES));
         call.stream_bytes = stream.bytes;
         call.last_activity_ms = stream.modified_ms;
         call.last_entry_type = stream.last_entry_type;
         call.last_output_preview = stream.output_preview;
+        call.input_tokens = stream.input_tokens;
+        call.output_tokens = stream.output_tokens;
         // 大 prompt 截断保护（前端展示摘要）
         if call.prompt.chars().count() > 400 {
             call.prompt = call.prompt.chars().take(400).collect();
@@ -243,14 +272,18 @@ pub fn read_call_detail(dir: &Path, exec_id: &str) -> Option<CallDetail> {
     let mut call: AgentCall = serde_json::from_str(&meta_raw).ok()?;
     call.exec_id = exec_id.to_owned();
     let jsonl_path = dir.join(format!("{exec_id}.jsonl"));
-    let stream = read_stream_summary(&jsonl_path);
+    let is_active = call.completed_at.is_none() && call.exit_code.is_none();
+    // 已完成调用：全量统计 token（尾部视窗可能截掉早期 token_usage 行）；
+    // 活跃调用：1MB 视窗（与对话条目一致）。
+    let stream = read_stream_summary(&jsonl_path, if is_active { Some(LIVE_DETAIL_TAIL_BYTES) } else { None });
     call.stream_bytes = stream.bytes;
     call.last_activity_ms = stream.modified_ms;
     call.last_entry_type = stream.last_entry_type;
     call.last_output_preview = stream.output_preview;
+    call.input_tokens = stream.input_tokens;
+    call.output_tokens = stream.output_tokens;
     // Full prompt remains available in the detail view.
 
-    let is_active = call.completed_at.is_none() && call.exit_code.is_none();
     let tail_bytes = is_active.then_some(LIVE_DETAIL_TAIL_BYTES);
     let entries = read_jsonl_entries(&jsonl_path, tail_bytes);
     Some(CallDetail { call, entries })
@@ -270,6 +303,58 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn scan_calls_includes_live_stream_summary() {
+        let dir = tmp_dir("stream");
+        fs::write(
+            dir.join("pi-123.meta.json"),
+            r#"{"execId":"pi-123","tool":"pi","mode":"analysis","prompt":"test","startedAt":"2026-08-11T08:00:00Z"}"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pi-123.jsonl"),
+            concat!(
+                "{\"type\":\"assistant_message\",\"content\":\"Hello\",\"partial\":true}\n",
+                "{\"type\":\"assistant_message\",\"content\":\" world\",\"partial\":true}\n",
+                "{\"type\":\"token_usage\",\"inputTokens\":1,\"outputTokens\":2}\n"
+            ),
+        )
+        .unwrap();
+
+        let calls = scan_calls(&dir, 10);
+        assert_eq!(calls.len(), 1);
+        assert!(calls[0].stream_bytes > 0);
+        assert!(calls[0].last_activity_ms.is_some());
+        assert_eq!(calls[0].last_entry_type.as_deref(), Some("token_usage"));
+        assert_eq!(calls[0].last_output_preview.as_deref(), Some("Hello world"));
+        assert_eq!(calls[0].input_tokens, 1);
+        assert_eq!(calls[0].output_tokens, 2);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_call_detail_full_scan_accumulates_all_token_rows() {
+        let dir = tmp_dir("tokens-full");
+        fs::write(
+            dir.join("pi-tok.meta.json"),
+            r#"{"execId":"pi-tok","tool":"pi","mode":"analysis","prompt":"test","startedAt":"2026-08-11T08:00:00Z","completedAt":"2026-08-11T08:01:00Z","exitCode":0}"#,
+        )
+        .unwrap();
+        // token_usage 行位于流首部：全量统计必须能跨过尾部视窗读到。
+        let rows = concat!(
+            "{\"type\":\"token_usage\",\"inputTokens\":100,\"outputTokens\":50}\n",
+            "{\"type\":\"assistant_message\",\"content\":\"middle\"}\n",
+            "{\"type\":\"token_usage\",\"inputTokens\":7,\"outputTokens\":3}\n",
+            "{\"type\":\"assistant_message\",\"content\":\"tail\"}\n"
+        );
+        fs::write(dir.join("pi-tok.jsonl"), rows).unwrap();
+
+        let detail = read_call_detail(&dir, "pi-tok").unwrap();
+        assert_eq!(detail.call.input_tokens, 107);
+        assert_eq!(detail.call.output_tokens, 53);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -351,33 +436,6 @@ mod tests {
         let detail = read_call_detail(&dir, "pi-live").unwrap();
         assert_eq!(detail.entries.len(), 1);
         assert_eq!(detail.entries[0].content.as_deref(), Some("latest"));
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn scan_calls_includes_live_stream_summary() {
-        let dir = tmp_dir("stream");
-        fs::write(
-            dir.join("pi-123.meta.json"),
-            r#"{"execId":"pi-123","tool":"pi","mode":"analysis","prompt":"test","startedAt":"2026-08-11T08:00:00Z"}"#,
-        )
-        .unwrap();
-        fs::write(
-            dir.join("pi-123.jsonl"),
-            concat!(
-                "{\"type\":\"assistant_message\",\"content\":\"Hello\",\"partial\":true}\n",
-                "{\"type\":\"assistant_message\",\"content\":\" world\",\"partial\":true}\n",
-                "{\"type\":\"token_usage\",\"inputTokens\":1,\"outputTokens\":2}\n"
-            ),
-        )
-        .unwrap();
-
-        let calls = scan_calls(&dir, 10);
-        assert_eq!(calls.len(), 1);
-        assert!(calls[0].stream_bytes > 0);
-        assert!(calls[0].last_activity_ms.is_some());
-        assert_eq!(calls[0].last_entry_type.as_deref(), Some("token_usage"));
-        assert_eq!(calls[0].last_output_preview.as_deref(), Some("Hello world"));
         let _ = fs::remove_dir_all(&dir);
     }
 }

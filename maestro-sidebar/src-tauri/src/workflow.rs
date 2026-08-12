@@ -31,12 +31,32 @@ pub struct RunSummary {
     pub gate_ids: Vec<String>,
 }
 
+/// 单个门禁条目（gates.json 的 map value）
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct GateInfo {
+    pub key: String,
+    pub title: Option<String>,
+    pub scope: Option<String>,
+    pub run_id: Option<String>,
+    pub required: bool,
+    pub blocking: bool,
+    pub status: Option<String>,
+    /// waiver 存在即已豁免（status 可能为 skipped）。
+    pub waiver: Option<serde_json::Value>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SessionDetail {
     pub session: SessionSummary,
     pub runs: Vec<RunSummary>,
     pub orchestration: Option<serde_json::Value>,
     pub boundary_contract: Option<serde_json::Value>,
+    /// 会话级门禁注册表（gates.json；按 key 排序保证确定性）。
+    pub gates: Vec<GateInfo>,
+    /// session.json 的 lifecycle 对象（sealed_at / seal_summary /
+    /// promoted_spec_ids / promoted_knowhow_ids / forked_from）。
+    pub lifecycle: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -245,6 +265,38 @@ fn parse_run(raw: &serde_json::Value) -> RunSummary {
     }
 }
 
+/// 解析会话级 gates.json（key → GateInfo，按 key 字典序）。
+pub fn scan_gates(wf_root: &Path, session_id: &str) -> Vec<GateInfo> {
+    let path = wf_root.join("sessions").join(session_id).join("gates.json");
+    let Some(raw) = read_json(&path) else {
+        return Vec::new();
+    };
+    let Some(gates) = raw.get("gates").and_then(|g| g.as_object()) else {
+        return Vec::new();
+    };
+    let mut out: Vec<GateInfo> = gates
+        .values()
+        .filter_map(|v| {
+            let key = str_field(v, "key").unwrap_or_default();
+            if key.is_empty() {
+                return None;
+            }
+            Some(GateInfo {
+                key,
+                title: str_field(v, "title"),
+                scope: str_field(v, "scope"),
+                run_id: str_field(v, "run_id"),
+                required: v.get("required").and_then(|x| x.as_bool()).unwrap_or(false),
+                blocking: v.get("blocking").and_then(|x| x.as_bool()).unwrap_or(false),
+                status: str_field(v, "status"),
+                waiver: v.get("waiver").cloned(),
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| a.key.cmp(&b.key));
+    out
+}
+
 /// 会话完整详情：session.json 关键字段 + 全量 run 列表。
 pub fn scan_session_detail(wf_root: &Path, session_id: &str) -> Option<SessionDetail> {
     let session_dir = wf_root.join("sessions").join(session_id);
@@ -252,11 +304,15 @@ pub fn scan_session_detail(wf_root: &Path, session_id: &str) -> Option<SessionDe
     let runs = scan_runs(wf_root, session_id);
     let (latest_run, run_count) = load_latest_run(&session_dir);
     let status = str_field(&session_json, "status").unwrap_or_else(|| "unknown".into());
+    // 工程归属：与 scan_sessions_impl 同源（state.json project_name），
+    // 多工程合并时详情页可标注归属（原实现恒为 None）。
+    let project = read_json(&wf_root.join("state.json"))
+        .and_then(|v| str_field(&v, "project_name"));
     let session = SessionSummary {
         session_id: session_id.to_owned(),
         intent: str_field(&session_json, "intent"),
         status,
-        project: None,
+        project,
         active_run_id: str_field(&session_json, "active_run_id"),
         latest_completed_run_id: str_field(&session_json, "latest_completed_run_id"),
         run_count,
@@ -267,6 +323,8 @@ pub fn scan_session_detail(wf_root: &Path, session_id: &str) -> Option<SessionDe
         runs,
         orchestration: session_json.get("orchestration").cloned(),
         boundary_contract: session_json.get("boundary_contract").cloned(),
+        gates: scan_gates(wf_root, session_id),
+        lifecycle: session_json.get("lifecycle").cloned(),
     })
 }
 
@@ -459,6 +517,106 @@ pub fn scan_runs(wf_root: &Path, session_id: &str) -> Vec<RunSummary> {
 // Tests
 // ---------------------------------------------------------------------------
 
+/// run 产出物（report.md + outputs/ 列表 + 注册表计数）
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RunArtifactFile {
+    pub name: String,
+    pub size: u64,
+    pub preview: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RunArtifacts {
+    pub report_md: Option<String>,
+    pub outputs: Vec<RunArtifactFile>,
+    /// 会话级 evidence.json records 数
+    pub evidence_records: u64,
+    /// 会话级 artifacts.json artifacts 数
+    pub artifacts_count: u64,
+}
+
+const REPORT_MAX_CHARS: usize = 20_000;
+const OUTPUT_PREVIEW_CHARS: usize = 200;
+const OUTPUT_FILE_LIMIT: usize = 30;
+const OUTPUT_CONTENT_MAX_CHARS: usize = 30_000;
+
+/// 扫描 run 产出物：report.md（截断）、outputs/ 文件（名称/大小/预览）、
+/// 会话级 evidence/artifacts 注册表计数。
+pub fn scan_run_artifacts(wf_root: &Path, session_id: &str, run_id: &str) -> Option<RunArtifacts> {
+    let run_dir = wf_root
+        .join("sessions")
+        .join(session_id)
+        .join("runs")
+        .join(run_id);
+    if !run_dir.is_dir() {
+        return None;
+    }
+    let mut out = RunArtifacts::default();
+    if let Ok(raw) = fs::read_to_string(run_dir.join("report.md")) {
+        let truncated = raw.chars().take(REPORT_MAX_CHARS).collect::<String>();
+        out.report_md = Some(truncated);
+    }
+    if let Ok(entries) = fs::read_dir(run_dir.join("outputs")) {
+        let mut files: Vec<_> = entries.flatten().filter(|e| e.path().is_file()).collect();
+        files.sort_by_key(|e| e.file_name());
+        for f in files.into_iter().take(OUTPUT_FILE_LIMIT) {
+            let name = f.file_name().to_string_lossy().to_string();
+            let size = f.metadata().map(|m| m.len()).unwrap_or(0);
+            let preview = fs::read_to_string(f.path())
+                .map(|s| s.chars().take(OUTPUT_PREVIEW_CHARS).collect::<String>())
+                .unwrap_or_default();
+            out.outputs.push(RunArtifactFile { name, size, preview });
+        }
+    }
+    let session_dir = wf_root.join("sessions").join(session_id);
+    if let Ok(raw) = fs::read_to_string(session_dir.join("evidence.json")) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
+            out.evidence_records = v
+                .get("records")
+                .and_then(|x| x.as_array())
+                .map(|a| a.len() as u64)
+                .unwrap_or(0);
+        }
+    }
+    if let Ok(raw) = fs::read_to_string(session_dir.join("artifacts.json")) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
+            out.artifacts_count = v
+                .get("artifacts")
+                .and_then(|x| x.as_object())
+                .map(|o| o.len() as u64)
+                .unwrap_or(0);
+        }
+    }
+    Some(out)
+}
+
+/// 读取单个 output 文件内容（防路径逃逸：name 仅限文件名）。
+pub fn read_run_output(
+    wf_root: &Path,
+    session_id: &str,
+    run_id: &str,
+    name: &str,
+) -> Option<String> {
+    if name.is_empty() || name.contains(['/', '\\']) || name.contains("..") {
+        return None;
+    }
+    let path = wf_root
+        .join("sessions")
+        .join(session_id)
+        .join("runs")
+        .join(run_id)
+        .join("outputs")
+        .join(name);
+    if !path.is_file() {
+        return None;
+    }
+    fs::read_to_string(path)
+        .ok()
+        .map(|s| s.chars().take(OUTPUT_CONTENT_MAX_CHARS).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -580,6 +738,108 @@ mod tests {
         assert_eq!(run.verdict.as_deref(), Some("ready"));
         assert_eq!(run.platform.as_deref(), Some("claude"));
 
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn scan_session_detail_backfills_project() {
+        let root = tmp_dir("detail-proj");
+        let wf = root.join(".workflow");
+        fs::create_dir_all(wf.join("sessions/s1/runs/r1")).unwrap();
+        fs::write(
+            wf.join("state.json"),
+            r#"{"project_name":"demo","sessions":[{"session_id":"s1"}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            wf.join("sessions/s1/session.json"),
+            r#"{"session_id":"s1","status":"sealed"}"#,
+        )
+        .unwrap();
+        fs::write(
+            wf.join("sessions/s1/runs/r1/run.json"),
+            r#"{"run_id":"r1","status":"sealed"}"#,
+        )
+        .unwrap();
+
+        let detail = scan_session_detail(&wf, "s1").unwrap();
+        assert_eq!(detail.session.project.as_deref(), Some("demo"));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn scan_gates_parses_status_and_flags() {
+        let root = tmp_dir("gates");
+        let wf = root.join(".workflow");
+        fs::create_dir_all(wf.join("sessions/s1")).unwrap();
+        fs::write(
+            wf.join("sessions/s1/gates.json"),
+            r#"{"schema_version":"gates/1.0","gates":{
+              "GATE-A": {"key":"GATE-A","title":"Entry check","scope":"entry","run_id":"r1","required":false,"blocking":false,"status":"skipped","waiver":null},
+              "GATE-B": {"key":"GATE-B","title":"Exit check","scope":"exit","run_id":"r1","required":true,"blocking":true,"status":"passed"}
+            }}"#,
+        )
+        .unwrap();
+
+        let gates = scan_gates(&wf, "s1");
+        assert_eq!(gates.len(), 2);
+        assert_eq!(gates[0].key, "GATE-A");
+        assert_eq!(gates[0].status.as_deref(), Some("skipped"));
+        assert!(!gates[0].required);
+        let b = &gates[1];
+        assert_eq!(b.title.as_deref(), Some("Exit check"));
+        assert!(b.required && b.blocking);
+        assert_eq!(b.status.as_deref(), Some("passed"));
+        // 缺 gates.json → 空
+        assert!(scan_gates(&wf, "missing").is_empty());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn scan_run_artifacts_reads_report_outputs_and_registry_counts() {
+        let root = tmp_dir("artifacts");
+        let wf = root.join(".workflow");
+        fs::create_dir_all(wf.join("sessions/s1/runs/r1/outputs")).unwrap();
+        fs::write(
+            wf.join("sessions/s1/runs/r1/report.md"),
+            "# Report\n\nsummary body",
+        )
+        .unwrap();
+        fs::write(wf.join("sessions/s1/runs/r1/outputs/findings.json"), "{\"a\":1}").unwrap();
+        fs::write(wf.join("sessions/s1/runs/r1/outputs/note.txt"), "hello preview").unwrap();
+        fs::write(
+            wf.join("sessions/s1/evidence.json"),
+            r#"{"records":[{"id":"E1"},{"id":"E2"}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            wf.join("sessions/s1/artifacts.json"),
+            r#"{"artifacts":{"a":1,"b":2,"c":3}}"#,
+        )
+        .unwrap();
+
+        let a = scan_run_artifacts(&wf, "s1", "r1").unwrap();
+        assert_eq!(a.report_md.as_deref(), Some("# Report\n\nsummary body"));
+        assert_eq!(a.outputs.len(), 2);
+        assert_eq!(a.outputs[0].name, "findings.json");
+        assert_eq!(a.outputs[1].preview, "hello preview");
+        assert_eq!(a.evidence_records, 2);
+        assert_eq!(a.artifacts_count, 3);
+        // 不存在的 run → None
+        assert!(scan_run_artifacts(&wf, "s1", "nope").is_none());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn read_run_output_blocks_path_escape() {
+        let root = tmp_dir("escape");
+        let wf = root.join(".workflow");
+        fs::create_dir_all(wf.join("sessions/s1/runs/r1/outputs")).unwrap();
+        fs::write(wf.join("sessions/s1/runs/r1/outputs/ok.json"), "fine").unwrap();
+        assert_eq!(read_run_output(&wf, "s1", "r1", "ok.json").as_deref(), Some("fine"));
+        assert!(read_run_output(&wf, "s1", "r1", "../secret").is_none());
+        assert!(read_run_output(&wf, "s1", "r1", "a/b").is_none());
+        assert!(read_run_output(&wf, "s1", "r1", "..\\evil").is_none());
         let _ = fs::remove_dir_all(&root);
     }
 

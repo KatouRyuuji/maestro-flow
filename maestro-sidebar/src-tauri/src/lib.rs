@@ -31,6 +31,7 @@ use snapshot::{RuntimeSnapshot, snapshot_fingerprint, all_projects, resolve_acti
 // App state
 // ---------------------------------------------------------------------------
 
+#[derive(Default)]
 struct RuntimeStore {
     last_snapshot: Option<RuntimeSnapshot>,
     last_emitted_fingerprint: Option<String>,
@@ -72,6 +73,35 @@ fn open_or_refresh_editor_tab(editor: &mut EditorState, incoming: EditorTab) {
 
     editor.tabs.push(incoming);
     editor.active = (editor.tabs.len() - 1) as i64;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_search_output_extracts_results() {
+        let raw = r#"{"query":"agent","wikiCount":1,"codeCount":1,"count":2,"results":[
+          {"source":"wiki","kind":"note","name":"A","detail":"d1","rank":0.5,"score":1,"snippet":"s1","summary":"sum1"},
+          {"source":"code","kind":"class","name":"B","detail":"d2","rank":0.4,"score":0.8,"snippet":"","summary":""}
+        ]}"#;
+        let out = parse_search_output(raw);
+        assert_eq!(out.count, 2);
+        assert_eq!(out.wiki_count, 1);
+        assert_eq!(out.results.len(), 2);
+        assert_eq!(out.results[0].source, "wiki");
+        assert_eq!(out.results[0].kind, "note");
+        assert_eq!(out.results[0].rank, 0.5);
+        assert_eq!(out.results[1].name, "B");
+        assert!(out.error.is_none());
+    }
+
+    #[test]
+    fn parse_search_output_handles_invalid_json() {
+        let out = parse_search_output("not json");
+        assert!(out.error.is_some());
+        assert!(out.results.is_empty());
+    }
 }
 
 #[cfg(test)]
@@ -253,15 +283,6 @@ struct AppState {
     dock: Mutex<Option<DockState>>,
 }
 
-impl Default for RuntimeStore {
-    fn default() -> Self {
-        RuntimeStore {
-            last_snapshot: None,
-            last_emitted_fingerprint: None,
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // RuntimeCoordinator — 串行 flush + trailing debounce
 // ---------------------------------------------------------------------------
@@ -338,6 +359,7 @@ struct ConfigOut {
     wallpaper: Option<String>,
     wallpaper_opacity: f64,
     active_root: Option<String>,
+    global_mode: bool,
 }
 
 fn config_out(cfg: &AppConfig) -> ConfigOut {
@@ -348,6 +370,7 @@ fn config_out(cfg: &AppConfig) -> ConfigOut {
         wallpaper: cfg.wallpaper.clone(),
         wallpaper_opacity: cfg.wallpaper_opacity_value(),
         active_root: cfg.active_root.clone(),
+        global_mode: cfg.global_mode,
     }
 }
 
@@ -519,6 +542,45 @@ fn get_session_detail(
     for wf in projects {
         if let Some(detail) = workflow::scan_session_detail(&wf, &session_id) {
             return Some(detail);
+        }
+    }
+    None
+}
+
+/// run 产出物（report.md / outputs / 注册表计数）
+#[tauri::command]
+fn get_run_artifacts(
+    state: tauri::State<AppState>,
+    session_id: String,
+    run_id: String,
+) -> Option<workflow::RunArtifacts> {
+    if !is_safe_id(&session_id) || !is_safe_id(&run_id) {
+        return None;
+    }
+    let cfg = state.config.lock().unwrap().clone();
+    for wf in active_projects(&cfg) {
+        if let Some(a) = workflow::scan_run_artifacts(&wf, &session_id, &run_id) {
+            return Some(a);
+        }
+    }
+    None
+}
+
+/// 读取单个 output 文件全文（防路径逃逸）
+#[tauri::command]
+fn get_run_artifact_content(
+    state: tauri::State<AppState>,
+    session_id: String,
+    run_id: String,
+    name: String,
+) -> Option<String> {
+    if !is_safe_id(&session_id) || !is_safe_id(&run_id) {
+        return None;
+    }
+    let cfg = state.config.lock().unwrap().clone();
+    for wf in active_projects(&cfg) {
+        if let Some(c) = workflow::read_run_output(&wf, &session_id, &run_id, &name) {
+            return Some(c);
         }
     }
     None
@@ -791,6 +853,158 @@ fn get_knowledge_item_content(
     None
 }
 
+/// 系统通知（前端检测到状态迁移后调用；不依赖前端 JS API）
+#[tauri::command]
+fn notify(app: tauri::AppHandle, title: String, body: String) -> Result<(), String> {
+    use tauri_plugin_notification::NotificationExt;
+    app.notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .show()
+        .map_err(|e| e.to_string())
+}
+
+/// 切换全局模式（全部工程 vs 激活单工程）
+#[tauri::command]
+fn set_global_mode(app: tauri::AppHandle, state: tauri::State<AppState>, flag: bool) -> Result<bool, String> {
+    state.config.lock().unwrap().global_mode = flag;
+    save_state(&state)?;
+    flush_snapshot(&app);
+    Ok(flag)
+}
+
+/// 开机自启开关（tauri-plugin-autostart）
+#[tauri::command]
+fn set_autostart(app: tauri::AppHandle, flag: bool) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    let autostart = app.autolaunch();
+    if flag {
+        autostart.enable().map_err(|e| format!("自启启用失败：{e}"))?;
+    } else {
+        autostart.disable().map_err(|e| format!("自启关闭失败：{e}"))?;
+    }
+    Ok(flag)
+}
+
+/// 查询开机自启状态
+#[tauri::command]
+fn get_autostart(app: tauri::AppHandle) -> bool {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch().is_enabled().unwrap_or(false)
+}
+
+/// 语义搜索桥接：spawn `maestro search --json`（激活工程作用域）
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SemanticSearchResult {
+    pub source: String, // wiki | code
+    pub kind: String,   // note | class | function | ...
+    pub name: String,
+    pub detail: String,
+    pub rank: f64,
+    pub score: f64,
+    pub snippet: String,
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SemanticSearchOut {
+    pub query: String,
+    pub wiki_count: u64,
+    pub code_count: u64,
+    pub count: u64,
+    pub results: Vec<SemanticSearchResult>,
+    pub error: Option<String>,
+}
+
+fn parse_search_output(stdout: &str) -> SemanticSearchOut {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(stdout) else {
+        return SemanticSearchOut {
+            error: Some("搜索输出不是合法 JSON".into()),
+            ..Default::default()
+        };
+    };
+    let num = |k: &str| v.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
+    let mut out = SemanticSearchOut {
+        query: v.get("query").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+        wiki_count: num("wikiCount"),
+        code_count: num("codeCount"),
+        count: num("count"),
+        ..Default::default()
+    };
+    if let Some(results) = v.get("results").and_then(|r| r.as_array()) {
+        out.results = results
+            .iter()
+            .filter_map(|r| {
+                let s = |k: &str| r.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+                let f = |k: &str| r.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0);
+                if s("name").is_empty() {
+                    return None;
+                }
+                Some(SemanticSearchResult {
+                    source: s("source"),
+                    kind: s("kind"),
+                    name: s("name"),
+                    detail: s("detail"),
+                    rank: f("rank"),
+                    score: f("score"),
+                    snippet: s("snippet"),
+                    summary: s("summary"),
+                })
+            })
+            .collect();
+    }
+    out
+}
+
+/// 语义搜索（激活工程）：`maestro search <q> --json --limit N --workflow-root <wf>`。
+/// CLI 缺失/失败时返回 error 字段，前端降级为本地字符串搜索。
+#[tauri::command]
+fn semantic_search(
+    state: tauri::State<AppState>,
+    query: String,
+    limit: Option<u64>,
+) -> SemanticSearchOut {
+    let q = query.trim().to_string();
+    if q.is_empty() {
+        return SemanticSearchOut { query: q, ..Default::default() };
+    }
+    let cfg = state.config.lock().unwrap().clone();
+    let projects = active_projects(&cfg);
+    let Some(wf) = projects.first() else {
+        return SemanticSearchOut { query: q, error: Some("无激活工作空间".into()), ..Default::default() };
+    };
+    let limit = limit.unwrap_or(8).clamp(1, 20).to_string();
+    let wf_str = config::normalize_path(wf);
+    let result = std::process::Command::new("maestro")
+        .args(["search", &q, "--json", "--limit", &limit, "--workflow-root", &wf_str])
+        .output();
+    match result {
+        Ok(out) if out.status.success() => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let mut parsed = parse_search_output(&stdout);
+            parsed.query = q;
+            parsed
+        }
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let msg = if stderr.trim().is_empty() {
+                "搜索命令退出码非零".to_string()
+            } else {
+                stderr.trim().chars().take(300).collect()
+            };
+            SemanticSearchOut { query: q, error: Some(msg), ..Default::default() }
+        }
+        Err(e) => SemanticSearchOut {
+            query: q,
+            error: Some(format!("maestro CLI 不可用：{e}")),
+            ..Default::default()
+        },
+    }
+}
+
 #[tauri::command]
 fn get_config(state: tauri::State<AppState>) -> ConfigOut {
     config_out(&state.config.lock().unwrap())
@@ -1052,6 +1266,11 @@ fn quit_app(app: tauri::AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let cfg = config::load();
@@ -1155,6 +1374,8 @@ pub fn run() {
             get_snapshot,
             get_session_runs,
             get_session_detail,
+            get_run_artifacts,
+            get_run_artifact_content,
             get_call_detail,
             get_knowledge_items,
             get_top_knowledge,
@@ -1169,6 +1390,11 @@ pub fn run() {
             editor_synced,
             editor_changed,
             get_config,
+            semantic_search,
+            set_global_mode,
+            set_autostart,
+            get_autostart,
+            notify,
             list_workspaces,
             set_active_root,
             complete_setup,

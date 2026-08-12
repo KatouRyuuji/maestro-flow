@@ -22,6 +22,9 @@ pub struct RuntimeSnapshot {
     /// 旧版缓存文件无此字段 → serde(default) 兼容反序列化。
     #[serde(default)]
     pub learning_top_digest: String,
+    /// 待沉淀候选（run 级 knowledge-delta.json 聚合）。旧缓存无此字段 → default 兼容。
+    #[serde(default)]
+    pub pending_candidates: knowledge::PendingCandidates,
 }
 
 /// 全部可用工程（.workflow 目录）：用户配置 roots ∪ 自动发现。
@@ -65,20 +68,24 @@ pub fn resolve_active<'a>(
     projects.first()
 }
 
-/// 构建快照：扫描当前激活工程。所有扫描失败都降级为空数据而非报错。
+/// 构建快照：单工程模式扫描激活工程；全局模式扫描全部工程。
+/// 所有扫描失败都降级为空数据而非报错。
 pub fn build_snapshot(cfg: &AppConfig) -> RuntimeSnapshot {
     let mut projects = all_projects(cfg);
-    let active = resolve_active(cfg, &projects);
-    if let Some(a) = active {
-        projects = vec![a.clone()];
-    } else {
-        projects = Vec::new();
+    if !cfg.global_mode {
+        let active = resolve_active(cfg, &projects);
+        if let Some(a) = active {
+            projects = vec![a.clone()];
+        } else {
+            projects = Vec::new();
+        }
     }
     let mut sessions: Vec<SessionSummary> = Vec::new();
     let mut knowledge = KnowledgeStats::default();
     let mut workspace: Option<String> = None;
     let mut active_session_id: Option<String> = None;
     let mut learning_top_digest = String::new();
+    let mut pending_candidates = knowledge::PendingCandidates::default();
 
     for wf in projects {
         let info: ProjectInfo = workflow::project_info(&wf);
@@ -96,6 +103,12 @@ pub fn build_snapshot(cfg: &AppConfig) -> RuntimeSnapshot {
         knowledge.issue_rows += k.issue_rows;
         // 与 get_top_knowledge 同源（激活工程 learning 统计）
         learning_top_digest = knowledge::learning_top_digest(&wf);
+        // 待沉淀候选（仅激活工程；跨工程聚合由调用方扩展）
+        let cand = knowledge::scan_pending_candidates(&wf);
+        pending_candidates.total += cand.total;
+        for c in cand.items {
+            pending_candidates.items.push(c);
+        }
     }
     // 跨工程合并后排序：运行中 > 暂停 > 失败/阻塞 > 已封存，组内 session_id 倒序（新在前）
     sessions.sort_by(|a, b| {
@@ -103,7 +116,9 @@ pub fn build_snapshot(cfg: &AppConfig) -> RuntimeSnapshot {
             .cmp(&workflow::status_rank(&b.status))
             .then_with(|| b.session_id.cmp(&a.session_id))
     });
-    sessions.truncate(40);
+    // 全局模式容纳更多会话（多工程合并且未截断前）；单工程维持 40 上限
+    let session_cap = if cfg.global_mode { 80 } else { 40 };
+    sessions.truncate(session_cap);
     knowledge.total = knowledge.specs
         + knowledge.memory
         + knowledge.knowhow
@@ -111,6 +126,11 @@ pub fn build_snapshot(cfg: &AppConfig) -> RuntimeSnapshot {
         + knowledge.issue_rows;
 
     let calls = activity::scan_calls(&crate::config::cli_history_dir(), 20);
+
+    // 候选跨工程合并后统一截断（保序：先到的工程优先）
+    if pending_candidates.items.len() > 50 {
+        pending_candidates.items.truncate(50);
+    }
 
     RuntimeSnapshot {
         workspace,
@@ -120,6 +140,7 @@ pub fn build_snapshot(cfg: &AppConfig) -> RuntimeSnapshot {
         calls,
         knowledge,
         learning_top_digest,
+        pending_candidates,
     }
 }
 
@@ -138,13 +159,14 @@ pub fn snapshot_fingerprint(snapshot: &RuntimeSnapshot) -> String {
     let calls = serde_json::to_string(&calls).unwrap_or_default();
     let knowledge = serde_json::to_string(&snapshot.knowledge).unwrap_or_default();
     format!(
-        "{}|{}|{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}|{}|{}",
         snapshot.workspace.as_deref().unwrap_or(""),
         snapshot.active_session_id.as_deref().unwrap_or(""),
         sessions,
         calls,
         knowledge,
-        snapshot.learning_top_digest
+        snapshot.learning_top_digest,
+        serde_json::to_string(&snapshot.pending_candidates).unwrap_or_default()
     )
 }
 
@@ -164,6 +186,7 @@ mod tests {
                 ..Default::default()
             },
             learning_top_digest: String::new(),
+            pending_candidates: Default::default(),
         }
     }
 
