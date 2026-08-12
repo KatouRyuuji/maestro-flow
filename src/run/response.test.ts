@@ -4,8 +4,10 @@ import {
   createRunResponseError,
   createRunResponseSuccess,
   emitRunResponse,
+  redactRunResponseLeaseTokens,
   runResponseSchema,
   stableRunResponseErrorCode,
+  stableRunResponseErrorCodeV11,
 } from './response.js';
 
 afterEach(() => {
@@ -122,6 +124,86 @@ describe('run-response/1.0', () => {
       ok: true,
       result: { schema_version: 'brief-result/1.0' },
     });
+  });
+
+  it('writes explicit 1.1 envelopes with locator, fence, warnings, and redaction', () => {
+    const response = createRunResponseSuccess({
+      schema_version: 'run-response/1.1',
+      operation: 'execution-attach',
+      request_id: 'req-attach',
+      locator: { session_id: 's', execution_id: 'exec-1', generation: 1, run_id: null },
+      fence: {
+        session_identity_revision: 2,
+        session_activity_revision: 3,
+        execution_revision: 4,
+        lease_epoch: 5,
+      },
+      replay: { status: 'applied', transition_id: 'tr-attach' },
+      warnings: [{
+        code: 'DEPRECATED_ALIAS',
+        message: 'legacy alias used',
+        replacement_command: 'maestro execution attach',
+      }],
+      result: {
+        lease_claim: {
+          owner_id: 'pi-session-1',
+          epoch: 5,
+          lease_id: 'private-token',
+        },
+      },
+    });
+
+    expect(runResponseSchema.parse(response)).toMatchObject({
+      schema_version: 'run-response/1.1',
+      disposition: 'success',
+      locator: { execution_id: 'exec-1', generation: 1 },
+      fence: { execution_revision: 4, lease_epoch: 5 },
+      warnings: [{ code: 'DEPRECATED_ALIAS' }],
+    });
+    const redacted = redactRunResponseLeaseTokens(response);
+    expect(redacted.result).toEqual({ lease_claim: { owner_id: 'pi-session-1', epoch: 5 } });
+    expect(JSON.stringify(redacted)).not.toContain('private-token');
+
+    expect(() => runResponseSchema.parse({ ...response, unexpected: true })).toThrow();
+    expect(() => runResponseSchema.parse({
+      ...response,
+      operation: 'execution-status',
+    })).toThrow(/raw lease_id/);
+  });
+
+  it('writes typed 1.1 errors without changing the default 1.0 writer', () => {
+    const legacy = createRunResponseError({
+      operation: 'next',
+      exit_code: 1,
+      code: 'LEASE_CONFLICT',
+      message: 'legacy conflict',
+    });
+    expect(legacy.schema_version).toBe('run-response/1.0');
+    expect(() => runResponseSchema.parse({ ...legacy, warnings: [] })).toThrow();
+
+    const current = createRunResponseError({
+      schema_version: 'run-response/1.1',
+      operation: 'execution-resume',
+      exit_code: 1,
+      disposition: 'domain_error',
+      code: 'LEASE_FENCE_CONFLICT',
+      message: 'owner epoch is stale',
+      retryable: true,
+      recovery_command: 'maestro execution lease status',
+      locator: { session_id: 's', execution_id: 'exec-1', generation: 1, run_id: null },
+    });
+    expect(current).toMatchObject({
+      schema_version: 'run-response/1.1',
+      disposition: 'domain_error',
+      error: {
+        code: 'LEASE_FENCE_CONFLICT',
+        retryable: true,
+        recovery_command: 'maestro execution lease status',
+      },
+    });
+    expect(() => runResponseSchema.parse({ ...current, exit_code: 2 })).toThrow();
+    expect(stableRunResponseErrorCodeV11(new Error('execution revision conflict')))
+      .toBe('EXECUTION_REVISION_CONFLICT');
   });
 
   it('parses and emits a success envelope with exit 0', () => {

@@ -38,6 +38,14 @@ export type ReuseReasonCode =
   | 'SAME_ROLE_CONFLICT'
   | 'REUSE_ELIGIBLE';
 
+export interface ExecutionSealReceiptAnchor {
+  execution_id: string;
+  generation: number;
+  sealed_at: string;
+  relative_path: string;
+  overall_hash: string;
+}
+
 export interface ReuseCandidate {
   workspaceId: string;
   sessionId: string;
@@ -51,6 +59,8 @@ export interface ReuseCandidate {
   observedArtifactHash: string | null;
   artifactSchema: string | null;
   artifactRegistryRevision: number | null;
+  executionSealReceipt?: ExecutionSealReceiptAnchor | null;
+  executionSourceRequired?: boolean;
 }
 
 export interface ReuseContractEvidence {
@@ -98,7 +108,7 @@ export interface ReuseAssessmentInput {
   conflicts: ReuseConflictEvidence;
 }
 
-export interface ReuseSourceFence {
+export interface ReuseSourceFenceV10 {
   schema_version: 'reuse-source-fence/1.0';
   workspace_id: string;
   session_id: string;
@@ -115,6 +125,14 @@ export interface ReuseSourceFence {
   producer_contract_hash: string | null;
 }
 
+export interface ReuseSourceFenceV11 extends Omit<ReuseSourceFenceV10, 'schema_version'> {
+  schema_version: 'reuse-source-fence/1.1';
+  execution_seal_receipt: ExecutionSealReceiptAnchor;
+}
+
+export type ReuseSourceFence = ReuseSourceFenceV10;
+export type ReuseSourceFenceRead = ReuseSourceFenceV10 | ReuseSourceFenceV11;
+
 export interface ReuseAssessment {
   schema_version: 'reuse-assessment/1.0';
   decision: ReuseDecision;
@@ -125,9 +143,16 @@ export interface ReuseAssessment {
     schema: string | null;
     role: 'primary' | 'attachment' | 'evidence' | 'checkpoint' | null;
   };
-  source_fence: ReuseSourceFence;
+  source_fence: ReuseSourceFenceV10;
   assessment_hash: string;
 }
+
+export interface ReuseAssessmentV11 extends Omit<ReuseAssessment, 'schema_version' | 'source_fence'> {
+  schema_version: 'reuse-assessment/1.1';
+  source_fence: ReuseSourceFenceV11;
+}
+
+export type ReuseAssessmentRead = ReuseAssessment | ReuseAssessmentV11;
 
 type Severity = 'reuse' | 'review' | 'conflict' | 'reject';
 
@@ -253,7 +278,11 @@ function normalizedSameRoleCandidates(
  * Pure, read-only eligibility assessment. It neither copies artifacts nor
  * changes Session/Run state; callers separately decide how to act on the result.
  */
-export function assessArtifactReuse(input: ReuseAssessmentInput): ReuseAssessment {
+export function assessArtifactReuse(
+  input: ReuseAssessmentInput & { candidate: ReuseCandidate & { executionSealReceipt: ExecutionSealReceiptAnchor } },
+): ReuseAssessmentV11;
+export function assessArtifactReuse(input: ReuseAssessmentInput): ReuseAssessment;
+export function assessArtifactReuse(input: ReuseAssessmentInput): ReuseAssessmentRead {
   const findings = new Map<ReuseReasonCode, Severity>();
   const add = (code: ReuseReasonCode, severity: Severity): void => {
     const current = findings.get(code);
@@ -265,7 +294,10 @@ export function assessArtifactReuse(input: ReuseAssessmentInput): ReuseAssessmen
   else if (input.candidate.artifactStatus === 'superseded') add('ARTIFACT_SUPERSEDED', 'reject');
   else if (input.candidate.artifactStatus !== 'sealed') add('ARTIFACT_NOT_SEALED', 'reject');
   if (input.candidate.producerRunHash === null
-    || input.candidate.artifactRegistryRevision === null) add('SOURCE_FENCE_INCOMPLETE', 'review');
+    || input.candidate.artifactRegistryRevision === null
+    || (input.candidate.executionSourceRequired && !input.candidate.executionSealReceipt)) {
+    add('SOURCE_FENCE_INCOMPLETE', input.candidate.executionSourceRequired ? 'reject' : 'review');
+  }
 
   if (input.candidate.artifactHash === null || input.candidate.observedArtifactHash === null) {
     add('ARTIFACT_HASH_UNVERIFIED', 'review');
@@ -344,8 +376,7 @@ export function assessArtifactReuse(input: ReuseAssessmentInput): ReuseAssessmen
         ? 'REVIEW'
         : 'REUSE';
 
-  const sourceFence: ReuseSourceFence = {
-    schema_version: 'reuse-source-fence/1.0',
+  const sourceFenceBase = {
     workspace_id: input.candidate.workspaceId,
     session_id: input.candidate.sessionId,
     producer_run_id: input.candidate.producerRunId,
@@ -360,6 +391,13 @@ export function assessArtifactReuse(input: ReuseAssessmentInput): ReuseAssessmen
     artifact_registry_revision: input.candidate.artifactRegistryRevision,
     producer_contract_hash: input.contract.producerHash,
   };
+  const sourceFence: ReuseSourceFenceRead = input.candidate.executionSealReceipt
+    ? {
+        ...sourceFenceBase,
+        schema_version: 'reuse-source-fence/1.1',
+        execution_seal_receipt: input.candidate.executionSealReceipt,
+      }
+    : { ...sourceFenceBase, schema_version: 'reuse-source-fence/1.0' };
   const consumer = input.consumer ?? {
     kind: input.candidate.artifactRole,
     alias: null,
@@ -388,8 +426,11 @@ export function assessArtifactReuse(input: ReuseAssessmentInput): ReuseAssessmen
       same_role_candidates: sameRoleCandidates,
     },
   };
+  const schemaVersion = sourceFence.schema_version === 'reuse-source-fence/1.1'
+    ? 'reuse-assessment/1.1' as const
+    : 'reuse-assessment/1.0' as const;
   const assessmentHash = sha256(stableJson({
-    schema_version: 'reuse-assessment/1.0',
+    schema_version: schemaVersion,
     decision,
     reason_codes: reasonCodes,
     consumer,
@@ -397,12 +438,13 @@ export function assessArtifactReuse(input: ReuseAssessmentInput): ReuseAssessmen
     evidence: normalizedEvidence,
   }));
 
-  return {
-    schema_version: 'reuse-assessment/1.0',
+  const result = {
     decision,
     reason_codes: reasonCodes,
     consumer,
-    source_fence: sourceFence,
     assessment_hash: assessmentHash,
   };
+  return sourceFence.schema_version === 'reuse-source-fence/1.1'
+    ? { ...result, schema_version: 'reuse-assessment/1.1', source_fence: sourceFence }
+    : { ...result, schema_version: 'reuse-assessment/1.0', source_fence: sourceFence };
 }

@@ -1,17 +1,38 @@
 import {
   runErrorCodeSchema,
+  runErrorCodeV11Schema,
   runResponseSchema,
+  runResponseV10Schema,
+  runResponseV11Schema,
+  type RunOperationV11,
   type RunResponse,
+  type RunResponseDisposition,
   type RunResponseErrorCode,
+  type RunResponseErrorCodeV11,
+  type RunResponseRead,
+  type RunResponseV10,
+  type RunResponseV11,
 } from './protocol-schemas.js';
 
 export interface RunResponseBaseInput {
-  operation: RunResponse['operation'];
+  operation: RunResponseV10['operation'];
   request_id?: string | null;
-  locator?: RunResponse['locator'];
-  next?: RunResponse['next'];
-  continuation?: RunResponse['continuation'];
-  replay?: RunResponse['replay'];
+  locator?: RunResponseV10['locator'];
+  next?: RunResponseV10['next'];
+  continuation?: RunResponseV10['continuation'];
+  replay?: RunResponseV10['replay'];
+}
+
+export interface RunResponseV11BaseInput {
+  schema_version: 'run-response/1.1';
+  operation: RunOperationV11;
+  request_id?: string | null;
+  locator?: RunResponseV11['locator'];
+  fence?: RunResponseV11['fence'];
+  next?: RunResponseV11['next'];
+  continuation?: RunResponseV11['continuation'];
+  replay?: RunResponseV11['replay'];
+  warnings?: RunResponseV11['warnings'];
 }
 
 /** Prefer typed domain codes, then map legacy message-only errors deterministically. */
@@ -45,10 +66,55 @@ export function stableRunResponseErrorCode(error: unknown): RunResponseErrorCode
   return 'INTERNAL_ERROR';
 }
 
+/** V1.1 mapping recognizes execution/lease codes before falling back to legacy mappings. */
+export function stableRunResponseErrorCodeV11(error: unknown): RunResponseErrorCodeV11 {
+  const typedCode = (error as { code?: unknown })?.code;
+  const parsedCode = runErrorCodeV11Schema.safeParse(typedCode);
+  if (parsedCode.success) return parsedCode.data;
+
+  const message = error instanceof Error ? error.message : String(error);
+  if (/execution not found/i.test(message)) return 'EXECUTION_NOT_FOUND';
+  if (/execution .*sealed/i.test(message)) return 'EXECUTION_SEALED';
+  if (/execution .*paused/i.test(message)) return 'EXECUTION_PAUSED';
+  if (/stale execution revision|execution revision conflict/i.test(message)) return 'EXECUTION_REVISION_CONFLICT';
+  if (/handoff.*in progress/i.test(message)) return 'LEASE_HANDOFF_IN_PROGRESS';
+  if (/handoff token/i.test(message)) return 'LEASE_HANDOFF_TOKEN_INVALID';
+  if (/stale.*(?:recover|takeover)|recovery required/i.test(message)) return 'LEASE_STALE_RECOVERY_REQUIRED';
+  if (/lease.*busy|lease is owned/i.test(message)) return 'LEASE_BUSY';
+  if (/lease.*(?:epoch|token|fence)|owner epoch|lease id/i.test(message)) return 'LEASE_FENCE_CONFLICT';
+  if (/session.*archived/i.test(message)) return 'SESSION_ARCHIVED';
+  return stableRunResponseErrorCode(error);
+}
+
 export function createRunResponseSuccess(
   input: RunResponseBaseInput & { result: unknown },
-): RunResponse {
-  return runResponseSchema.parse({
+): RunResponseV10;
+export function createRunResponseSuccess(
+  input: RunResponseV11BaseInput & { result: unknown },
+): RunResponseV11;
+export function createRunResponseSuccess(
+  input: (RunResponseBaseInput | RunResponseV11BaseInput) & { result: unknown },
+): RunResponseRead {
+  if ('schema_version' in input && input.schema_version === 'run-response/1.1') {
+    return runResponseV11Schema.parse({
+      schema_version: 'run-response/1.1',
+      operation: input.operation,
+      ok: true,
+      exit_code: 0,
+      disposition: 'success',
+      request_id: input.request_id ?? null,
+      locator: input.locator ?? null,
+      fence: input.fence ?? null,
+      result: input.result,
+      next: input.next ?? null,
+      continuation: input.continuation ?? null,
+      replay: input.replay ?? null,
+      warnings: input.warnings ?? [],
+      error: null,
+    });
+  }
+
+  return runResponseV10Schema.parse({
     schema_version: 'run-response/1.0',
     operation: input.operation,
     ok: true,
@@ -63,15 +129,57 @@ export function createRunResponseSuccess(
   });
 }
 
+interface RunResponseErrorBaseInput {
+  exit_code: 1 | 2 | 3;
+  message: string;
+  details?: Record<string, unknown>;
+}
+
 export function createRunResponseError(
-  input: RunResponseBaseInput & {
-    exit_code: 1 | 2 | 3;
-    code: RunResponseErrorCode;
-    message: string;
-    details?: Record<string, unknown>;
+  input: RunResponseBaseInput & RunResponseErrorBaseInput & { code: RunResponseErrorCode },
+): RunResponseV10;
+export function createRunResponseError(
+  input: RunResponseV11BaseInput & RunResponseErrorBaseInput & {
+    code: RunResponseErrorCodeV11;
+    disposition: Exclude<RunResponseDisposition, 'success'>;
+    retryable?: boolean;
+    recovery_command?: string | null;
   },
-): RunResponse {
-  return runResponseSchema.parse({
+): RunResponseV11;
+export function createRunResponseError(
+  input: (RunResponseBaseInput | RunResponseV11BaseInput) & RunResponseErrorBaseInput & {
+    code: RunResponseErrorCodeV11;
+    disposition?: Exclude<RunResponseDisposition, 'success'>;
+    retryable?: boolean;
+    recovery_command?: string | null;
+  },
+): RunResponseRead {
+  if ('schema_version' in input && input.schema_version === 'run-response/1.1') {
+    return runResponseV11Schema.parse({
+      schema_version: 'run-response/1.1',
+      operation: input.operation,
+      ok: false,
+      exit_code: input.exit_code,
+      disposition: input.disposition,
+      request_id: input.request_id ?? null,
+      locator: input.locator ?? null,
+      fence: input.fence ?? null,
+      result: null,
+      next: input.next ?? null,
+      continuation: input.continuation ?? null,
+      replay: input.replay ?? null,
+      warnings: input.warnings ?? [],
+      error: {
+        code: input.code,
+        message: input.message,
+        retryable: input.retryable ?? false,
+        details: input.details ?? {},
+        recovery_command: input.recovery_command ?? null,
+      },
+    });
+  }
+
+  return runResponseV10Schema.parse({
     schema_version: 'run-response/1.0',
     operation: input.operation,
     ok: false,
@@ -90,11 +198,41 @@ export function createRunResponseError(
   });
 }
 
-/** Validate before writing so machine mode never emits a partial envelope. */
-export function emitRunResponse(response: RunResponse): void {
-  const validated = runResponseSchema.parse(response);
-  process.stdout.write(`${JSON.stringify(validated)}\n`);
-  process.exitCode = validated.exit_code;
+function redactLeaseIds(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactLeaseIds);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => key !== 'lease_id')
+      .map(([key, item]) => [key, redactLeaseIds(item)]),
+  );
 }
 
-export { runResponseSchema, type RunResponse, type RunResponseErrorCode } from './protocol-schemas.js';
+/** Remove raw lease tokens before logging, persistence, UI projection, or transcript capture. */
+export function redactRunResponseLeaseTokens<T extends RunResponseRead>(response: T): T {
+  const validated = runResponseSchema.parse(response);
+  return runResponseSchema.parse(redactLeaseIds(validated)) as T;
+}
+
+/** Validate before writing so machine mode never emits a partial envelope. */
+export function emitRunResponse(
+  response: RunResponseRead,
+  options: { redactLeaseTokens?: boolean } = {},
+): void {
+  const validated = runResponseSchema.parse(response);
+  const output = options.redactLeaseTokens ? redactRunResponseLeaseTokens(validated) : validated;
+  process.stdout.write(`${JSON.stringify(output)}\n`);
+  process.exitCode = output.exit_code;
+}
+
+export {
+  runResponseSchema,
+  runResponseV10Schema,
+  runResponseV11Schema,
+  type RunResponse,
+  type RunResponseErrorCode,
+  type RunResponseErrorCodeV11,
+  type RunResponseRead,
+  type RunResponseV10,
+  type RunResponseV11,
+} from './protocol-schemas.js';

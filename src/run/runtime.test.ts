@@ -139,6 +139,18 @@ describe('Session/Run runtime', () => {
     ]);
   });
 
+  it('projects session/1.x status and active Run without 2.0 Execution pointers', () => {
+    const projectRoot = root();
+    commandFile(projectRoot, 'projection', 'consumes: []\nproduces: []\ngates: { entry: [], exit: [] }');
+    const created = createRun({ projectRoot, command: 'projection', intent: 'legacy projection' });
+    const entry = readStateJson(projectRoot)?.sessions?.find(item => item.session_id === created.session_id);
+    expect(entry).toMatchObject({
+      session_schema_version: 'session/1.3', status: 'running', active_run_id: created.run_id,
+    });
+    expect(entry).not.toHaveProperty('current_execution_id');
+    expect(entry).not.toHaveProperty('latest_execution_id');
+  });
+
   it('parses every migrated core command contract', () => {
     for (const [command, step] of Object.entries(migratedStepAssociations)) {
       const source = resolveCommandSource(process.cwd(), command);

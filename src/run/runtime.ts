@@ -50,20 +50,28 @@ import {
 } from '../knowledge/reconcile.js';
 import {
   gateSchema,
+  sessionStateV20Schema,
   type ArtifactRegistry,
   type CommandRun,
+  type CommandRunV14,
+  type ExecutionState,
   type Gate,
   type GateRegistry,
   type Handoff,
   type ReportFrontmatter,
   type SessionState,
+  type SessionStateRead,
 } from './schemas.js';
 import {
   briefResultV11Schema,
+  briefResultV12Schema,
   commandRebindAuditSchema,
   completeInputSnapshotSchema,
   executionContractV11Schema,
+  executionContractV12Schema,
   guidanceSnapshotSchema,
+  persistedTransitionRecordV11Schema,
+  sessionProvenanceSchema,
   type BriefResult,
   type CompleteInputSnapshot,
   type CreationProvenance,
@@ -72,7 +80,9 @@ import {
   type GuidanceSnapshot,
   type IntentIdentity,
   type SessionProvenance,
+  type SourceFenceRead,
   type PersistedTransitionRecord,
+  type TransitionFenceV11,
   type TransitionPointer,
 } from './protocol-schemas.js';
 import { createIntentIdentity } from './intent-identity.js';
@@ -83,7 +93,16 @@ import {
   type ValidatedChainProposal,
 } from './chain-proposal.js';
 import { createTopicIdentity, normalizeTopic, sameTopicIdentity, type TopicIdentity } from './topic-identity.js';
-import { assessArtifactReuse, schemaMatch, type ReuseAssessment } from './reuse-assessment.js';
+import {
+  schemaMatch,
+  type ReuseAssessment,
+  type ReuseAssessmentInput,
+  type ReuseAssessmentRead,
+} from './reuse-assessment.js';
+import {
+  assessReceiptBackedArtifactReuse,
+  validateReuseAcceptance,
+} from './reuse-acceptance.js';
 import {
   buildIntentSection,
   buildBoundaryContractSection,
@@ -99,11 +118,21 @@ import {
   issueRetryToken,
 } from './chain.js';
 import { canonicalRunDir, resolveRunContext, resolveRunContextFull, resolveTargetPlatform } from './context.js';
-import { checkLease, claimLease, type LeaseClaim } from './lease.js';
+import {
+  assertExecutionLease,
+  checkLease,
+  claimLease,
+  hashExecutionLeaseId,
+  type ExecutionLeaseClaim,
+  type LeaseClaim,
+} from './lease.js';
 import {
   assertTransitionMutationRevisions,
   createTransitionOutcome,
+  createTransitionOutcomeV11,
+  createTransitionRequestV11,
   prepareTransitionMutation,
+  replayOrApplyTransitionV11,
   stableJsonUtf8,
   transitionMutationReceipt,
   TransitionReceiptError,
@@ -154,6 +183,11 @@ export interface NamedGateBlocker {
   status: Gate['status'];
 }
 
+export type SessionProvenanceInput = Omit<SessionProvenance, 'forked_from' | 'imported_from'> & {
+  forked_from: SourceFenceRead | null;
+  imported_from: SourceFenceRead[];
+};
+
 export interface CreateRunOptions {
   projectRoot: string;
   command: string;
@@ -174,12 +208,21 @@ export interface CreateRunOptions {
   expectedIdentityRevision?: number;
   /** Lease claim validated and persisted with the chain binding. */
   leaseClaim?: LeaseClaim;
+  /** Explicit execution binding; omitted legacy calls continue writing command-run/1.3. */
+  execution?: {
+    executionId: string;
+    generation: number;
+    expectedRevision: number;
+    lease: ExecutionLeaseClaim;
+    requestId: string;
+    operation?: 'create' | 'next';
+  };
   /** Require a running Session and atomically fence an ad-hoc Run allocation. */
   requireRunningSession?: boolean;
   /** Explicit exact identity supplied by recall/fork/import consumers. */
   intentIdentity?: IntentIdentity;
   /** Session lineage for a newly allocated Session. */
-  sessionProvenance?: SessionProvenance;
+  sessionProvenance?: SessionProvenanceInput;
   /** Audited creation authority supplied by confirmation/transition consumers. */
   creation?: {
     requestId: string | null;
@@ -199,7 +242,7 @@ export interface CreateRunResult {
   resolved_platform: TargetPlatform;
   upstream: Record<string, RunUpstream>;
   topic_identity: TopicIdentity;
-  reuse_assessments: ReuseAssessment[];
+  reuse_assessments: ReuseAssessmentRead[];
   reuse_warnings: string[];
   argument_requirements: ArgumentRequirement[];
   entry_gates: GateSummary;
@@ -270,7 +313,7 @@ export interface CheckRunResult {
   warnings: string[];
   errors: string[];
   upstream: Record<string, RunUpstream>;
-  reuse_assessments: ReuseAssessment[];
+  reuse_assessments: ReuseAssessmentRead[];
   /** Populated by `run check`: repair loop while gates block, complete when clean, advance when sealed. */
   next?: { command: string; reason: string };
   /**
@@ -323,7 +366,7 @@ export interface PreparePrevious {
   handoff: PrevHandoff | null;
   consumes: PrepareConsumeStatus[];
   upstream: Record<string, RunUpstream>;
-  reuse_assessments: ReuseAssessment[];
+  reuse_assessments: ReuseAssessmentRead[];
   selected_refs: Array<{ alias: string; artifact_id: string; path: string; assessment_hash: string }>;
 }
 
@@ -443,6 +486,14 @@ export interface CompleteRunOptions {
   decisions?: string[];
   /** Lease claim checked inside the same transaction that seals the Run. */
   leaseClaim?: LeaseClaim;
+  /** Execution-bound completion authority; omitted legacy calls stay on transition/1.0. */
+  execution?: {
+    executionId: string;
+    generation: number;
+    expectedRevision: number;
+    lease: ExecutionLeaseClaim;
+    requestId: string;
+  };
   /** Internal chain transition used by completeRunWithVerdict. */
   chainVerdict?: CompletionVerdict;
   /** Run-relative chain-proposal artifact selected for atomic application. */
@@ -600,15 +651,46 @@ function projectState(projectRoot: string): StateJsonV2 {
   };
 }
 
-export function projectSessionEntry(session: SessionState): ProjectSessionEntry {
-  return {
+export function projectSessionEntry(
+  session: SessionState,
+  authority?: SessionStateRead,
+): ProjectSessionEntry {
+  const common = {
     session_id: session.session_id,
     intent: session.intent,
-    status: session.status,
     depends_on: [],
     roadmap_artifact_id: null,
     seed_ref: null,
   };
+  if (authority?.schema_version === 'session/2.0') {
+    const identity = sessionStateV20Schema.parse(authority);
+    return {
+      ...common,
+      session_schema_version: 'session/2.0',
+      current_execution_id: identity.current_execution_id,
+      latest_execution_id: identity.latest_execution_id,
+      archived_at: identity.archived_at,
+    };
+  }
+  return {
+    ...common,
+    session_schema_version: authority?.schema_version.startsWith('session/1.')
+      ? authority.schema_version as 'session/1.0' | 'session/1.1' | 'session/1.2' | 'session/1.3'
+      : 'session/1.3',
+    status: session.status,
+    active_run_id: session.active_run_id,
+  };
+}
+
+function sessionAvailableForAutomaticUse(store: SessionStore, sessionId: string): boolean {
+  const record = store.readSessionRecord(sessionId);
+  if (record.schema_version !== 'session/2.0') {
+    return store.readBundle(sessionId).session.status === 'running';
+  }
+  const identity = sessionStateV20Schema.parse(record);
+  if (identity.archived_at) return false;
+  if (!identity.current_execution_id) return true;
+  return store.readExecution(sessionId, identity.current_execution_id).status === 'active';
 }
 
 function compatibleTopic(session: SessionState, identity: TopicIdentity): boolean {
@@ -639,7 +721,7 @@ function runningTopicCandidatesLocked(
       const session = currentDraft?.session_id === sessionId
         ? currentDraft
         : store.readBundle(sessionId).session;
-      return session.status === 'running' ? [{ sessionId, session }] : [];
+      return sessionAvailableForAutomaticUse(store, sessionId) ? [{ sessionId, session }] : [];
     } catch {
       return [];
     }
@@ -668,7 +750,8 @@ export function resolveTopicSessionId(
     }
     return requested;
   }
-  const running = store.listSessions({ statuses: ['running'] }).candidates;
+  const running = store.listSessions().candidates
+    .filter(item => sessionAvailableForAutomaticUse(store, item.sessionId));
   const native = running.filter(item => item.session.topic_identity
     && sameTopicIdentity(item.session.topic_identity, identity));
   const nativeId = uniqueTopicCandidate('Running topic match', native);
@@ -731,7 +814,7 @@ function defaultAlias(kind: string, command: string): string | undefined {
 
 interface CollectedReuse {
   upstream: Record<string, RunUpstream>;
-  assessments: ReuseAssessment[];
+  assessments: ReuseAssessmentRead[];
 }
 
 function observedArtifactHash(path: string): string | null {
@@ -801,7 +884,7 @@ function collectReusableUpstream(
     .sort((left, right) => (right.producer?.sequence ?? 0) - (left.producer?.sequence ?? 0)
       || left.artifactId.localeCompare(right.artifactId));
 
-  const assessments: ReuseAssessment[] = [];
+  const assessments: ReuseAssessmentRead[] = [];
   const upstream: Record<string, RunUpstream> = {};
   for (const consume of contract.consumes) {
     const aliasTargetId = consume.alias ? registry.aliases[consume.alias] : undefined;
@@ -906,21 +989,21 @@ function collectReusableUpstream(
           supersededByArtifactIds: supersededBy,
         },
         conflicts: { sameRoleCandidates },
-      } satisfies Parameters<typeof assessArtifactReuse>[0];
-      let assessment = assessArtifactReuse(assessmentInput);
+      } satisfies ReuseAssessmentInput;
+      let assessment = assessReceiptBackedArtifactReuse(projectRoot, assessmentInput, store);
       const finalArtifactHash = observedArtifactHash(join(store.sessionDir(session.session_id), item.artifact.relative_path));
       const finalRunHash = observedArtifactHash(join(store.runDir(session.session_id, producer.run_id), 'run.json'));
       if (finalArtifactHash !== assessment.source_fence.observed_artifact_hash
         || finalRunHash !== assessment.source_fence.producer_run_hash) {
         const producerFenceStable = finalRunHash === assessment.source_fence.producer_run_hash;
-        assessment = assessArtifactReuse({
+        assessment = assessReceiptBackedArtifactReuse(projectRoot, {
           ...assessmentInput,
           candidate: {
             ...assessmentInput.candidate,
             observedArtifactHash: finalArtifactHash,
             producerRunHash: producerFenceStable ? finalRunHash : null,
           },
-        });
+        }, store);
       }
       assessments.push(assessment);
       return { item, assessment };
@@ -961,8 +1044,22 @@ export function assessSessionReuse(
 
 interface RevalidatedRunReuse {
   upstream: Record<string, RunUpstream>;
-  assessments: ReuseAssessment[];
+  assessments: ReuseAssessmentRead[];
   blockers: string[];
+}
+
+function sameReuseSourceAuthority(
+  original: ReuseAssessmentRead['source_fence'],
+  refreshed: ReuseAssessmentRead['source_fence'],
+): boolean {
+  if (original.schema_version !== refreshed.schema_version) return false;
+  if (original.schema_version === 'reuse-source-fence/1.0') {
+    return stableJsonUtf8(original) === stableJsonUtf8(refreshed);
+  }
+  if (refreshed.schema_version !== 'reuse-source-fence/1.1') return false;
+  const { artifact_registry_revision: _originalRevision, ...originalAuthority } = original;
+  const { artifact_registry_revision: _refreshedRevision, ...refreshedAuthority } = refreshed;
+  return stableJsonUtf8(originalAuthority) === stableJsonUtf8(refreshedAuthority);
 }
 
 function revalidateRunReuse(
@@ -972,7 +1069,7 @@ function revalidateRunReuse(
   run: CommandRun,
   contract?: CommandContract,
 ): RevalidatedRunReuse {
-  const stored = (run.input.reuse_assessments ?? []) as ReuseAssessment[];
+  const stored = (run.input.reuse_assessments ?? []) as ReuseAssessmentRead[];
   if (stored.length === 0) {
     return {
       upstream: {},
@@ -980,41 +1077,50 @@ function revalidateRunReuse(
       blockers: run.input.consumes.length > 0 ? ['consumed artifacts have no reusable source fence'] : [],
     };
   }
-  const current = collectReusableUpstream(
-    projectRoot,
-    store,
-    bundle.session,
-    bundle.artifacts,
-    bundle.gates,
-    contract ?? contractForRun(projectRoot, run).contract,
-  );
+  let current: CollectedReuse = { upstream: {}, assessments: [] };
+  let collectionError: string | null = null;
+  try {
+    current = collectReusableUpstream(
+      projectRoot,
+      store,
+      bundle.session,
+      bundle.artifacts,
+      bundle.gates,
+      contract ?? contractForRun(projectRoot, run).contract,
+    );
+  } catch (error) {
+    collectionError = (error as Error).message;
+  }
   const upstream: Record<string, RunUpstream> = {};
-  const assessments: ReuseAssessment[] = [];
+  const assessments: ReuseAssessmentRead[] = [];
   const blockers: string[] = [];
   for (const original of stored) {
+    let authorityError: string | null = null;
+    try {
+      validateReuseAcceptance(projectRoot, original, store);
+    } catch (error) {
+      authorityError = (error as Error).message;
+    }
     const refreshed = current.assessments.find(item =>
       item.source_fence.artifact_id === original.source_fence.artifact_id
       && item.consumer.kind === original.consumer.kind
       && item.consumer.alias === original.consumer.alias);
     const aliasCurrent = original.consumer.alias === null
       || bundle.artifacts.aliases[original.consumer.alias] === original.source_fence.artifact_id;
-    const sourceFenceCurrent = refreshed !== undefined
-      && refreshed.source_fence.artifact_registry_revision === original.source_fence.artifact_registry_revision
-      && refreshed.source_fence.artifact_hash === original.source_fence.artifact_hash
-      && refreshed.source_fence.observed_artifact_hash === original.source_fence.observed_artifact_hash
-      && refreshed.source_fence.producer_run_hash === original.source_fence.producer_run_hash
+    const sourceFenceCurrent = authorityError === null
+      && collectionError === null
+      && refreshed !== undefined
+      && sameReuseSourceAuthority(original.source_fence, refreshed.source_fence)
       && aliasCurrent;
     const originalReuseCurrent = original.decision === 'REUSE'
       && refreshed?.decision === 'REUSE'
       && sourceFenceCurrent;
     const acceptedReviewCurrent = original.decision === 'REVIEW'
       && refreshed?.decision === 'REVIEW'
-      && refreshed.assessment_hash === original.assessment_hash
-      && stableJsonUtf8(refreshed.source_fence) === stableJsonUtf8(original.source_fence)
       && sourceFenceCurrent
-      && reuseAcceptanceStatus(bundle.session, run, original) === 'accepted';
+      && reuseAcceptanceStatus(bundle.session, run, original as ReuseAssessment) === 'accepted';
     if (!originalReuseCurrent && !acceptedReviewCurrent) {
-      const assessment: ReuseAssessment = refreshed
+      const assessment: ReuseAssessmentRead = refreshed
         ? {
             ...refreshed,
             decision: refreshed.decision === 'REUSE' ? 'REVIEW' : refreshed.decision,
@@ -1025,7 +1131,11 @@ function revalidateRunReuse(
         : { ...original, decision: 'REJECT', reason_codes: [...new Set([...original.reason_codes, 'ARTIFACT_INVALID' as const])] };
       assessments.push(assessment);
       if (run.input.consumes.includes(original.source_fence.artifact_id)) {
-        blockers.push(`artifact ${original.source_fence.artifact_id} reuse fence is no longer current or accepted`);
+        const detail = authorityError ?? collectionError;
+        blockers.push(
+          `artifact ${original.source_fence.artifact_id} reuse fence is no longer current or accepted`
+          + (detail ? `: ${detail}` : ''),
+        );
       }
       continue;
     }
@@ -1069,11 +1179,19 @@ export function acceptRunReuse(
   const located = store.findRun(runId, sessionId);
   const initialBundle = store.readBundle(located.sessionId);
   const initialRun = located.run;
-  const assessment = (initialRun.input.reuse_assessments as ReuseAssessment[])
+  const assessment = (initialRun.input.reuse_assessments as ReuseAssessmentRead[])
     .find(item => item.assessment_hash === assessmentHash);
   if (!assessment) throw new Error(`reuse assessment not found: ${assessmentHash}`);
   if (assessment.decision !== 'REVIEW') {
     throw new Error(`reuse assessment ${assessmentHash} is ${assessment.decision}, expected REVIEW`);
+  }
+  validateReuseAcceptance(projectRoot, assessment, store);
+  let executionBinding: Pick<CommandRunV14, 'execution_id' | 'generation'> | null = null;
+  try {
+    const bound = store.readExecutionRun(located.sessionId, runId);
+    executionBinding = { execution_id: bound.execution_id, generation: bound.generation };
+  } catch {
+    // Historical command-run/1.x acceptance remains on the legacy writer path.
   }
   const resolvedContract = contractForRun(projectRoot, initialRun).contract;
   const prepared = prepareTransitionMutation({
@@ -1100,15 +1218,20 @@ export function acceptRunReuse(
     if (run.status === 'sealed' || run.status === 'completed') {
       throw new Error(`Run ${runId} is ${run.status} and immutable`);
     }
-    const stored = (run.input.reuse_assessments as ReuseAssessment[])
+    const stored = (run.input.reuse_assessments as ReuseAssessmentRead[])
       .find(item => item.assessment_hash === assessment.assessment_hash);
     const current = collectReusableUpstream(
       projectRoot, store, draft.session, draft.artifacts, draft.gates, resolvedContract,
-    ).assessments.find(item => item.assessment_hash === assessment.assessment_hash);
+    ).assessments.find(item => (
+      item.source_fence.artifact_id === assessment.source_fence.artifact_id
+      && item.consumer.kind === assessment.consumer.kind
+      && item.consumer.alias === assessment.consumer.alias
+    ));
+    if (stored) validateReuseAcceptance(projectRoot, stored, store);
     if (!stored || stored.decision !== 'REVIEW'
       || !current || current.decision !== 'REVIEW'
       || stableJsonUtf8(stored.source_fence) !== stableJsonUtf8(assessment.source_fence)
-      || stableJsonUtf8(current.source_fence) !== stableJsonUtf8(assessment.source_fence)) {
+      || !sameReuseSourceAuthority(assessment.source_fence, current.source_fence)) {
       throw new TransitionReceiptError(
         'FENCE_CONFLICT',
         `reuse assessment ${assessment.assessment_hash} no longer matches its REVIEW source fence`,
@@ -1143,7 +1266,15 @@ export function acceptRunReuse(
     );
     if (run.status === 'blocked' && entryGates.blocking.length === 0) run.status = 'running';
     draft.session.activity_revision++;
-    tx.writeRun(run);
+    const persistedRun: CommandRun | CommandRunV14 = executionBinding
+      ? {
+          ...run,
+          schema_version: 'command-run/1.4',
+          execution_id: executionBinding.execution_id,
+          generation: executionBinding.generation,
+        }
+      : run;
+    tx.writeRun(persistedRun);
     const acceptance = {
       run_id: runId,
       assessment_hash: assessment.assessment_hash,
@@ -1171,7 +1302,7 @@ export function acceptRunReuse(
         session_identity_revision: draft.session.identity_revision,
         session_activity_revision: draft.session.activity_revision,
         active_run_id: draft.session.active_run_id,
-        run_hash: protocolSha256(`${JSON.stringify(run, null, 2)}\n`),
+        run_hash: protocolSha256(`${JSON.stringify(persistedRun, null, 2)}\n`),
         artifact_registry_revision: draft.artifacts.revision,
       },
       exit_code: 0, error_code: null, result: { acceptance, value: result },
@@ -1868,31 +1999,71 @@ export function createRun(options: CreateRunOptions): CreateRunResult {
   );
   const { sessionId, topicIdentity } = resolvedSession;
   const sessionExisted = store.sessionExists(sessionId);
+  const selectedStatusless = sessionExisted
+    ? store.readSessionRecord(sessionId).schema_version === 'session/2.0'
+    : store.sessionSchemaSelection().writer === 'session/2.0';
+  if (selectedStatusless && !options.execution) {
+    throw new Error('session/2.0 Run creation requires an explicit current Execution binding');
+  }
+  if (sessionExisted) {
+    const selected = store.readSessionRecord(sessionId);
+    if (selected.schema_version === 'session/2.0' && selected.archived_at) {
+      throw new Error(`Session ${sessionId} is archived`);
+    }
+  }
   if (!sessionExisted) {
     store.createSession(sessionId, intent, {
       command: options.command,
       intentIdentity,
-      ...(options.sessionProvenance ? { provenance: options.sessionProvenance } : {}),
+      ...(options.sessionProvenance
+        ? { provenance: sessionProvenanceSchema.parse(options.sessionProvenance) }
+        : {}),
     });
   }
 
-  return store.update(sessionId, (bundle, tx) => {
+  const applyCreate = (
+    bundle: SessionBundle,
+    tx: StoreTransaction,
+    execution: ExecutionState | null,
+  ): CreateRunResult => {
+    const authorityIdentityRevision = bundle.session.identity_revision;
+    const authorityActivityRevision = bundle.session.activity_revision;
+    if (execution) {
+      if (execution.session_id !== sessionId || execution.generation !== options.execution!.generation) {
+        throw new Error('Execution generation or Session binding changed');
+      }
+      if (execution.status !== 'active') throw new Error(`Execution ${execution.execution_id} is ${execution.status}`);
+      if (execution.active_run_id) throw new Error(`Execution has active Run ${execution.active_run_id}`);
+      assertExecutionLease(execution.lease, options.execution!.lease);
+
+      if (options.execution!.operation === 'next') {
+        let reconciled = false;
+        for (const step of bundle.session.orchestration.chain) {
+          if (step.status !== 'running' || !step.run_id) continue;
+          const status = tx.readRun(step.run_id).status;
+          if (status !== 'sealed' && status !== 'completed') continue;
+          step.status = 'sealed';
+          reconciled = true;
+        }
+        if (reconciled) bundle.session.activity_revision++;
+      }
+    }
     if (options.requireRunningSession) {
-      if (bundle.session.status !== 'running') {
+      if (!selectedStatusless && bundle.session.status !== 'running') {
         throw new Error(`Session ${sessionId} is ${bundle.session.status}; publishing requires running status`);
       }
       if (options.expectedIdentityRevision !== undefined
-        && bundle.session.identity_revision !== options.expectedIdentityRevision) {
+        && authorityIdentityRevision !== options.expectedIdentityRevision) {
         throw new TransitionReceiptError(
           'FENCE_CONFLICT',
-          `stale identity revision: expected ${options.expectedIdentityRevision}, current ${bundle.session.identity_revision}`,
+          `stale identity revision: expected ${options.expectedIdentityRevision}, current ${authorityIdentityRevision}`,
         );
       }
       if (options.expectedActivityRevision !== undefined
-        && bundle.session.activity_revision !== options.expectedActivityRevision) {
+        && authorityActivityRevision !== options.expectedActivityRevision) {
         throw new TransitionReceiptError(
           'FENCE_CONFLICT',
-          `stale activity revision: expected ${options.expectedActivityRevision}, current ${bundle.session.activity_revision}`,
+          `stale activity revision: expected ${options.expectedActivityRevision}, current ${authorityActivityRevision}`,
         );
       }
       const conflict = checkLease(bundle.session.orchestration.lease, options.leaseClaim ?? {});
@@ -1921,25 +2092,25 @@ export function createRun(options: CreateRunOptions): CreateRunResult {
       chainStepId = retryStep.step_id;
     }
     if (chainStepId) {
-      if (bundle.session.status !== 'running') {
+      if (!selectedStatusless && bundle.session.status !== 'running') {
         throw new Error(`Session ${sessionId} is ${bundle.session.status}; chain dispatch requires running status`);
       }
       if (
         options.expectedActivityRevision !== undefined
-        && bundle.session.activity_revision !== options.expectedActivityRevision
+        && authorityActivityRevision !== options.expectedActivityRevision
       ) {
         throw new Error(
           `Session ${sessionId} changed after run-next preflight `
-          + `(expected activity_revision ${options.expectedActivityRevision}, got ${bundle.session.activity_revision})`,
+          + `(expected activity_revision ${options.expectedActivityRevision}, got ${authorityActivityRevision})`,
         );
       }
       if (
         options.expectedIdentityRevision !== undefined
-        && bundle.session.identity_revision !== options.expectedIdentityRevision
+        && authorityIdentityRevision !== options.expectedIdentityRevision
       ) {
         throw new Error(
           `Session ${sessionId} identity changed after run-next preflight `
-          + `(expected identity_revision ${options.expectedIdentityRevision}, got ${bundle.session.identity_revision})`,
+          + `(expected identity_revision ${options.expectedIdentityRevision}, got ${authorityIdentityRevision})`,
         );
       }
       const conflict = checkLease(bundle.session.orchestration.lease, options.leaseClaim ?? {});
@@ -2004,7 +2175,9 @@ export function createRun(options: CreateRunOptions): CreateRunResult {
       if (pending.chain_step_id !== boundStep.step_id) throw new Error('retry token chain step mismatch');
       if (pending.command !== options.command) throw new Error(`retry token is for command ${pending.command}`);
       if (Date.parse(pending.expires_at) <= Date.now()) throw new Error('retry token has expired');
-      const parent = tx.readRun(pending.parent_run_id);
+      const parent = execution
+        ? tx.readExecutionRun(pending.parent_run_id)
+        : tx.readRun(pending.parent_run_id);
       if (parent.session_id !== sessionId) throw new Error(`retry parent belongs to Session ${parent.session_id}`);
       if (parent.command.name !== options.command) throw new Error('retry parent command mismatch');
       if (parent.chain_step_id !== boundStep.step_id) throw new Error('retry parent chain step mismatch');
@@ -2093,7 +2266,7 @@ export function createRun(options: CreateRunOptions): CreateRunResult {
         args: options.args ?? [],
         consumes: Object.values(upstream).map(item => item.artifact_id),
         context_identity_revision: bundle.session.identity_revision,
-        reuse_assessments: reuse.assessments,
+        reuse_assessments: reuse.assessments as ReuseAssessment[],
       },
       gate_ids: gateIds,
       output: { produces: [], primary_artifact_id: null, verdict: null },
@@ -2135,8 +2308,25 @@ export function createRun(options: CreateRunOptions): CreateRunResult {
     bundle.session.activity_revision++;
     bundle.session.status = 'running';
     bundle.gates.revision++;
-    tx.writeRun(run);
-    const nextState = ensureSessionProjection(freshState, projectSessionEntry(bundle.session));
+    if (execution) {
+      const boundRun: CommandRunV14 = {
+        ...run,
+        schema_version: 'command-run/1.4',
+        execution_id: execution.execution_id,
+        generation: execution.generation,
+      };
+      tx.writeRun(boundRun);
+      execution.active_run_id = runId;
+      execution.chain = structuredClone(bundle.session.orchestration.chain);
+      execution.decision_points = structuredClone(bundle.session.orchestration.decision_points);
+      execution.revision++;
+    } else {
+      tx.writeRun(run);
+    }
+    const nextState = ensureSessionProjection(
+      freshState,
+      projectSessionEntry(bundle.session, store.readSessionRecord(sessionId)),
+    );
     tx.writeJson(join(store.workflowRoot, 'state.json'), nextState);
     const runDirRel = canonicalRunDir(store, sessionId, runId);
     const hasWorkflow = resolveStepContent(options.projectRoot, options.command).workflow !== null;
@@ -2164,6 +2354,130 @@ export function createRun(options: CreateRunOptions): CreateRunResult {
           : readyReason,
       },
     };
+  };
+
+  if (!options.execution) {
+    return store.update(sessionId, (bundle, tx) => applyCreate(bundle, tx, null));
+  }
+
+  const executionOptions = options.execution;
+  const requestId = executionOptions.requestId?.trim();
+  if (!requestId) throw new Error('request id is required');
+  return store.updateExecutionAtomic(
+    sessionId,
+    executionOptions.executionId,
+    executionOptions.expectedRevision,
+    (bundle, execution, tx) => {
+      const activeRunPath = execution.active_run_id
+        ? join(store.runDir(sessionId, execution.active_run_id), 'run.json')
+        : null;
+      const before: TransitionFenceV11 = {
+        session_identity_revision: bundle.session.identity_revision,
+        session_activity_revision: bundle.session.activity_revision,
+        execution_id: execution.execution_id,
+        execution_generation: execution.generation,
+        execution_revision: execution.revision,
+        execution_status: execution.status,
+        lease_epoch: execution.lease?.epoch ?? null,
+        active_run_id: execution.active_run_id,
+        run_hash: activeRunPath && existsSync(activeRunPath) ? protocolSha256(readFileSync(activeRunPath)) : null,
+        artifact_registry_revision: bundle.artifacts.revision,
+      };
+      const existing = store.readExecutionTransition(sessionId, execution.execution_id, requestId);
+      const operation = executionOptions.operation ?? 'create';
+      const request = createTransitionRequestV11({
+        request_id: requestId,
+        operation,
+        subject: {
+          session_id: sessionId,
+          execution_id: execution.execution_id,
+          generation: execution.generation,
+          run_id: null,
+          chain_step_id: options.chainStepId ?? null,
+        },
+        requested_at: existing?.payload.requested_at ?? localISO(),
+        preconditions: existing?.payload.preconditions ?? before,
+        payload: {
+          command: options.command,
+          intent: options.intent ?? null,
+          topic: options.topic ?? null,
+          args: options.args ?? [],
+          platform: options.platform ?? null,
+          chain_step_id: options.chainStepId ?? null,
+          retry_token: options.retryToken ?? null,
+          creation: options.creation ?? null,
+          lease: {
+            owner_id: executionOptions.lease.ownerId,
+            owner_kind: executionOptions.lease.ownerKind,
+            epoch: executionOptions.lease.epoch,
+            lease_id_hash: hashExecutionLeaseId(executionOptions.lease.leaseId),
+          },
+        },
+      });
+      const evaluated = replayOrApplyTransitionV11(
+        existing ? [persistedTransitionRecordV11Schema.parse(existing)] : [],
+        request,
+        before,
+        () => {
+          const value = applyCreate(bundle, tx, execution);
+          const runWrite = tx.writes.find(write => (
+            write.path === join(store.runDir(sessionId, value.run_id), 'run.json')
+          ));
+          const after: TransitionFenceV11 = {
+            session_identity_revision: bundle.session.identity_revision,
+            session_activity_revision: bundle.session.activity_revision,
+            execution_id: execution.execution_id,
+            execution_generation: execution.generation,
+            execution_revision: execution.revision,
+            execution_status: execution.status,
+            lease_epoch: execution.lease?.epoch ?? null,
+            active_run_id: execution.active_run_id,
+            run_hash: runWrite ? protocolSha256(`${JSON.stringify(runWrite.value, null, 2)}\n`) : null,
+            artifact_registry_revision: bundle.artifacts.revision,
+          };
+          return createTransitionOutcomeV11({
+            request_id: request.request_id,
+            request_hash: request.normalized_request_hash,
+            operation,
+            status: 'applied',
+            applied_at: localISO(),
+            subject: request.subject,
+            postconditions: after,
+            exit_code: 0,
+            error_code: null,
+            result: { value },
+          });
+        },
+      );
+      if (!evaluated.replayed) tx.writeExecutionTransition(execution.execution_id, evaluated.record);
+      return structuredClone(evaluated.outcome.result.value) as CreateRunResult;
+    },
+    { replayRequestId: requestId },
+  );
+}
+
+export interface CreateExecutionRunOptions extends Omit<CreateRunOptions, 'execution'> {
+  executionId: string;
+  generation: number;
+  expectedExecutionRevision: number;
+  executionLease: ExecutionLeaseClaim;
+  requestId: string;
+  transitionOperation?: 'create' | 'next';
+}
+
+/** Execution-aware create; legacy createRun remains an unleased command-run/1.3 API. */
+export function createExecutionRun(options: CreateExecutionRunOptions): CreateRunResult {
+  return createRun({
+    ...options,
+    execution: {
+      executionId: options.executionId,
+      generation: options.generation,
+      expectedRevision: options.expectedExecutionRevision,
+      lease: options.executionLease,
+      requestId: options.requestId,
+      operation: options.transitionOperation,
+    },
+    requireRunningSession: true,
   });
 }
 
@@ -2505,7 +2819,11 @@ export function sealSession(projectRoot: string, sessionId: string, summary = ''
 
   const state = projectState(projectRoot);
   const bundle = store.readBundle(sessionId);
-  const projected = ensureSessionProjection(state, projectSessionEntry(bundle.session), false);
+  const projected = ensureSessionProjection(
+    state,
+    projectSessionEntry(bundle.session, store.readSessionRecord(sessionId)),
+    false,
+  );
   if (projected.active_session_id === sessionId) projected.active_session_id = null;
   writeStateJson(projectRoot, projected);
   // K6: refresh the session-level reconciliation receipt at seal time
@@ -2835,7 +3153,7 @@ function completeInputSnapshot(runDir: string, paths: readonly string[]): Comple
 
 function assertCompleteReplayInputs(
   runDir: string,
-  record: PersistedTransitionRecord,
+  record: { request_id: string; payload: { payload: Record<string, unknown> } },
 ): void {
   const parsed = completeInputSnapshotSchema.safeParse(record.payload.payload.completion_input_snapshot);
   if (!parsed.success) {
@@ -3138,11 +3456,33 @@ export function applyCompleteRunMutation(
   draft: SessionBundle,
   tx: StoreTransaction,
   prepared: PreparedCompleteInputs,
+  executionOverride?: ExecutionState,
 ): { result: CompleteAuthorityResult; run: CommandRun } {
   const { store, runId, projectRoot, scan, frontmatter, options } = prepared;
   const run = tx.readRun(runId);
+  const execution = options.execution ? executionOverride ?? tx.readExecution(options.execution.executionId) : null;
+  if (execution) {
+    if (execution.generation !== options.execution!.generation) {
+      throw new Error('Execution generation changed');
+    }
+    if (execution.revision !== options.execution!.expectedRevision) {
+      throw new Error(
+        `execution revision conflict: expected ${options.execution!.expectedRevision}, current ${execution.revision}`,
+      );
+    }
+    if (execution.status !== 'active') throw new Error(`Execution ${execution.execution_id} is ${execution.status}`);
+    if (execution.active_run_id !== runId) {
+      throw new Error(`Execution active Run is ${execution.active_run_id ?? '<none>'}; expected ${runId}`);
+    }
+    assertExecutionLease(execution.lease, options.execution!.lease);
+    const bound = tx.readExecutionRun(runId);
+    if (bound.execution_id !== execution.execution_id || bound.generation !== execution.generation) {
+      throw new Error('command-run/1.4 Execution binding changed');
+    }
+  }
   if (options.requireRunningSession) {
-    if (draft.session.status !== 'running') {
+    const statusless = store.readSessionRecord(prepared.sessionId).schema_version === 'session/2.0';
+    if (!statusless && draft.session.status !== 'running') {
       throw new Error(`Session ${prepared.sessionId} is ${draft.session.status}; publishing requires running status`);
     }
     if (draft.session.active_run_id !== runId) {
@@ -3175,9 +3515,23 @@ export function applyCompleteRunMutation(
   draft.session.activity_revision++;
   if (blocked) {
     run.status = 'blocked';
-    tx.writeRun(run);
+    if (execution) {
+      tx.writeRun({
+        ...run,
+        schema_version: 'command-run/1.4',
+        execution_id: execution.execution_id,
+        generation: execution.generation,
+      });
+      execution.active_run_id = runId;
+      execution.chain = structuredClone(draft.session.orchestration.chain);
+      execution.decision_points = structuredClone(draft.session.orchestration.decision_points);
+      execution.revision++;
+    } else {
+      tx.writeRun(run);
+    }
     tx.writeJson(join(store.workflowRoot, 'state.json'), ensureSessionProjection(
-      prepared.state, projectSessionEntry(draft.session),
+      prepared.state,
+      projectSessionEntry(draft.session, store.readSessionRecord(prepared.sessionId)),
     ));
     return {
       run,
@@ -3234,9 +3588,27 @@ export function applyCompleteRunMutation(
       }
     : null;
   summarizeRegistry(draft.gates);
-  tx.writeRun(run);
+  if (execution && chainTransition && draft.session.status === 'paused') {
+    execution.status = 'paused';
+    execution.lease = null;
+  }
+  if (execution) {
+    tx.writeRun({
+      ...run,
+      schema_version: 'command-run/1.4',
+      execution_id: execution.execution_id,
+      generation: execution.generation,
+    });
+    execution.active_run_id = null;
+    execution.chain = structuredClone(draft.session.orchestration.chain);
+    execution.decision_points = structuredClone(draft.session.orchestration.decision_points);
+    execution.revision++;
+  } else {
+    tx.writeRun(run);
+  }
   tx.writeJson(join(store.workflowRoot, 'state.json'), ensureSessionProjection(
-    prepared.state, projectSessionEntry(draft.session),
+    prepared.state,
+    projectSessionEntry(draft.session, store.readSessionRecord(prepared.sessionId)),
   ));
   return {
     run,
@@ -3262,8 +3634,165 @@ export function completeRun(
   sessionId?: string,
   options: CompleteRunOptions = {},
 ): CompleteRunResult {
+  if (!options.execution) {
+    const authorityStore = new SessionStore(projectRoot);
+    const located = authorityStore.findRun(runId, sessionId);
+    const openExecution = authorityStore.readOpenExecution(located.sessionId);
+    if (openExecution) {
+      throw new Error(
+        `Session ${located.sessionId} has open Execution ${openExecution.execution_id}; execution binding and lease are required`,
+      );
+    }
+  } else {
+    const authorityStore = new SessionStore(projectRoot);
+    const located = authorityStore.findRun(runId, sessionId);
+    const requestId = options.execution.requestId?.trim();
+    if (!requestId) throw new Error('request id is required');
+    const existing = authorityStore.readExecutionTransition(
+      located.sessionId,
+      options.execution.executionId,
+      requestId,
+    );
+    if (!existing) {
+      const execution = authorityStore.readExecution(located.sessionId, options.execution.executionId);
+      if (execution.generation !== options.execution.generation) throw new Error('Execution generation changed');
+      if (execution.revision !== options.execution.expectedRevision) {
+        throw new Error(
+          `execution revision conflict: expected ${options.execution.expectedRevision}, current ${execution.revision}`,
+        );
+      }
+      if (execution.status !== 'active') throw new Error(`Execution ${execution.execution_id} is ${execution.status}`);
+      if (execution.active_run_id !== runId) {
+        throw new Error(`Execution active Run is ${execution.active_run_id ?? '<none>'}; expected ${runId}`);
+      }
+      assertExecutionLease(execution.lease, options.execution.lease);
+      const bound = authorityStore.readExecutionRun(located.sessionId, runId);
+      if (bound.execution_id !== execution.execution_id || bound.generation !== execution.generation) {
+        throw new Error('command-run/1.4 Execution binding changed');
+      }
+    }
+  }
   const preparedInputs = prepareCompleteInputs(projectRoot, runId, sessionId, options);
   const { store } = preparedInputs;
+  if (options.execution) {
+    const executionOptions = options.execution;
+    const requestId = executionOptions.requestId?.trim();
+    if (!requestId) throw new Error('request id is required');
+    const evaluated = store.updateExecutionAtomic(
+      preparedInputs.sessionId,
+      executionOptions.executionId,
+      executionOptions.expectedRevision,
+      (draft, execution, tx) => {
+        const runPath = join(store.runDir(preparedInputs.sessionId, runId), 'run.json');
+        const before: TransitionFenceV11 = {
+          session_identity_revision: draft.session.identity_revision,
+          session_activity_revision: draft.session.activity_revision,
+          execution_id: execution.execution_id,
+          execution_generation: execution.generation,
+          execution_revision: execution.revision,
+          execution_status: execution.status,
+          lease_epoch: execution.lease?.epoch ?? null,
+          active_run_id: execution.active_run_id,
+          run_hash: existsSync(runPath) ? protocolSha256(readFileSync(runPath)) : null,
+          artifact_registry_revision: draft.artifacts.revision,
+        };
+        const existing = store.readExecutionTransition(
+          preparedInputs.sessionId,
+          execution.execution_id,
+          requestId,
+        );
+        if (existing) assertCompleteReplayInputs(preparedInputs.runDir, existing);
+        const request = createTransitionRequestV11({
+          request_id: requestId,
+          operation: 'complete',
+          subject: {
+            session_id: preparedInputs.sessionId,
+            execution_id: execution.execution_id,
+            generation: execution.generation,
+            run_id: runId,
+            chain_step_id: store.readRun(preparedInputs.sessionId, runId).chain_step_id,
+          },
+          requested_at: existing?.payload.requested_at ?? localISO(),
+          preconditions: existing?.payload.preconditions ?? before,
+          payload: {
+            run_id: runId,
+            notes: options.notes ?? [],
+            extra_artifacts: options.extraArtifacts ?? [],
+            summary_fallback: options.summaryFallback ?? null,
+            decisions: options.decisions ?? [],
+            chain_verdict: options.chainVerdict ?? null,
+            skip_artifact_metadata_validation: options.skipArtifactMetadataValidation ?? false,
+            chain_proposal: preparedInputs.chainProposal
+              ? {
+                  path: preparedInputs.chainProposal.path,
+                  proposal_id: preparedInputs.chainProposal.proposal.proposal_id,
+                  content_hash: preparedInputs.chainProposal.artifact.contentHash,
+                }
+              : null,
+            completion_input_snapshot: existing?.payload.payload.completion_input_snapshot
+              ?? preparedInputs.completionInputSnapshot,
+            lease: {
+              owner_id: executionOptions.lease.ownerId,
+              owner_kind: executionOptions.lease.ownerKind,
+              epoch: executionOptions.lease.epoch,
+              lease_id_hash: hashExecutionLeaseId(executionOptions.lease.leaseId),
+            },
+          },
+        });
+        const receipt = replayOrApplyTransitionV11(
+          existing ? [persistedTransitionRecordV11Schema.parse(existing)] : [],
+          request,
+          before,
+          () => {
+            revalidatePreparedCompleteInputs(preparedInputs);
+            const applied = applyCompleteRunMutation(draft, tx, preparedInputs, execution);
+            const persistedRun: CommandRunV14 = {
+              ...applied.run,
+              schema_version: 'command-run/1.4',
+              execution_id: execution.execution_id,
+              generation: execution.generation,
+            };
+            const after: TransitionFenceV11 = {
+              session_identity_revision: draft.session.identity_revision,
+              session_activity_revision: draft.session.activity_revision,
+              execution_id: execution.execution_id,
+              execution_generation: execution.generation,
+              execution_revision: execution.revision,
+              execution_status: execution.status,
+              lease_epoch: execution.lease?.epoch ?? null,
+              active_run_id: execution.active_run_id,
+              run_hash: protocolSha256(`${JSON.stringify(persistedRun, null, 2)}\n`),
+              artifact_registry_revision: draft.artifacts.revision,
+            };
+            return createTransitionOutcomeV11({
+              request_id: request.request_id,
+              request_hash: request.normalized_request_hash,
+              operation: 'complete',
+              status: 'applied',
+              applied_at: localISO(),
+              subject: request.subject,
+              postconditions: after,
+              exit_code: applied.result.sealed ? 0 : 1,
+              error_code: applied.result.sealed ? null : 'RUN_GATES_BLOCKING',
+              result: { value: applied.result },
+            });
+          },
+        );
+        if (!receipt.replayed) tx.writeExecutionTransition(execution.execution_id, receipt.record);
+        return {
+          value: structuredClone(receipt.outcome.result.value) as CompleteAuthorityResult,
+          transition: {
+            request_id: request.request_id,
+            transition_id: receipt.outcome.transition_id,
+            status: receipt.replayed ? 'replayed' as const : 'applied' as const,
+          },
+        };
+      },
+      { replayRequestId: requestId },
+    );
+    return { ...evaluated.value, transition: evaluated.transition };
+  }
+
   const initialBundle = store.readBundle(preparedInputs.sessionId);
   const requestId = options.transition?.requestId?.trim();
   const priorRecord = requestId
@@ -3325,6 +3854,34 @@ export function completeRun(
     ...(structuredClone(evaluated.outcome.result.value) as CompleteAuthorityResult),
     transition: transitionMutationReceipt(prepared.request, evaluated.outcome, evaluated.replayed),
   };
+}
+
+export interface CompleteExecutionRunOptions extends Omit<CompleteRunOptions, 'execution'> {
+  sessionId: string;
+  executionId: string;
+  generation: number;
+  expectedExecutionRevision: number;
+  executionLease: ExecutionLeaseClaim;
+  requestId: string;
+}
+
+/** Execution-aware completion with command-run/1.4 binding and full lease fencing. */
+export function completeExecutionRun(
+  projectRoot: string,
+  runId: string,
+  options: CompleteExecutionRunOptions,
+): CompleteRunResult {
+  return completeRun(projectRoot, runId, options.sessionId, {
+    ...options,
+    requireRunningSession: true,
+    execution: {
+      executionId: options.executionId,
+      generation: options.generation,
+      expectedRevision: options.expectedExecutionRevision,
+      lease: options.executionLease,
+      requestId: options.requestId,
+    },
+  });
 }
 
 export interface CompleteVerdictOptions extends CompleteRunOptions {
@@ -3462,6 +4019,7 @@ export function completeRunWithVerdict(
     summaryFallback: options.summaryFallback,
     decisions: options.decisions,
     leaseClaim: options.leaseClaim,
+    execution: options.execution,
     chainVerdict: verdict,
     skipArtifactMetadataValidation: options.skipArtifactMetadataValidation,
     chainProposal: options.chainProposal,
@@ -3881,6 +4439,7 @@ export function briefRun(
   const freshness = guidanceFreshness(projectRoot, run);
   const argumentRequirements = resolveArgumentRequirements(projectRoot, run.command.name, run.input.args);
   const reuseAssessments = validatedReuse.assessments;
+  const receiptBackedReuse = reuseAssessments.some(item => item.schema_version === 'reuse-assessment/1.1');
   const inputs: ExecutionContractView['inputs'] = contract.consumes.map(consume => ({
     kind: consume.kind,
     alias: consume.alias ?? null,
@@ -3913,8 +4472,10 @@ export function briefRun(
       } : null;
     })
     .filter((item): item is NonNullable<typeof item> => item !== null);
-  const executionContract: ExecutionContractView = executionContractV11Schema.parse({
-    schema_version: 'execution-contract/1.1',
+  const executionContract: ExecutionContractView = (
+    receiptBackedReuse ? executionContractV12Schema : executionContractV11Schema
+  ).parse({
+    schema_version: receiptBackedReuse ? 'execution-contract/1.2' : 'execution-contract/1.1',
     command: run.command.name,
     invocation: { args: [...run.input.args] },
     guidance: {
@@ -3947,8 +4508,8 @@ export function briefRun(
     orchestration: { chain_effects: [...(contract.orchestration?.chain_effects ?? [])] },
   });
 
-  return briefResultV11Schema.parse({
-    schema_version: 'brief-result/1.1',
+  return (receiptBackedReuse ? briefResultV12Schema : briefResultV11Schema).parse({
+    schema_version: receiptBackedReuse ? 'brief-result/1.2' : 'brief-result/1.1',
     session_id: context.session_id,
     run_id: runId,
     run_dir: context.run_dir,
@@ -4080,7 +4641,18 @@ export function ensureSessionProjectionOnDisk(
     const bundle = store.readBundle(sessionId);
     const state = readStateJson(projectRoot);
     if (!state) return 'state.json missing; session projection not registered';
-    writeStateJson(projectRoot, ensureSessionProjection(state, projectSessionEntry(bundle.session), makeActive));
+    const projected = ensureSessionProjection(
+      state,
+      projectSessionEntry(bundle.session, store.readSessionRecord(sessionId)),
+      makeActive,
+    );
+    const record = store.readSessionRecord(sessionId);
+    if (record.schema_version === 'session/2.0'
+      && record.archived_at
+      && projected.active_session_id === sessionId) {
+      projected.active_session_id = null;
+    }
+    writeStateJson(projectRoot, projected);
     return null;
   } catch (error) {
     return `session projection registration failed: ${(error as Error).message}`;

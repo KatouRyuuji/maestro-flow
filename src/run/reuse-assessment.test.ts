@@ -71,6 +71,34 @@ describe('reuse-assessment/1.0', () => {
     expect(assessArtifactReuse(input)).toEqual(result);
   });
 
+  it('emits additive 1.1 only with a sealed Execution anchor and rejects a required missing anchor', () => {
+    const anchored = compatibleInput();
+    anchored.candidate.executionSourceRequired = true;
+    anchored.candidate.executionSealReceipt = {
+      execution_id: 'execution-001',
+      generation: 1,
+      sealed_at: '2026-07-21T00:00:00.000Z',
+      relative_path: 'executions/execution-001/seal-receipt.json',
+      overall_hash: HASH_B,
+    };
+    expect(assessArtifactReuse(anchored)).toMatchObject({
+      schema_version: 'reuse-assessment/1.1',
+      decision: 'REUSE',
+      source_fence: {
+        schema_version: 'reuse-source-fence/1.1',
+        execution_seal_receipt: { execution_id: 'execution-001', generation: 1 },
+      },
+    });
+
+    const missing = compatibleInput();
+    missing.candidate.executionSourceRequired = true;
+    expect(assessArtifactReuse(missing)).toMatchObject({
+      schema_version: 'reuse-assessment/1.0',
+      decision: 'REJECT',
+      reason_codes: expect.arrayContaining(['SOURCE_FENCE_INCOMPLETE']),
+    });
+  });
+
   it('allows compatible freshness but rejects stale and reviews unknown freshness', () => {
     const compatible = compatibleInput();
     compatible.freshness = 'compatible';
