@@ -6,7 +6,7 @@ title: ".workflow/ 文件体系变更方案 — Session/Run 模型"
 > 基线（当前态）：`workflow-structure-guide.md`（`scratch/` + `milestone/phase` 模型）。
 > 目标态：Session → Run → Artifact 三级数据模型。
 > 目的：同一 Session 连续跑 analyze/plan/execute/review/test/debug，每次调用独立 Run 目录不互污，下游经 typed artifact 消费，恢复不依赖 `mtime latest`。
-> **当前 runtime addendum（schema `session/1.3` + `command-run/1.3`）**：本文件保留早期 `*/1.1` 文件体系设计背景，但 §6.1、§7.1 与 §7.1c 以当前 writer、transition receipt、paused recovery 和 machine response 为准；兼容 reader 接受 1.0–1.3，未知版本 fail closed。
+> **当前 runtime addendum（Wave 2 additive）**：capabilities exact 支持 Session writes `session/1.3` + `session/2.0` 且 `session_statusless=true`，但默认 selection 仍为 `session/1.3`/`session_statusless=false`，没有 silent default switch。`session/2.0` 只在 `.workflow/config.json` 显式 `session-schema-selection/1.0` opt-in 后用于新建，并要求既有 Session 另行执行 `maestro session migrate --to session/2.0`。§6.1a、§7.1、§7.1c、§十与 §十三的 current-runtime note supersede 本文早期 Session-seal target model；历史 `session/1.x` compatibility 仍保留。
 
 ---
 
@@ -193,6 +193,24 @@ interface SessionState {
 
 `PersistedTransitionRecord` 使用 `transition-request/1.0` 与 `transition-outcome/1.0`：request 固化 `request_id`、operation、subject、normalized request hash、precondition fence 与 payload；outcome 固化 `transition_id`、applied/rejected、postcondition fence、exit/error、result hash 与 result。replay 前必须重算 request/result hash，并交叉核对 record/payload/outcome 的 request、status、operation、subject、request hash 与 claimed Run。`complete` request 另存 report、declared outputs、extra artifacts 的 `complete-input-snapshot/1.0`，排除 apply 会更新的 `run.json`/`state.json` authority；重放时当前字节漂移返回 `FENCE_CONFLICT`。
 
+### 6.1a `session/2.0` statusless identity（显式 opt-in）
+
+`session/2.0` 是 strict identity/index authority，不含 `status`、`active_run_id`、chain、lease、gate、Artifact 或 Evidence authority。它只保存 identity revisions、`current_execution_id`、`latest_execution_id`、`latest_completed_run_id`、`archived_at` 与 `archived_by`。lifecycle、active Run 与 chain/decision projection 位于 `executions/{execution-id}/execution.json`（`execution/1.0`）；CLI 的 `derived_status`/availability 从 current Execution 与 archive marker 计算。
+
+支持它不改变默认值。项目必须在 `.workflow/config.json` 显式选择：
+
+```json
+{
+  "session_schema": {
+    "schema_version": "session-schema-selection/1.0",
+    "writer": "session/2.0",
+    "features": { "session_statusless": true }
+  }
+}
+```
+
+启用后的 `maestro session create` 是 identity-only；chain/engine/quality/platform 属于 Execution。既有 `session/1.x` 只有在同一 opt-in 下再显式运行 `maestro session migrate --session <id> --to session/2.0` 才迁移。archive/unarchive 必须提供 request/actor/reason/evidence 与 identity/activity CAS revisions，写 `session-archive-receipt/1.0`，并由 `previous_receipt_hash` 串成 immutable chain。
+
 ### 6.2 `GateRecord`（内联记录，取代 `gates.json`）
 
 Gate 本就是 run 作用域（ID `GATE-{run-seq}-{NN}`）——运行时记录**内联**在宿主文件：run 级门在 `run.json.gates[]`，session 级门在 `session.json.gates[]`（ID `GATE-S-{NN}`），所在位置即作用域，无独立账本。
@@ -310,7 +328,7 @@ interface CommandRun {
 }
 ```
 
-Reader compatibility is `command-run/1.0`–`command-run/1.3`; older generations are normalized to the 1.3 read shape. Unknown Run schema versions are rejected instead of being guessed.
+Legacy/default Run 继续使用上述 `command-run/1.3` shape。显式 Execution-bound Run 使用 additive `command-run/1.4`，只增加 `execution_id: string` 与 `generation: positive integer`；它由 exact Execution locator、revision fence 与 lease claim 触发，不是默认 writer。已知 Run reader compatibility 是 `command-run/1.0`–`command-run/1.4`，其中 legacy reader 可规范化为 1.3 compatibility shape，Execution-aware reader 保留 1.4 binding。未知未来 Run 版本采用 opaque/best-effort read compatibility：passthrough reader 保留原字段，旧 CLI 只会尽力把它投影为兼容 shape，因此后续读取也可能因缺少预期字段而失败，并不保证语义兼容。read acceptance 不授予 mutation authority；任何写回都必须通过 strict `command-run/1.3` 或 `command-run/1.4` writer schema，Execution-bound 写回还需 exact locator/revision/lease fence，不能表示为受支持 canonical shape 时在持久化前 fail closed（fail-closed mutation boundary）。
 
 ### 7.1a 三类 JSON · 三种归属 · 零协议学习
 
@@ -386,13 +404,19 @@ for file in outputs/*（report.md 除外）:
 
 > 新命令不加 contract 也能跑——文件名自带 kind，扫描器自发现，门禁列表为空（全 `skipped`）。contract 是渐进式质量约束，不是启动前提。同名异义即冲突信号：文件名 stem 与 kind 不一致时应改文件名（如 review 的产物命名 `review-findings.json`），而非依赖 `_meta` 长期覆盖。
 
-### 7.1c CLI transition、paused recovery 与 machine matrix
+### 7.1c CLI transition、Execution seal receipt 与 source fence
 
-Canonical paused recovery 是两段式状态转换：`maestro session resolve` 处置一个 decision/failed-step blocker 后保持 `paused`，`maestro session resume` 只在所有 blocker 清空后转为 `running`。两者都要求 exact `--session`、`--request-id`、`--actor`、`--reason`、一个或多个 `--evidence`、expected identity/activity revision，并可带 lease triple；两者都不创建 Run。恢复后的 chain 只能由显式 `maestro run next` 分配和绑定下一个 Run。
+Legacy `session/1.x` paused recovery 仍是两段式 `maestro session resolve` → `maestro session resume`，使用 Session audit/revision fence 且不创建 Run。statusless `session/2.0` 使用 `maestro execution resolve`/`resume`，lease authority 使用 strict `execution-lease/1.0`；`session ... --execution` 与 `run status --execution` 仅为带 deprecation warning 的兼容桥。Execution mutation 要求 exact `--session`、`--execution`、`--request-id`、`--expected-execution-revision`；leased mutation 还要求完整 `--owner-id`、`--owner-kind`、`--lease-epoch`、`--lease-id`。
 
-所有 receipt-backed mutation 都先校验 revision/lease fence，再把 request/outcome 写入 `session.json.requests[]`；Run 只保存必要的 transition pointer。`resolve`、`resume`、`decide`、`chain-insert`、`chain-replace`、`chain-skip`、`meta-update` 的 machine success 从 receipt 投影 applied/replayed `transition_id` 和 `request_id`。
+`maestro execution seal` 只 seal 当前 generation，不永久 seal Session identity。它原子写 immutable `execution-seal-receipt/1.0`，快照 Execution/Session revisions、sealed Runs、chain、gates、Artifact registry/content hashes、Evidence 与 corpus refs，并清除 current Execution pointer。后续可以在同一 Session 开始下一 generation。
 
-显式 `--json` 的完整 `run-response/1.0` operation matrix 为：`create`、`next`、`complete`、`brief`、`recall`、`fork`、`import`、`check`、`decide`、`seal-session`、`resolve`、`resume`、`chain-insert`、`chain-replace`、`chain-skip`、`meta-update`、`accept-reuse`、`plan-publish`。每次 machine invocation 只向 stdout 写一行 envelope，stderr 为空，process status 等于 envelope `exit_code`；Commander usage 同样返回 `COMMANDER_USAGE` envelope。`accept-reuse` 必须提供 actor、reason 和至少一个 evidence；`plan-publish` 将 immutable approved Markdown 封存为 `plan/1.0` `current-plan`，并通过真实 producer Run 与 transition receipt 保留 provenance；`seal-session` 非 receipt-backed，成功时 `replay: null`。
+receipt-backed recall/import 使用 `source-fence/1.1`，receipt-backed reuse assessment 使用 `reuse-source-fence/1.1`；二者绑定同一个 Execution seal snapshot，可跨 later Session activity 验证，并对 receipt、Run、Artifact、generation 或 cross-Session drift fail closed。Artifact aliases 仍是 Session-global：后续 Execution 可以移动 alias，但既有 receipt 中的 Artifact bytes/hash 不变。strict `source-fence` 与 reuse 1.0 readers 继续支持历史 `session/1.x`。
+
+Session-source knowledge candidate 使用 immutable candidate/evidence snapshot 与 session-level reconciliation freshness fence，因此可在没有 permanent Session seal 的情况下显式 promotion。Run-source candidate 仍要求 source Run sealed。Execution seal 或 legacy Session seal 都不隐式提升知识。
+
+Legacy receipt-backed mutation 保持 `transition-request/1.0`/`transition-outcome/1.0`；Execution mutation 使用 `transition-request/1.1`/`transition-outcome/1.1` 和 generation/revision/lease epoch fence。相同 request 与相同 normalized inputs可 replay；相同 request 搭配不同 inputs 返回 conflict。heartbeat 不增加 Execution revision，release、handoff、recover、seal 与 Execution-bound Run mutation 会推进 revision。
+
+显式 `--json` 的 legacy `run-response/1.0` operation set 保持：`create`、`next`、`complete`、`brief`、`recall`、`fork`、`import`、`check`、`decide`、`seal-session`、`resolve`、`resume`、`chain-insert`、`chain-replace`、`chain-skip`、`meta-update`、`accept-reuse`、`plan-publish`。strict `run-response/1.1` 接受完整 additive set：`capabilities`、`session-create`、`session-archive`、`session-unarchive`、`execution-start`、`execution-attach`、`execution-status`、`execution-pause`、`execution-resolve`、`execution-resume`、`execution-seal`、`execution-handoff-prepare`、`execution-handoff-accept`、`execution-handoff-cancel`、`execution-lease-status`、`execution-lease-heartbeat`、`execution-lease-release`、`execution-lease-recover`，以及上述 legacy operations。
 
 ### 7.2 md 产物统一命名
 
@@ -541,7 +565,7 @@ next:
 | 当前命令 | 目标去处 |
 |---------|---------|
 | `maestro-milestone-audit` | 逐目标校验并入 session 的 **verify/review 门禁** |
-| `maestro-milestone-complete` | 实质（知识提取）并入 **session seal**（触发 `finish-work` 提升 spec/knowhow） |
+| `maestro-milestone-complete` | 历史设计曾并入 session seal；当前知识提升改为显式 reconcile/promote，session-source 不要求 permanent Session seal |
 | `maestro-milestone-release` | 丢弃——**DAG 全 sealed = 项目完成**，无发布分组 |
 
 > 跨 session 并行改用 worktree + fork Session（lineage 记 `session.json.lifecycle.forked_from`）。
@@ -569,15 +593,17 @@ next:
 ## 十、文件生命周期
 
 ```text
-created → running → completed → sealed  ─(session)→ sealed → archived
+legacy session/1.x: created → running → completed → sealed → archived
+Wave 2: Session identity → Execution(active/paused) → Execution sealed → next Execution
+                    ↕ audited archive/unarchive CAS receipts
 ```
 
 | 状态 | 含义 |
 |------|------|
 | Run **completed** | 逻辑完成，产物仍可由 completion gate 修正。`run complete` 调用时**先设 completed → 再求值 Exit 门（含 prepared/handoff 动态门）→ 全过后才推进到 sealed** |
 | Run **sealed** | hash/schema/handoff/registry 全确认+Exit 门全过，禁止原地改 |
-| Session **sealed** | 无 running Run、无 claimed Request、目标 Gates 已确认、seal metadata 已写 |
-| Session **archived** | 仅生命周期归档，不移动目录 |
+| Session **sealed** | 历史 `session/1.x` lifecycle state；Wave 2 以 Execution seal receipt 封存 generation，不永久封闭 Session identity |
+| Session **archived** | `session/1.x` 保留 lifecycle state；`session/2.0` 使用 archive marker + audited `session-archive-receipt/1.0`，不移动目录 |
 
 > Artifact 更新必生成新 Artifact 并用 `replaces` 关联，**禁改 sealed**；report 修订也生成新 report Artifact，保审计链。
 
@@ -630,7 +656,7 @@ created → running → completed → sealed  ─(session)→ sealed → archive
 3. **verify 独立**：从当前 `maestro-execute` 的 E2.7 内嵌步骤拆为独立 verify Run；Execute 只保留 `self-check.json`（build/test 冒烟）。
 4. **milestone-* 命令下线**：三个 milestone 命令按 §8.1 坍缩，`milestones/`/`phases/` 物理目录废除。
 5. **roadmap 转 session 划分器**：产 `sessions[]` DAG + 结构化种子写入 `state.json`，由 Session 注册系统按 dep-ready 逐个物化。
-6. **知识提升统一入口**：session seal 触发 `finish-work`，把 session `specs/`/`knowhow/` 确认项提升到项目级并登记 provenance；WikiIndexer 只索引 sealed/archived。
+6. **知识提升统一入口（current supersession）**：Run-source 要求 source Run sealed；session-source 绑定 candidate/evidence snapshot，fresh reconciliation 后可显式 `knowledge promote`，不依赖 permanent Session seal。任何 seal 都不隐式 promotion。
 7. **入口层重组与注册表**：工作流命令按三档分类（step / run-aware skill / plain skill）迁移，用户入口收敛为 next + ralph，step/gate/kind 统一注册——方案见 `session-run-simplification-plan.md` §七；命令重构与 CLI 实现**不在本次修订范围**，按该规划 §八顺序另行执行。
 
 ---

@@ -9,6 +9,8 @@
 [搜索系统指南](../guide/search-system-guide.md)，Session/Run 通用协议见
 [Session-Run 架构参考](../guide/session-run-architecture.md)。
 
+> **Wave 2 supersession（2026-08）**：本文中把 `session seal` 列为流程收口的段落保留为历史 `session/1.x` compatibility/audit context，不再表示 promotion gate。当前 session-source candidate 绑定 immutable candidate/evidence snapshot；session-level reconciliation fresh 后即可显式 promotion without a permanent Session seal。Run-source candidate 仍要求各 source Run sealed。`session/2.0` 没有永久 Session seal；Execution completion 由 `execution-seal-receipt/1.0` 封存单个 generation，且任何 seal 都不会隐式 promotion。
+
 ---
 
 ## 1. 设计目标
