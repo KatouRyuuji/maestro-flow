@@ -3,8 +3,9 @@
  *
  * Implements K1/K2 of docs/knowledge-session-decoupling-mvp.md
  * (pi-maestro-flow repo):
- *   K1 — session-knowledge-delta sidecar writes; sealed Sessions refuse
- *        writes (S8), run delta v1.0 remains byte-for-byte untouched (S1).
+ *   K1 — session-knowledge-delta sidecar writes; legacy 1.x sealed Sessions
+ *        refuse writes while canonical 2.0 candidates use immutable source
+ *        bindings (S8); run delta v1.0 remains byte-for-byte untouched (S1).
  *   K2 — idempotent synthetic knowledge Session creation for run-less
  *        daily sessions (ID = ksyn-<hash(host+project+date)>, host ids are
  *        mapping keys only, never Session-directory authority, S4).
@@ -14,13 +15,13 @@
  * write operations so knowledge.ts stays free of synthetic-session policy.
  */
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 
 import {
   addCandidate,
   addInput,
   createSessionDelta,
+  createSessionKnowledgeCandidateSource,
   knowledgeCandidateId,
   sessionKnowledgeDeltaPath,
   sessionKnowledgeDeltaSchema,
@@ -38,31 +39,46 @@ function nowIso(): string {
 
 /**
  * Mutate the Session-level knowledge sidecar atomically under the store lock.
- * Sealed/archived/failed Sessions refuse writes (S8 time-order invariant).
+ * Legacy 1.x Sessions retain their running/paused mutation guard. Canonical
+ * session/2.0 has no Session status; immutable candidate source snapshots are
+ * the authority fence for its session-source candidate writes.
  */
 export function updateSessionKnowledgeSidecar<T>(
   projectRoot: string,
   sessionId: string,
-  mutator: (draft: SessionKnowledgeDelta) => T,
+  mutator: (
+    draft: SessionKnowledgeDelta,
+    source: { schemaVersion: string; activityRevision: number; store: SessionStore },
+  ) => T,
 ): T {
   const store = new SessionStore(projectRoot);
   if (!store.sessionExists(sessionId)) throw new Error(`Session not found: ${sessionId}`);
-  return store.updateKnowledgeLifecycle(sessionId, (_lifecycle, tx) => {
-    // Re-check under the lock (readBundle is re-entrancy safe via isHeld).
-    const status = store.readBundle(sessionId).session.status;
-    if (status !== 'running' && status !== 'paused') {
-      throw new Error(`Session ${sessionId} is ${status} and cannot mutate knowledge sidecars`);
-    }
-    const path = sessionKnowledgeDeltaPath(store, sessionId);
-    const now = nowIso();
-    const draft = existsSync(path)
-      ? structuredClone(store.readJsonFileReadOnly(path, sessionKnowledgeDeltaSchema))
-      : createSessionDelta(sessionId, now);
-    const result = mutator(draft);
-    sessionKnowledgeDeltaSchema.parse(draft);
-    tx.writeJson(path, draft, sessionKnowledgeDeltaSchema);
-    return result;
-  });
+  const path = sessionKnowledgeDeltaPath(store, sessionId);
+  let result: T | undefined;
+  store.updateJsonFile(
+    path,
+    sessionKnowledgeDeltaSchema,
+    createSessionDelta(sessionId, nowIso()),
+    draft => {
+      const session = store.readSessionRecordReadOnly(sessionId);
+      if (session.schema_version !== 'session/2.0') {
+        const status = store.readBundle(sessionId).session.status;
+        if (status !== 'running' && status !== 'paused') {
+          throw new Error(`Session ${sessionId} is ${status} and cannot mutate knowledge sidecars`);
+        }
+      }
+      const activityRevision = session.activity_revision;
+      if (!Number.isSafeInteger(activityRevision) || Number(activityRevision) < 0) {
+        throw new Error(`Session ${sessionId} has no valid activity revision for knowledge staging`);
+      }
+      result = mutator(draft, {
+        schemaVersion: session.schema_version,
+        activityRevision: Number(activityRevision),
+        store,
+      });
+    },
+  );
+  return result as T;
 }
 
 // ---------------------------------------------------------------------------
@@ -155,7 +171,10 @@ export function stageSessionKnowledgeCandidate(
     );
   }
   const now = nowIso();
-  return updateSessionKnowledgeSidecar(projectRoot, sessionId, (draft) => {
+  const evidenceRefs = [...new Set([`session:${sessionId}`, ...evidence])];
+  return updateSessionKnowledgeSidecar(projectRoot, sessionId, (draft, source) => {
+    const retainedSource = draft.candidates.find(candidate => candidate.candidate_id === candidateId)
+      ?.source_snapshot;
     const id = addCandidate(draft, {
       target: input.target,
       action: input.action ?? 'propose',
@@ -163,7 +182,15 @@ export function stageSessionKnowledgeCandidate(
       content,
       category: input.category?.trim() || null,
       source_kind: 'manual',
-      evidence_refs: [...new Set([`session:${sessionId}`, ...evidence])],
+      evidence_refs: evidenceRefs,
+      source_snapshot: retainedSource ?? createSessionKnowledgeCandidateSource(
+        projectRoot,
+        source.store,
+        sessionId,
+        source.activityRevision,
+        content,
+        evidenceRefs,
+      ),
     }, now);
     draft.revision++;
     draft.updated_at = now;

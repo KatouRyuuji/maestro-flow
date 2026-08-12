@@ -1,9 +1,11 @@
+import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  sessionKnowledgeCandidateSourceSchema,
   sessionKnowledgeDeltaPath,
   stageRunKnowledgeCandidate,
   summarizeSessionKnowledge,
@@ -15,8 +17,10 @@ import {
   SYNTHETIC_SESSION_PREFIX,
   syntheticKnowledgeSessionId,
 } from './session-knowledge.js';
+import { migrateSession } from './migrate.js';
 import { completeRun, createRun, sealSession } from './runtime.js';
 import { SessionStore } from './store.js';
+import { sessionKnowledgeReceiptCandidateSchema } from '../knowledge/reconciliation-schema.js';
 
 const roots: string[] = [];
 
@@ -24,6 +28,11 @@ function root(): string {
   const path = mkdtempSync(join(tmpdir(), 'maestro-session-knowledge-'));
   roots.push(path);
   installCommand(path);
+  const srcDir = join(path, 'src');
+  mkdirSync(srcDir, { recursive: true });
+  for (const file of ['foo.ts', 'x.ts', 'v20.ts']) {
+    writeFileSync(join(srcDir, file), `// immutable evidence fixture: ${file}\n`, 'utf8');
+  }
   return path;
 }
 
@@ -70,6 +79,27 @@ describe('synthetic knowledge session (K2)', () => {
 });
 
 describe('session knowledge ledger (K1)', () => {
+  it('preserves legacy candidate and receipt reads without typed descriptors', () => {
+    const legacySource = sessionKnowledgeCandidateSourceSchema.parse({
+      schema_version: 'session-knowledge-candidate-source/1.0',
+      candidate_version: 1,
+      session_id: 'legacy-session',
+      observed_activity_revision: 2,
+      content_hash: 'a'.repeat(64),
+      evidence_roots: ['legacy-label'],
+      evidence_root_hash: 'b'.repeat(64),
+    });
+    const legacyReceiptCandidate = sessionKnowledgeReceiptCandidateSchema.parse({
+      candidate_id: 'KDC-0123456789abcdef',
+      candidate_version: 1,
+      observed_activity_revision: 2,
+      content_hash: 'a'.repeat(64),
+      evidence_root_hash: 'b'.repeat(64),
+    });
+    expect(legacySource.evidence_root_descriptors).toBeUndefined();
+    expect(legacyReceiptCandidate.evidence_root_descriptors).toBeUndefined();
+  });
+
   it('stages candidates with session evidence anchor and summarizes origin=session', () => {
     const projectRoot = root();
     const { sessionId } = ensureSyntheticKnowledgeSession(projectRoot, 'host-a');
@@ -91,6 +121,24 @@ describe('session knowledge ledger (K1)', () => {
     expect(candidate?.stage).toBe('observed');
     expect(candidate?.evidence_refs).toContain(`session:${sessionId}`);
     expect(candidate?.evidence_refs).toContain('src/foo.ts:12');
+    expect(candidate?.source_snapshot).toMatchObject({
+      schema_version: 'session-knowledge-candidate-source/1.0',
+      candidate_version: 1,
+      session_id: sessionId,
+      observed_activity_revision: 0,
+      evidence_roots: [`session:${sessionId}`, 'src/foo.ts:12'].sort(),
+    });
+    expect(candidate?.source_snapshot?.evidence_root_descriptors).toEqual([
+      expect.objectContaining({
+        kind: 'file',
+        ref: 'src/foo.ts:12',
+        path: 'src/foo.ts',
+        anchor: ':12',
+        content_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      }),
+    ]);
+    expect(candidate?.source_snapshot?.content_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(candidate?.source_snapshot?.evidence_root_hash).toMatch(/^[a-f0-9]{64}$/);
     expect(summary.run_count).toBe(0);
   });
 
@@ -102,6 +150,81 @@ describe('session knowledge ledger (K1)', () => {
       title: 'No evidence',
       content: 'No evidence content',
     })).toThrow(/--evidence/);
+  });
+
+  it('rejects unresolved mutable evidence labels', () => {
+    const projectRoot = root();
+    const { sessionId } = ensureSyntheticKnowledgeSession(projectRoot, 'host-unresolved');
+    expect(() => stageSessionKnowledgeCandidate(projectRoot, sessionId, {
+      target: 'knowhow',
+      title: 'Unresolved evidence',
+      content: 'Unresolved evidence content',
+      evidenceRefs: ['missing-label'],
+    })).toThrow(/Unresolved or mutable session evidence/);
+  });
+
+  it('content-addresses Run, sealed artifact, and explicit inline roots', () => {
+    const projectRoot = root();
+    const created = createRun({
+      projectRoot,
+      command: 'knowledge-demo',
+      sessionId: 'typed-root-session',
+      intent: 'typed evidence root coverage',
+    });
+    const store = new SessionStore(projectRoot);
+    const artifactId = 'ART-typed-root-evidence';
+    const artifactRelativePath = 'outputs/typed-root-evidence.txt';
+    const artifactPath = join(store.sessionDir(created.session_id), artifactRelativePath);
+    mkdirSync(join(store.sessionDir(created.session_id), 'outputs'), { recursive: true });
+    const artifactBytes = Buffer.from('sealed artifact evidence\n', 'utf8');
+    writeFileSync(artifactPath, artifactBytes);
+    const artifactHash = createHash('sha256').update(artifactBytes).digest('hex');
+    store.update(created.session_id, draft => {
+      draft.artifacts.artifacts[artifactId] = {
+        kind: 'evidence',
+        role: 'evidence',
+        producer_run_id: created.run_id,
+        relative_path: artifactRelativePath,
+        media_type: 'text/plain',
+        schema_version: 'text/1.0',
+        content_hash: artifactHash,
+        size: artifactBytes.byteLength,
+        status: 'sealed',
+        derived_from: [],
+        replaces: null,
+      };
+      draft.artifacts.revision++;
+    });
+    const staged = stageSessionKnowledgeCandidate(projectRoot, created.session_id, {
+      target: 'knowhow',
+      title: 'Typed root candidate',
+      content: 'Typed root candidate content',
+      evidenceRefs: [
+        `run:${created.run_id}`,
+        `artifact:${artifactId}`,
+        'inline:human-reviewed immutable assertion',
+      ],
+    });
+    const candidate = summarizeSessionKnowledge(projectRoot, created.session_id, { readOnly: true })
+      .candidates.find(item => item.candidate_id === staged.candidate_id);
+    const descriptors = candidate?.source_snapshot?.evidence_root_descriptors ?? [];
+    expect(descriptors.map(item => item.kind).sort()).toEqual(['artifact', 'inline', 'run']);
+    const runRoot = descriptors.find(item => item.kind === 'run');
+    const runBytes = readFileSync(join(store.runDir(created.session_id, created.run_id), 'run.json'));
+    expect(runRoot).toMatchObject({
+      kind: 'run',
+      run_id: created.run_id,
+      content_hash: createHash('sha256').update(runBytes).digest('hex'),
+    });
+    expect(descriptors.find(item => item.kind === 'artifact')).toMatchObject({
+      kind: 'artifact',
+      artifact_id: artifactId,
+      content_hash: store.readBundle(created.session_id).artifacts.artifacts[artifactId].content_hash,
+    });
+    expect(descriptors.find(item => item.kind === 'inline')).toMatchObject({
+      kind: 'inline',
+      content: 'human-reviewed immutable assertion',
+    });
   });
 
   it('records inputs visible in summary with origin=session', () => {
@@ -138,7 +261,7 @@ describe('session knowledge ledger (K1)', () => {
       target: 'knowhow',
       title: 'Shared insight',
       content,
-      evidenceRefs: ['manual-note'],
+      evidenceRefs: ['inline:manual-note'],
     });
 
     const summary = summarizeSessionKnowledge(projectRoot, created.session_id, { readOnly: true });
@@ -166,6 +289,32 @@ describe('session knowledge ledger (K1)', () => {
       content: 'Too late content',
       evidenceRefs: ['src/x.ts:1'],
     })).toThrow(/cannot mutate knowledge sidecars/);
+  });
+
+  it('allows canonical session/2.0 sidecar staging without a legacy status gate', () => {
+    const projectRoot = root();
+    const { sessionId } = ensureSyntheticKnowledgeSession(projectRoot, 'v20-host');
+    sealSession(projectRoot, sessionId, 'legacy session sealed before migration');
+    writeFileSync(join(projectRoot, '.workflow', 'config.json'), JSON.stringify({
+      session_schema: {
+        schema_version: 'session-schema-selection/1.0',
+        writer: 'session/2.0',
+        features: { session_statusless: true },
+      },
+    }, null, 2), 'utf8');
+    migrateSession(projectRoot, sessionId);
+    expect(new SessionStore(projectRoot).readSessionRecordReadOnly(sessionId).schema_version)
+      .toBe('session/2.0');
+
+    const staged = stageSessionKnowledgeCandidate(projectRoot, sessionId, {
+      target: 'knowhow',
+      title: 'Statusless candidate',
+      content: 'Statusless candidate content',
+      evidenceRefs: ['src/v20.ts:4'],
+    });
+    expect(summarizeSessionKnowledge(projectRoot, sessionId, { readOnly: true }).candidates
+      .find(candidate => candidate.candidate_id === staged.candidate_id)?.source_snapshot)
+      .toMatchObject({ session_id: sessionId, candidate_version: 1 });
   });
 
   it('writes the session delta sidecar next to session.json', () => {

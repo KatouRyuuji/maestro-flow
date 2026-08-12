@@ -3,13 +3,16 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import {
   recallConfirmationFinalTargetSchema,
   recallConfirmationOutcomeSchema,
+  recallConfirmationRecordReadSchema,
   recallConfirmationRecordSchema,
+  recallConfirmationRecordV11Schema,
   recallConfirmationRegistrySchema,
   recallConfirmationReservationSchema,
+  recallConfirmationReservationV11Schema,
   recallConfirmationTargetIdentitySchema,
   recallReservationMarkerSchema,
   staleRecallReservationSchema,
-  sourceFenceSchema,
+  sourceFenceReadSchema,
   targetFenceSchema,
   type RecallConfirmationFinalTarget,
   type RecallConfirmationOutcome,
@@ -49,8 +52,13 @@ export function issueRecallConfirmationRecord(
 ): { token: string; record: RecallConfirmationRecord } {
   const now = input.now ?? new Date();
   const token = `rcf_${randomBytes(32).toString('base64url')}`;
-  const record = recallConfirmationRecordSchema.parse({
-    schema_version: 'recall-confirmation/1.0',
+  const recordSchema = input.source_fence && 'schema_version' in input.source_fence
+    ? recallConfirmationRecordV11Schema
+    : recallConfirmationRecordSchema;
+  const record = recordSchema.parse({
+    schema_version: recordSchema === recallConfirmationRecordV11Schema
+      ? 'recall-confirmation/1.1'
+      : 'recall-confirmation/1.0',
     token_hash: sha256Digest(token),
     action: input.action,
     candidate_id: input.candidate_id ?? null,
@@ -90,7 +98,7 @@ export function assertRecallConfirmationConsumable(
   recordInput: RecallConfirmationRecord,
   expected: { action: RecallConfirmationRecord['action']; request_hash: string; now?: Date },
 ): RecallConfirmationRecord {
-  const record = recallConfirmationRecordSchema.parse(recordInput);
+  const record = recallConfirmationRecordReadSchema.parse(recordInput);
   if (record.action !== expected.action || record.request_hash !== expected.request_hash) {
     throw new RecallConfirmationError('REQUEST_CONFLICT', 'confirmation token is bound to a different action or request');
   }
@@ -152,7 +160,7 @@ function assertBoundRequest(
   },
 ): RecallConfirmationTargetIdentity {
   const proposedTarget = recallConfirmationTargetIdentitySchema.parse(expected.proposed_target);
-  const sourceFence = expected.source_fence === null ? null : sourceFenceSchema.parse(expected.source_fence);
+  const sourceFence = expected.source_fence === null ? null : sourceFenceReadSchema.parse(expected.source_fence);
   const targetFence = targetFenceSchema.parse(expected.target_fence);
   if (record.action !== expected.action || record.request_hash !== expected.request_hash) {
     throw new RecallConfirmationError('REQUEST_CONFLICT', 'confirmation token is bound to a different action or request');
@@ -208,7 +216,7 @@ export function reserveRecallConfirmationRecord(
   recordInput: RecallConfirmationRecord,
   input: ReserveRecallConfirmationInput,
 ): ReserveRecallConfirmationResult {
-  const record = recallConfirmationRecordSchema.parse(recordInput);
+  const record = recallConfirmationRecordReadSchema.parse(recordInput);
   const proposedTarget = assertBoundRequest(record, input);
   if (record.reservation && !sameValue(record.reservation.proposed_target, proposedTarget)) {
     throw new RecallConfirmationError('REQUEST_CONFLICT', 'confirmation reservation target identity mismatch');
@@ -261,8 +269,13 @@ export function reserveRecallConfirmationRecord(
     throw new RecallConfirmationError('RESERVATION_INVALID', 'reservation TTL must be a positive integer');
   }
   const reservationId = `rsv_${randomUUID()}`;
-  const reservation = recallConfirmationReservationSchema.parse({
-    schema_version: 'recall-confirmation-reservation/1.0',
+  const reservationSchema = record.schema_version === 'recall-confirmation/1.1'
+    ? recallConfirmationReservationV11Schema
+    : recallConfirmationReservationSchema;
+  const reservation = reservationSchema.parse({
+    schema_version: reservationSchema === recallConfirmationReservationV11Schema
+      ? 'recall-confirmation-reservation/1.1'
+      : 'recall-confirmation-reservation/1.0',
     reservation_id: reservationId,
     action: input.action,
     request_hash: input.request_hash,
@@ -277,7 +290,7 @@ export function reserveRecallConfirmationRecord(
     )).toISOString(),
     reconcile_expires_at: null,
   });
-  const reserved = recallConfirmationRecordSchema.parse({ ...record, reservation });
+  const reserved = recallConfirmationRecordReadSchema.parse({ ...record, reservation });
   return {
     status: 'reserved',
     record: reserved,
@@ -301,7 +314,7 @@ export function finalizeRecallConfirmationRecord(
   reservationId: string,
   input: FinalizeRecallConfirmationInput,
 ): { record: RecallConfirmationRecord; outcome: RecallConfirmationOutcome; replayed: boolean } {
-  const record = recallConfirmationRecordSchema.parse(recordInput);
+  const record = recallConfirmationRecordReadSchema.parse(recordInput);
   const target = recallConfirmationFinalTargetSchema.parse(input.target);
   const now = input.now ?? new Date();
   const outcomeHash = sha256Digest(stableJsonUtf8(input.outcome));
@@ -354,7 +367,7 @@ export function finalizeRecallConfirmationRecord(
     outcome: input.outcome,
     finalized_at: now.toISOString(),
   });
-  const finalized = recallConfirmationRecordSchema.parse({
+  const finalized = recallConfirmationRecordReadSchema.parse({
     ...record,
     consumed_at: now.toISOString(),
     result_session_id: target.session_id,
@@ -370,7 +383,7 @@ export function cancelRecallConfirmationRecord(
   reservationId: string,
   now = new Date(),
 ): { record: RecallConfirmationRecord; rollback_target: RecallConfirmationTargetIdentity; released: boolean } {
-  const record = recallConfirmationRecordSchema.parse(recordInput);
+  const record = recallConfirmationRecordReadSchema.parse(recordInput);
   if (record.consumed_at || record.outcome) {
     throw new RecallConfirmationError('TOKEN_REPLAYED', 'confirmation token was already consumed');
   }
@@ -383,7 +396,7 @@ export function cancelRecallConfirmationRecord(
   const rollbackTarget = record.reservation.proposed_target;
   if (record.reservation.phase === 'target-claimed') {
     return {
-      record: recallConfirmationRecordSchema.parse({
+      record: recallConfirmationRecordReadSchema.parse({
         ...record,
         reservation: { ...record.reservation, phase: 'rollback-partial', reconcile_expires_at: null },
       }),
@@ -395,7 +408,7 @@ export function cancelRecallConfirmationRecord(
     throw new RecallConfirmationError('RESERVATION_INVALID', 'confirmation reservation requires reconciliation');
   }
   return {
-    record: recallConfirmationRecordSchema.parse({ ...record, reservation: null }),
+    record: recallConfirmationRecordReadSchema.parse({ ...record, reservation: null }),
     rollback_target: rollbackTarget,
     released: true,
   };
@@ -409,9 +422,15 @@ export function hashRecallConfirmationToken(token: string): string {
 export {
   recallConfirmationFinalTargetSchema,
   recallConfirmationOutcomeSchema,
+  recallConfirmationRecordReadSchema,
   recallConfirmationRecordSchema,
+  recallConfirmationRecordV11Schema,
+  recallConfirmationRegistryReadSchema,
   recallConfirmationRegistrySchema,
+  recallConfirmationRegistryV11Schema,
+  recallConfirmationReservationReadSchema,
   recallConfirmationReservationSchema,
+  recallConfirmationReservationV11Schema,
   recallConfirmationTargetIdentitySchema,
   recallReservationMarkerSchema,
   staleRecallReservationSchema,

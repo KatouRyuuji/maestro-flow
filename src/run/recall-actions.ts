@@ -12,9 +12,11 @@ import {
   type ImportManifest,
   type RecallConfirmationRecord,
   type RecallConfirmationTargetIdentity,
+  type SessionProvenance,
   type ValidatedRecallSource,
 } from './protocol-schemas.js';
-import { createRun } from './runtime.js';
+import { startExecution } from './execution.js';
+import { createExecutionRun, createRun, type CreateRunOptions, type CreateRunResult } from './runtime.js';
 import { SessionStore } from './store.js';
 
 export interface ExecuteRecallActionInput extends RecallActionRequest { confirmation_token: string; }
@@ -143,7 +145,7 @@ function materializeImport(
       is_directory: finalHash.isDirectory,
     };
   });
-  retryLock(() => store.update(created.session_id, draft => {
+  const applyArtifacts = (draft: ReturnType<SessionStore['readBundle']>): void => {
     for (const item of artifacts) {
       draft.artifacts.artifacts[item.target_artifact_id] = {
         kind: item.source_kind,
@@ -160,7 +162,35 @@ function materializeImport(
       };
     }
     draft.artifacts.revision++;
-  }));
+  };
+  const targetRecord = store.readSessionRecord(created.session_id);
+  if (targetRecord.schema_version === 'session/2.0') {
+    const boundRun = store.readExecutionRun(created.session_id, created.run_id);
+    const execution = store.readExecution(created.session_id, boundRun.execution_id);
+    if (!execution.lease
+      || execution.lease.owner_id !== 'maestro-recall-core'
+      || execution.lease.owner_kind !== 'manual') {
+      throw new RecallConfirmationError('FENCE_CONFLICT', 'recall import lost its core manual Execution lease');
+    }
+    retryLock(() => store.updateExecutionAtomic(
+      created.session_id,
+      execution.execution_id,
+      execution.revision,
+      (draft, current) => {
+        if (current.generation !== boundRun.generation
+          || current.active_run_id !== created.run_id
+          || current.lease?.lease_id !== execution.lease?.lease_id) {
+          throw new RecallConfirmationError('FENCE_CONFLICT', 'recall import Execution authority changed');
+        }
+        applyArtifacts(draft);
+        current.revision++;
+        draft.session.activity_revision++;
+        return null;
+      },
+    ));
+  } else {
+    retryLock(() => store.update(created.session_id, applyArtifacts));
+  }
   rmSync(join(store.sessionDir(created.session_id), '.recall-import-staging'), { recursive: true, force: true });
   return importManifestSchema.parse({
     schema_version: 'import-manifest/1.0',
@@ -280,6 +310,51 @@ function settleFailure(
   catch { /* conflict or completed target remains fenced for the next retry */ }
 }
 
+function createConfirmedTargetRun(
+  store: SessionStore,
+  reservationId: string,
+  input: ExecuteRecallActionInput,
+  intentIdentity: ReturnType<typeof createIntentIdentity>,
+  provenance: SessionProvenance,
+  creation: NonNullable<CreateRunOptions['creation']>,
+): CreateRunResult {
+  const common: CreateRunOptions = {
+    projectRoot: store.projectRoot,
+    command: input.command,
+    sessionId: input.target_session_id,
+    intent: input.intent,
+    args: input.args ?? [],
+    intentIdentity,
+    sessionProvenance: provenance,
+    creation,
+  };
+  if (store.sessionSchemaSelection().writer !== 'session/2.0') return createRun(common);
+
+  store.createSession(input.target_session_id, input.intent, {
+    command: input.command,
+    intentIdentity,
+    provenance,
+  });
+  const started = startExecution(store.projectRoot, input.target_session_id, {
+    requestId: `recall-${reservationId}-execution-start`,
+    ownerId: 'maestro-recall-core',
+    ownerKind: 'manual',
+  });
+  return createExecutionRun({
+    ...common,
+    executionId: started.execution.execution_id,
+    generation: started.execution.generation,
+    expectedExecutionRevision: started.execution.revision,
+    executionLease: {
+      ownerId: started.lease_claim.owner_id,
+      ownerKind: started.lease_claim.owner_kind,
+      epoch: started.lease_claim.epoch,
+      leaseId: started.lease_claim.lease_id,
+    },
+    requestId: `recall-${reservationId}-run-create`,
+  });
+}
+
 function executeRecallActionOnce(
   projectRoot: string,
   input: ExecuteRecallActionInput,
@@ -327,23 +402,22 @@ function executeRecallActionOnce(
       ? copyValidatedArtifactsToStaging(store, input.target_session_id, validatedSource!, options)
       : [];
     const sourceFence = validatedSource?.fence ?? null;
-    const provenance = sourceFence
+    const legacySourceFence = sourceFence && !('schema_version' in sourceFence) ? sourceFence : null;
+    const provenance: SessionProvenance = sourceFence
       ? {
           source: action as 'fork' | 'import',
-          forked_from: action === 'fork' ? sourceFence : null,
-          imported_from: action === 'import' ? [sourceFence] : [],
+          forked_from: action === 'fork' ? legacySourceFence : null,
+          imported_from: action === 'import' && legacySourceFence ? [legacySourceFence] : [],
           created_by: 'run-recall-confirmation',
         }
-      : { source: 'native' as const, forked_from: null, imported_from: [], created_by: 'run-recall-confirmation' };
-    const created = retryLock(() => createRun({
-      projectRoot,
-      command: input.command,
-      sessionId: input.target_session_id,
-      intent: input.intent,
-      args: input.args ?? [],
+      : { source: 'native', forked_from: null, imported_from: [], created_by: 'run-recall-confirmation' };
+    const created = retryLock(() => createConfirmedTargetRun(
+      store,
+      reservationId,
+      input,
       intentIdentity,
-      sessionProvenance: provenance,
-      creation: {
+      provenance,
+      {
         requestId: null,
         mode: action === 'new' ? 'explicit-create' : action,
         authority: 'confirmation-token',
@@ -359,7 +433,7 @@ function executeRecallActionOnce(
             : [],
         },
       },
-    }));
+    ));
     const manifest = action === 'import'
       ? materializeImport(store, created, validatedSource!, staged)
       : null;

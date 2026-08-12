@@ -23,18 +23,38 @@ import {
   stageSessionKnowledgeCandidate,
 } from './session-knowledge.js';
 import {
+  ensureSessionKnowledgeReconciliation,
+  isSessionKnowledgeReconciliationFresh,
+  persistSessionKnowledgeReconciliation,
   promoteReconciledSessionKnowledge,
   resolveKnowledgeCandidate,
 } from '../knowledge/reconcile.js';
+import { migrateSession } from './migrate.js';
 import { completeRun, createRun, sealSession } from './runtime.js';
 import { SessionStore } from './store.js';
+import { buildTranscriptUri, storeTranscriptEvidence } from './transcript-evidence.js';
 
 const roots: string[] = [];
 
 function root(): string {
   const path = mkdtempSync(join(tmpdir(), 'maestro-session-promotion-'));
   roots.push(path);
+  const srcDir = join(path, 'src');
+  mkdirSync(srcDir, { recursive: true });
+  for (const file of [
+    'early.ts', 'missing.ts', 'stale.ts', 'promote.ts', 'content.ts',
+    'evidence.ts', 'corpus.ts', 'revision.ts', 'v20-promotion.ts', 'shared.ts',
+  ]) {
+    writeFileSync(join(srcDir, file), `// immutable evidence fixture: ${file}\n`, 'utf8');
+  }
   return path;
+}
+
+function reviewSessionKnowledge(projectRoot: string, sessionId: string): void {
+  persistSessionKnowledgeReconciliation(
+    projectRoot,
+    ensureSessionKnowledgeReconciliation(projectRoot, sessionId),
+  );
 }
 
 function installCommand(projectRoot: string, name = 'knowledge-demo'): void {
@@ -50,25 +70,44 @@ function installCommand(projectRoot: string, name = 'knowledge-demo'): void {
   writeFileSync(join(workflowDir, `${name}.md`), `# ${name}\n`, 'utf8');
 }
 
+function writeSpec(projectRoot: string, content: string): void {
+  const dir = join(projectRoot, '.workflow', 'specs');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'phase-four.md'), `---
+category: coding
+---
+
+<spec-entry category="coding" date="2026-08-01" sid="S-phase-four" title="Phase four corpus">
+
+### Phase four corpus
+
+${content}
+
+</spec-entry>
+`, 'utf8');
+}
+
 afterEach(() => {
   for (const path of roots.splice(0)) rmSync(path, { recursive: true, force: true });
 });
 
 describe('session-source promotion gate matrix (K5)', () => {
-  it('rejects promotion before the Session is sealed', () => {
+  it('promotes a reviewed session candidate without sealing the Session', () => {
     const projectRoot = root();
     const { sessionId } = ensureSyntheticKnowledgeSession(projectRoot, 'gate-host');
-    stageSessionKnowledgeCandidate(projectRoot, sessionId, {
+    const staged = stageSessionKnowledgeCandidate(projectRoot, sessionId, {
       target: 'knowhow',
       title: 'Early promotion',
       content: 'Early promotion content',
       evidenceRefs: ['src/early.ts:1'],
     });
-    expect(() => promoteReconciledSessionKnowledge(projectRoot, sessionId, { all: true }))
-      .toThrow(/sealed before promotion/);
+    reviewSessionKnowledge(projectRoot, sessionId);
+    expect(new SessionStore(projectRoot).readBundle(sessionId).session.status).toBe('running');
+    const result = promoteReconciledSessionKnowledge(projectRoot, sessionId, { all: true });
+    expect(result.promoted.map(item => item.candidate_id)).toContain(staged.candidate_id);
   });
 
-  it('rejects a sealed Session with a missing receipt (fail-closed)', () => {
+  it('rejects a session candidate with a missing receipt (fail-closed)', () => {
     const projectRoot = root();
     const { sessionId } = ensureSyntheticKnowledgeSession(projectRoot, 'gate-host');
     stageSessionKnowledgeCandidate(projectRoot, sessionId, {
@@ -77,10 +116,6 @@ describe('session-source promotion gate matrix (K5)', () => {
       content: 'Missing receipt content',
       evidenceRefs: ['src/missing.ts:1'],
     });
-    sealSession(projectRoot, sessionId, 'sealed');
-    // Simulate a failed K6 receipt refresh.
-    const store = new SessionStore(projectRoot);
-    rmSync(sessionReconciliationPath(store, sessionId));
     expect(() => promoteSessionKnowledge(projectRoot, sessionId, { all: true }))
       .toThrow(/no session knowledge reconciliation receipt/);
   });
@@ -94,17 +129,12 @@ describe('session-source promotion gate matrix (K5)', () => {
       content: 'Stale gate content',
       evidenceRefs: ['src/stale.ts:1'],
     });
-    sealSession(projectRoot, sessionId, 'sealed');
-    // Tamper with the sealed delta to drift the snapshot hash (receipt stale).
+    reviewSessionKnowledge(projectRoot, sessionId);
+    // Tamper with the bound delta evidence after review.
     const store = new SessionStore(projectRoot);
     const deltaPath = sessionKnowledgeDeltaPath(store, sessionId);
     const delta = JSON.parse(readFileSync(deltaPath, 'utf8'));
-    delta.candidates.push({
-      ...delta.candidates[0],
-      candidate_id: 'KDC-deadbeefdeadbeef',
-      title: 'Drift',
-      content: 'Drift content',
-    });
+    delta.candidates[0].evidence_refs.push('src/changed.ts:9');
     writeFileSync(deltaPath, JSON.stringify(delta), 'utf8');
     expect(() => resolveKnowledgeCandidate(
       projectRoot,
@@ -115,7 +145,7 @@ describe('session-source promotion gate matrix (K5)', () => {
     )).toThrow(/stale session reconciliation receipt/);
   });
 
-  it('promotes an eligible session candidate after seal (full gate satisfied)', () => {
+  it('promotes an eligible session candidate after review without seal', () => {
     const projectRoot = root();
     const { sessionId } = ensureSyntheticKnowledgeSession(projectRoot, 'gate-host');
     const staged = stageSessionKnowledgeCandidate(projectRoot, sessionId, {
@@ -124,7 +154,7 @@ describe('session-source promotion gate matrix (K5)', () => {
       content: 'Promotable session insight content',
       evidenceRefs: ['src/promote.ts:2'],
     });
-    sealSession(projectRoot, sessionId, 'sealed with receipt');
+    reviewSessionKnowledge(projectRoot, sessionId);
     const store = new SessionStore(projectRoot);
     expect(existsSync(sessionReconciliationPath(store, sessionId))).toBe(true);
 
@@ -136,6 +166,151 @@ describe('session-source promotion gate matrix (K5)', () => {
     const promoted = delta.candidates.find(item => item.candidate_id === staged.candidate_id);
     expect(promoted?.status).toBe('promoted');
     expect(promoted?.promotion_receipt?.outcome).toBe('created');
+  });
+
+  it('fails closed when candidate content or evidence changes after review', () => {
+    for (const field of ['content', 'evidence'] as const) {
+      const projectRoot = root();
+      const { sessionId } = ensureSyntheticKnowledgeSession(projectRoot, `mutation-${field}`);
+      stageSessionKnowledgeCandidate(projectRoot, sessionId, {
+        target: 'knowhow',
+        title: `Bound ${field}`,
+        content: `Bound ${field} content`,
+        evidenceRefs: [`src/${field}.ts:1`],
+      });
+      reviewSessionKnowledge(projectRoot, sessionId);
+      const store = new SessionStore(projectRoot);
+      const deltaPath = sessionKnowledgeDeltaPath(store, sessionId);
+      const delta = JSON.parse(readFileSync(deltaPath, 'utf8'));
+      if (field === 'content') delta.candidates[0].content = 'Mutated candidate content';
+      else delta.candidates[0].evidence_refs.push('src/mutated-evidence.ts:2');
+      writeFileSync(deltaPath, JSON.stringify(delta), 'utf8');
+      expect(() => promoteReconciledSessionKnowledge(projectRoot, sessionId, { all: true }))
+        .toThrow(/stale session knowledge reconciliation receipt/);
+    }
+  });
+
+  it('fails closed when the corpus changes after session review', () => {
+    const projectRoot = root();
+    const { sessionId } = ensureSyntheticKnowledgeSession(projectRoot, 'corpus-host');
+    stageSessionKnowledgeCandidate(projectRoot, sessionId, {
+      target: 'knowhow',
+      title: 'Corpus-bound candidate',
+      content: 'Corpus-bound candidate content',
+      evidenceRefs: ['src/corpus.ts:1'],
+    });
+    reviewSessionKnowledge(projectRoot, sessionId);
+    writeSpec(projectRoot, 'The corpus changed after review.');
+    expect(() => promoteReconciledSessionKnowledge(projectRoot, sessionId, { all: true }))
+      .toThrow(/stale session knowledge reconciliation receipt/);
+  });
+
+  it('fails closed when referenced file bytes change after review', () => {
+    const projectRoot = root();
+    const { sessionId } = ensureSyntheticKnowledgeSession(projectRoot, 'evidence-byte-host');
+    stageSessionKnowledgeCandidate(projectRoot, sessionId, {
+      target: 'knowhow',
+      title: 'Byte-bound candidate',
+      content: 'Byte-bound candidate content',
+      evidenceRefs: ['src/evidence.ts:1'],
+    });
+    reviewSessionKnowledge(projectRoot, sessionId);
+    writeFileSync(join(projectRoot, 'src', 'evidence.ts'), '// changed after review\n', 'utf8');
+
+    expect(() => promoteReconciledSessionKnowledge(projectRoot, sessionId, { all: true }))
+      .toThrow(/stale session knowledge reconciliation receipt|evidence bytes changed/);
+  });
+
+  it('fails closed when the corpus changes inside the final promotion transaction', () => {
+    const projectRoot = root();
+    const { sessionId } = ensureSyntheticKnowledgeSession(projectRoot, 'final-cas-host');
+    stageSessionKnowledgeCandidate(projectRoot, sessionId, {
+      target: 'knowhow',
+      title: 'Final CAS candidate',
+      content: 'Final CAS candidate content',
+      evidenceRefs: ['inline:reviewed immutable evidence'],
+    });
+    reviewSessionKnowledge(projectRoot, sessionId);
+
+    expect(() => promoteReconciledSessionKnowledge(projectRoot, sessionId, {
+      all: true,
+      _beforeFinalSessionValidation: () => {
+        writeSpec(projectRoot, 'Concurrent corpus bytes written at final validation.');
+      },
+    })).toThrow(/stale session knowledge reconciliation receipt at final commit/);
+    expect(readSessionKnowledgeDelta(new SessionStore(projectRoot), sessionId, true).candidates[0].status)
+      .toBe('pending');
+    expect(existsSync(join(projectRoot, '.workflow', 'knowhow'))).toBe(false);
+  });
+
+  it('keeps a bound candidate fresh across unrelated later Session activity', () => {
+    const projectRoot = root();
+    const { sessionId } = ensureSyntheticKnowledgeSession(projectRoot, 'activity-host');
+    const staged = stageSessionKnowledgeCandidate(projectRoot, sessionId, {
+      target: 'knowhow',
+      title: 'Revision-independent candidate',
+      content: 'Revision-independent candidate content',
+      evidenceRefs: ['src/revision.ts:1'],
+    });
+    const receipt = ensureSessionKnowledgeReconciliation(projectRoot, sessionId);
+    expect(receipt.session_source).toMatchObject({
+      schema_version: 'session-knowledge-reconciliation-source/1.0',
+      session_activity_revision: 0,
+      candidates: [{
+        candidate_id: staged.candidate_id,
+        candidate_version: 1,
+        observed_activity_revision: 0,
+      }],
+    });
+    expect(receipt.session_source?.evidence_root_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(receipt.session_source?.candidates[0].content_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(receipt.session_source?.candidates[0].evidence_root_descriptors).toEqual([
+      expect.objectContaining({
+        kind: 'file',
+        ref: 'src/revision.ts:1',
+        path: 'src/revision.ts',
+        content_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      }),
+    ]);
+    persistSessionKnowledgeReconciliation(projectRoot, receipt);
+    const store = new SessionStore(projectRoot);
+    store.update(sessionId, draft => {
+      draft.session.activity_revision++;
+    });
+    expect(isSessionKnowledgeReconciliationFresh(projectRoot, sessionId, receipt)).toBe(true);
+    const result = promoteReconciledSessionKnowledge(projectRoot, sessionId, {
+      candidateIds: [staged.candidate_id],
+    });
+    expect(result.promoted.map(item => item.candidate_id)).toContain(staged.candidate_id);
+  });
+
+  it('reviews and promotes a canonical session/2.0 candidate without a Session seal gate', () => {
+    const projectRoot = root();
+    const { sessionId } = ensureSyntheticKnowledgeSession(projectRoot, 'v20-promotion-host');
+    sealSession(projectRoot, sessionId, 'legacy seal before statusless migration');
+    writeFileSync(join(projectRoot, '.workflow', 'config.json'), JSON.stringify({
+      session_schema: {
+        schema_version: 'session-schema-selection/1.0',
+        writer: 'session/2.0',
+        features: { session_statusless: true },
+      },
+    }, null, 2), 'utf8');
+    migrateSession(projectRoot, sessionId);
+    const staged = stageSessionKnowledgeCandidate(projectRoot, sessionId, {
+      target: 'knowhow',
+      title: 'Statusless promotion candidate',
+      content: 'Statusless promotion candidate content',
+      evidenceRefs: ['src/v20-promotion.ts:3'],
+    });
+    reviewSessionKnowledge(projectRoot, sessionId);
+
+    const result = promoteReconciledSessionKnowledge(projectRoot, sessionId, {
+      candidateIds: [staged.candidate_id],
+    });
+    expect(result.promoted.map(item => item.candidate_id)).toContain(staged.candidate_id);
+    const store = new SessionStore(projectRoot);
+    expect(store.readSessionRecordReadOnly(sessionId).schema_version).toBe('session/2.0');
+    expect(readSessionKnowledgeDelta(store, sessionId, true).candidates[0].status).toBe('promoted');
   });
 
   it('resolves transcript-only copies across Run and Session origins with one decision', () => {
@@ -154,11 +329,22 @@ describe('session-source promotion gate matrix (K5)', () => {
       content,
       evidenceRefs: ['transcript:pi:host-1:entry-1:aaaaaaaaaaaaaaaa'],
     }, created.session_id);
+    const sessionTranscript = storeTranscriptEvidence(
+      projectRoot,
+      created.session_id,
+      'Session-origin transcript evidence',
+      { host_kind: 'pi', host_session_id: 'host-2', entry_id: 'entry-2' },
+    );
     const sessionStaged = stageSessionKnowledgeCandidate(projectRoot, created.session_id, {
       target: 'knowhow',
       title: 'Shared transcript-only insight',
       content,
-      evidenceRefs: ['transcript:pi:host-2:entry-2:bbbbbbbbbbbbbbbb'],
+      evidenceRefs: [buildTranscriptUri(
+        'pi',
+        'host-2',
+        'entry-2',
+        sessionTranscript.sha256,
+      )],
     });
     expect(sessionStaged.candidate_id).toBe(runStaged.candidate_id);
 

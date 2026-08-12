@@ -20,9 +20,31 @@ function root(): string {
   return value;
 }
 
+function enableV20(projectRoot: string): void {
+  const workflowRoot = join(projectRoot, '.workflow');
+  const configPath = join(workflowRoot, 'config.json');
+  mkdirSync(workflowRoot, { recursive: true });
+  const existing = existsSync(configPath)
+    ? JSON.parse(readFileSync(configPath, 'utf8')) as Record<string, unknown>
+    : {};
+  writeFileSync(configPath, JSON.stringify({
+    ...existing,
+    session_schema: {
+      schema_version: 'session-schema-selection/1.0',
+      writer: 'session/2.0',
+      features: { session_statusless: true },
+    },
+  }, null, 2));
+}
+
 function writeLinkedConfig(projectRoot: string, name: string, linkedRoot: string, share: string[] = ['session']): void {
+  const configPath = join(projectRoot, '.workflow', 'config.json');
   mkdirSync(join(projectRoot, '.workflow'), { recursive: true });
-  writeFileSync(join(projectRoot, '.workflow', 'config.json'), JSON.stringify({
+  const existing = existsSync(configPath)
+    ? JSON.parse(readFileSync(configPath, 'utf8')) as Record<string, unknown>
+    : {};
+  writeFileSync(configPath, JSON.stringify({
+    ...existing,
     workspaces: { linked: [{ name, path: linkedRoot, share }] },
   }, null, 2));
 }
@@ -82,9 +104,101 @@ describe('confirmed recall actions', () => {
     const issued = issueRecallConfirmation(projectRoot, request);
     const result = executeRecallAction(projectRoot, { ...request, confirmation_token: issued.token });
     const replay = executeRecallAction(projectRoot, { ...request, confirmation_token: issued.token });
+    const store = new SessionStore(projectRoot);
     expect(result).toMatchObject({ session_id: 'target', replayed: false });
     expect(replay).toMatchObject({ session_id: 'target', run_id: result.run_id, replayed: true });
+    expect(store.readSessionRecord('target').schema_version).toBe('session/1.3');
+    expect(store.readRun('target', result.run_id).schema_version).toBe('command-run/1.3');
   });
+
+  it.each(['new', 'fork', 'import'] as const)(
+    'creates confirmed %s targets with generation-1 Execution authority under a session/2.0 writer',
+    action => {
+      const projectRoot = root();
+      let source: ReturnType<typeof linkedSource> | null = null;
+      if (action === 'fork') {
+        const created = createRun({
+          projectRoot,
+          command: 'demo',
+          sessionId: 'local-source',
+          intent: 'local fork source',
+        });
+        expect(completeRun(projectRoot, created.run_id, created.session_id).sealed).toBe(true);
+        sealSession(projectRoot, created.session_id, 'sealed local source');
+        source = {
+          sourceRoot: projectRoot,
+          sessionId: created.session_id,
+          runId: created.run_id,
+          bytes: Buffer.alloc(0),
+          output: '',
+        };
+      } else if (action === 'import') {
+        source = linkedSource(Buffer.from('v2 import payload'));
+        writeLinkedConfig(projectRoot, 'linked', source.sourceRoot);
+      }
+      enableV20(projectRoot);
+
+      const request = {
+        action,
+        target_session_id: `v2-${action}`,
+        command: 'demo',
+        intent: `v2 ${action} target`,
+        source_session_id: source?.sessionId,
+        source_run_id: source?.runId,
+        source_workspace: action === 'import' ? 'linked' : undefined,
+        args: [] as string[],
+      };
+      const issued = issueRecallConfirmation(projectRoot, request);
+      const result = executeRecallAction(projectRoot, { ...request, confirmation_token: issued.token });
+      const store = new SessionStore(projectRoot);
+      const identity = store.readSessionRecord(result.session_id);
+      expect(identity).toMatchObject({
+        schema_version: 'session/2.0',
+        current_execution_id: 'execution-001',
+        latest_execution_id: 'execution-001',
+      });
+      const run = store.readExecutionRun(result.session_id, result.run_id);
+      expect(run).toMatchObject({
+        schema_version: 'command-run/1.4',
+        execution_id: 'execution-001',
+        generation: 1,
+      });
+      const execution = store.readExecution(result.session_id, 'execution-001');
+      expect(execution).toMatchObject({
+        generation: 1,
+        status: 'active',
+        active_run_id: result.run_id,
+        lease: { owner_id: 'maestro-recall-core', owner_kind: 'manual', epoch: 1 },
+      });
+      expect(store.readBundle(result.session_id).session.intent_identity).not.toBeNull();
+      const createTransition = store.readExecutionTransition(
+        result.session_id,
+        'execution-001',
+        `recall-${result.reservation_id}-run-create`,
+      );
+      expect(createTransition).toMatchObject({
+        payload: {
+          operation: 'create',
+          subject: { execution_id: 'execution-001', generation: 1 },
+          preconditions: { execution_revision: 1, lease_epoch: 1 },
+          payload: {
+            lease: {
+              owner_id: 'maestro-recall-core',
+              owner_kind: 'manual',
+              epoch: 1,
+              lease_id_hash: expect.stringMatching(/^sha256:/),
+            },
+          },
+        },
+        outcome: { postconditions: { execution_revision: 2, lease_epoch: 1 } },
+      });
+      const privateLeaseId = execution.lease!.lease_id;
+      expect(JSON.stringify(result)).not.toContain(privateLeaseId);
+      expect(JSON.stringify(store.listExecutionTransitions(result.session_id, 'execution-001'))).not.toContain(privateLeaseId);
+      if (action === 'import') expect(result.import_manifest?.artifacts).toHaveLength(1);
+      else expect(result.import_manifest).toBeNull();
+    },
+  );
 
   it('rejects linked source session, artifact-byte, and share-fence drift with zero target', () => {
     for (const drift of ['session', 'artifact', 'share'] as const) {
