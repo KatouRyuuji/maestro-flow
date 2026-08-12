@@ -76,6 +76,9 @@ let detailSearch = '';
 let topKbCache = { ts: 0, items: null };
 const TOP_KB_TTL = 30 * 1000;
 const TOP_KB_LIMIT = 5;
+// 后端 snapshot 携带的高频知识摘要（learning 行 command/frequency/lastUsed 哈希）。
+// 摘要变化 → 立即失效 30s TTL 缓存，避免面板滞后；未变化则不重扫（流式事件下零额外开销）。
+let lastLearningDigest = null;
 let kbItemsPromise = null; // 知识条目全量缓存（详情页 / 区块搜索共用）
 
 const TOOL_COLORS = {
@@ -182,6 +185,11 @@ async function init() {
     await listen('snapshot-changed', (event) => {
       snapshot = event.payload;
       cacheSnapshot(snapshot);
+      const digest = snapshot?.learning_top_digest || '';
+      if (digest !== lastLearningDigest) {
+        lastLearningDigest = digest;
+        topKbCache = { ts: 0, items: null }; // 高频知识摘要变化 → 绕过 30s TTL
+      }
       scheduleLiveCallDetailRefresh();
       if (!$('menuPop').hidden) return;
       $('liveStatus').textContent = '实时监听';
@@ -203,6 +211,11 @@ async function init() {
       if (JSON.stringify(s) !== JSON.stringify(snapshot)) {
         snapshot = s;
         cacheSnapshot(snapshot);
+        const digest = s?.learning_top_digest || '';
+        if (digest !== lastLearningDigest) {
+          lastLearningDigest = digest;
+          topKbCache = { ts: 0, items: null };
+        }
         scheduleLiveCallDetailRefresh();
         if (!$('menuPop').hidden) return;
         renderWithFocus();

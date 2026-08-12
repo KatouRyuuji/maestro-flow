@@ -31,6 +31,8 @@ pub struct KnowledgeEntry {
 
 const KIND_ORDER: [&str; 5] = ["specs", "memory", "knowhow", "learning", "issues"];
 const MAX_PER_KIND: usize = 50;
+/// 高频统计扫描上限：learning 行是使用统计，行数可能远超展示上限，不能截断。
+const LEARNING_SCAN_LIMIT: usize = 100_000;
 
 fn count_files(dir: &Path, ext: &str) -> u64 {
     let Ok(entries) = fs::read_dir(dir) else {
@@ -233,11 +235,13 @@ pub fn scan_knowledge_items(wf_root: &Path) -> Vec<KnowledgeEntry> {
                 &wf_root.join("learning"),
                 "learning",
                 jsonl_learning_entry,
+                MAX_PER_KIND,
             )),
             "issues" => out.extend(read_jsonl_entries(
                 &wf_root.join("issues"),
                 "issues",
                 jsonl_issue_entry,
+                MAX_PER_KIND,
             )),
             _ => {}
         }
@@ -245,7 +249,7 @@ pub fn scan_knowledge_items(wf_root: &Path) -> Vec<KnowledgeEntry> {
     out
 }
 
-fn read_jsonl_entries<F>(dir: &Path, kind: &str, mapper: F) -> Vec<KnowledgeEntry>
+fn read_jsonl_entries<F>(dir: &Path, kind: &str, mapper: F, limit: usize) -> Vec<KnowledgeEntry>
 where
     F: Fn(&serde_json::Value, &str) -> KnowledgeEntry,
 {
@@ -268,14 +272,14 @@ where
         let Ok(raw) = fs::read_to_string(file.path()) else {
             continue;
         };
-        for line in raw.lines().take(MAX_PER_KIND) {
+        for line in raw.lines().take(limit) {
             let line = line.trim();
             if line.is_empty() {
                 continue;
             }
             if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
                 out.push(mapper(&value, kind));
-                if out.len() >= MAX_PER_KIND {
+                if out.len() >= limit {
                     return out;
                 }
             }
@@ -344,8 +348,14 @@ fn jsonl_learning_entry(v: &serde_json::Value, kind: &str) -> KnowledgeEntry {
 }
 
 /// 高频知识沉淀：learning 行按使用频次倒序取前 N 条（跨工程合并由调用方完成）。
+/// 读取不设 50 行展示上限：频率统计必须覆盖全部行，否则高频行被截断会失真。
 pub fn scan_top_learning(wf_root: &Path, limit: usize) -> Vec<KnowledgeEntry> {
-    let mut items = read_jsonl_entries(&wf_root.join("learning"), "learning", jsonl_learning_entry);
+    let mut items = read_jsonl_entries(
+        &wf_root.join("learning"),
+        "learning",
+        jsonl_learning_entry,
+        LEARNING_SCAN_LIMIT,
+    );
     items.sort_by(|a, b| {
         b.frequency
             .unwrap_or(0)
@@ -354,6 +364,40 @@ pub fn scan_top_learning(wf_root: &Path, limit: usize) -> Vec<KnowledgeEntry> {
     });
     items.truncate(limit);
     items
+}
+
+/// 高频知识摘要：全部 learning 行 (command, frequency, lastUsed) 的稳定哈希。
+/// 供 snapshot 指纹使用 —— 行数不变但频次/时间变化时也能触发 snapshot-changed，
+/// 使前端高频知识面板及时刷新（不再依赖行数变化）。
+pub fn learning_top_digest(wf_root: &Path) -> String {
+    let mut items = scan_top_learning(wf_root, LEARNING_SCAN_LIMIT);
+    // 显式排序保证确定性：frequency 倒序、title 升序（与面板排序一致）
+    items.sort_by(|a, b| {
+        b.frequency
+            .unwrap_or(0)
+            .cmp(&a.frequency.unwrap_or(0))
+            .then_with(|| a.title.cmp(&b.title))
+    });
+    let mut s = String::new();
+    for item in items.iter() {
+        s.push_str(item.title.as_str());
+        s.push(':');
+        s.push_str(&item.frequency.unwrap_or(0).to_string());
+        s.push(':');
+        s.push_str(item.updated.as_deref().unwrap_or(""));
+        s.push(',');
+    }
+    fnv1a64_hex(s.as_bytes())
+}
+
+/// FNV-1a 64 位哈希（确定性、无外部依赖），hex 编码。
+fn fnv1a64_hex(data: &[u8]) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in data {
+        hash ^= b as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
 }
 
 fn nonempty(s: String) -> Option<String> {
@@ -642,6 +686,41 @@ mod tests {
         // 截断
         let all = scan_top_learning(&dir, 10);
         assert_eq!(all.len(), 3);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scan_top_learning_reads_beyond_50_rows() {
+        // 回归：展示上限 MAX_PER_KIND=50 曾截断高频统计，第 51+ 行的最高频命令会丢失。
+        let dir = tmp_dir("beyond50");
+        let mut rows: Vec<(&str, u64)> = (0..60)
+            .map(|i| {
+                let cmd: &'static str = Box::leak(format!("cmd-{i:02}").into_boxed_str());
+                (cmd, (i % 7) as u64 + 1)
+            })
+            .collect();
+        rows[59] = ("top-cmd", 999);
+        write_learning(&dir, &rows);
+        let top = scan_top_learning(&dir, 3);
+        assert_eq!(top[0].title, "top-cmd");
+        assert_eq!(top[0].frequency, Some(999));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn learning_top_digest_tracks_frequency_and_usage_time() {
+        let dir = tmp_dir("digest");
+        write_learning(&dir, &[("claude-code", 9), ("codex", 5)]);
+        let d1 = learning_top_digest(&dir);
+        assert_eq!(d1, learning_top_digest(&dir), "digest 必须确定");
+        // 行数不变、仅 frequency 变化 → digest 变化
+        write_learning(&dir, &[("claude-code", 10), ("codex", 5)]);
+        let d2 = learning_top_digest(&dir);
+        assert_ne!(d1, d2, "frequency 变化必须改变 digest");
+        // 行数变化 → digest 变化
+        write_learning(&dir, &[("claude-code", 10), ("codex", 5), ("gemini", 3)]);
+        let d3 = learning_top_digest(&dir);
+        assert_ne!(d2, d3, "新增行必须改变 digest");
         let _ = fs::remove_dir_all(&dir);
     }
 

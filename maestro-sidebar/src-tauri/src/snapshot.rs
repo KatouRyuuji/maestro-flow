@@ -17,6 +17,11 @@ pub struct RuntimeSnapshot {
     pub sessions: Vec<SessionSummary>,
     pub calls: Vec<AgentCall>,
     pub knowledge: KnowledgeStats,
+    /// 高频知识摘要（learning 行 command/frequency/lastUsed 的哈希）。
+    /// 纳入指纹后，行内频率更新也能触发 snapshot-changed，前端据此失效高频知识缓存。
+    /// 旧版缓存文件无此字段 → serde(default) 兼容反序列化。
+    #[serde(default)]
+    pub learning_top_digest: String,
 }
 
 /// 全部可用工程（.workflow 目录）：用户配置 roots ∪ 自动发现。
@@ -73,6 +78,7 @@ pub fn build_snapshot(cfg: &AppConfig) -> RuntimeSnapshot {
     let mut knowledge = KnowledgeStats::default();
     let mut workspace: Option<String> = None;
     let mut active_session_id: Option<String> = None;
+    let mut learning_top_digest = String::new();
 
     for wf in projects {
         let info: ProjectInfo = workflow::project_info(&wf);
@@ -88,6 +94,8 @@ pub fn build_snapshot(cfg: &AppConfig) -> RuntimeSnapshot {
         knowledge.knowhow += k.knowhow;
         knowledge.learning_rows += k.learning_rows;
         knowledge.issue_rows += k.issue_rows;
+        // 与 get_top_knowledge 同源（激活工程 learning 统计）
+        learning_top_digest = knowledge::learning_top_digest(&wf);
     }
     // 跨工程合并后排序：运行中 > 暂停 > 失败/阻塞 > 已封存，组内 session_id 倒序（新在前）
     sessions.sort_by(|a, b| {
@@ -111,6 +119,7 @@ pub fn build_snapshot(cfg: &AppConfig) -> RuntimeSnapshot {
         sessions,
         calls,
         knowledge,
+        learning_top_digest,
     }
 }
 
@@ -129,12 +138,13 @@ pub fn snapshot_fingerprint(snapshot: &RuntimeSnapshot) -> String {
     let calls = serde_json::to_string(&calls).unwrap_or_default();
     let knowledge = serde_json::to_string(&snapshot.knowledge).unwrap_or_default();
     format!(
-        "{}|{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}|{}",
         snapshot.workspace.as_deref().unwrap_or(""),
         snapshot.active_session_id.as_deref().unwrap_or(""),
         sessions,
         calls,
-        knowledge
+        knowledge,
+        snapshot.learning_top_digest
     )
 }
 
@@ -153,6 +163,7 @@ mod tests {
                 specs: 3,
                 ..Default::default()
             },
+            learning_top_digest: String::new(),
         }
     }
 
@@ -172,5 +183,18 @@ mod tests {
         let mut c = sample();
         c.active_session_id = Some("s2".into());
         assert_ne!(snapshot_fingerprint(&a), snapshot_fingerprint(&c));
+
+        // 高频知识摘要变化（行内频率更新）必须改变指纹 → 触发 snapshot-changed
+        let mut d = sample();
+        d.learning_top_digest = "deadbeef".into();
+        assert_ne!(snapshot_fingerprint(&a), snapshot_fingerprint(&d));
+    }
+
+    #[test]
+    fn old_cache_without_digest_field_still_deserializes() {
+        // 旧版 snapshot-cache.json 无 learning_top_digest 字段 → serde(default) 兼容
+        let raw = r#"{"workspace":"demo","active_session_id":null,"generated_at":100,"sessions":[],"calls":[],"knowledge":{"specs":1,"memory":0,"knowhow":0,"learning_rows":0,"issue_rows":0,"total":1}}"#;
+        let parsed: RuntimeSnapshot = serde_json::from_str(raw).unwrap();
+        assert_eq!(parsed.learning_top_digest, "");
     }
 }
