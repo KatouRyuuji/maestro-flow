@@ -582,6 +582,12 @@ function bindEvents() {
       if (!view) renderOverview();
       $('liveDot').classList.remove('stale');
       $('liveStatus').textContent = `已更新 ${fmtClock2(new Date().toISOString())}`;
+      // 完成闭环反馈：旋转图标短暂变为勾选（复用复制按钮模式）
+      const use = btn.querySelector('use');
+      if (use) {
+        use.setAttribute('href', 'icons.svg#i-check');
+        setTimeout(() => { if (use.isConnected) use.setAttribute('href', 'icons.svg#i-refresh'); }, 900);
+      }
     } catch (err) {
       $('liveStatus').textContent = `刷新失败${err && err.message ? ' · ' + err.message : ''}`;
     } finally {
@@ -3588,6 +3594,11 @@ function renderPendingDetail() {
 // 胶囊
 // ---------------------------------------------------------------------------
 
+// Agent 完成驻留：running→无 running 的瞬间保留 Agent 面板 ~1.5s，让「刚刚完成」可感知
+let capLastRunning = false;
+let capDwellUntil = 0;
+let capDwellTimer = null;
+
 function renderCapsule() {
   const sessions = snapshot.sessions || [];
   const calls = snapshot.calls || [];
@@ -3595,6 +3606,14 @@ function renderCapsule() {
   const runningCalls = calls.filter((call) => callStatus(call) === 'running');
   const selectedCall = runningCalls[0] || calls[0] || null;
   const hasRunningAgent = runningCalls.length > 0;
+  const now = Date.now();
+  if (capLastRunning && !hasRunningAgent) {
+    capDwellUntil = now + 1500;
+    clearTimeout(capDwellTimer);
+    capDwellTimer = setTimeout(() => renderCapsule(), 1600);
+  }
+  capLastRunning = hasRunningAgent;
+  const dwelling = !hasRunningAgent && now < capDwellUntil && Boolean(selectedCall);
   const capsule = $('capsule');
   const sub = $('capSub');
   const sessionDot = sub.querySelector('.dot');
@@ -3679,12 +3698,12 @@ function renderCapsule() {
     $('capAgentPanel').setAttribute('aria-label', '当前没有 Agent 动态');
   }
 
-  if (hasRunningAgent) {
+  if (hasRunningAgent || dwelling) {
     setCapsulePane('agent');
     $('capContextLabel').textContent = 'AGENT';
-    $('capContextMeta').textContent = `${runningCalls.length} 运行中`;
+    $('capContextMeta').textContent = hasRunningAgent ? `${runningCalls.length} 运行中` : '刚刚完成';
     $('capContextDot').style.setProperty('--c', selectedCall ? (TOOL_COLORS[selectedCall.tool] || 'var(--ok)') : 'var(--ok)');
-    $('capContextDot').classList.add('pulse');
+    $('capContextDot').classList.toggle('pulse', hasRunningAgent);
   } else {
     setCapsulePane('session');
     $('capContextLabel').textContent = 'SESSION';
@@ -3693,7 +3712,7 @@ function renderCapsule() {
     $('capContextDot').classList.toggle('pulse', ['running', 'active', 'executing'].includes(sessionSignal));
   }
 
-  const visibleCall = hasRunningAgent ? selectedCall : null;
+  const visibleCall = (hasRunningAgent || dwelling) ? selectedCall : null;
   const visualKind = visibleCall ? callStatus(visibleCall) : sessionSignal;
   const visualColor = visibleCall
     ? (TOOL_COLORS[visibleCall.tool] || 'var(--text-dim)')
