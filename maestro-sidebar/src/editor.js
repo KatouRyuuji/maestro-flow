@@ -9,103 +9,23 @@ const TAURI = window.__TAURI__;
 const { invoke } = TAURI?.core ?? {};
 const { listen } = TAURI?.event ?? {};
 
-// 主题跟随主窗口（共享 localStorage）
-(function applyTheme() {
+// 主题跟随主窗口（共享 localStorage；storage 事件实时同步主窗口切换）
+function applyEditorTheme() {
   const supported = ['graphite', 'mist', 'glass', 'ember', 'blueprint', 'ocean', 'sunset'];
   const aliases = { specimen: 'graphite', synthwave: 'ember' };
   const stored = aliases[localStorage.getItem('theme')] || localStorage.getItem('theme');
   document.body.dataset.theme = supported.includes(stored) ? stored : 'graphite';
-})();
+}
+applyEditorTheme();
+window.addEventListener('storage', (e) => {
+  if (!e || e.key === null || e.key === 'theme') applyEditorTheme();
+});
 
 let state = { tabs: [], active: -1 };
 let previewMode = false;
 let draftSyncPromise = Promise.resolve();
 
 const $ = (id) => document.getElementById(id);
-
-function esc(x) {
-  return String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-function inline(x) {
-  return esc(x)
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-}
-function renderMd(md) {
-  let body = md;
-  if (body.startsWith('---\n') || body.startsWith('---\r\n')) {
-    const end = body.indexOf('\n---');
-    if (end > 0) body = body.slice(end + 4);
-  }
-  const lines = body.split(/\r?\n/);
-  let html = '';
-  let list = null;
-  let inCode = false;
-  let codeBuf = [];
-  let para = [];
-  const flushPara = () => {
-    if (para.length) { html += '<p>' + para.map(inline).join('<br/>') + '</p>'; para = []; }
-  };
-  const closeList = () => {
-    if (list) { html += '</' + list + '>'; list = null; }
-  };
-  for (const raw of lines) {
-    const line = raw.trimEnd();
-    if (line.trimStart().startsWith('```')) {
-      if (inCode) {
-        html += '<pre><code>' + esc(codeBuf.join('\n')) + '</code></pre>';
-        codeBuf = []; inCode = false;
-      } else {
-        flushPara(); closeList(); inCode = true;
-      }
-      continue;
-    }
-    if (inCode) { codeBuf.push(line); continue; }
-    const t = line.trim();
-    if (!t) { flushPara(); closeList(); continue; }
-    if (/^#{1,6}\s/.test(t)) {
-      flushPara(); closeList();
-      const level = t.match(/^(#{1,6})\s/)[1].length;
-      html += `<h${level}>${inline(t.replace(/^#{1,6}\s*/, ''))}</h${level}>`;
-      continue;
-    }
-    if (/^\s*[-*+]\s/.test(t)) {
-      flushPara();
-      if (list !== 'ul') { closeList(); list = 'ul'; html += '<ul>'; }
-      html += `<li>${inline(t.replace(/^\s*[-*+]\s*/, ''))}</li>`;
-      continue;
-    }
-    if (/^\s*\d+[.)]\s/.test(t)) {
-      flushPara();
-      if (list !== 'ol') { closeList(); list = 'ol'; html += '<ol>'; }
-      html += `<li>${inline(t.replace(/^\s*\d+[.)]\s*/, ''))}</li>`;
-      continue;
-    }
-    if (/^>\s?/.test(t)) {
-      flushPara(); closeList();
-      html += `<blockquote>${inline(t.replace(/^>\s?/, ''))}</blockquote>`;
-      continue;
-    }
-    if (/^(-{3,}|\*{3,}|_{3,})$/.test(t)) {
-      flushPara(); closeList();
-      html += '<hr/>';
-      continue;
-    }
-    if (/^\|.*\|$/.test(t)) {
-      flushPara(); closeList();
-      const cells = t.replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
-      html += '<table><tr>' + cells.map((c) => '<th>' + inline(c) + '</th>').join('') + '</tr></table>';
-      continue;
-    }
-    closeList();
-    para.push(t);
-  }
-  flushPara(); closeList();
-  if (inCode) html += '<pre><code>' + esc(codeBuf.join('\n')) + '</code></pre>';
-  return html;
-}
 
 function tab() {
   return state.tabs[state.active] || null;
@@ -181,6 +101,14 @@ function el(tag, cls, text) {
   return n;
 }
 
+/** 状态栏反馈：文字 + 状态点语义（ok=已同步 / warn=未保存·进行中 / error=失败） */
+function setStatus(text, tone = 'ok') {
+  $('stText').textContent = text;
+  const dot = $('stDot');
+  dot.classList.toggle('warn', tone === 'warn');
+  dot.classList.toggle('error', tone === 'error');
+}
+
 function renderBody() {
   const t = tab();
   $('edSave').disabled = !t;
@@ -191,7 +119,7 @@ function renderBody() {
     $('edPreviewPane').hidden = true;
     $('edMeta').textContent = '';
     $('edDirty').textContent = '';
-    $('stText').textContent = '就绪 · 点击侧边栏知识条目打开文档';
+    setStatus('就绪 · 点击侧边栏知识条目打开文档');
     return;
   }
   $('edContent').value = t.content;
@@ -201,12 +129,16 @@ function renderBody() {
   $('edMeta').textContent = `${t.kind} · ${t.id}`;
   $('edDirty').textContent = t.dirty ? '未保存' : '';
   $('edPreview').textContent = previewMode ? '编辑' : '预览';
-  $('stText').textContent = `${t.kind} · ${t.id}`;
+  setStatus(`${t.kind} · ${t.id}`, t.dirty ? 'warn' : 'ok');
 }
 
 async function save() {
   const t = tab();
   if (!t) return;
+  const btn = $('edSave');
+  btn.disabled = true;
+  btn.setAttribute('aria-busy', 'true');
+  setStatus('保存中…', 'warn');
   try {
     const content = $('edContent').value;
     t.content = content;
@@ -215,9 +147,12 @@ async function save() {
     await invoke('editor_synced', { kind: t.kind, id: t.id, content });
     t.dirty = false;
     $('edDirty').textContent = '';
-    $('stText').textContent = `已保存 ${t.id}`;
+    setStatus(`已保存 · ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`, 'ok');
   } catch (err) {
-    $('stText').textContent = `保存失败：${err && err.message ? err.message : err}`;
+    setStatus(`保存失败：${err && err.message ? err.message : err}`, 'error');
+  } finally {
+    btn.disabled = !tab();
+    btn.removeAttribute('aria-busy');
   }
 }
 
@@ -229,11 +164,11 @@ async function removeTab() {
     await invoke('delete_knowledge_item', { kind: t.kind, id: t.id });
     const idx = state.active;
     await invoke('close_editor_tab', { index: idx });
-    $('stText').textContent = `已删除 ${t.id}`;
+    setStatus(`已删除 ${t.id}`, 'ok');
     await loadState();
     if (state.tabs.length === 0) window.close();
   } catch (err) {
-    $('stText').textContent = `删除失败：${err && err.message ? err.message : err}`;
+    setStatus(`删除失败：${err && err.message ? err.message : err}`, 'error');
   }
 }
 
@@ -245,7 +180,7 @@ async function createTab() {
   try {
     const id = await invoke('create_knowledge_item', { kind, title, content: '' });
     await invoke('open_editor_tab', { kind, id });
-    $('stText').textContent = `已创建 ${id}`;
+    setStatus(`已创建 ${id}`, 'ok');
     await loadState();
     // 预填标题并聚焦
     const t = tab();
@@ -257,7 +192,7 @@ async function createTab() {
       $('edContent').focus();
     }
   } catch (err) {
-    $('stText').textContent = `创建失败：${err && err.message ? err.message : err}`;
+    setStatus(`创建失败：${err && err.message ? err.message : err}`, 'error');
   }
 }
 
@@ -269,8 +204,10 @@ $('edCopy').addEventListener('click', async () => {
   if (!t) return;
   try {
     await navigator.clipboard.writeText(t.id);
-    $('stText').textContent = `已复制 ${t.id}`;
-  } catch { /* 剪贴板不可用 */ }
+    setStatus(`已复制 ${t.id}`, 'ok');
+  } catch {
+    setStatus('复制失败：剪贴板不可用', 'error');
+  }
 });
 $('edDelete').addEventListener('click', removeTab);
 $('edNew').addEventListener('click', createTab);
@@ -292,6 +229,21 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// tablist 方向键导航（ArrowLeft/Right/Home/End 在 tab 间移动焦点）
+$('edTabs').addEventListener('keydown', (e) => {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+  const tabs = Array.from($('edTabs').querySelectorAll('.ed-tab'));
+  if (!tabs.length) return;
+  const cur = tabs.indexOf(document.activeElement);
+  let next = cur;
+  if (e.key === 'ArrowLeft') next = cur <= 0 ? tabs.length - 1 : cur - 1;
+  else if (e.key === 'ArrowRight') next = cur === tabs.length - 1 || cur < 0 ? 0 : cur + 1;
+  else if (e.key === 'Home') next = 0;
+  else next = tabs.length - 1;
+  e.preventDefault();
+  tabs[next]?.focus();
+});
+
 // 主窗口推送更新（新 tab / 内容刷新）
 if (listen) {
   listen('editor-updated', () => loadState());
@@ -308,9 +260,11 @@ let prevTimer = null;
 $('edContent').addEventListener('input', () => {
   const t = tab();
   if (t) {
+    const wasDirty = t.dirty;
     t.content = $('edContent').value;
     t.dirty = true;
     $('edDirty').textContent = '未保存';
+    if (!wasDirty) setStatus(`${t.kind} · ${t.id}`, 'warn');
     void syncDraft(t, t.content).catch(() => {});
   }
   if (previewMode) {

@@ -875,6 +875,10 @@ input[type="range"]:focus-visible {
   .run-trigger { grid-template-columns: 20px minmax(0, 1fr); }
   .run-side { grid-column: 2; flex-direction: row; align-items: center; justify-content: space-between; }
   .run-detail { padding-left: 49px; }
+  /* 状态栏降级：先隐藏时钟与全局模式文字，再压缩工作空间名（图标 + title 保留语义） */
+  .sb-time { display: none; }
+  .sb-global-name { display: none; }
+  .sb-ws-name { max-width: 72px; }
 }
 
 @media (min-width: 576px) {

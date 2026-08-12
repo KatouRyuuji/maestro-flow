@@ -9,6 +9,7 @@
 <link rel="stylesheet" href="styles.css" />
 <link rel="stylesheet" href="v2.css" />
 <link rel="stylesheet" href="themes.css" />
+<script src="md.js"></script>
 <script src="app.js" defer></script>
 </head>
 <body data-theme="graphite" data-mode="card">
@@ -136,6 +137,10 @@
             <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-pin"/></svg>
             <span>窗口置顶</span><i aria-hidden="true">关</i>
           </button>
+          <button type="button" class="mp-row setting" id="btnAutoStart" role="switch" aria-checked="false">
+            <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-power"/></svg>
+            <span>开机自启</span><i aria-hidden="true">关</i>
+          </button>
           <button type="button" class="mp-row" id="btnCapsule">
             <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-capsule"/></svg>
             <span>切换到胶囊</span>
@@ -202,6 +207,7 @@
             <svg class="lucide" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-search"/></svg>
             <input type="search" id="detailSearch" placeholder="搜索…" aria-label="搜索详情内容" autocomplete="off" spellcheck="false" />
             <button type="button" class="sec-search-clear" id="detailSearchClear" title="清除搜索" aria-label="清除搜索" hidden>×</button>
+            <button type="button" class="sem-toggle" id="semToggle" title="语义搜索（maestro search，含 wiki 与代码图谱）" aria-label="切换语义搜索" aria-pressed="false" hidden>语义</button>
             <span class="detail-search-count" id="detailSearchCount" hidden></span>
           </div>
           <div class="detail-body" id="detailBody" aria-busy="false"></div>
@@ -314,6 +320,10 @@
         <span class="sb-status" id="liveStatus" role="status" aria-live="polite">实时监听</span>
         <span class="sb-time clk" id="clk">--:--:--</span>
         <span class="sb-spacer"></span>
+        <button type="button" class="sb-global" id="btnGlobal" title="单工程 / 全局模式" aria-label="切换单工程或全局模式" aria-pressed="false">
+          <span class="sb-global-ic" aria-hidden="true">◎</span>
+          <span class="sb-global-name" id="globalName">单工程</span>
+        </button>
         <button type="button" class="sb-ws" id="btnWs" title="选择工作空间" aria-label="选择工作空间" aria-expanded="false" aria-controls="wsPop">
           <span class="sb-ws-dot" aria-hidden="true">◆</span>
           <span class="sb-ws-name" id="wsName">—</span>
@@ -332,5 +342,5 @@
 </div>
 </body>
 <!-- 启动错误显示（调试用） -->
-<div id="bootError" role="alert" hidden style="position:fixed;bottom:8px;left:8px;right:8px;background:rgba(80,0,0,0.92);color:#ff8b8b;font-size:11px;padding:8px 10px;border-radius:8px;z-index:999;white-space:pre-wrap;word-break:break-all;font-family:monospace;pointer-events:none;"></div>
+<div id="bootError" role="alert" hidden style="position:fixed;bottom:8px;left:8px;right:8px;background:var(--popover,rgba(80,0,0,0.92));color:var(--danger,#ff8b8b);border:1px solid var(--danger,#f87171);font-size:11px;padding:8px 10px;border-radius:8px;z-index:999;white-space:pre-wrap;word-break:break-all;font-family:var(--mono,monospace);pointer-events:none;"></div>
 </html>
