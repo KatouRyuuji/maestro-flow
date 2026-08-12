@@ -32,6 +32,7 @@ if (!TAURI) {
 const { invoke } = TAURI?.core ?? {};
 const { listen } = TAURI?.event ?? {};
 const { open: dialogOpen } = TAURI?.dialog ?? {};
+const appWindow = TAURI?.window?.getCurrentWindow?.() ?? null;
 if (!invoke) showBootError('__TAURI__.core 缺失：Tauri API 未注入');
 
 // ---------------------------------------------------------------------------
@@ -58,6 +59,15 @@ const SESSIONS_LIMIT = 8;
 let callsExpanded = false;
 let sessionsListExpanded = false;
 let liveCallRefreshTimer = null;
+let capsulePane = 'session';
+const callDetailUiState = new Map();
+const CHAT_FOLLOW_THRESHOLD = 48;
+const LONG_MESSAGE_CHARS = 1200;
+const LONG_MESSAGE_LINES = 14;
+let dockedEdge = null;
+let dockTracking = false;
+let dockMoveTimer = null;
+let dockHideTimer = null;
 
 // 搜索：区块列表搜索（主视图）+ 详情页搜索
 const listSearch = { calls: '', sessions: '', knowledge: '' };
@@ -207,9 +217,17 @@ async function init() {
 /** 渲染并尽力保留键盘焦点（监听推送/轮询重绘时用） */
 function renderWithFocus() {
   const focused = document.activeElement;
+  const focusKey = focused?.dataset?.focusKey || '';
   render();
   requestAnimationFrame(() => {
-    if (focused && focused.isConnected) focused.focus();
+    if (focused && focused.isConnected) {
+      focused.focus();
+      return;
+    }
+    if (!focusKey) return;
+    const replacement = Array.from(document.querySelectorAll('[data-focus-key]'))
+      .find((node) => node.dataset.focusKey === focusKey);
+    replacement?.focus();
   });
 }
 
@@ -259,18 +277,121 @@ function renderSkeleton() {
 // 事件绑定
 // ---------------------------------------------------------------------------
 
-async function restoreCard(options = {}) {
+function setDockedEdge(edge) {
+  dockedEdge = edge || null;
+  if (dockedEdge) document.body.dataset.docked = dockedEdge;
+  else delete document.body.dataset.docked;
+}
+
+function resetDockClient() {
+  dockTracking = false;
+  clearTimeout(dockMoveTimer);
+  clearTimeout(dockHideTimer);
+  setDockedEdge(null);
+  document.body.classList.remove('dock-revealed');
+}
+
+function bindDockBehavior() {
+  if (appWindow?.onMoved) {
+    appWindow.onMoved(() => {
+      if (!dockTracking) return;
+      clearTimeout(dockMoveTimer);
+      dockMoveTimer = setTimeout(async () => {
+        dockTracking = false;
+        try {
+          setDockedEdge(await invoke('dock_window_if_near_edge'));
+        } catch {
+          setDockedEdge(null);
+        }
+      }, 280);
+    }).catch(() => {});
+  }
+
+  const world = $('world');
+  world.addEventListener('mouseenter', async () => {
+    if (!dockedEdge) return;
+    clearTimeout(dockHideTimer);
+    try {
+      await invoke('reveal_docked_window');
+      document.body.classList.add('dock-revealed');
+    } catch { /* 停靠状态已失效 */ }
+  });
+  world.addEventListener('mouseleave', () => {
+    if (!dockedEdge || dockTracking) return;
+    clearTimeout(dockHideTimer);
+    dockHideTimer = setTimeout(async () => {
+      try {
+        await invoke('hide_docked_window');
+        document.body.classList.remove('dock-revealed');
+      } catch { /* 窗口已隐藏或退出 */ }
+    }, 650);
+  });
+}
+
+function bindWindowDrag(surface, blockedSelector) {
+  surface.addEventListener('mousedown', (event) => {
+    if (event.button !== 0 || event.detail > 1) return;
+    if (blockedSelector && event.target.closest(blockedSelector)) return;
+    if (!appWindow?.startDragging) return;
+    event.preventDefault();
+    resetDockClient();
+    dockTracking = true;
+    invoke('undock_window').catch(() => {});
+    appWindow.startDragging().catch(() => {
+      dockTracking = false;
+      $('liveStatus').textContent = '窗口拖动不可用';
+    });
+  });
+}
+
+function setCapsulePane(pane) {
+  capsulePane = pane === 'agent' ? 'agent' : 'session';
+  const sessionActive = capsulePane === 'session';
+  const capsule = $('capsule');
+  capsule.dataset.pane = capsulePane;
+  $('capSessionPanel').classList.toggle('active', sessionActive);
+  $('capSessionPanel').setAttribute('aria-hidden', String(!sessionActive));
+  $('capAgentPanel').classList.toggle('active', !sessionActive);
+  $('capAgentPanel').setAttribute('aria-hidden', String(sessionActive));
+}
+
+function toggleCapsuleMenu(open) {
+  const pop = $('capMenuPop');
+  const show = open !== undefined ? open : pop.hidden;
+  pop.hidden = !show;
+  $('btnCapMenu').setAttribute('aria-expanded', String(show));
+  if (show) requestAnimationFrame(() => pop.querySelector('button')?.focus());
+}
+
+async function enterCapsule() {
+  resetDockClient();
+  toggleMenu(false);
+  toggleCapsuleMenu(false);
+  await invoke('set_window_mode', { mode: 'capsule' });
+  document.body.dataset.mode = 'capsule';
+  $('card').hidden = true;
+  $('capsule').hidden = false;
+  $('capsule').classList.add('mode-enter');
+  setTimeout(() => $('capsule').classList.remove('mode-enter'), 200);
+}
+
+async function restoreCard() {
+  resetDockClient();
+  toggleCapsuleMenu(false);
   await invoke('set_window_mode', { mode: 'card' });
   document.body.dataset.mode = 'card';
   $('capsule').hidden = true;
   $('card').hidden = false;
   $('card').classList.add('mode-enter');
   setTimeout(() => $('card').classList.remove('mode-enter'), 200);
-  if (options.openMenu) toggleMenu(true, $('btnMenu'));
   fitWindow();
 }
 
 function bindEvents() {
+  bindDockBehavior();
+  bindWindowDrag(document.querySelector('.topbar'), '.tb-btns, button, input, a, [role="button"]');
+  bindWindowDrag($('capsule'), '.cap-window-actions, .cap-menu-pop');
+
   // 面板折叠（.sec 0fr 动画）
   for (const id of ['Calls', 'Sessions', 'Knowledge']) {
     const head = $(`head${id}`);
@@ -378,9 +499,13 @@ function bindEvents() {
   // 详情返回
   $('btnBack').addEventListener('click', closeDetail);
 
-  // 窗口工具栏：菜单 / 隐藏（托盘） / 关闭（退出）
+  // 窗口工具栏：刷新 / 胶囊 / 菜单 / 隐藏 / 退出
+  $('btnCapsuleQuick').addEventListener('click', enterCapsule);
   $('btnMenu').addEventListener('click', (e) => toggleMenu($('menuPop').hidden, e.currentTarget));
-  $('btnHideWin').addEventListener('click', () => invoke('hide_window'));
+  $('btnHideWin').addEventListener('click', () => {
+    resetDockClient();
+    invoke('hide_window');
+  });
   $('btnQuitWin').addEventListener('click', () => invoke('quit_app'));
 
   // 菜单
@@ -400,17 +525,12 @@ function bindEvents() {
       btn.removeAttribute('aria-busy');
     }
   });
-  $('btnCapsule').addEventListener('click', async () => {
+  $('btnCapsule').addEventListener('click', enterCapsule);
+  $('btnHide').addEventListener('click', () => {
+    resetDockClient();
     toggleMenu(false);
-    await invoke('set_window_mode', { mode: 'capsule' });
-    document.body.dataset.mode = 'capsule';
-    $('card').hidden = true;
-    $('capsule').hidden = false;
-    $('capsule').classList.add('mode-enter');
-    setTimeout(() => $('capsule').classList.remove('mode-enter'), 200);
-    fitWindow();
+    invoke('hide_window');
   });
-  $('btnHide').addEventListener('click', () => { toggleMenu(false); invoke('hide_window'); });
   $('btnQuit').addEventListener('click', () => invoke('quit_app'));
   $('btnAddRoot').addEventListener('click', async () => {
     toggleMenu(false);
@@ -432,29 +552,47 @@ function bindEvents() {
       btn.disabled = false;
     }
   });
-  // 底部工作空间选择按钮（弹层选择）+ 胶囊工程 chip（循环切换）
+  // 底部工作空间选择按钮
   $('btnWs').addEventListener('click', (e) => {
     e.stopPropagation();
     toggleWsPop();
   });
-  $('capWs').addEventListener('click', cycleWorkspace);
-  // 点击外部关闭选择弹层
+  // 点击外部关闭选择弹层或胶囊菜单
   document.addEventListener('click', (e) => {
     if (!$('wsPop').hidden && !e.target.closest('#wsPop') && e.target.id !== 'btnWs') {
       toggleWsPop(false);
     }
+    if (!$('capMenuPop').hidden && !e.target.closest('#capMenuPop') && !e.target.closest('#btnCapMenu')) {
+      toggleCapsuleMenu(false);
+    }
   });
 
-
-
-  $('btnCapMenu').addEventListener('click', async (e) => {
+  $('btnCapMenu').addEventListener('click', (e) => {
     e.stopPropagation();
-    await restoreCard({ openMenu: true });
+    toggleCapsuleMenu();
   });
   $('btnCapRestore').addEventListener('click', async (e) => {
     e.stopPropagation();
     await restoreCard();
   });
+  $('btnCapTop').addEventListener('click', async () => {
+    const btn = $('btnCapTop');
+    const flag = btn.getAttribute('aria-checked') !== 'true';
+    btn.disabled = true;
+    try {
+      await invoke('set_always_on_top', { flag });
+      applyTop(flag);
+    } finally {
+      btn.disabled = false;
+      toggleCapsuleMenu(false);
+    }
+  });
+  $('btnCapHide').addEventListener('click', () => {
+    resetDockClient();
+    toggleCapsuleMenu(false);
+    invoke('hide_window');
+  });
+  $('btnCapQuit').addEventListener('click', () => invoke('quit_app'));
 
   // 主题（点击 + radiogroup 方向键，roving tabindex）
   const dots = Array.from(document.querySelectorAll('.theme-dot'));
@@ -532,12 +670,15 @@ function bindEvents() {
   });
 
   // 胶囊 → 卡片
-  $('capBody').addEventListener('click', () => restoreCard());
+  $('capSessionPanel').title = '切回完整窗口';
 
   // Esc 关闭菜单或返回列表；菜单打开时 Tab 焦点陷阱
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
-      if (!$('menuPop').hidden) {
+      if (!$('capMenuPop').hidden) {
+        toggleCapsuleMenu(false);
+        $('btnCapMenu').focus();
+      } else if (!$('menuPop').hidden) {
         toggleMenu(false);
       } else if (!view && (listSearch.calls || listSearch.sessions || listSearch.knowledge)) {
         // 主视图：Esc 逐层清除区块搜索
@@ -606,7 +747,6 @@ function toggleMenu(open, trigger = null) {
   $('menuPop').hidden = !open;
   $('menuScrim').hidden = !open;
   $('btnMenu').setAttribute('aria-expanded', String(open));
-  $('btnCapMenu').setAttribute('aria-expanded', String(open));
   if (open) {
     requestAnimationFrame(() => $('menuPop').focus());
   } else if (menuTrigger && typeof menuTrigger.focus === 'function') {
@@ -618,6 +758,8 @@ function toggleMenu(open, trigger = null) {
 function applyTop(flag) {
   $('btnTop').setAttribute('aria-checked', String(flag));
   $('btnTop').querySelector('i').textContent = flag ? '开' : '关';
+  $('btnCapTop').setAttribute('aria-checked', String(flag));
+  $('btnCapTop').querySelector('i').textContent = flag ? '开' : '关';
 }
 
 function applyTheme() {
@@ -720,7 +862,7 @@ function renderRootList() {
   }
 }
 
-/** 拉取工作空间列表并渲染：菜单工程组 + 底部切换按钮 + 胶囊 chip */
+/** 拉取工作空间列表并渲染：菜单工程组 + 底部切换按钮 */
 async function refreshWorkspaces() {
   try {
     workspaces = await invoke('list_workspaces');
@@ -732,9 +874,6 @@ async function refreshWorkspaces() {
   const name = active ? active.name : (snapshot?.workspace || '—');
   $('wsName').textContent = name;
   $('wsName').title = active ? active.path : '';
-  const capWs = $('capWs');
-  capWs.textContent = name;
-  capWs.title = active ? `当前：${name} · 点击切换` : '点击切换工作空间';
 }
 
 /** 工作空间选择弹层开关 */
@@ -975,6 +1114,17 @@ async function loadTopKnowledge(force = false) {
   return topKbCache.items;
 }
 
+/** 顶部概览卡的紧凑统计网格。 */
+function renderOverviewStats(container, items) {
+  container.innerHTML = '';
+  for (const item of items) {
+    const stat = el('div', 'ov-stat');
+    stat.appendChild(el('span', 'ov-stat-label', item.label));
+    stat.appendChild(el('strong', `ov-stat-value${item.tone ? ` ${item.tone}` : ''}`, String(item.value)));
+    container.appendChild(stat);
+  }
+}
+
 /** 顶部概览条：实时运行（Agent/会话）+ 高频知识沉淀 */
 async function renderOverview() {
   if (view) return;
@@ -984,7 +1134,24 @@ async function renderOverview() {
   );
   const calls = snapshot.calls || [];
   const runningCalls = calls.filter((c) => callStatus(c) === 'running');
-  $('ovRunningCount').textContent = String(runningSessions.length + runningCalls.length);
+  const failedSessions = sessions.filter((s) => ['failed', 'blocked', 'error'].includes(String(s.status || '').toLowerCase())).length;
+  const failedCalls = calls.filter((c) => callStatus(c) === 'error').length;
+  const runningTotal = runningSessions.length + runningCalls.length;
+  $('ovRunningCount').textContent = String(runningTotal);
+  renderOverviewStats($('ovRunningStats'), [
+    { label: 'Session', value: sessions.length },
+    { label: 'Agent', value: calls.length },
+    { label: '运行中', value: runningTotal, tone: 'live' },
+    { label: '异常', value: failedSessions + failedCalls, tone: failedSessions + failedCalls ? 'warn' : '' },
+  ]);
+  const knowledge = snapshot.knowledge || {};
+  $('ovTopKbCount').textContent = String(knowledge.total || 0);
+  renderOverviewStats($('ovTopKbStats'), [
+    { label: '规格', value: knowledge.specs || 0 },
+    { label: '记忆', value: knowledge.memory || 0 },
+    { label: 'Know-how', value: knowledge.knowhow || 0 },
+    { label: 'Learning', value: knowledge.learning_rows || 0 },
+  ]);
   const rBody = $('ovRunningBody');
   rBody.innerHTML = '';
   if (!runningSessions.length && !runningCalls.length) {
@@ -1022,7 +1189,6 @@ async function renderOverview() {
   // 高频知识沉淀
   const kb = await loadTopKnowledge();
   if (view) return; // 等待期间已切换视图
-  $('ovTopKbCount').textContent = String(kb.length);
   const kbBody = $('ovTopKbBody');
   kbBody.innerHTML = '';
   if (!kb.length) {
@@ -1051,7 +1217,21 @@ async function renderOverview() {
 /** 详情搜索输入：仅重渲染详情正文（保留标题/滚动位置） */
 function onDetailSearchInput() {
   const input = $('detailSearch');
-  detailSearch = input.value.trim().toLowerCase();
+  const nextSearch = input.value.trim().toLowerCase();
+  if (view?.kind === 'call') {
+    const call = detail?.call || { execId: view.id };
+    captureCallDetailViewport(call.execId || view.id);
+    const state = getCallDetailUi(call);
+    if (!detailSearch && nextSearch) {
+      state.followBeforeSearch = state.followLive;
+      state.scrollBeforeSearch = state.scrollTop;
+      state.followLive = false;
+      state.skipNextCapture = true;
+    } else if (detailSearch && !nextSearch) {
+      restoreCallDetailSearchState(call.execId || view.id);
+    }
+  }
+  detailSearch = nextSearch;
   $('detailSearchClear').hidden = !input.value;
   if (!view) return;
   if (view.kind === 'call') renderCallDetail();
@@ -1756,6 +1936,7 @@ function renderKnowledgeItemDetail() {
 // ---------------------------------------------------------------------------
 
 async function openDetail(kind, id, trigger = null, fromStack = false) {
+  teardownCallDetailSearch();
   const requestId = ++detailRequestId;
   const key = `${kind}::${id}`;
   if (trigger) detailReturnFocus = trigger;
@@ -1825,6 +2006,7 @@ async function openDetail(kind, id, trigger = null, fromStack = false) {
 }
 
 function closeDetail() {
+  teardownCallDetailSearch();
   detailRequestId += 1;
   viewStack.pop();
   // 返回栈回退：回到上一详情（知识列表等），而不是直接跳回主列表
@@ -1848,6 +2030,7 @@ function closeDetail() {
 function renderDetailState(kindLabel) {
   $('detailKind').textContent = kindLabel;
   const body = $('detailBody');
+  body.className = 'detail-body';
   body.innerHTML = '';
   body.setAttribute('aria-busy', String(detailStatus === 'loading'));
   if (detailStatus === 'loading') {
@@ -1914,9 +2097,14 @@ function normalizeCallEntries(rawEntries, running) {
     'system_message', 'error', 'status_change',
   ]);
   const entries = [];
-  for (const raw of Array.isArray(rawEntries) ? rawEntries : []) {
+  for (const [sourceIndex, raw] of (Array.isArray(rawEntries) ? rawEntries : []).entries()) {
     if (!raw || !allowed.has(raw.type)) continue;
-    const entry = { ...raw };
+    const fallbackKey = [raw.type || 'entry', raw.timestamp || 'no-time', sourceIndex].join(':');
+    const entry = {
+      ...raw,
+      _sourceIndex: sourceIndex,
+      _uiKey: raw.id ? String(raw.id) : fallbackKey,
+    };
     if (entry.type === 'assistant_message') {
       entry.partial = running && Boolean(entry.partial);
       const previous = entries[entries.length - 1];
@@ -1934,7 +2122,13 @@ function normalizeCallEntries(rawEntries, running) {
         && (!entry.name || item.name === entry.name)
       ));
       if (pending >= 0) {
-        entries[pending] = { ...entries[pending], ...entry };
+        const pendingEntry = entries[pending];
+        entries[pending] = {
+          ...pendingEntry,
+          ...entry,
+          _sourceIndex: pendingEntry._sourceIndex,
+          _uiKey: pendingEntry._uiKey,
+        };
         continue;
       }
     }
@@ -1953,84 +2147,433 @@ function callEntryText(entry) {
   return entry.content || entry.message || entry.result || '';
 }
 
+const AUXILIARY_CALL_ENTRY_TYPES = new Set([
+  'thinking', 'tool_use', 'tool_result', 'system_message', 'status_change',
+]);
+
+function callEntryKey(entry, index) {
+  if (entry._uiKey) return String(entry._uiKey);
+  if (entry.id) return String(entry.id);
+  return [entry.type || 'entry', entry.timestamp || 'no-time', entry._sourceIndex ?? index].join(':');
+}
+
+function callEntryKind(entry) {
+  if (entry.type === 'user_message') return 'user';
+  if (entry.type === 'assistant_message') return 'assistant';
+  if (entry.type === 'error') return 'error';
+  if (entry.type === 'thinking') return 'thinking';
+  if (entry.type === 'status_change') return 'status';
+  return 'tool';
+}
+
+function callEntryRole(entry) {
+  const labels = {
+    user_message: '用户',
+    assistant_message: '助手',
+    thinking: '思考',
+    tool_use: '工具',
+    tool_result: '工具结果',
+    system_message: '系统',
+    status_change: '状态',
+    error: '错误',
+  };
+  return labels[entry.type] || entry.type || '消息';
+}
+
+function getCallDetailUi(call) {
+  const id = String(call.execId || view?.id || 'unknown');
+  let state = callDetailUiState.get(id);
+  if (!state) {
+    const running = callStatus(call) === 'running';
+    state = {
+      initialized: false,
+      followLive: running,
+      scrollTop: 0,
+      bottomDistance: 0,
+      newActivityCount: 0,
+      metaExpanded: callStatus(call) === 'error',
+      metaTouched: false,
+      promptExpanded: false,
+      auxiliaryExpanded: new Set(),
+      longExpanded: new Set(),
+      lastSignature: '',
+      lastEntryCount: 0,
+      lastStatus: callStatus(call),
+      followBeforeSearch: null,
+      scrollBeforeSearch: null,
+      skipNextCapture: false,
+    };
+    callDetailUiState.set(id, state);
+  }
+  const status = callStatus(call);
+  if (status === 'error' && state.lastStatus !== 'error' && !state.metaTouched) {
+    state.metaExpanded = true;
+  }
+  state.lastStatus = status;
+  return state;
+}
+
+function captureCallDetailViewport(callId) {
+  const scroll = $('detailBody')?.querySelector('.chat-scroll');
+  if (!scroll || !callId) return;
+  const state = callDetailUiState.get(String(callId));
+  if (!state) return;
+  const distance = Math.max(0, scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop);
+  state.scrollTop = scroll.scrollTop;
+  state.bottomDistance = distance;
+  state.followLive = distance <= CHAT_FOLLOW_THRESHOLD;
+  if (state.followLive) state.newActivityCount = 0;
+}
+
+function restoreCallDetailSearchState(callId) {
+  if (!callId) return;
+  const state = callDetailUiState.get(String(callId));
+  if (!state || state.followBeforeSearch === null) return;
+  state.followLive = state.followBeforeSearch;
+  if (!state.followLive && state.scrollBeforeSearch !== null) state.scrollTop = state.scrollBeforeSearch;
+  state.followBeforeSearch = null;
+  state.scrollBeforeSearch = null;
+  state.skipNextCapture = true;
+}
+
+function teardownCallDetailSearch() {
+  if (view?.kind !== 'call' || !detailSearch) return;
+  const state = callDetailUiState.get(String(view.id));
+  if (!state || state.followBeforeSearch === null) return;
+  captureCallDetailViewport(view.id);
+  restoreCallDetailSearchState(view.id);
+}
+
+function iconButton(symbol, label, className = 'chat-icon-btn') {
+  const button = el('button', className);
+  button.type = 'button';
+  button.title = label;
+  button.setAttribute('aria-label', label);
+  button.appendChild(svg(symbol, 12));
+  return button;
+}
+
+async function copyCallText(text, button, successText) {
+  try {
+    await navigator.clipboard.writeText(String(text || ''));
+    $('liveStatus').textContent = successText;
+    if (!button) return;
+    button.classList.add('copied');
+    button.replaceChildren(svg('i-check', 12));
+    button.title = successText;
+    button.setAttribute('aria-label', successText);
+    setTimeout(() => {
+      if (!button.isConnected) return;
+      button.classList.remove('copied');
+      button.replaceChildren(svg('i-copy', 12));
+      button.title = button.dataset.copyLabel || '复制';
+      button.setAttribute('aria-label', button.dataset.copyLabel || '复制');
+    }, 1500);
+  } catch {
+    $('liveStatus').textContent = '剪贴板不可用';
+  }
+}
+
+function copyButton(text, label, successText, focusKey = '') {
+  const button = iconButton('i-copy', label, 'chat-icon-btn copy-btn');
+  button.dataset.copyLabel = label;
+  if (focusKey) button.dataset.focusKey = focusKey;
+  button.addEventListener('click', () => copyCallText(text, button, successText));
+  return button;
+}
+
+function callDisclosure(label, id, expanded, onToggle, action = null) {
+  const section = el('section', 'call-disclosure');
+  const head = el('div', 'call-disclosure-head');
+  const trigger = el('button', 'call-disclosure-trigger');
+  trigger.type = 'button';
+  trigger.dataset.focusKey = `disclosure:${id}`;
+  trigger.title = `${expanded ? '收起' : '展开'}${label}`;
+  trigger.setAttribute('aria-label', `${expanded ? '收起' : '展开'}${label}`);
+  trigger.setAttribute('aria-expanded', String(expanded));
+  trigger.setAttribute('aria-controls', id);
+  trigger.appendChild(svg('i-chevron', 11));
+  trigger.appendChild(el('span', '', label));
+  trigger.addEventListener('click', onToggle);
+  head.appendChild(trigger);
+  if (action) head.appendChild(action);
+  section.appendChild(head);
+  const panel = el('div', 'call-disclosure-panel');
+  panel.id = id;
+  panel.hidden = !expanded;
+  section.appendChild(panel);
+  return { section, panel };
+}
+
+function renderCallSummary(call, running) {
+  const summary = el('section', 'call-live-summary');
+  const lead = el('div', 'call-live-lead');
+  const dot = el('span', `call-live-dot${running ? ' pulse' : ''}`);
+  dot.style.setProperty('--c', running ? 'var(--ok)' : callStatus(call) === 'error' ? 'var(--danger)' : 'var(--info)');
+  lead.appendChild(dot);
+  lead.appendChild(el('strong', '', running ? 'LIVE' : callStatusLabel(call).toUpperCase()));
+  summary.appendChild(lead);
+  const facts = el('div', 'call-live-facts');
+  for (const value of [call.model || '默认模型', call.mode || 'default', fmtAgo(call.lastActivityMs ? new Date(Number(call.lastActivityMs)).toISOString() : call.startedAt)]) {
+    facts.appendChild(el('span', '', value));
+  }
+  summary.appendChild(facts);
+  summary.appendChild(el('span', `bd ${callStatusClass(call)}`, callStatusLabel(call)));
+  return summary;
+}
+
+function formatCallConversation(entries) {
+  return entries.map((entry) => {
+    const time = entry.timestamp ? fmtFull(entry.timestamp) : '无时间';
+    return `[${time}] ${callEntryRole(entry)}\n${String(callEntryText(entry))}`;
+  }).join('\n\n');
+}
+
+function isLongCallMessage(content) {
+  return content.length > LONG_MESSAGE_CHARS || content.split('\n').length > LONG_MESSAGE_LINES;
+}
+
+function callMessagePreview(content) {
+  const linePreview = content.split('\n').slice(0, LONG_MESSAGE_LINES).join('\n');
+  const preview = linePreview.slice(0, 760).trimEnd();
+  return preview === content ? content : `${preview}…`;
+}
+
+function renderAuxiliaryCallEntry(entry, key, state, q) {
+  const kind = callEntryKind(entry);
+  const content = String(callEntryText(entry));
+  const expanded = Boolean(q) || state.auxiliaryExpanded.has(key);
+  const item = el('article', `chat-event ${kind}`);
+  const head = el('div', 'chat-event-head');
+  const trigger = el('button', 'chat-event-trigger');
+  const bodyId = `call-entry-${safeDomId(key)}`;
+  trigger.type = 'button';
+  trigger.dataset.focusKey = `event:${key}`;
+  trigger.title = `${expanded ? '收起' : '展开'}${callEntryRole(entry)}`;
+  trigger.setAttribute('aria-label', `${expanded ? '收起' : '展开'}${callEntryRole(entry)}`);
+  trigger.setAttribute('aria-expanded', String(expanded));
+  trigger.setAttribute('aria-controls', bodyId);
+  trigger.appendChild(svg('i-chevron', 10));
+  trigger.appendChild(el('span', 'chat-event-role', callEntryRole(entry)));
+  trigger.appendChild(el('span', 'chat-event-summary', content.split('\n')[0] || '无内容'));
+  if (entry.timestamp) trigger.appendChild(el('time', 'chat-event-time', fmtClock2(entry.timestamp)));
+  trigger.addEventListener('click', () => {
+    if (state.auxiliaryExpanded.has(key)) state.auxiliaryExpanded.delete(key);
+    else state.auxiliaryExpanded.add(key);
+    renderWithFocus();
+  });
+  head.appendChild(trigger);
+  head.appendChild(copyButton(content, `复制${callEntryRole(entry)}`, `已复制${callEntryRole(entry)}`, `copy:${key}`));
+  item.appendChild(head);
+  const panel = el('div', 'chat-event-panel');
+  panel.id = bodyId;
+  panel.hidden = !expanded;
+  const contentDiv = el('div', 'chat-content');
+  contentDiv.appendChild(highlightText(content, q));
+  panel.appendChild(contentDiv);
+  item.appendChild(panel);
+  return item;
+}
+
+function renderPrimaryCallEntry(entry, key, state, q) {
+  const kind = callEntryKind(entry);
+  const content = String(callEntryText(entry));
+  const isLong = isLongCallMessage(content);
+  const expanded = Boolean(q) || !isLong || state.longExpanded.has(key);
+  const bubble = el('article', `chat-bubble ${kind}`);
+  const head = el('header', 'chat-message-head');
+  const role = el('div', 'chat-role', callEntryRole(entry));
+  if (entry.type === 'assistant_message' && entry.partial) role.appendChild(el('span', 'chat-stream-label', '正在生成'));
+  head.appendChild(role);
+  if (entry.timestamp) head.appendChild(el('time', 'chat-time', fmtClock2(entry.timestamp)));
+  head.appendChild(copyButton(content, `复制${callEntryRole(entry)}消息`, `已复制${callEntryRole(entry)}消息`, `copy:${key}`));
+  bubble.appendChild(head);
+  const contentId = `call-message-${safeDomId(key)}`;
+  const contentDiv = el('div', `chat-content${isLong && !expanded ? ' clipped' : ''}`);
+  contentDiv.id = contentId;
+  contentDiv.appendChild(highlightText(expanded ? content : callMessagePreview(content), q));
+  if (entry.type === 'assistant_message' && entry.partial) contentDiv.appendChild(el('span', 'chat-cursor'));
+  bubble.appendChild(contentDiv);
+  if (isLong && !q) {
+    const more = el('button', 'chat-expand-text', expanded ? '收起' : '展开全文');
+    more.type = 'button';
+    more.dataset.focusKey = `expand:${key}`;
+    more.setAttribute('aria-expanded', String(expanded));
+    more.setAttribute('aria-controls', contentId);
+    more.setAttribute('aria-label', `${expanded ? '收起' : '展开'}${callEntryRole(entry)}消息全文`);
+    more.addEventListener('click', () => {
+      if (expanded) state.longExpanded.delete(key);
+      else state.longExpanded.add(key);
+      renderWithFocus();
+    });
+    bubble.appendChild(more);
+  }
+  return bubble;
+}
+
+function restoreCallDetailViewport(scroll, state, running, q) {
+  requestAnimationFrame(() => {
+    if (!scroll.isConnected) return;
+    if (!state.initialized) {
+      scroll.scrollTop = running && !q ? scroll.scrollHeight : 0;
+      state.initialized = true;
+    } else if (!q && state.followLive) {
+      scroll.scrollTop = scroll.scrollHeight;
+    } else {
+      scroll.scrollTop = Math.min(state.scrollTop, Math.max(0, scroll.scrollHeight - scroll.clientHeight));
+    }
+    const distance = Math.max(0, scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop);
+    state.scrollTop = scroll.scrollTop;
+    state.bottomDistance = distance;
+    if (!q) state.followLive = distance <= CHAT_FOLLOW_THRESHOLD;
+  });
+}
+
 function renderCallDetail() {
+  const call = detail?.call || {};
+  const existingState = callDetailUiState.get(String(call.execId || view?.id || 'unknown'));
+  if (existingState?.skipNextCapture) existingState.skipNextCapture = false;
+  else captureCallDetailViewport(call.execId || view?.id);
   if (!renderDetailState('AGENT 调用')) return;
   const body = $('detailBody');
-  const call = detail.call || {};
+  body.classList.add('call-detail-body');
   const q = detailSearch;
+  const running = callStatus(call) === 'running';
+  const state = getCallDetailUi(call);
   $('detailTitle').textContent = TOOL_LABEL[call.tool] || call.tool || '调用详情';
 
-  const meta = el('section', 'detail-card');
-  meta.appendChild(el('h2', 'd-sec-title', '执行信息'));
-  meta.appendChild(detailRow('模型', call.model));
-  meta.appendChild(detailRow('模式', call.mode));
-  meta.appendChild(detailRow('状态', callStatusLabel(call)));
-  meta.appendChild(detailRow('执行目录', call.workDir));
-  meta.appendChild(detailRow('开始', fmtFull(call.startedAt)));
-  meta.appendChild(detailRow('结束', fmtFull(call.completedAt)));
-  if (call.exitCode !== null && call.exitCode !== undefined) meta.appendChild(detailRow('退出码', String(call.exitCode)));
-  if (call.delegateStatus) meta.appendChild(detailRow('委托状态', call.delegateStatus));
-  body.appendChild(meta);
+  body.appendChild(renderCallSummary(call, running));
+
+  const contextStack = el('div', 'call-context-stack');
+  const metaId = `call-meta-${safeDomId(call.execId || 'current')}`;
+  const meta = callDisclosure('执行信息', metaId, state.metaExpanded, () => {
+    state.metaExpanded = !state.metaExpanded;
+    state.metaTouched = true;
+    renderWithFocus();
+  });
+  meta.panel.appendChild(detailRow('模型', call.model));
+  meta.panel.appendChild(detailRow('模式', call.mode));
+  meta.panel.appendChild(detailRow('状态', callStatusLabel(call)));
+  meta.panel.appendChild(detailRow('执行目录', call.workDir));
+  meta.panel.appendChild(detailRow('开始', fmtFull(call.startedAt)));
+  meta.panel.appendChild(detailRow('结束', fmtFull(call.completedAt)));
+  if (call.exitCode !== null && call.exitCode !== undefined) meta.panel.appendChild(detailRow('退出码', String(call.exitCode)));
+  if (call.delegateStatus) meta.panel.appendChild(detailRow('委托状态', call.delegateStatus));
+  contextStack.appendChild(meta.section);
 
   const promptText = String(call.prompt || '');
   const promptMatch = !q || promptText.toLowerCase().includes(q);
   if (promptText && promptMatch) {
-    const prompt = el('section', 'detail-card full-width');
-    prompt.appendChild(el('h2', 'd-sec-title', '完整提示词'));
-    const pre = el('pre', 'd-prompt');
+    const promptId = `call-prompt-${safeDomId(call.execId || 'current')}`;
+    const promptExpanded = Boolean(q) || state.promptExpanded;
+    const prompt = callDisclosure('完整提示词', promptId, promptExpanded, () => {
+      state.promptExpanded = !state.promptExpanded;
+      renderWithFocus();
+    }, copyButton(promptText, '复制完整提示词', '已复制完整提示词', `copy:${promptId}`));
+    const pre = el('pre', 'd-prompt call-prompt');
     pre.appendChild(highlightText(promptText, q));
-    prompt.appendChild(pre);
-    body.appendChild(prompt);
+    prompt.panel.appendChild(pre);
+    contextStack.appendChild(prompt.section);
   }
+  body.appendChild(contextStack);
 
-  const running = callStatus(call) === 'running';
   const allEntries = normalizeCallEntries(detail.entries, running);
   const entries = q ? allEntries.filter((entry) => callEntryText(entry).toLowerCase().includes(q)) : allEntries;
   setSearchCount(entries.length, allEntries.length);
-  const chat = el('section', 'detail-card full-width');
-  chat.appendChild(el('h2', 'd-sec-title', `对话 · ${entries.length}${q ? ` / ${allEntries.length}` : ''}${running ? ' · 实时' : ''}`));
+  const lastEntry = allEntries[allEntries.length - 1];
+  const signature = [
+    call.streamBytes || 0,
+    allEntries.length,
+    lastEntry ? callEntryKey(lastEntry, allEntries.length - 1) : '',
+    lastEntry ? String(callEntryText(lastEntry)).length : 0,
+  ].join(':');
+  if (state.initialized && state.lastSignature && signature !== state.lastSignature && !state.followLive && !q) {
+    state.newActivityCount += Math.max(1, allEntries.length - state.lastEntryCount);
+  }
+  state.lastSignature = signature;
+  state.lastEntryCount = allEntries.length;
+
+  const chat = el('section', 'call-chat-workspace');
+  const toolbar = el('div', 'call-chat-toolbar');
+  const title = el('div', 'call-chat-title');
+  title.appendChild(el('strong', '', '对话'));
+  title.appendChild(el('span', '', `${entries.length}${q ? ` / ${allEntries.length}` : ' 条'}`));
+  if (running) title.appendChild(el('span', 'call-chat-live', '实时'));
+  toolbar.appendChild(title);
+
+  const auxiliaryEntries = entries
+    .map((entry, index) => ({ entry, key: callEntryKey(entry, index) }))
+    .filter(({ entry }) => AUXILIARY_CALL_ENTRY_TYPES.has(entry.type));
+  if (auxiliaryEntries.length) {
+    const allAuxExpanded = auxiliaryEntries.every(({ key }) => state.auxiliaryExpanded.has(key));
+    const toggleAux = el('button', 'call-toolbar-command', allAuxExpanded ? '收起事件' : '展开事件');
+    toggleAux.type = 'button';
+    toggleAux.dataset.focusKey = 'toggle-auxiliary-events';
+    toggleAux.disabled = Boolean(q);
+    toggleAux.setAttribute('aria-label', allAuxExpanded ? '收起全部辅助事件' : '展开全部辅助事件');
+    toggleAux.title = q ? '搜索结果会临时展开命中事件' : (allAuxExpanded ? '收起全部辅助事件' : '展开全部辅助事件');
+    toggleAux.addEventListener('click', () => {
+      for (const { key } of auxiliaryEntries) {
+        if (allAuxExpanded) state.auxiliaryExpanded.delete(key);
+        else state.auxiliaryExpanded.add(key);
+      }
+      renderWithFocus();
+    });
+    toolbar.appendChild(toggleAux);
+  }
+  const conversationCopy = copyButton(formatCallConversation(entries), q ? '复制当前搜索结果' : '复制完整对话', q ? '已复制当前搜索结果' : '已复制完整对话', 'copy:conversation');
+  conversationCopy.disabled = !entries.length;
+  toolbar.appendChild(conversationCopy);
+  chat.appendChild(toolbar);
+
+  const scroll = el('div', 'chat-scroll');
+  scroll.tabIndex = 0;
+  scroll.setAttribute('role', 'log');
+  scroll.setAttribute('aria-label', 'Agent 对话记录');
+  scroll.setAttribute('aria-live', 'polite');
+  scroll.setAttribute('aria-relevant', 'additions text');
+  scroll.setAttribute('aria-busy', String(running));
   if (!allEntries.length) {
-    chat.appendChild(el('div', 'detail-empty', running ? 'Agent 已连接，正在等待首个输出。' : '没有可展示的对话条目。'));
-  } else if (q && !entries.length && !(promptText && promptMatch)) {
-    chat.appendChild(emptySearchResult());
+    scroll.appendChild(el('div', 'detail-empty', running ? 'Agent 已连接，正在等待首个输出。' : '没有可展示的对话条目。'));
+  } else if (q && !entries.length) {
+    scroll.appendChild(emptySearchResult(promptMatch ? '对话中未找到匹配内容' : undefined));
   } else {
     const flow = el('div', 'chat-flow');
-    for (const entry of entries) {
-      const kind = entry.type === 'user_message'
-        ? 'user'
-        : entry.type === 'assistant_message'
-          ? 'assistant'
-          : entry.type === 'error'
-            ? 'error'
-            : entry.type === 'thinking'
-              ? 'thinking'
-              : entry.type === 'status_change'
-                ? 'status'
-                : 'tool';
-      const bubble = el('div', `chat-bubble ${kind}`);
-      const role = kind === 'user'
-        ? '用户'
-        : kind === 'assistant'
-          ? '助手'
-          : kind === 'thinking'
-            ? '思考'
-            : kind === 'status'
-              ? '状态'
-              : entry.type === 'tool_use'
-                ? '工具'
-                : entry.type;
-      bubble.appendChild(el('div', 'chat-role', role));
-      const content = String(callEntryText(entry));
-      const contentDiv = el('div', 'chat-content');
-      contentDiv.appendChild(highlightText(content.length > 4000 ? `${content.slice(0, 4000)}…` : content, q));
-      if (entry.type === 'assistant_message' && entry.partial) contentDiv.appendChild(el('span', 'chat-cursor'));
-      bubble.appendChild(contentDiv);
-      if (entry.timestamp) bubble.appendChild(el('div', 'chat-time', fmtFull(entry.timestamp)));
-      flow.appendChild(bubble);
-    }
-    chat.appendChild(flow);
+    entries.forEach((entry, index) => {
+      const key = callEntryKey(entry, index);
+      flow.appendChild(AUXILIARY_CALL_ENTRY_TYPES.has(entry.type)
+        ? renderAuxiliaryCallEntry(entry, key, state, q)
+        : renderPrimaryCallEntry(entry, key, state, q));
+    });
+    scroll.appendChild(flow);
   }
+  const jump = el('button', 'chat-jump-latest');
+  jump.appendChild(svg('i-arrow-down', 12));
+  jump.appendChild(el('span', '', `${state.newActivityCount} 条新动态`));
+  jump.type = 'button';
+  jump.dataset.focusKey = 'jump-to-latest';
+  jump.hidden = !state.newActivityCount;
+  jump.setAttribute('aria-label', `跳到最新，${state.newActivityCount} 条新动态`);
+  jump.addEventListener('click', () => {
+    state.followLive = true;
+    state.newActivityCount = 0;
+    scroll.scrollTo({ top: scroll.scrollHeight, behavior: 'smooth' });
+    jump.hidden = true;
+  });
+  scroll.addEventListener('scroll', () => {
+    const distance = Math.max(0, scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop);
+    state.scrollTop = scroll.scrollTop;
+    state.bottomDistance = distance;
+    if (!q) state.followLive = distance <= CHAT_FOLLOW_THRESHOLD;
+    if (state.followLive) {
+      state.newActivityCount = 0;
+      jump.hidden = true;
+    }
+  }, { passive: true });
+  chat.appendChild(scroll);
+  chat.appendChild(jump);
   body.appendChild(chat);
+  restoreCallDetailViewport(scroll, state, running, q);
 }
 
 /** 全部 Agent 调用详情视图（含搜索） */
@@ -2327,51 +2870,43 @@ function renderSessionDetail() {
 
 function renderCapsule() {
   const sessions = snapshot.sessions || [];
+  const calls = snapshot.calls || [];
   const active = sessions.find((item) => item.session_id === snapshot.active_session_id) || sessions[0];
+  const runningCalls = calls.filter((call) => callStatus(call) === 'running');
+  const selectedCall = runningCalls[0] || calls[0] || null;
+  const hasRunningAgent = runningCalls.length > 0;
   const capsule = $('capsule');
-  const knowledgeTotal = (snapshot.knowledge || {}).total || 0;
   const sub = $('capSub');
-  const dot = sub.querySelector('.dot');
-  const subT = $('capSubT');
-  const vb = $('capVerdict');
-  const ago = $('capAgo');
+  const sessionDot = sub.querySelector('.dot');
   const progressBar = $('capProgressBar');
+
+  let sessionSignal = 'idle';
+  let sessionColor = 'var(--text-dim)';
+  let sessionContextMeta = '空闲';
   if (active) {
     const run = active.latest_run || null;
     const running = ['running', 'active', 'executing'].includes(String(active.status || '').toLowerCase());
-    const signal = String(run?.verdict || run?.status || active.status || 'unknown').toLowerCase();
-    const color = VERDICT_COLOR[signal]
+    sessionSignal = String(run?.verdict || run?.status || active.status || 'unknown').toLowerCase();
+    sessionColor = VERDICT_COLOR[sessionSignal]
       || (running ? 'var(--ok)' : null)
-      || (['sealed', 'completed'].includes(signal) ? 'var(--info)' : null)
-      || (['paused'].includes(signal) ? 'var(--warn)' : null)
-      || (['failed', 'blocked', 'error'].includes(signal) ? 'var(--danger)' : 'var(--text-dim)')
+      || (['sealed', 'completed'].includes(sessionSignal) ? 'var(--info)' : null)
+      || (['paused'].includes(sessionSignal) ? 'var(--warn)' : null)
+      || (['failed', 'blocked', 'error'].includes(sessionSignal) ? 'var(--danger)' : 'var(--text-dim)')
       || 'var(--text-dim)';
-    capsule.dataset.kind = signal;
-    capsule.style.setProperty('--cap-color', color);
-    // 行 1：意图 + 状态徽章
     $('capTitle').textContent = active.intent ? oneLine(active.intent) : active.session_id;
     const sm = sessionStatusMeta(active.status);
-    const stBadge = $('capStatus');
-    stBadge.className = `bd ${sm[0]} cap-status`;
-    stBadge.textContent = sm[1];
-    // 行 2：run 故事 + verdict 徽章 + 相对时间（静态元素原地更新）
-    dot.style.setProperty('--c', color);
-    dot.classList.toggle('pulse', running);
+    $('capStatus').className = `bd ${sm[0]} cap-status`;
+    $('capStatus').textContent = sm[1];
+    sessionDot.style.setProperty('--c', sessionColor);
+    sessionDot.classList.toggle('pulse', running);
+    const platform = run?.platform ? (TOOL_LABEL[run.platform] || run.platform) : '';
+    $('capSessionAgent').textContent = platform || 'Session';
     const step = run && run.sequence != null && active.run_count
-      ? `第 ${run.sequence}/${active.run_count} 步`
+      ? `${run.sequence}/${active.run_count}`
       : `#${run?.sequence ?? '—'}`;
-    subT.textContent = run ? `${step} · ${run.command || 'run'}` : '等待 Run';
-    subT.title = run ? `${run.run_id || ''} · ${run.verdict || ''}` : '';
-    if (run && run.verdict) {
-      vb.hidden = false;
-      vb.className = `bd ${verdictClass(run.verdict)}`;
-      vb.textContent = verdictLabel(run.verdict);
-      vb.title = run.verdict;
-    } else {
-      vb.hidden = true;
-    }
-    ago.textContent = run ? fmtAgo(run.started_at) : '';
-    // 行 3：进度
+    sessionContextMeta = run ? `${step} · ${sm[1]}` : sm[1];
+    $('capSubT').textContent = run ? `${step} · ${run.command || 'run'}` : '等待 Run';
+    $('capAgo').textContent = run ? fmtAgo(run.started_at) : '';
     if (run && run.sequence != null && active.run_count) {
       $('capProgress').hidden = false;
       progressBar.style.width = `${Math.min(100, Math.round((run.sequence / active.run_count) * 100))}%`;
@@ -2379,28 +2914,72 @@ function renderCapsule() {
       $('capProgress').hidden = true;
       progressBar.style.width = '0%';
     }
-    const total = sessions.length;
-    $('capSessions').textContent = total >= 40 ? '40+ 会话' : `${total} 会话`;
-    $('capBody').setAttribute('aria-label', `打开活动会话：${$('capTitle').textContent}`);
+    $('capSessionPanel').setAttribute('aria-label', `Session：${$('capTitle').textContent}，${sm[1]}`);
   } else {
-    capsule.dataset.kind = 'idle';
-    capsule.style.setProperty('--cap-color', 'var(--text-dim)');
     $('capTitle').textContent = snapshot.workspace || 'Maestro';
-    const stBadge = $('capStatus');
-    stBadge.className = 'bd bd-dim cap-status';
-    stBadge.textContent = '空闲';
-    dot.style.setProperty('--c', 'var(--text-dim)');
-    dot.classList.remove('pulse');
-    subT.textContent = '当前没有活动会话';
-    subT.title = '';
-    vb.hidden = true;
-    ago.textContent = '';
+    $('capStatus').className = 'bd bd-dim cap-status';
+    $('capStatus').textContent = '空闲';
+    sessionDot.style.setProperty('--c', 'var(--text-dim)');
+    sessionDot.classList.remove('pulse');
+    $('capSessionAgent').textContent = 'Session';
+    $('capSubT').textContent = '当前没有活动会话';
+    $('capAgo').textContent = '';
     $('capProgress').hidden = true;
     progressBar.style.width = '0%';
-    $('capSessions').textContent = '0 会话';
-    $('capBody').setAttribute('aria-label', '打开完整卡片视图');
+    $('capSessionPanel').setAttribute('aria-label', '当前没有活动 Session');
   }
-  $('capKnowledge').textContent = `${knowledgeTotal} 知识`;
+
+  if (selectedCall) {
+    const running = callStatus(selectedCall) === 'running';
+    const toolColor = TOOL_COLORS[selectedCall.tool] || 'var(--text-dim)';
+    const toolLabel = TOOL_LABEL[selectedCall.tool] || selectedCall.tool || 'Agent';
+    $('capAgentDot').classList.toggle('pulse', running);
+    $('capAgentDot').style.setProperty('--c', toolColor);
+    $('capAgentCli').textContent = `${toolLabel} CLI`;
+    $('capAgentModel').textContent = selectedCall.model || '默认模型';
+    $('capAgentStatus').className = `bd ${callStatusClass(selectedCall)}`;
+    $('capAgentStatus').textContent = callStatusLabel(selectedCall);
+    const activityMs = Number(selectedCall.lastActivityMs);
+    const activityAt = Number.isFinite(activityMs) && activityMs > 0
+      ? new Date(activityMs).toISOString()
+      : selectedCall.completedAt || selectedCall.startedAt;
+    $('capAgentTime').textContent = fmtAgo(activityAt);
+    $('capAgentBar').style.width = running ? '100%' : '0%';
+    $('capAgentBar').style.background = toolColor;
+    $('capAgentPanel').setAttribute('aria-label', `${toolLabel} CLI，${selectedCall.model || '默认模型'}，${callStatusLabel(selectedCall)}`);
+  } else {
+    $('capAgentDot').classList.remove('pulse');
+    $('capAgentDot').style.setProperty('--c', 'var(--text-dim)');
+    $('capAgentCli').textContent = 'Maestro CLI';
+    $('capAgentModel').textContent = '等待 Agent';
+    $('capAgentStatus').className = 'bd bd-dim';
+    $('capAgentStatus').textContent = '空闲';
+    $('capAgentTime').textContent = '—';
+    $('capAgentBar').style.width = '0%';
+    $('capAgentPanel').setAttribute('aria-label', '当前没有 Agent 动态');
+  }
+
+  if (hasRunningAgent) {
+    setCapsulePane('agent');
+    $('capContextLabel').textContent = 'AGENT';
+    $('capContextMeta').textContent = `${runningCalls.length} 运行中`;
+    $('capContextDot').style.setProperty('--c', selectedCall ? (TOOL_COLORS[selectedCall.tool] || 'var(--ok)') : 'var(--ok)');
+    $('capContextDot').classList.add('pulse');
+  } else {
+    setCapsulePane('session');
+    $('capContextLabel').textContent = 'SESSION';
+    $('capContextMeta').textContent = sessionContextMeta;
+    $('capContextDot').style.setProperty('--c', sessionColor);
+    $('capContextDot').classList.toggle('pulse', ['running', 'active', 'executing'].includes(sessionSignal));
+  }
+
+  const visibleCall = hasRunningAgent ? selectedCall : null;
+  const visualKind = visibleCall ? callStatus(visibleCall) : sessionSignal;
+  const visualColor = visibleCall
+    ? (TOOL_COLORS[visibleCall.tool] || 'var(--text-dim)')
+    : sessionColor;
+  capsule.dataset.kind = visualKind;
+  capsule.style.setProperty('--cap-color', visualColor);
 }
 
 // ---------------------------------------------------------------------------
@@ -2513,7 +3092,7 @@ let fitTimer = null;
 function fitWindow() {
   clearTimeout(fitTimer);
   fitTimer = setTimeout(() => {
-    if (document.body.dataset.mode !== 'card') return;
+    if (document.body.dataset.mode !== 'card' || dockedEdge) return;
     if (view) return; // 详情视图：不随内容拉高窗口，由 .content 内部滚动
     const content = document.querySelector('.content');
     const h = content ? content.scrollHeight + 46 + 32 + 22 : document.documentElement.scrollHeight;

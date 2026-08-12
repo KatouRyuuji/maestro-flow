@@ -37,25 +37,66 @@
   <!-- 主界面：卡片形态 -->
   <div class="main-view" id="mainView" hidden>
 
-    <!-- 胶囊形态：极简状态条 -->
-    <div class="capsule" id="capsule" hidden data-tauri-drag-region>
-      <span class="cap-logo" aria-hidden="true">◆</span>
-      <button type="button" class="cap-main" id="capBody" title="回到卡片" aria-label="打开完整卡片视图">
-        <div class="cap-row1">
-          <div class="cap-intent" id="capTitle">—</div>
-          <span class="bd bd-dim cap-status" id="capStatus">—</span>
+    <!-- 胶囊形态：Session / Agent 单面板渐进切换 -->
+    <div class="capsule" id="capsule" hidden data-tauri-drag-region data-pane="session">
+      <div class="cap-toolbar">
+        <div class="cap-context" aria-live="polite">
+          <span class="dot" id="capContextDot"></span>
+          <strong id="capContextLabel">SESSION</strong>
+          <span class="cap-context-meta" id="capContextMeta">等待状态</span>
         </div>
-        <div class="cap-sub" id="capSub"><span class="dot"></span><span class="cap-sub-t" id="capSubT">—</span><span class="bd bd-dim" id="capVerdict" hidden></span><span class="cap-ago" id="capAgo"></span></div>
-        <div class="cap-progress" id="capProgress" aria-hidden="true"><i id="capProgressBar"></i></div>
-      </button>
-      <div class="cap-chips">
-        <button type="button" class="cap-chip hot" id="capWs" title="点击切换工作空间" aria-label="切换工作空间"></button>
-        <span class="cap-chip" id="capSessions">0 会话</span>
-        <span class="cap-chip" id="capKnowledge">0 知识</span>
+        <div class="cap-window-actions">
+          <button type="button" class="ib cap-restore" id="btnCapRestore" title="切回窗口" aria-label="切回完整窗口">
+            <svg class="lucide" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-restore"/></svg>
+          </button>
+          <button type="button" class="ib cap-menu" id="btnCapMenu" title="胶囊菜单" aria-label="胶囊菜单" aria-expanded="false" aria-controls="capMenuPop" aria-haspopup="menu">
+            <svg class="lucide" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-more"/></svg>
+          </button>
+        </div>
       </div>
-      <button type="button" class="ib cap-menu" id="btnCapMenu" title="胶囊菜单" aria-label="胶囊菜单" aria-expanded="false" aria-controls="menuPop" aria-haspopup="dialog">
-        <svg class="lucide" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-more"/></svg>
-      </button>
+      <div class="cap-stage">
+        <div class="cap-panel cap-session-panel active" id="capSessionPanel" aria-hidden="false">
+          <div class="cap-row1">
+            <div class="cap-intent" id="capTitle">—</div>
+            <span class="bd bd-dim cap-status" id="capStatus">—</span>
+          </div>
+          <div class="cap-sub" id="capSub">
+            <span class="dot"></span>
+            <span class="cap-session-agent" id="capSessionAgent">Session</span>
+            <span class="cap-divider" aria-hidden="true"></span>
+            <span class="cap-sub-t" id="capSubT">—</span>
+            <span class="cap-ago" id="capAgo"></span>
+          </div>
+          <div class="cap-progress" id="capProgress" aria-hidden="true"><i id="capProgressBar"></i></div>
+        </div>
+        <div class="cap-panel cap-agent-panel" id="capAgentPanel" aria-hidden="true">
+          <div class="cap-agent-row">
+            <span class="dot" id="capAgentDot"></span>
+            <strong class="cap-agent-cli" id="capAgentCli">Maestro CLI</strong>
+            <span class="bd bd-dim" id="capAgentStatus">空闲</span>
+          </div>
+          <div class="cap-agent-sub">
+            <span id="capAgentModel">等待 Agent</span>
+            <span class="cap-divider" aria-hidden="true"></span>
+            <span id="capAgentTime">—</span>
+          </div>
+          <div class="cap-agent-bar" aria-hidden="true"><i id="capAgentBar"></i></div>
+        </div>
+      </div>
+      <div class="cap-menu-pop" id="capMenuPop" role="menu" aria-label="胶囊窗口菜单" hidden>
+        <button type="button" class="mp-row setting" id="btnCapTop" role="menuitemcheckbox" aria-checked="false">
+          <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-pin"/></svg>
+          <span>窗口置顶</span><i aria-hidden="true">关</i>
+        </button>
+        <button type="button" class="mp-row" id="btnCapHide" role="menuitem">
+          <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-hide"/></svg>
+          <span>隐藏到托盘</span>
+        </button>
+        <button type="button" class="mp-row danger" id="btnCapQuit" role="menuitem">
+          <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-x"/></svg>
+          <span>退出</span>
+        </button>
+      </div>
     </div>
 
     <!-- 卡片形态 -->
@@ -69,6 +110,9 @@
         <div class="tb-btns">
           <button type="button" class="ib" id="btnRefresh" title="刷新快照" aria-label="刷新快照">
             <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><use href="icons.svg#i-refresh"/></svg>
+          </button>
+          <button type="button" class="ib" id="btnCapsuleQuick" title="切换到胶囊" aria-label="切换到胶囊">
+            <svg class="lucide" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-capsule"/></svg>
           </button>
           <span class="tb-div" aria-hidden="true"></span>
           <button type="button" class="ib" id="btnMenu" title="菜单" aria-label="打开菜单" aria-expanded="false" aria-controls="menuPop" aria-haspopup="dialog">
@@ -173,6 +217,7 @@
               <span class="ov-t">实时运行</span>
               <span class="ov-count" id="ovRunningCount">0</span>
             </button>
+            <div class="ov-stats" id="ovRunningStats" aria-label="运行数据统计"></div>
             <div class="ov-body" id="ovRunningBody"></div>
           </div>
           <div class="ov-card" id="ovTopKb">
@@ -181,6 +226,7 @@
               <span class="ov-t">高频知识</span>
               <span class="ov-count" id="ovTopKbCount">0</span>
             </button>
+            <div class="ov-stats" id="ovTopKbStats" aria-label="知识数据统计"></div>
             <div class="ov-body" id="ovTopKbBody"></div>
           </div>
         </section>

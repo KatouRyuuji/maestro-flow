@@ -111,10 +111,146 @@ mod editor_state_tests {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct DockState {
+    edge: DockEdge,
+    visible_x: i32,
+    visible_y: i32,
+    hidden_x: i32,
+    hidden_y: i32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DockEdge {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+impl DockEdge {
+    fn label(self) -> &'static str {
+        match self {
+            DockEdge::Left => "left",
+            DockEdge::Right => "right",
+            DockEdge::Top => "top",
+            DockEdge::Bottom => "bottom",
+        }
+    }
+}
+
+fn calculate_dock_state(
+    window_pos: (i32, i32),
+    window_size: (i32, i32),
+    monitor_pos: (i32, i32),
+    monitor_size: (i32, i32),
+    threshold: i32,
+    reveal_strip: i32,
+) -> Option<DockState> {
+    let (x, y) = window_pos;
+    let (width, height) = window_size;
+    let (monitor_x, monitor_y) = monitor_pos;
+    let (monitor_width, monitor_height) = monitor_size;
+    let monitor_right = monitor_x + monitor_width;
+    let monitor_bottom = monitor_y + monitor_height;
+    let distances = [
+        (DockEdge::Left, (x - monitor_x).abs()),
+        (DockEdge::Right, (x + width - monitor_right).abs()),
+        (DockEdge::Top, (y - monitor_y).abs()),
+        (DockEdge::Bottom, (y + height - monitor_bottom).abs()),
+    ];
+    let (edge, distance) = distances.into_iter().min_by_key(|(_, distance)| *distance)?;
+    if distance > threshold {
+        return None;
+    }
+
+    let max_x = (monitor_right - width).max(monitor_x);
+    let max_y = (monitor_bottom - height).max(monitor_y);
+    let clamped_x = x.clamp(monitor_x, max_x);
+    let clamped_y = y.clamp(monitor_y, max_y);
+    let (visible_x, visible_y, hidden_x, hidden_y) = match edge {
+        DockEdge::Left => (
+            monitor_x,
+            clamped_y,
+            monitor_x - width + reveal_strip,
+            clamped_y,
+        ),
+        DockEdge::Right => (
+            monitor_right - width,
+            clamped_y,
+            monitor_right - reveal_strip,
+            clamped_y,
+        ),
+        DockEdge::Top => (
+            clamped_x,
+            monitor_y,
+            clamped_x,
+            monitor_y - height + reveal_strip,
+        ),
+        DockEdge::Bottom => (
+            clamped_x,
+            monitor_bottom - height,
+            clamped_x,
+            monitor_bottom - reveal_strip,
+        ),
+    };
+    Some(DockState {
+        edge,
+        visible_x,
+        visible_y,
+        hidden_x,
+        hidden_y,
+    })
+}
+
+#[cfg(test)]
+mod dock_state_tests {
+    use super::*;
+
+    const WINDOW: (i32, i32) = (380, 100);
+    const MONITOR: (i32, i32) = (1920, 1080);
+
+    fn dock(position: (i32, i32)) -> Option<DockState> {
+        calculate_dock_state(position, WINDOW, (0, 0), MONITOR, 20, 8)
+    }
+
+    #[test]
+    fn calculates_left_and_right_hidden_strips() {
+        let left = dock((5, 200)).unwrap();
+        assert_eq!(left.edge, DockEdge::Left);
+        assert_eq!((left.visible_x, left.visible_y), (0, 200));
+        assert_eq!((left.hidden_x, left.hidden_y), (-372, 200));
+
+        let right = dock((1535, 300)).unwrap();
+        assert_eq!(right.edge, DockEdge::Right);
+        assert_eq!((right.visible_x, right.visible_y), (1540, 300));
+        assert_eq!((right.hidden_x, right.hidden_y), (1912, 300));
+    }
+
+    #[test]
+    fn calculates_top_and_bottom_hidden_strips() {
+        let top = dock((500, 3)).unwrap();
+        assert_eq!(top.edge, DockEdge::Top);
+        assert_eq!((top.visible_x, top.visible_y), (500, 0));
+        assert_eq!((top.hidden_x, top.hidden_y), (500, -92));
+
+        let bottom = dock((500, 975)).unwrap();
+        assert_eq!(bottom.edge, DockEdge::Bottom);
+        assert_eq!((bottom.visible_x, bottom.visible_y), (500, 980));
+        assert_eq!((bottom.hidden_x, bottom.hidden_y), (500, 1072));
+    }
+
+    #[test]
+    fn ignores_positions_outside_the_dock_threshold() {
+        assert!(dock((500, 400)).is_none());
+    }
+}
+
 struct AppState {
     config: Mutex<AppConfig>,
     runtime: Mutex<RuntimeStore>,
     editor: Mutex<EditorState>,
+    dock: Mutex<Option<DockState>>,
 }
 
 impl Default for RuntimeStore {
@@ -756,17 +892,108 @@ fn set_always_on_top(
     Ok(flag)
 }
 
+fn set_dock_position(
+    window: &tauri::WebviewWindow,
+    x: i32,
+    y: i32,
+) -> Result<(), String> {
+    window
+        .set_position(tauri::PhysicalPosition::new(x, y))
+        .map_err(|error| error.to_string())
+}
+
+fn reveal_and_clear_dock(window: &tauri::WebviewWindow, state: &AppState) {
+    if let Some(dock) = state.dock.lock().unwrap().take() {
+        let _ = set_dock_position(window, dock.visible_x, dock.visible_y);
+    }
+}
+
 #[tauri::command]
-fn set_window_mode(app: tauri::AppHandle, mode: String) -> Result<(), String> {
+fn dock_window_if_near_edge(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+) -> Result<Option<String>, String> {
     let window = app.get_webview_window("main").ok_or("窗口不存在")?;
+    let position = window.outer_position().map_err(|error| error.to_string())?;
+    let size = window.outer_size().map_err(|error| error.to_string())?;
+    let monitor = window
+        .current_monitor()
+        .map_err(|error| error.to_string())?
+        .ok_or("未找到当前显示器")?;
+    let scale = window.scale_factor().map_err(|error| error.to_string())?;
+    let threshold = (20.0 * scale).round() as i32;
+    let reveal_strip = (8.0 * scale).round().max(4.0) as i32;
+    let work_area = monitor.work_area();
+    let dock = calculate_dock_state(
+        (position.x, position.y),
+        (size.width as i32, size.height as i32),
+        (work_area.position.x, work_area.position.y),
+        (work_area.size.width as i32, work_area.size.height as i32),
+        threshold,
+        reveal_strip,
+    );
+    let Some(dock) = dock else {
+        state.dock.lock().unwrap().take();
+        return Ok(None);
+    };
+    let edge = dock.edge.label().to_owned();
+    *state.dock.lock().unwrap() = Some(dock);
+    set_dock_position(&window, dock.hidden_x, dock.hidden_y)?;
+    Ok(Some(edge))
+}
+
+#[tauri::command]
+fn reveal_docked_window(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+) -> Result<Option<String>, String> {
+    let window = app.get_webview_window("main").ok_or("窗口不存在")?;
+    let dock = *state.dock.lock().unwrap();
+    if let Some(dock) = dock {
+        set_dock_position(&window, dock.visible_x, dock.visible_y)?;
+        return Ok(Some(dock.edge.label().to_owned()));
+    }
+    Ok(None)
+}
+
+#[tauri::command]
+fn hide_docked_window(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+) -> Result<Option<String>, String> {
+    let window = app.get_webview_window("main").ok_or("窗口不存在")?;
+    let dock = *state.dock.lock().unwrap();
+    if let Some(dock) = dock {
+        set_dock_position(&window, dock.hidden_x, dock.hidden_y)?;
+        return Ok(Some(dock.edge.label().to_owned()));
+    }
+    Ok(None)
+}
+
+#[tauri::command]
+fn undock_window(app: tauri::AppHandle, state: tauri::State<AppState>) -> Result<(), String> {
+    let window = app.get_webview_window("main").ok_or("窗口不存在")?;
+    reveal_and_clear_dock(&window, &state);
+    Ok(())
+}
+
+#[tauri::command]
+fn set_window_mode(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+    mode: String,
+) -> Result<(), String> {
+    let window = app.get_webview_window("main").ok_or("窗口不存在")?;
+    reveal_and_clear_dock(&window, &state);
     let position = window.outer_position().ok();
     let (w, h, min_h) = if mode == "capsule" {
-        (380.0, 96.0, 96.0)
+        (380.0, 100.0, 100.0)
     } else if mode == "editor" {
         // 编辑器模式：侧边栏 380 + 编辑器 380 并排
-        (760.0, 680.0, 320.0)
+        (760.0, 615.0, 320.0)
     } else {
-        (380.0, 680.0, 320.0)
+        // 主窗口在原 615px 基线上增加约 10%，仍保持明显低于全屏高度。
+        (380.0, 677.0, 320.0)
     };
     window
         .set_min_size(Some(tauri::LogicalSize::new(300.0, min_h)))
@@ -788,11 +1015,12 @@ fn fit_window_height(app: tauri::AppHandle, height: f64) -> Result<(), String> {
     let scale = window.scale_factor().map_err(|e| e.to_string())?;
     let size = window.inner_size().map_err(|e| e.to_string())?;
     let w = size.width as f64 / scale;
-    let mut h = height.clamp(320.0, 1200.0);
+    let mut max_h = (w * 1.78).clamp(560.0, 720.0);
     if let Ok(Some(monitor)) = window.current_monitor() {
-        let max_h = monitor.size().height as f64 / scale - 40.0;
-        h = h.min(max_h);
+        let monitor_h = monitor.size().height as f64 / scale;
+        max_h = max_h.min(monitor_h * 0.82);
     }
+    let h = height.clamp(320.0, max_h.max(320.0));
     window.set_resizable(true).map_err(|e| e.to_string())?;
     window
         .set_size(tauri::LogicalSize::new(w, h))
@@ -804,8 +1032,9 @@ fn fit_window_height(app: tauri::AppHandle, height: f64) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn hide_window(app: tauri::AppHandle) {
+fn hide_window(app: tauri::AppHandle, state: tauri::State<AppState>) {
     if let Some(window) = app.get_webview_window("main") {
+        reveal_and_clear_dock(&window, &state);
         let _ = window.hide();
     }
 }
@@ -833,6 +1062,7 @@ pub fn run() {
                     tabs: Vec::new(),
                     active: -1,
                 }),
+                dock: Mutex::new(None),
             });
             // 预创建独立编辑器窗口（隐藏，按需 show）：避免运行时同步建窗阻塞主线程
             {
@@ -876,6 +1106,8 @@ pub fn run() {
             window.on_window_event(move |event| {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
+                    let state = w.app_handle().state::<AppState>();
+                    reveal_and_clear_dock(&w, &state);
                     let _ = w.hide();
                 }
             });
@@ -903,6 +1135,8 @@ pub fn run() {
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => {
                         if let Some(w) = app.get_webview_window("main") {
+                            let state = app.state::<AppState>();
+                            reveal_and_clear_dock(&w, &state);
                             let _ = w.show();
                             let _ = w.set_focus();
                         }
@@ -945,6 +1179,10 @@ pub fn run() {
             set_wallpaper,
             clear_wallpaper,
             set_wallpaper_opacity,
+            dock_window_if_near_edge,
+            reveal_docked_window,
+            hide_docked_window,
+            undock_window,
             set_window_mode,
             fit_window_height,
             hide_window,
