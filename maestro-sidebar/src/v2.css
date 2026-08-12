@@ -854,7 +854,15 @@ body[data-docked="bottom"] { --dock-reveal-x: 0; --dock-reveal-y: 6px; }
 body.dock-revealed .world { animation: dock-reveal-in .16s ease-out; }
 
 /* 统一按压反馈 */
-.sess-toggle:active, .run-trigger:active, .sh:active, .ib:active, .back-btn:active, .expand-btn:active, .more:active, .mp-row:active { background: var(--active-soft); }
+.sess-toggle:active, .run-trigger:active, .sh:active, .ib:active, .back-btn:active, .expand-btn:active, .more:active, .mp-row:active,
+.ov-head:active, .sh-go:active, .ke:active, .ws-item:active, .sb-global:active, .sb-ws:active, .receipt-chip:active, .fchip:active, .gk-item:active { background: var(--active-soft); }
+
+/* 通用禁用态（chat 工具条以外的普通按钮此前无统一视觉） */
+.ib:disabled, .mp-row:disabled, .sh-go:disabled, .expand-btn:disabled, .fchip:disabled, .sb-global:disabled, .sb-ws:disabled {
+  opacity: .45;
+  cursor: default;
+  pointer-events: none;
+}
 
 /* 程序化焦点在全部主题可见 */
 button:focus-visible,

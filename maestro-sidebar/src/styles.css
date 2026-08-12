@@ -322,7 +322,7 @@ input[type="range"]:focus-visible { outline: 2px solid var(--focus); outline-off
   right: 10px;
   bottom: 40px;
   width: 260px;
-  max-height: 320px;
+  max-height: min(320px, calc(100vh - 80px));
   overflow-y: auto;
   background: var(--popover);
   border: 1px solid var(--border);

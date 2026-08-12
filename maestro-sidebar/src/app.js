@@ -734,6 +734,9 @@ function bindEvents() {
     try {
       await invoke('set_always_on_top', { flag });
       applyTop(flag);
+    } catch {
+      // 胶囊无状态栏：用上下文 meta 短暂反馈失败（下次渲染自动覆盖）
+      $('capContextMeta').textContent = '置顶设置失败';
     } finally {
       btn.disabled = false;
       toggleCapsuleMenu(false);
@@ -807,7 +810,10 @@ function bindEvents() {
     wpTimer = setTimeout(async () => {
       try {
         config = await invoke('set_wallpaper_opacity', { opacity: Number(v) / 100 });
-      } catch { /* 保留当前预览 */ }
+      } catch {
+        // 本地预览保留，但持久化失败要可感知
+        $('liveStatus').textContent = '透明度未保存（重启后将还原）';
+      }
     }, 80);
   });
   $('btnWallpaperClear').addEventListener('click', async () => {
