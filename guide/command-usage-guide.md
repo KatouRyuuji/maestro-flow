@@ -368,8 +368,7 @@ maestro session status                                  # 项目仪表板
 | `--template <name>` | 预定义策略：`performance` / `memory-leak` / `race-condition` / `regression` / `crash` |
 | `--skip-fix` | 仅分析，不执行修复 |
 | `--skip-generalize` | 跳过泛化扫描 |
-| `--auto` | CLI delegate 不需确认 |
-| `-y` | 自动确认所有决策 |
+| `-y` | 自动确认所有决策（含 delegate/agent 确认，决策记为 `deferred`） |
 | `-c` | 恢复最近会话 |
 
 **输出**：`session.json` + `evidence.ndjson` + `explore.json` + `understanding.md`（9 节）

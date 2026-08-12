@@ -2,7 +2,7 @@
 name: maestro-odyssey
 disable-model-invocation: true
 description: "Long-running iterative cycle — one entry, six modes (debug|improve|planex|review|security|ui). Shared archaeology/audit → fix → verify → generalize → discover → persist skeleton with mode-specific dimensions. User-invoked campaign entry; single-step fixes route via /maestro-next"
-argument-hint: "<intent> --mode debug|improve|planex|review|security|ui [--auto] [-y] [-c]"
+argument-hint: "<intent> --mode debug|improve|planex|review|security|ui [-y] [-c]"
 allowed-tools:
   - Read
   - Write
@@ -24,6 +24,8 @@ contract:
 <required_reading>
 @~/.maestro/workflows/run-mode.md
 </required_reading>
+
+If any required file above was not expanded into context by the host, or its content is no longer in context, Read it explicitly before executing any step.
 
 <deferred_reading>
 - [odyssey-base.md](~/.maestro/workflows/odyssey-base.md) — read after mode resolved for shared back-half (A_INTAKE, A_RESUME, GENERALIZE → DISCOVER → RECORD → END)
@@ -82,7 +84,7 @@ On mode resolved: read the deferred workflow file for that mode + odyssey-base.m
 <context>
 $ARGUMENTS
 
-**Universal flags:** `--mode <name>` mode selector | `--skip-fix` audit/diagnose only, skip fix+verify | `--skip-generalize` skip GENERALIZE+DISCOVER | `--auto` skip delegate/agent confirmation in execution phases only (decisions → `deferred`); does NOT affect mode selection or INTAKE interactions — mode ambiguity still triggers [@ask] or E000 | `-y` skip all confirmation interactions, use default choices; does NOT auto-mark decisions as deferred (use `--auto` for delegate confirmation skip); never bypasses mode ambiguity (E000), INTAKE gate blockers, escalation | `-c` resume most recent unfinished session of the SAME mode; if --mode conflicts with resumed session's mode → E003 (mode mismatch); no history → ignore -c, create new session | `--heartbeat` /loop periodic progress
+**Universal flags:** `--mode <name>` mode selector | `--skip-fix` audit/diagnose only, skip fix+verify | `--skip-generalize` skip GENERALIZE+DISCOVER | `-y` skip all confirmation interactions (including delegate/agent confirmations in execution phases), use default choices; decisions skipped this way are recorded as `deferred`; never bypasses mode ambiguity (E000), INTAKE gate blockers, escalation | `-c` resume most recent unfinished session of the SAME mode; if --mode conflicts with resumed session's mode → E003 (mode mismatch); no history → ignore -c, create new session | `--heartbeat` /loop periodic progress
 
 **Mode-scoped flags:**
 
@@ -101,16 +103,7 @@ $ARGUMENTS
 
 Mode-scoped flags passed to inapplicable mode: emit W008 warning and ignore the flag.
 
-**Run creation** (per run-mode.md §Start or Resume):
-```bash
-# command-name is odyssey-{mode} — resolves the mode's own prepare contract and workflow
-maestro run create odyssey-<mode> \
-  --session YYYYMMDD-odyssey-{mode}-{topic} \
-  --intent "<short goal phrase>" \
-  [-- flags...]
-```
-
-Compatibility: `maestro session start` is an alias for `maestro run create` (see companion.md). Both resolve the same lifecycle.
+**Run creation**: follow `run-mode.md` exactly. Negotiate capabilities, create or resolve the explicit Session identity, start a bounded Execution with the complete audited acquisition options, then invoke the complete fenced `maestro run create odyssey-<mode>` option set with the mode arguments. Never abbreviate or omit the Execution locator, revision, or private lease claim in an executable command.
 
 **Session**: `{run_dir}/outputs/`
 **Output**: `session.json` | `evidence.ndjson` | `understanding.md` | `explore.json` (debug/review only)

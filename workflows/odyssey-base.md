@@ -49,7 +49,7 @@ Artifact paths are declared in each mode's `prepare/odyssey-<mode>.md` contract;
 {
   "session_id": "{mode}-odyssey-{YYYYMMDD-HHmmss}",
   "current_state": "S_INTAKE",
-  "flags": { "skip_fix": false, "skip_generalize": false, "auto": false, "auto_confirm": false },
+  "flags": { "skip_fix": false, "skip_generalize": false, "auto_confirm": false },
   "phase_goals": [], "phase_goals_all_done": false,
   "self_iteration_log": [],
   "cross_phase_loops": 0, "max_loops": 5,

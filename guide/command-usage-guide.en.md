@@ -355,8 +355,7 @@ Academic research and deep improvement workflows — 5 commands covering debuggi
 | `--template <name>` | Predefined strategy: `performance` / `memory-leak` / `race-condition` / `regression` / `crash` |
 | `--skip-fix` | Analysis only, no fix execution |
 | `--skip-generalize` | Skip generalization scan |
-| `--auto` | CLI delegates without confirmation |
-| `-y` | Auto-confirm all decisions |
+| `-y` | Auto-confirm all decisions (including delegate/agent confirmations; decisions recorded as `deferred`) |
 | `-c` | Resume most recent session |
 
 **Output**: `session.json` + `evidence.ndjson` + `explore.json` + `understanding.md` (9 sections)

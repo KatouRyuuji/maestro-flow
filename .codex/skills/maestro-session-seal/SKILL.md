@@ -31,8 +31,10 @@ version: 0.5.69
 @~/.maestro/workflows/codex-run-mode.md
 </required_reading>
 
+If any required file above was not expanded into context by the host, or its content is no longer in context, Read it explicitly before executing any step.
+
 <purpose>
-Seal a completed session: verify all Runs are sealed, review the durable knowledge candidate backlog, mark the Session as sealed, and recommend the next dep-ready Session from the DAG.
+Seal a completed bounded Execution after verifying all Runs are immutable and terminal, review the durable knowledge candidate backlog, and recommend the next dep-ready Session from the DAG.
 
 Run completion already stages accepted decisions, locked constraints, and explicit `maestro knowledge stage` entries. This command reviews those receipts; it does not re-extract the same artifacts or write project knowledge through a second path.
 </purpose>
@@ -81,11 +83,11 @@ Note: maestro-next suggests session-seal when 'Tests green + active session'. Th
    - `-y` may run `--all`, which promotes all eligible candidates (observed-only emits a warning) and skips review-required and suppressed candidates. It MUST NOT auto-resolve a candidate without explicit user selection.
 8. For a replacement candidate, confirm `--as supersede` and then promote it; promotion creates the successor and links the evolution chain. For coexisting valid rules, confirm `related` or `conflict` as appropriate. Never direct-write a candidate that was already promoted successfully.
 
-### Step 3: Seal Session
+### Step 3: Seal Execution
 
-1. Call `maestro session seal {session_id}` (`--json` emits the canonical machine envelope)
-2. CLI writes `session.json.lifecycle.sealed_at` and `seal_summary`
-3. CLI updates `state.json.sessions[].status` to `sealed`
+1. Resolve the exact current Execution and private claim from the retained `run-response/1.1` state.
+2. Call the complete `maestro execution seal` command from `run-mode.md`, supplying the exact Session/Execution locator, request ID, Execution and activity revisions, owner/epoch/lease claim, audit actor/reason/evidence, outcome, summary, and `--json`.
+3. Verify `execution-seal-receipt/1.0`; never mutate Session lifecycle state or edit runtime-owned protocol JSON.
 
 ### Step 4: DAG Progression
 

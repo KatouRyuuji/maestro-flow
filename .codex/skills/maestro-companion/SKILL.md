@@ -35,8 +35,10 @@ version: 0.5.69
 @~/.maestro/workflows/codex-run-mode.md
 </required_reading>
 
+If any required file above was not expanded into context by the host, or its content is no longer in context, Read it explicitly before executing any step.
+
 <purpose>
-Minimal-run execution channel. Full LLM capability with minimal protocol: one `session start` + one `session done`, evidence appended to `{run_dir}/evidence/companion-log.md`.
+Minimal-run execution channel. Full LLM capability with one bounded Execution/Run and evidence appended to `{run_dir}/evidence/companion-log.md`.
 
 Use when:
 - Intent is mechanically clear (no design decisions needed; file count irrelevant)
@@ -64,7 +66,7 @@ Knowledge utilities (note/log/promote) are available via `/maestro-knowledge`.
 </context>
 
 <invariants>
-1. Execute mode uses only `session start` + `session done`.
+1. Execute mode follows the exact Session identity -> bounded Execution -> Run lifecycle in `run-mode.md`.
 2. Evidence is append-only, non-formal (never enters gates or artifact registry)
 3. No auto-orchestration — executes directly, never creates chains
 </invariants>
@@ -73,15 +75,11 @@ Knowledge utilities (note/log/promote) are available via `/maestro-knowledge`.
 
 ## Execute (default)
 
-Linear: create → explore → confirm → do → seal.
+Linear: create identity/Execution/Run -> explore -> confirm -> do -> complete Run -> seal Execution.
 
 ### 1. Create
 
-```bash
-maestro session start "<intent>" --chain companion --session YYYYMMDD-companion-<topic> --arg "<intent>" --workflow-root .
-```
-
-Compatibility spelling for older callers: `maestro run create companion --session YYYYMMDD-companion-<topic> --intent "<intent>" --arg "<intent>" --workflow-root .`. The intent is Session metadata only; pass the same text with `--arg` because it is the required command arguments payload.
+Follow the self-start flow in `run-mode.md`: negotiate capabilities, create or resolve the explicit Session identity, start the bounded Execution with the complete audited acquisition option set, then invoke the complete fenced `maestro run create companion` option set with `--intent "<intent>"` and `--arg "<intent>"`. Intent is Session metadata only; `--arg` supplies the required command arguments. Do not use a Session lifecycle alias or omit the Execution locator, revision, or private lease claim.
 
 Init `{run_dir}/evidence/companion-log.md`:
 ```markdown
@@ -142,7 +140,8 @@ Before completion, put accepted decisions/locked constraints in `report.md`. If 
 
 ```bash
 maestro knowledge stage knowhow "<title>" "<content>" --run <run_id>
-maestro session done <run_id> --verdict done --workflow-root .
+# Then use the complete fenced `maestro run complete` and `maestro execution seal`
+# commands from run-mode.md with the current locator, fence, and private claim.
 ```
 
 Display: `Companion done. Run: {run_id} | Evidence: {path}`

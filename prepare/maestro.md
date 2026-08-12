@@ -1,7 +1,7 @@
 ---
 name: maestro
 description: Intent-to-chain planner over the canonical Session/Run lifecycle
-argument-hint: <intent> [-y] [-c] [--amend] [--dry-run]
+argument-hint: <intent> [-y] [-c] [--amend]
 contract:
   consumes: []
   produces: []
@@ -26,7 +26,6 @@ Maestro 是意图到链的规划器。本文件定义 **公共接口**、**分�
 | `-y` | 自动确认低风险分类和 proposal；不越高风险、低置信度、边界歧义、drift 熔断 |
 | `-c` | 继续唯一 live compatible Session；多候选必须询问；paused 进入 audited recovery |
 | `--amend` | 修改唯一 live Session 的目标；剩余文本为 change request |
-| `--dry-run` | 显示 chain 后结束，不执行 |
 
 其余文本全部视为 intent。Platform、roadmap、quality、模板复用、并行与对抗策略由 intent、Session state、Skill contract 和 host runtime 推断。
 
