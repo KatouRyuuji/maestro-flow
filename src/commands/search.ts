@@ -19,6 +19,7 @@ import { basename, extname, resolve } from 'node:path';
 import { truncate, extractSnippet, highlightTerms } from '../utils/cli-format.js';
 import { knowhowFileToWikiId } from '../utils/frontmatter.js';
 import { isDeprecatedKnowledgeEntry } from '../utils/knowledge-lifecycle.js';
+import { recordSearchUsage } from './search-usage.js';
 import type { SourceType } from '../graph/kg/db/types.js';
 import type { WikiIndexer } from '#maestro-dashboard/wiki/wiki-indexer.js';
 import type {
@@ -553,6 +554,7 @@ export async function runUnifiedSearch(q: string, opts: UnifiedSearchOptions & {
       results.map(result => ({ id: result.id, sourceRef: result.sourceRef })),
       opts.evidenceRecorder,
       opts.evidenceQueryId ?? null,
+      [q],
     );
   }
 
@@ -575,6 +577,7 @@ function incrementSearchHitsAsync(
   entries: Array<{ id: string; sourceRef?: string | null }>,
   evidenceRecorder?: (event: SearchEvidenceEvent) => void,
   queryId: string | null = null,
+  contexts: string[] = [],
 ): void {
   const projectRoot = resolve('.');
   Promise.all([
@@ -600,6 +603,8 @@ function incrementSearchHitsAsync(
         queryId,
       });
       mg.getConnection().transaction(() => store.incrementImpressions(existingIds));
+      // 搜索用量同步写入 learning 统计（高频知识面板数据源），best-effort
+      recordSearchUsage(projectRoot, { success: true, contexts });
     } finally {
       mg.close();
     }
@@ -802,6 +807,8 @@ export async function runKgSearch(
             .map(result => result.graphId);
           const existingIds = [...mg.getQueryBuilder().getNodesByIds(knowledgeIds).keys()];
           mg.getConnection().transaction(() => store.incrementImpressions(existingIds));
+          // 搜索用量同步写入 learning 统计（高频知识面板数据源），best-effort
+          recordSearchUsage(projectRoot, { success: true, contexts: [q] });
         } catch (error) {
           if (process.env.MAESTRO_DEBUG === '1') {
             console.error(
@@ -1060,6 +1067,7 @@ export async function runMixedSearch(
         exposedWiki,
         options.evidenceRecorder,
         options.evidenceQueryId ?? null,
+        [q],
       );
     }
   }
