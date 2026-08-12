@@ -58,6 +58,8 @@ const CALLS_LIMIT = 8;
 const SESSIONS_LIMIT = 8;
 let callsExpanded = false;
 let sessionsListExpanded = false;
+// 调用筛选：状态 / 工具（chips）
+let callsFilter = { status: '', tool: '' };
 let liveCallRefreshTimer = null;
 let capsulePane = 'session';
 const callDetailUiState = new Map();
@@ -72,6 +74,16 @@ let dockHideTimer = null;
 // 搜索：区块列表搜索（主视图）+ 详情页搜索
 const listSearch = { calls: '', sessions: '', knowledge: '' };
 let detailSearch = '';
+// 语义搜索（知识详情页）：maestro search 桥接
+let semanticMode = false;
+let semanticReqId = 0;
+let semanticResults = null; // null=loading | {results,error,...}
+let semanticTimer = null;
+// 系统通知：状态迁移检测（快照对比，只通知一次）
+const notifySeen = { calls: new Map(), sessions: new Map() };
+let notifyReady = false;
+// 知识统计摘要：md 类计数（specs/memory/knowhow/issues 行数）变化 → 条目缓存失效
+let lastKbStatsDigest = '';
 // 高频知识缓存（30s TTL）
 let topKbCache = { ts: 0, items: null };
 const TOP_KB_TTL = 30 * 1000;
@@ -146,6 +158,7 @@ async function init() {
   } catch { config = { configured: false, roots: [], always_on_top: false }; }
   applyTop(config.always_on_top);
   applyWallpaper(config);
+  applyGlobalMode();
 
   if (!config.configured) {
     $('setup').hidden = false;
@@ -172,19 +185,24 @@ async function init() {
   try {
     snapshot = await invoke('get_snapshot');
     cacheSnapshot(snapshot);
+    seedNotifyState(snapshot);
   } catch (err) {
     snapshot = { workspace: '未连接', active_session_id: null, sessions: [], calls: [], knowledge: { total: 0 } };
     $('liveStatus').textContent = '连接中断';
     $('liveDot').classList.add('stale');
     showBootError(`首次快照失败：${String(err && err.message ? err.message : err)}`);
+    seedNotifyState(snapshot);
   }
   render();
 
   // 后端推送：快照变化即重渲染（指纹去重在 Rust 端）；菜单打开或焦点在行内时保留焦点
+  let pollFallback = false;
   try {
     await listen('snapshot-changed', (event) => {
       snapshot = event.payload;
       cacheSnapshot(snapshot);
+      notifyMigration(snapshot);
+      refreshKbCacheOnStatsChange(snapshot);
       const digest = snapshot?.learning_top_digest || '';
       if (digest !== lastLearningDigest) {
         lastLearningDigest = digest;
@@ -192,6 +210,7 @@ async function init() {
       }
       scheduleLiveCallDetailRefresh();
       if (!$('menuPop').hidden) return;
+      $('liveDot').classList.remove('stale');
       $('liveStatus').textContent = '实时监听';
       renderWithFocus();
     });
@@ -200,6 +219,7 @@ async function init() {
     });
     $('liveStatus').textContent = '实时监听';
   } catch {
+    pollFallback = true;
     $('liveStatus').textContent = '轮询模式';
     $('liveDot').classList.add('stale');
   }
@@ -208,9 +228,16 @@ async function init() {
   setInterval(async () => {
     try {
       const s = await invoke('get_snapshot');
+      // 连接恢复：清除 stale 状态点并复位文案（轮询降级模式保留「轮询模式」提示）
+      if ($('liveDot').classList.contains('stale')) {
+        $('liveDot').classList.remove('stale');
+        $('liveStatus').textContent = pollFallback ? '轮询模式' : '实时监听';
+      }
       if (JSON.stringify(s) !== JSON.stringify(snapshot)) {
         snapshot = s;
         cacheSnapshot(snapshot);
+        notifyMigration(snapshot);
+        refreshKbCacheOnStatsChange(snapshot);
         const digest = s?.learning_top_digest || '';
         if (digest !== lastLearningDigest) {
           lastLearningDigest = digest;
@@ -431,6 +458,14 @@ function bindEvents() {
   $('ovRunningHead').addEventListener('click', () => openDetail('sessions', 'all'));
   $('ovTopKbHead').addEventListener('click', () => openDetail('knowledge', 'all'));
 
+  // 调用筛选 chips 容器（搜索框下方，内容由 renderCallFilterChips 刷新）
+  const callsSearch = $('callsSearch');
+  if (callsSearch) {
+    const filterRow = el('div', 'filter-chips');
+    filterRow.id = 'callsFilterRow';
+    callsSearch.closest('.sec-search').after(filterRow);
+  }
+
   // 区块搜索框（输入即过滤；Esc/清除按钮复位）
   for (const name of ['calls', 'sessions', 'knowledge']) {
     const input = $(`${name}Search`);
@@ -464,8 +499,25 @@ function bindEvents() {
 
   // 详情页搜索栏
   $('detailSearch').addEventListener('input', onDetailSearchInput);
+  $('detailSearch').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && view?.kind === 'knowledge' && semanticMode) {
+      runSemanticSearch(detailSearch);
+    }
+  });
   $('detailSearchClear').addEventListener('click', () => {
     $('detailSearch').value = '';
+    onDetailSearchInput();
+    $('detailSearch').focus();
+  });
+  // 语义搜索 toggle（知识详情页）
+  $('semToggle').addEventListener('click', () => {
+    semanticMode = !semanticMode;
+    semanticResults = null;
+    semanticReqId += 1;
+    $('detailSearch').value = '';
+    detailSearch = '';
+    $('detailSearchClear').hidden = true;
+    $('detailSearchCount').hidden = true;
     onDetailSearchInput();
     $('detailSearch').focus();
   });
@@ -477,6 +529,33 @@ function bindEvents() {
     e.preventDefault();
     const first = document.querySelector('#listView .sec-search input');
     if (first && !first.closest('.sec').classList.contains('closed')) first.focus();
+  });
+
+  // 键盘导航：主列表 j/k 上下移动、Enter 聚焦首个可见行、r 刷新
+  document.addEventListener('keydown', (e) => {
+    if (view || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+    const tag = document.activeElement && document.activeElement.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    const key = e.key.toLowerCase();
+    if (key === 'r') {
+      e.preventDefault();
+      $('btnRefresh').click();
+      return;
+    }
+    if (key !== 'j' && key !== 'k' && key !== 'Enter') return;
+    e.preventDefault();
+    // 当前区块内的可交互行（.row / .ke / 会话 toggle），仅可见项
+    const section = document.activeElement && document.activeElement.closest('.sec');
+    const rows = Array.from((section || document).querySelectorAll('.rows .row, .ke, .srow .sess-toggle'))
+      .filter((n) => n.offsetParent !== null);
+    if (!rows.length) return;
+    const idx = rows.indexOf(document.activeElement);
+    if (key === 'Enter') {
+      if (idx < 0) rows[0].focus();
+      return; // 焦点已在 button 上时 Enter 由浏览器原生触发 click
+    }
+    const next = key === 'j' ? Math.min(idx + 1, rows.length - 1) : Math.max(idx - 1, 0);
+    if (next !== idx) rows[next].focus();
   });
 
   // 底部渐隐与时钟
@@ -495,10 +574,13 @@ function bindEvents() {
     try {
       snapshot = await invoke('get_snapshot');
       cacheSnapshot(snapshot);
+      notifyMigration(snapshot);
+      refreshKbCacheOnStatsChange(snapshot);
       renderWithFocus();
       // 高频知识同步强刷
       await loadTopKnowledge(true);
       if (!view) renderOverview();
+      $('liveDot').classList.remove('stale');
       $('liveStatus').textContent = `已更新 ${fmtClock2(new Date().toISOString())}`;
     } catch (err) {
       $('liveStatus').textContent = `刷新失败${err && err.message ? ' · ' + err.message : ''}`;
@@ -538,6 +620,29 @@ function bindEvents() {
       btn.removeAttribute('aria-busy');
     }
   });
+  // 开机自启开关
+  const applyAutoStart = (flag) => {
+    const btn = $('btnAutoStart');
+    btn.setAttribute('aria-checked', String(flag));
+    btn.querySelector('i').textContent = flag ? '开' : '关';
+  };
+  $('btnAutoStart').addEventListener('click', async () => {
+    const btn = $('btnAutoStart');
+    const flag = btn.getAttribute('aria-checked') !== 'true';
+    btn.disabled = true;
+    btn.setAttribute('aria-busy', 'true');
+    try {
+      await invoke('set_autostart', { flag });
+      applyAutoStart(flag);
+      $('liveStatus').textContent = flag ? '已开启开机自启' : '已关闭开机自启';
+    } catch {
+      $('liveStatus').textContent = '自启设置失败';
+    } finally {
+      btn.disabled = false;
+      btn.removeAttribute('aria-busy');
+    }
+  });
+  invoke('get_autostart').then(applyAutoStart).catch(() => { /* 插件不可用时保持关 */ });
   $('btnCapsule').addEventListener('click', enterCapsule);
   $('btnHide').addEventListener('click', () => {
     resetDockClient();
@@ -569,6 +674,26 @@ function bindEvents() {
   $('btnWs').addEventListener('click', (e) => {
     e.stopPropagation();
     toggleWsPop();
+  });
+  // 全局模式切换（全部工程 vs 激活单工程）
+  $('btnGlobal').addEventListener('click', async () => {
+    const btn = $('btnGlobal');
+    const flag = !Boolean(config?.global_mode);
+    btn.disabled = true;
+    try {
+      await invoke('set_global_mode', { flag });
+      config = await invoke('get_config');
+      snapshot = await invoke('get_snapshot');
+      cacheSnapshot(snapshot);
+      seedNotifyState(snapshot);
+      applyGlobalMode();
+      render();
+      $('liveStatus').textContent = flag ? '已切换到全局模式' : '已切换到单工程模式';
+    } catch {
+      $('liveStatus').textContent = '全局模式切换失败';
+    } finally {
+      btn.disabled = false;
+    }
   });
   // 点击外部关闭选择弹层或胶囊菜单
   document.addEventListener('click', (e) => {
@@ -953,12 +1078,82 @@ async function cycleWorkspace() {
 }
 
 // ---------------------------------------------------------------------------
+// 系统通知：状态迁移检测
+// 规则：call running/queued → done/error；session running/paused → blocked/failed。
+// 首次快照只登记状态（seed），之后每次快照更新检测迁移并去重（迁移只发生一次）。
+// ---------------------------------------------------------------------------
+
+function seedNotifyState(snap) {
+  notifySeen.calls = new Map((snap.calls || []).map((c) => [c.execId, callStatus(c)]));
+  notifySeen.sessions = new Map(
+    (snap.sessions || []).map((s) => [s.session_id, String(s.status || '').toLowerCase()]),
+  );
+  notifyReady = true;
+  lastKbStatsDigest = JSON.stringify(snap.knowledge || null);
+}
+
+/** 知识统计变化 → 条目列表缓存失效（md 类计数变化即文件增删/编辑） */
+function refreshKbCacheOnStatsChange(snap) {
+  const digest = JSON.stringify(snap?.knowledge || null);
+  if (digest !== lastKbStatsDigest) {
+    lastKbStatsDigest = digest;
+    invalidateKnowledgeCaches();
+  }
+}
+
+function notifyMigration(snap) {
+  if (!snap || !notifyReady) return;
+  const calls = snap.calls || [];
+  for (const c of calls) {
+    const prev = notifySeen.calls.get(c.execId);
+    const now = callStatus(c);
+    if (prev !== undefined && prev !== now
+      && ['running', 'queued'].includes(prev)
+      && ['done', 'error'].includes(now)) {
+      const tool = TOOL_LABEL[c.tool] || c.tool || 'Agent';
+      const title = now === 'done' ? `Agent 完成 · ${tool}` : `Agent 失败 · ${tool}`;
+      const body = oneLine(c.prompt || '无提示词').slice(0, 120);
+      invoke('notify', { title, body }).catch(() => {});
+    }
+    notifySeen.calls.set(c.execId, now);
+  }
+  // 清理已不在快照中的记录（防止 map 无限增长）
+  const seenCalls = new Set(calls.map((c) => c.execId));
+  for (const k of notifySeen.calls.keys()) {
+    if (!seenCalls.has(k)) notifySeen.calls.delete(k);
+  }
+
+  const sessions = snap.sessions || [];
+  for (const s of sessions) {
+    const prev = notifySeen.sessions.get(s.session_id);
+    const now = String(s.status || '').toLowerCase();
+    if (prev !== undefined && prev !== now
+      && ['running', 'active', 'executing', 'paused'].includes(prev)
+      && ['blocked', 'failed', 'error'].includes(now)) {
+      const body = oneLine(s.intent || s.session_id).slice(0, 120);
+      invoke('notify', { title: '会话受阻', body }).catch(() => {});
+    }
+    notifySeen.sessions.set(s.session_id, now);
+  }
+}
+
+function applyGlobalMode() {
+  const on = Boolean(config?.global_mode);
+  const btn = $('btnGlobal');
+  btn.setAttribute('aria-pressed', String(on));
+  $('globalName').textContent = on ? '全局' : '单工程';
+  btn.title = on ? '全局模式：观察全部工程（点击切回单工程）' : '单工程模式：仅观察激活工程（点击切换全局）';
+}
+
+// ---------------------------------------------------------------------------
 // 渲染主入口
 // ---------------------------------------------------------------------------
 
 function render() {
   if (!snapshot) return;
-  $('wsChip').textContent = snapshot.workspace || '未连接';
+  $('wsChip').textContent = config?.global_mode && workspaces.length > 1
+    ? `全局 · ${workspaces.length} 工程`
+    : (snapshot.workspace || '未连接');
   $('wsChip').title = snapshot.workspace || '';
 
   // 详情视图
@@ -970,6 +1165,7 @@ function render() {
     else if (view.kind === 'sessions') renderSessionsListDetail();
     else if (view.kind === 'knowledge') renderKnowledgeDetail();
     else if (view.kind === 'knowledge-item') renderKnowledgeItemDetail();
+    else if (view.kind === 'pending') renderPendingDetail();
     else renderSessionDetail();
   } else {
     $('detailView').hidden = true;
@@ -1247,11 +1443,20 @@ function onDetailSearchInput() {
   detailSearch = nextSearch;
   $('detailSearchClear').hidden = !input.value;
   if (!view) return;
+  // 语义模式：输入即触发（防抖 300ms），回车兜底
+  if (view.kind === 'knowledge' && semanticMode) {
+    clearTimeout(semanticTimer);
+    semanticTimer = setTimeout(() => runSemanticSearch(nextSearch), 300);
+    renderKnowledgeDetail();
+    scheduleFade();
+    return;
+  }
   if (view.kind === 'call') renderCallDetail();
   else if (view.kind === 'calls') renderCallsListDetail();
   else if (view.kind === 'session') renderSessionDetail();
   else if (view.kind === 'sessions') renderSessionsListDetail();
   else if (view.kind === 'knowledge') renderKnowledgeDetail();
+  else if (view.kind === 'pending') renderPendingDetail();
   else renderKnowledgeItemDetail();
   scheduleFade();
 }
@@ -1262,13 +1467,20 @@ function updateDetailSearchUI() {
   const input = $('detailSearch');
   row.hidden = !view;
   if (!view) return;
+  // 语义搜索 toggle 仅知识详情页可用
+  const sem = $('semToggle');
+  const kbView = view.kind === 'knowledge';
+  sem.hidden = !kbView;
+  sem.setAttribute('aria-pressed', String(kbView && semanticMode));
+  sem.textContent = semanticMode ? '语义 ✓' : '语义';
   const ph = {
     call: '搜索对话 / 提示词…',
     calls: '搜索 Agent 调用…',
     session: '搜索 Run / 编排步骤…',
     sessions: '搜索会话 / Run…',
-    knowledge: '搜索知识条目…',
+    knowledge: semanticMode ? '语义搜索：wiki + 代码图谱（回车触发）…' : '搜索知识条目…',
     'knowledge-item': '搜索全文…',
+    pending: '搜索待处置候选…',
   };
   input.placeholder = ph[view.kind] || '搜索…';
   $('detailSearchCount').hidden = !detailSearch;
@@ -1281,10 +1493,14 @@ function updateDetailSearchUI() {
 function renderCalls() {
   const all = snapshot.calls || [];
   const q = listSearch.calls;
-  const calls = q ? all.filter((c) => matchCall(c, q)) : all;
-  $('callsCount').textContent = q ? `${calls.length}/${all.length}` : String(all.length);
   const searching = Boolean(q);
-  $('callsEmpty').hidden = all.length > 0 && !(searching && !calls.length);
+  const filtering = Boolean(callsFilter.status || callsFilter.tool);
+  let calls = q ? all.filter((c) => matchCall(c, q)) : all;
+  if (callsFilter.status) calls = calls.filter((c) => callStatus(c) === callsFilter.status);
+  if (callsFilter.tool) calls = calls.filter((c) => (c.tool || '') === callsFilter.tool);
+  $('callsCount').textContent = (q || filtering) ? `${calls.length}/${all.length}` : String(all.length);
+  $('callsEmpty').hidden = all.length > 0 && !((searching || filtering) && !calls.length);
+  renderCallFilterChips();
   // Section 头状态 chip：运行中调用数
   let meta = $('headCalls').querySelector('.sh-meta');
   if (meta) meta.remove();
@@ -1301,7 +1517,7 @@ function renderCalls() {
   }
   const list = $('callsList');
   list.innerHTML = '';
-  const visibleCalls = searching || callsExpanded ? calls : calls.slice(0, CALLS_LIMIT);
+  const visibleCalls = searching || filtering || callsExpanded ? calls : calls.slice(0, CALLS_LIMIT);
   for (const call of visibleCalls) list.appendChild(callRowEl(call, q));
   if (!all.length) {
     const empty = $('callsEmpty');
@@ -1311,14 +1527,14 @@ function renderCalls() {
     empty.appendChild(ic);
     empty.appendChild(el('div', '', '暂无 Agent 调用'));
     empty.appendChild(el('div', 'empty-hint', '运行一个 Agent，这里就会亮起来'));
-  } else if (searching && !calls.length) {
+  } else if ((searching || filtering) && !calls.length) {
     const empty = $('callsEmpty');
     empty.innerHTML = '';
     const ic = el('div', 'empty-ic');
     ic.appendChild(svg('i-search', 18));
     empty.appendChild(ic);
     empty.appendChild(el('div', '', `未找到匹配的调用`));
-    empty.appendChild(el('div', 'empty-hint', '换个关键词试试（提示词 / 模型 / 工具）'));
+    empty.appendChild(el('div', 'empty-hint', '换个关键词或筛选条件（提示词 / 模型 / 工具）'));
   }
   const foot = $('callsFoot');
   foot.innerHTML = '';
@@ -1338,6 +1554,46 @@ function renderCalls() {
     foot.appendChild(expand);
   } else {
     foot.hidden = true;
+  }
+}
+
+/** 调用筛选 chips（状态 + 工具，工具集来自快照动态生成） */
+function renderCallFilterChips() {
+  const wrap = $('callsFilterRow');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  const statuses = [
+    ['', '全部'], ['running', '运行中'], ['error', '失败'], ['done', '完成'],
+    ['queued', '排队'], ['cancel', '取消'],
+  ];
+  for (const [val, label] of statuses) {
+    const chip = el('button', `fchip${callsFilter.status === val ? ' on' : ''}`, label);
+    chip.type = 'button';
+    chip.setAttribute('aria-pressed', String(callsFilter.status === val));
+    chip.addEventListener('click', () => {
+      callsFilter.status = callsFilter.status === val ? '' : val;
+      renderCalls();
+      fitWindow();
+      scheduleFade();
+    });
+    wrap.appendChild(chip);
+  }
+  const sep = el('span', 'fchip-sep');
+  sep.setAttribute('aria-hidden', 'true');
+  wrap.appendChild(sep);
+  const tools = [...new Set((snapshot.calls || []).map((c) => c.tool).filter(Boolean))].sort();
+  for (const t of tools) {
+    const label = TOOL_LABEL[t] || t;
+    const chip = el('button', `fchip${callsFilter.tool === t ? ' on' : ''}`, label);
+    chip.type = 'button';
+    chip.setAttribute('aria-pressed', String(callsFilter.tool === t));
+    chip.addEventListener('click', () => {
+      callsFilter.tool = callsFilter.tool === t ? '' : t;
+      renderCalls();
+      fitWindow();
+      scheduleFade();
+    });
+    wrap.appendChild(chip);
   }
 }
 
@@ -1790,6 +2046,17 @@ function renderKnowledge() {
   body.appendChild(stack);
   body.appendChild(legend);
   const foot = el('div', 'kb-foot');
+  // 待沉淀候选入口（A1）：KDC 候选 > 0 时置顶显示
+  const pc = snapshot.pending_candidates;
+  if (pc && pc.total > 0) {
+    const pend = el('button', 'expand-btn pend-btn');
+    pend.type = 'button';
+    pend.title = '会话 run 已生成待处置的知识候选（knowledge promote/review）';
+    pend.appendChild(el('span', 'pend-dot'));
+    pend.appendChild(document.createTextNode(`待处置 ${pc.total} 条候选 ›`));
+    pend.addEventListener('click', () => openDetail('pending', 'all', pend));
+    foot.appendChild(pend);
+  }
   const all = el('button', 'expand-btn', '查看全部条目 ›');
   all.type = 'button';
   all.addEventListener('click', () => openDetail('knowledge', 'all', all));
@@ -1838,9 +2105,18 @@ function kbStatusClass(status) {
   return 'st-unknown';
 }
 const KB_KIND_ORDER = [['specs', '规范'], ['memory', '记忆'], ['knowhow', '诀窍'], ['learning', '学习'], ['issues', '问题']];
+// issues 状态子分组（真实数据含 open/completed/registered；未知状态归「其他」）
+const ISSUE_STATUS_ORDER = [
+  ['open', '待处理'], ['blocked', '受阻'], ['registered', '已登记'],
+  ['draft', '草稿'], ['in_progress', '进行中'], ['completed', '已完成'], ['closed', '已关闭'],
+];
 
 function renderKnowledgeDetail() {
   if (!renderDetailState('知识积累')) return;
+  if (semanticMode) {
+    renderSemanticDetail();
+    return;
+  }
   const body = $('detailBody');
   const items = Array.isArray(detail.items) ? detail.items : [];
   const q = detailSearch;
@@ -1873,7 +2149,31 @@ function renderKnowledgeDetail() {
     head.appendChild(el('span', '', label));
     head.appendChild(el('span', 'pill', String(group.length)));
     body.appendChild(head);
-    for (const item of group) body.appendChild(kbEntryEl(item, q));
+    if (kind === 'issues') {
+      // D5：按状态子分组（open → blocked → registered → … → 其他）
+      const buckets = new Map();
+      for (const item of group) {
+        const st = String(item.status || 'open').toLowerCase();
+        if (!buckets.has(st)) buckets.set(st, []);
+        buckets.get(st).push(item);
+      }
+      for (const [st, stLabel] of ISSUE_STATUS_ORDER) {
+        const items = buckets.get(st);
+        if (!items) continue;
+        buckets.delete(st);
+        body.appendChild(el('div', 'issue-sub', `${stLabel} · ${items.length}`));
+        for (const item of items) body.appendChild(kbEntryEl(item, q));
+      }
+      if (buckets.size) {
+        const rest = [...buckets.values()].reduce((n, a) => n + a.length, 0);
+        body.appendChild(el('div', 'issue-sub', `其他 · ${rest}`));
+        for (const items of buckets.values()) {
+          for (const item of items) body.appendChild(kbEntryEl(item, q));
+        }
+      }
+    } else {
+      for (const item of group) body.appendChild(kbEntryEl(item, q));
+    }
   }
 }
 
@@ -1901,18 +2201,12 @@ function renderKnowledgeItemDetail() {
     } catch { /* 剪贴板不可用 */ }
   });
   meta.appendChild(copyBtn);
-  // markdown 类条目：独立预览窗口
+  // markdown 类条目：详情页内渲染预览 modal（md.js 共享渲染器）
   if (['specs', 'memory', 'knowhow'].includes(item.kind)) {
     const pv = el('button', 'retry-btn primary', '预览 Markdown');
     pv.type = 'button';
-    pv.title = '在独立窗口中打开渲染后的 Markdown';
-    pv.addEventListener('click', async () => {
-      try {
-        await invoke('open_md_preview', { kind: item.kind, id: item.id });
-      } catch {
-        $('liveStatus').textContent = '预览打开失败';
-      }
-    });
+    pv.title = '在当前窗口渲染 Markdown 预览';
+    pv.addEventListener('click', () => openMdPreview(String(item.content || ''), item.title || item.id));
     meta.appendChild(pv);
   }
   body.appendChild(meta);
@@ -1944,6 +2238,93 @@ function renderKnowledgeItemDetail() {
   card.appendChild(pre);
   body.appendChild(card);
 }
+/** 语义搜索详情（maestro search 桥接）：wiki + 代码图谱 */
+async function runSemanticSearch(q) {
+  const reqId = ++semanticReqId;
+  semanticResults = null; // loading
+  renderKnowledgeDetail();
+  if (!q) return;
+  try {
+    const out = await invoke('semantic_search', { query: q, limit: 10 });
+    if (reqId !== semanticReqId) return;
+    semanticResults = out || { results: [], error: '无返回' };
+  } catch (err) {
+    if (reqId !== semanticReqId) return;
+    semanticResults = { results: [], error: String(err && err.message ? err.message : err) };
+  }
+  renderKnowledgeDetail();
+}
+
+function semanticRowEl(r, q) {
+  const row = el('article', 'sem-row');
+  const head = el('div', 'sem-head');
+  head.appendChild(el('span', `bd ${r.source === 'code' ? 'st-done' : 'st-queued'}`, r.source === 'code' ? '代码' : '知识'));
+  if (r.kind) head.appendChild(el('span', 'sem-kind', r.kind));
+  const name = el('span', 'sem-name');
+  name.appendChild(highlightText(r.name || r.detail || '未命名', q));
+  name.title = r.name || '';
+  head.appendChild(name);
+  row.appendChild(head);
+  if (r.snippet) {
+    const sn = el('div', 'sem-snippet');
+    sn.appendChild(highlightText(oneLine(r.snippet), q));
+    row.appendChild(sn);
+  }
+  if (r.summary) {
+    const su = el('div', 'sem-summary');
+    su.appendChild(highlightText(oneLine(r.summary).slice(0, 240), q));
+    row.appendChild(su);
+  }
+  const foot = el('div', 'sem-foot');
+  if (r.detail) foot.appendChild(el('span', 'sem-detail', r.detail));
+  if (r.score != null) foot.appendChild(el('span', 'rt', `得分 ${(r.score * 100).toFixed(0)}`));
+  row.appendChild(foot);
+  if (r.detail) {
+    row.appendChild(copyButton(r.detail, '复制引用', '已复制引用'));
+  }
+  return row;
+}
+
+function renderSemanticDetail() {
+  const body = $('detailBody');
+  $('detailTitle').textContent = '语义搜索';
+  $('detailKind').textContent = 'SEARCH';
+  const sub = el('div', 'kb-sub');
+  sub.textContent = 'maestro search · wiki + 代码图谱混合检索 · 输入关键词后回车';
+  body.appendChild(sub);
+  const q = detailSearch;
+  if (!q) {
+    body.appendChild(el('div', 'detail-empty', '输入关键词开始语义搜索（如「门禁」「知识沉淀」）。'));
+    return;
+  }
+  if (!semanticResults) {
+    body.appendChild(el('div', 'loading-state'));
+    body.appendChild(el('div', 'loading-line'));
+    body.appendChild(el('div', 'loading-line short'));
+    body.appendChild(el('div', 'loading-line'));
+    return;
+  }
+  if (semanticResults.error) {
+    body.appendChild(el('div', 'detail-empty', `语义搜索不可用：${semanticResults.error}`));
+    const back = el('button', 'retry-btn', '切回本地搜索');
+    back.type = 'button';
+    back.addEventListener('click', () => { semanticMode = false; semanticResults = null; onDetailSearchInput(); });
+    body.appendChild(back);
+    return;
+  }
+  const results = Array.isArray(semanticResults.results) ? semanticResults.results : [];
+  $('detailSearchCount').textContent = `${results.length} 条`;
+  $('detailSearchCount').hidden = false;
+  if (!results.length) {
+    body.appendChild(el('div', 'detail-empty', '未找到相关结果。'));
+    return;
+  }
+  const rows = el('div', 'rows');
+  for (const r of results) rows.appendChild(semanticRowEl(r, q));
+  body.appendChild(rows);
+  body.appendChild(el('div', 'kb-sub', '点击「复制引用」获取路径 / id；结果来自 maestro search（wiki + 代码图谱）'));
+}
+
 // ---------------------------------------------------------------------------
 // 详情视图
 // ---------------------------------------------------------------------------
@@ -1956,11 +2337,13 @@ async function openDetail(kind, id, trigger = null, fromStack = false) {
   if (!fromStack) viewStack.push({ kind, id });
   // 重置详情搜索
   detailSearch = '';
+  semanticReqId += 1;
+  semanticResults = null;
   const dInput = $('detailSearch');
   if (dInput.value) dInput.value = '';
   $('detailSearchClear').hidden = true;
-  // 快照直供视图（全部调用 / 全部会话）：无需后端拉取
-  if (kind === 'calls' || kind === 'sessions') {
+  // 快照直供视图（全部调用 / 全部会话 / 待处置候选）：无需后端拉取
+  if (kind === 'calls' || kind === 'sessions' || kind === 'pending') {
     view = { kind, id };
     detail = { ok: true };
     detailStatus = 'ready';
@@ -2472,6 +2855,9 @@ function renderCallDetail() {
   meta.panel.appendChild(detailRow('结束', fmtFull(call.completedAt)));
   if (call.exitCode !== null && call.exitCode !== undefined) meta.panel.appendChild(detailRow('退出码', String(call.exitCode)));
   if (call.delegateStatus) meta.panel.appendChild(detailRow('委托状态', call.delegateStatus));
+  if (call.inputTokens || call.outputTokens) {
+    meta.panel.appendChild(detailRow('Token', `${fmtTokens(call.inputTokens)} in / ${fmtTokens(call.outputTokens)} out`));
+  }
   contextStack.appendChild(meta.section);
 
   const promptText = String(call.prompt || '');
@@ -2611,6 +2997,39 @@ function renderCallsListDetail() {
   for (const call of matched) rows.appendChild(callRowEl(call, q));
   body.appendChild(rows);
   body.appendChild(el('div', 'kb-sub', '点击任意调用查看完整对话与元数据'));
+  // Token 聚合：总计 + 按工具汇总（仅当前快照视窗内的记录）
+  const totals = { input: 0, output: 0 };
+  const byTool = new Map();
+  for (const c of calls) {
+    totals.input += c.inputTokens || 0;
+    totals.output += c.outputTokens || 0;
+    if (!(c.inputTokens || c.outputTokens)) continue;
+    const key = TOOL_LABEL[c.tool] || c.tool || 'Agent';
+    const t = byTool.get(key) || { input: 0, output: 0, n: 0 };
+    t.input += c.inputTokens || 0;
+    t.output += c.outputTokens || 0;
+    t.n += 1;
+    byTool.set(key, t);
+  }
+  if (totals.input || totals.output) {
+    const card = el('section', 'detail-card token-totals');
+    card.appendChild(el('h2', 'd-sec-title', `Token 消耗（快照视窗 ${calls.length} 次调用）`));
+    card.appendChild(detailRow('总计', `${fmtTokens(totals.input)} in / ${fmtTokens(totals.output)} out`));
+    for (const [tool, t] of byTool) {
+      card.appendChild(detailRow(tool, `${fmtTokens(t.input)} in / ${fmtTokens(t.output)} out · ${t.n} 次`));
+    }
+    body.appendChild(card);
+  }
+}
+
+/** 友好 token 数字：≥1000 显示 k */
+function fmtTokens(n) {
+  const v = Number(n) || 0;
+  if (v >= 1000) {
+    const k = v / 1000;
+    return `${k >= 100 ? Math.round(k) : k.toFixed(1)}k`;
+  }
+  return String(v);
 }
 
 /** 全部会话详情视图（含搜索，行内可展开 Run 时间线） */
@@ -2696,7 +3115,7 @@ function appendRunDetailSection(parent, label, items, tone) {
   parent.appendChild(section);
 }
 
-function renderRunEntry(run, session, q) {
+function renderRunEntry(run, session, q, gates) {
   const key = `${session.session_id}:${run.run_id}`;
   const verdict = String(run.verdict || run.status || 'unknown').toLowerCase();
   const attention = ['blocked', 'failed', 'needs-retry', 'done_with_concerns'].includes(verdict) || (run.concerns || []).length > 0;
@@ -2730,10 +3149,10 @@ function renderRunEntry(run, session, q) {
   const signals = el('div', 'run-signals');
   const decisions = Array.isArray(run.decisions) ? run.decisions.length : 0;
   const concerns = Array.isArray(run.concerns) ? run.concerns.length : 0;
-  const gates = Array.isArray(run.gate_ids) ? run.gate_ids.length : 0;
+  const gateCount = Array.isArray(run.gate_ids) ? run.gate_ids.length : 0;
   if (decisions) signals.appendChild(el('span', 'signal-chip decision', `决策 ${decisions}`));
   if (concerns) signals.appendChild(el('span', 'signal-chip concern', `疑虑 ${concerns}`));
-  if (gates) signals.appendChild(el('span', 'signal-chip gate', `门禁 ${gates}`));
+  if (gateCount) signals.appendChild(el('span', 'signal-chip gate', `门禁 ${gateCount}`));
   if (signals.children.length) main.appendChild(signals);
   trigger.appendChild(main);
 
@@ -2759,7 +3178,26 @@ function renderRunEntry(run, session, q) {
   }
   appendRunDetailSection(details, '决策', run.decisions, 'decision');
   appendRunDetailSection(details, '疑虑与警告', run.concerns, 'concern');
-  appendRunDetailSection(details, '审批门禁', run.gate_ids, 'gate');
+  renderGateList(details, run.gate_ids, gates);
+  // 产出物（懒加载：展开时拉取，按 run 缓存）
+  const artKey = `${session.session_id}:${run.run_id}`;
+  const artState = runArtifactsCache.get(artKey) || { status: 'idle', data: null };
+  if (expanded && artState.status === 'idle') loadRunArtifacts(session.session_id, run.run_id);
+  if (expanded) {
+    if (artState.status === 'loading') {
+      const sec = el('section', 'run-detail-section');
+      sec.appendChild(el('div', 'run-detail-title', '产出物'));
+      sec.appendChild(el('div', 'run-detail-item', '载入产出物…'));
+      details.appendChild(sec);
+    } else if (artState.status === 'error' || (artState.status === 'ready' && !artState.data)) {
+      const sec = el('section', 'run-detail-section');
+      sec.appendChild(el('div', 'run-detail-title', '产出物'));
+      sec.appendChild(el('div', 'run-detail-item', '无产出物数据。'));
+      details.appendChild(sec);
+    } else if (artState.status === 'ready') {
+      renderRunArtifactsSection(details, artState.data, session.session_id, run.run_id);
+    }
+  }
   entry.appendChild(details);
 
   trigger.addEventListener('click', () => {
@@ -2768,6 +3206,139 @@ function renderRunEntry(run, session, q) {
     requestAnimationFrame(() => document.querySelector(`[aria-controls="${detailId}"]`)?.focus());
   });
   return entry;
+}
+
+/** 门禁状态徽章（gates.json status） */
+function gateStatusMeta(status) {
+  const s = String(status || '').toLowerCase();
+  if (s === 'passed' || s === 'done') return ['st-done', '通过'];
+  if (s === 'failed' || s === 'blocked' || s === 'error') return ['st-error', '失败'];
+  if (s === 'waived') return ['st-unknown', '豁免'];
+  if (s === 'skipped') return ['st-unknown', '跳过'];
+  return ['st-cancel', s || '待审'];
+}
+
+/** run 的门禁列表：id + 状态 + 标题（gates.json 查表） */
+function renderGateList(parent, gateIds, gates) {
+  if (!Array.isArray(gateIds) || !gateIds.length) return;
+  const section = el('section', 'run-detail-section');
+  section.appendChild(el('div', 'run-detail-title', '审批门禁'));
+  const map = new Map((gates || []).map((g) => [g.key, g]));
+  for (const id of gateIds) {
+    const g = map.get(id) || {};
+    const [cls, label] = gateStatusMeta(g.status);
+    const row = el('div', 'run-detail-item gate-id');
+    row.appendChild(el('span', `bd ${cls}`, label));
+    row.appendChild(document.createTextNode(` ${id}`));
+    if (g.title) row.appendChild(document.createTextNode(` · ${g.title}`));
+    const marks = [];
+    if (g.required) marks.push('必过');
+    if (g.blocking) marks.push('阻塞');
+    if (g.waiver) marks.push('豁免');
+    if (marks.length) row.appendChild(el('span', 'bd bd-dim', marks.join('/')));
+    section.appendChild(row);
+  }
+  parent.appendChild(section);
+}
+
+/** run 产出物缓存（按 session:run 键） */
+const runArtifactsCache = new Map();
+
+async function loadRunArtifacts(sessionId, runId) {
+  const key = `${sessionId}:${runId}`;
+  if (runArtifactsCache.has(key)) return;
+  runArtifactsCache.set(key, { status: 'loading', data: null });
+  try {
+    const data = await invoke('get_run_artifacts', { sessionId, runId });
+    runArtifactsCache.set(key, { status: data ? 'ready' : 'error', data });
+  } catch {
+    runArtifactsCache.set(key, { status: 'error', data: null });
+  }
+  renderWithFocus();
+}
+
+function fmtBytes(n) {
+  const v = Number(n) || 0;
+  if (v >= 1024 * 1024) return `${(v / 1024 / 1024).toFixed(1)}MB`;
+  if (v >= 1024) return `${(v / 1024).toFixed(1)}KB`;
+  return `${v}B`;
+}
+
+function renderRunArtifactsSection(parent, art, sessionId, runId) {
+  const section = el('section', 'run-detail-section');
+  section.appendChild(el('div', 'run-detail-title', '产出物'));
+  const meta = [];
+  if (art.evidence_records) meta.push(`证据 ${art.evidence_records}`);
+  if (art.artifacts_count) meta.push(`产物 ${art.artifacts_count}`);
+  if (meta.length) section.appendChild(el('div', 'art-meta', meta.join(' · ')));
+  if (art.report_md) {
+    const rep = el('details', 'art-report');
+    rep.appendChild(el('summary', 'art-summary', 'report.md'));
+    const pre = el('pre', 'art-pre');
+    pre.textContent = art.report_md;
+    rep.appendChild(pre);
+    section.appendChild(rep);
+  }
+  const outputs = Array.isArray(art.outputs) ? art.outputs : [];
+  for (const f of outputs) {
+    const row = el('div', 'art-file');
+    const name = el('button', 'art-file-name', f.name);
+    name.type = 'button';
+    name.title = '点击查看全文';
+    name.addEventListener('click', () => openRunOutputModal(sessionId, runId, f.name));
+    row.appendChild(name);
+    if (f.preview) row.appendChild(el('div', 'art-file-preview', oneLine(f.preview)));
+    row.appendChild(el('span', 'rt', fmtBytes(f.size)));
+    section.appendChild(row);
+  }
+  parent.appendChild(section);
+}
+
+/** output 文件全文 modal */
+async function openRunOutputModal(sessionId, runId, name) {
+  const opener = document.activeElement;
+  const overlay = el('div', 'md-preview-overlay');
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-label', `产出物：${name}`);
+  const box = el('div', 'md-preview-box');
+  const head = el('div', 'md-preview-head');
+  const h = el('div', 'md-preview-title', name);
+  h.title = `${sessionId} · ${runId}`;
+  head.appendChild(h);
+  const close = el('button', 'chat-icon-btn', '');
+  close.type = 'button';
+  close.title = '关闭（Esc）';
+  close.setAttribute('aria-label', '关闭');
+  close.appendChild(svg('i-x', 13));
+  const dismiss = () => {
+    overlay.remove();
+    if (opener && opener.isConnected && typeof opener.focus === 'function') opener.focus();
+  };
+  close.addEventListener('click', dismiss);
+  head.appendChild(close);
+  const body = el('pre', 'md-preview-body art-content');
+  body.textContent = '载入中…';
+  body.setAttribute('aria-busy', 'true');
+  box.appendChild(head);
+  box.appendChild(body);
+  overlay.appendChild(box);
+  overlay.addEventListener('mousedown', (e) => {
+    if (e.target === overlay) dismiss();
+  });
+  overlay.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.stopPropagation(); dismiss(); return; }
+    if (e.key === 'Tab') trapTab(e, overlay);
+  });
+  document.body.appendChild(overlay);
+  close.focus();
+  try {
+    const content = await invoke('get_run_artifact_content', { sessionId, runId, name });
+    if (overlay.isConnected) body.textContent = content || '（空文件）';
+  } catch {
+    if (overlay.isConnected) body.textContent = '读取失败';
+  }
+  body.removeAttribute('aria-busy');
 }
 
 function renderSessionDetail() {
@@ -2796,6 +3367,41 @@ function renderSessionDetail() {
   resume.appendChild(resumeMeta);
   body.appendChild(resume);
 
+  // 知识沉淀收据：promoted ids / seal 信息 / 派生来源（A3）
+  const lifecycle = detail.lifecycle && typeof detail.lifecycle === 'object' ? detail.lifecycle : {};
+  const promotedSpecs = Array.isArray(lifecycle.promoted_spec_ids) ? lifecycle.promoted_spec_ids : [];
+  const promotedKnowhow = Array.isArray(lifecycle.promoted_knowhow_ids) ? lifecycle.promoted_knowhow_ids : [];
+  const hasReceipt = promotedSpecs.length || promotedKnowhow.length
+    || lifecycle.seal_summary || lifecycle.sealed_at || lifecycle.forked_from;
+  if (hasReceipt) {
+    const kSection = el('section', 'detail-section receipt-section');
+    kSection.appendChild(el('h2', 'section-title', '知识沉淀 · Receipt'));
+    const promoteRow = (label, ids, kind) => {
+      const row = el('div', 'receipt-row');
+      row.appendChild(el('span', 'receipt-label', label));
+      const wrap = el('div', 'receipt-ids');
+      if (!ids.length) {
+        wrap.appendChild(el('span', 'receipt-empty', '无'));
+      } else {
+        for (const id of ids) {
+          const chip = el('button', 'receipt-chip', id);
+          chip.type = 'button';
+          chip.title = `打开知识条目 ${id}`;
+          chip.addEventListener('click', () => openDetail('knowledge-item', `${kind}::${id}`, chip));
+          wrap.appendChild(chip);
+        }
+      }
+      row.appendChild(wrap);
+      kSection.appendChild(row);
+    };
+    promoteRow('已沉淀规范', promotedSpecs, 'specs');
+    promoteRow('已沉淀诀窍', promotedKnowhow, 'knowhow');
+    if (lifecycle.seal_summary) kSection.appendChild(el('div', 'receipt-note', `封存摘要：${lifecycle.seal_summary}`));
+    if (lifecycle.sealed_at) kSection.appendChild(el('div', 'receipt-note', `封存时间：${fmtFull(lifecycle.sealed_at)}`));
+    if (lifecycle.forked_from) kSection.appendChild(el('div', 'receipt-note', `派生自：${lifecycle.forked_from}`));
+    body.appendChild(kSection);
+  }
+
   const boundary = detail.boundary_contract && typeof detail.boundary_contract === 'object' ? detail.boundary_contract : {};
   const boundarySection = el('section', 'detail-section boundary-section');
   boundarySection.appendChild(el('h2', 'section-title', '边界契约 · Boundary Contract'));
@@ -2809,6 +3415,35 @@ function renderSessionDetail() {
   if (textArray(boundary.out_of_scope).length) appendContractBlock(contractGrid, 'Out of Scope', boundary.out_of_scope, true);
   boundarySection.appendChild(contractGrid);
   body.appendChild(boundarySection);
+
+  const gates = Array.isArray(detail.gates) ? detail.gates : [];
+  const gatesSection = el('section', 'detail-section gates-section');
+  gatesSection.appendChild(el('h2', 'section-title', `门禁状态 · Gates`));
+  if (!gates.length) {
+    gatesSection.appendChild(el('div', 'detail-empty', '尚未登记门禁。'));
+  } else {
+    const ledger = el('div', 'run-ledger');
+    for (const g of gates) {
+      const [cls, label] = gateStatusMeta(g.status);
+      const row = el('div', 'gate-row');
+      row.appendChild(el('span', `bd ${cls}`, label));
+      const txt = el('div', 'gate-copy');
+      const t = el('div', 'gate-title', g.title || g.key);
+      t.title = `${g.key} · ${g.scope || ''}`;
+      txt.appendChild(t);
+      const meta = [g.key, g.scope, g.run_id].filter(Boolean).join(' · ');
+      if (meta) txt.appendChild(el('div', 'gate-meta', meta));
+      row.appendChild(txt);
+      const marks = [];
+      if (g.required) marks.push('必过');
+      if (g.blocking) marks.push('阻塞');
+      if (g.waiver) marks.push('已豁免');
+      if (marks.length) row.appendChild(el('span', 'gate-marks', marks.join(' / ')));
+      ledger.appendChild(row);
+    }
+    gatesSection.appendChild(ledger);
+  }
+  body.appendChild(gatesSection);
 
   const orchestration = detail.orchestration && typeof detail.orchestration === 'object' ? detail.orchestration : {};
   const chain = Array.isArray(orchestration.chain) ? orchestration.chain.filter((step) => step && typeof step === 'object') : [];
@@ -2871,10 +3506,82 @@ function renderSessionDetail() {
     runSection.appendChild(emptySearchResult('未找到匹配的 Run'));
   } else {
     const ledger = el('div', 'run-ledger');
-    for (const run of visibleRuns) ledger.appendChild(renderRunEntry(run || {}, session, q));
+    for (const run of visibleRuns) ledger.appendChild(renderRunEntry(run || {}, session, q, gates));
     runSection.appendChild(ledger);
   }
   body.appendChild(runSection);
+}
+
+/** 待处置知识候选（A1+A2）：KDC 列表 + 处置命令复制 */
+function renderPendingDetail() {
+  if (!renderDetailState('待处置候选')) return;
+  const body = $('detailBody');
+  const pc = snapshot.pending_candidates || { total: 0, items: [] };
+  const items = Array.isArray(pc.items) ? pc.items : [];
+  const q = detailSearch;
+  const matched = q
+    ? items.filter((it) =>
+        [it.title, it.summary, it.candidate_id, it.session_id, it.run_id, it.target, it.action]
+          .filter(Boolean)
+          .some((v) => String(v).toLowerCase().includes(q)))
+    : items;
+  $('detailTitle').textContent = `待处置候选 · ${pc.total}`;
+  $('detailKind').textContent = 'PENDING';
+  setSearchCount(matched.length, items.length);
+  const sub = el('div', 'kb-sub');
+  sub.textContent = '会话 run 已生成知识候选（KDC），需 review / promote 处置 · 复制命令后在终端执行，或在会话详情查看沉淀收据';
+  body.appendChild(sub);
+  if (!items.length) {
+    body.appendChild(el('div', 'detail-empty', '暂无待处置候选。'));
+    return;
+  }
+  if (q && !matched.length) {
+    body.appendChild(emptySearchResult('未找到匹配的候选'));
+    return;
+  }
+  const rows = el('div', 'rows');
+  for (const it of matched) {
+    const row = el('article', 'pend-item');
+    const dot = el('i', 'lg-dot');
+    dot.style.setProperty('--c', it.target === 'knowhow' ? 'var(--ok)' : 'var(--accent)');
+    row.appendChild(dot);
+    const main = el('div', 'pend-main');
+    const head = el('div', 'pend-head');
+    const t = el('span', 'pend-title');
+    t.appendChild(highlightText(it.title || it.candidate_id, q));
+    head.appendChild(t);
+    head.appendChild(el('span', 'bd bd-dim', it.target || '—'));
+    head.appendChild(el('span', 'bd bd-dim', it.action || '—'));
+    main.appendChild(head);
+    if (it.summary) {
+      const s = el('div', 'pend-sum');
+      s.appendChild(highlightText(oneLine(it.summary), q));
+      main.appendChild(s);
+    }
+    const meta = el('div', 'pend-meta');
+    meta.appendChild(el('code', '', it.candidate_id));
+    meta.appendChild(el('span', '', it.session_id));
+    if (it.run_id) meta.appendChild(el('span', '', it.run_id));
+    if (it.updated_at) meta.appendChild(el('span', 'rt', fmtAgo(it.updated_at)));
+    main.appendChild(meta);
+    row.appendChild(main);
+    const actions = el('div', 'pend-actions');
+    const promoteCmd = `maestro knowledge promote ${it.session_id} --candidate ${it.candidate_id}`;
+    const copy = copyButton(promoteCmd, '复制 promote 命令', '已复制 promote 命令');
+    copy.title = promoteCmd;
+    actions.appendChild(copy);
+    const open = el('button', 'chat-icon-btn', '');
+    open.type = 'button';
+    open.title = '打开所属会话';
+    open.setAttribute('aria-label', '打开所属会话');
+    open.appendChild(svg('i-session', 12));
+    open.addEventListener('click', () => openDetail('session', it.session_id, open));
+    actions.appendChild(open);
+    row.appendChild(actions);
+    rows.appendChild(row);
+  }
+  body.appendChild(rows);
+  body.appendChild(el('div', 'kb-sub', '处置后候选将进入知识库；会话详情「知识沉淀 · Receipt」展示 promote 收据'));
 }
 
 // ---------------------------------------------------------------------------
@@ -3029,6 +3736,77 @@ async function createKnowledgeItem() {
     $('liveStatus').textContent = `创建失败：${err && err.message ? err.message : err}`;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Markdown 预览 modal（详情页内渲染，md.js 共享渲染器）
+// ---------------------------------------------------------------------------
+
+let mdPreviewEl = null;
+let mdPreviewOpener = null;
+
+/** modal 焦点陷阱：Tab 在 overlay 内循环 */
+function trapTab(e, root) {
+  const focusables = root.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+  if (!focusables.length) { e.preventDefault(); return; }
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+}
+
+function openMdPreview(content, title) {
+  closeMdPreview();
+  const overlay = el('div', 'md-preview-overlay');
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-label', `预览：${title || 'Markdown'}`);
+  const box = el('div', 'md-preview-box');
+  const head = el('div', 'md-preview-head');
+  const h = el('div', 'md-preview-title', title || 'Markdown 预览');
+  h.title = title || '';
+  head.appendChild(h);
+  const close = el('button', 'chat-icon-btn md-preview-close', '');
+  close.type = 'button';
+  close.title = '关闭预览（Esc）';
+  close.setAttribute('aria-label', '关闭预览');
+  close.appendChild(svg('i-x', 13));
+  close.addEventListener('click', closeMdPreview);
+  head.appendChild(close);
+  const body = el('div', 'md-preview-body');
+  body.innerHTML = typeof renderMd === 'function' ? renderMd(content) : `<pre>${String(content || '')}</pre>`;
+  box.appendChild(head);
+  box.appendChild(body);
+  overlay.appendChild(box);
+  overlay.addEventListener('mousedown', (e) => {
+    if (e.target === overlay) closeMdPreview();
+  });
+  overlay.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab') trapTab(e, overlay);
+  });
+  document.body.appendChild(overlay);
+  mdPreviewEl = overlay;
+  mdPreviewOpener = document.activeElement === document.body ? null : document.activeElement;
+  close.focus();
+}
+
+function closeMdPreview() {
+  if (mdPreviewEl) {
+    mdPreviewEl.remove();
+    mdPreviewEl = null;
+    if (mdPreviewOpener && mdPreviewOpener.isConnected && typeof mdPreviewOpener.focus === 'function') {
+      mdPreviewOpener.focus();
+    }
+    mdPreviewOpener = null;
+  }
+}
+
+// Esc 关闭预览（在既有 Esc 处理前优先拦截）
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && mdPreviewEl) {
+    e.stopImmediatePropagation();
+    closeMdPreview();
+  }
+}, true);
 
 function svg(symbol, size) {
   const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
