@@ -3,165 +3,151 @@
 
 Canonical lifecycle reference: `@~/.maestro/workflows/run-mode.md`.
 
-Maestro 与 Ralph 共享这一执行循环。编排层调用 `maestro session ...`（next/done/decide/seal/status/recover/chain edit），执行层调用 `maestro run ...`（brief/check/create/prepare）。Session 与 Run 协议文件始终由 Runtime 写入。
+Maestro and Ralph share this loop. Session is durable topic identity; the current Execution owns chain, decisions, gates, lifecycle, revision, active Run, and the core lease; each Run is an immutable attempt. Runtime alone writes protocol records.
 
 ## Public flags
 
-- `-y`：自动确认低风险选择；不得越过高风险、低置信度、边界歧义或 drift 熔断。
-- `-c`：继续唯一 live compatible Session。多个候选必须询问，paused Session 进入 audited recovery。
-- `--amend`：修改唯一 live Session 的目标；剩余文本为 change request。
+- `-y`: auto-confirm bounded low-risk choices; never bypass high risk, low confidence, ambiguity, failed gates, recovery, or drift halt.
+- `-c`: continue the unique compatible Session's exact current Execution. Multiple candidates require selection; a paused Execution enters audited recovery.
+- `--amend`: amend the current Execution goal through the audited proposal flow.
 
-除以上 3 个 flags 外，其余文本全部视为 intent。Roadmap、quality、executor、platform、模板复用、并行与对抗策略由 intent、Session state、Skill contract 和 host runtime 推断。
+All other text is intent. Roadmap, quality, executor, platform, reuse, parallelism, and adversarial strategy derive from intent, Session identity, current Execution state, Skill contract, and host Runtime.
+
+## Capability and Authority Gate
+
+1. Before any mutation, call `maestro capabilities --json`. Canonical mutation requires exact `maestro-capabilities/1.0` support for `session/2.0`, `execution/1.0`, `run-response/1.1`, `session_statusless`, `execution_generation`, and `core_execution_lease`.
+2. If negotiation is absent, malformed, or incomplete, fail closed. Never downgrade to a host-only lease or a Session lifecycle alias. The explicit legacy branch is the only old-schema fallback.
+3. Keep one private authority record for the loop:
+
+   `session_id + execution_id + generation + run_id? + session_identity_revision + session_activity_revision + execution_revision + lease_epoch + owner_id + owner_kind + lease_id`
+
+4. Every new-runtime mutation uses a stable unique `--request-id`, the exact locator, current `--expected-execution-revision`, and the current core claim where required. Execution acquisition and Session pointer changes also use the exact `--expected-identity-revision` and `--expected-activity-revision`. Parse exactly one `run-response/1.1` envelope, verify the locator/generation is unchanged, and replace cached revisions from its fence before the next mutation.
+5. Never persist raw `lease_id` in prompt text, task/team state, report, log, artifact, or receipt. If a write result is uncertain, discard unverified authority and recover from canonical Execution status instead of guessing or replaying with changed inputs.
 
 ## Authority
 
-- Session 是 topic grouping/index；`session.json.orchestration` 是 chain/goal/decision 唯一真相源。
-- Run 是一次执行 attempt；Run 的 outputs、handoff、gate、proposal 与 transition receipt 归该 Run。
-- Skill 决定领域结果及可选 `chain-proposal/1.0`；orchestrator 决定 accept/reject/revise；Runtime 独占 chain mutation。
-- historical similarity 只读；同 Session sealed outputs 只经 birth packet 的 canonical `upstream` 复用。
+- Session identity and Session-global artifact lineage remain durable across Execution generations. A Session has no permanent running/paused/sealed authority in `session/2.0`.
+- Execution is the only authority for chain, goal/decision state, gates, active Run, pause/resume, revision, and lease.
+- Run owns its immutable input/output/handoff/proposal and is sealed exactly once. Retry creates a new Run in the same Execution.
+- Skill produces domain results and optional `chain-proposal/1.0`; orchestrator accepts/rejects/revises; Runtime applies allowed mutations atomically inside the current Execution.
+- Historical similarity is read-only. Same-Session sealed outputs enter only through the canonical `upstream` map.
 
 ## Continuation Router
 
-所有 `--json` machine response 优先读取 `continuation`。它是 Session/Run 权威状态的只读投影，不是第二状态源。旧 Runtime 没有该字段时，才回退到 `next`、`result.next_action` 与稳定 error code。
+For new-runtime responses, `run-response/1.1` locator/fence is authoritative. Consume `continuation` or `result.next` only after rebuilding any mutation command with the freshly returned locator, revision, and claim; never execute a stale command string copied from an older receipt. Legacy `run-response/1.0` routing applies only in the compatibility branch.
 
-`suggest_only` 只表示 CLI 不自行执行；它不表示每一步都要询问用户。Session 已确认后：
+`suggest_only` means the CLI is passive, not that confirmed chain work needs another user prompt:
 
-- `authority=automatic`：立即执行 `command`，读取新回执并继续本循环。
-- `authority=auto_mode_only`：仅当 Session 持久化 `auto_mode=true` 且该动作满足下述 `-y` 白名单时执行；否则询问用户。
-- `authority=user_required`：停止自动动作，报告精确 blocker、hash、reason code 与所需证据。
+- `authority=automatic`: if preconditions match the current Execution and claim, execute one action, parse its receipt, and loop.
+- `authority=auto_mode_only`: execute only when current Execution policy enables auto mode and the action is in the `-y` whitelist.
+- `authority=user_required`: stop and report the exact blocker, hashes/revisions, reason code, and evidence needed.
 
-**Turn 终止不变量**：只要 Session 为 `running` 且存在可满足 preconditions 的 `automatic` 动作，不得结束当前 turn、报告整体完成或仅把命令推荐给用户。每执行一条 continuation command 都重新读取回执；不得根据旧状态连续猜测多条命令。
+**Turn 终止不变量**: while the current Execution is `active`, its claim is valid, and a satisfiable `automatic` action exists, do not end the turn or report overall completion. Re-read authority after every action; never predict multiple transitions from one receipt.
 
-| continuation.action | Prompt 行为 |
+| continuation.action | Canonical prompt behavior |
 |---|---|
-| `load_run` | 调用同一 `run_id` 的 `run brief --json`，禁止创建重复 Run |
-| `execute_run` | 执行已加载的 Resume Packet，随后调用 directive 中的 check/complete command |
-| `repair_run` | 重新附着同一 Run，修复 gate/scan error，再 check |
-| `dispatch_next` | 校验 preconditions 后立即 `session next --json`；尤其是 `complete` 或 `decide` 后不得只展示命令 |
-| `evaluate_decision` | `command` 非空时只执行一次以读取 decision card；`reason_code=DECISION_CARD_READY` 时不得再次 `session next`，直接派发只读 evaluator，再调用 `session decide` |
-| `accept_reuse` | 按下述正式 reuse 流程处理 exact assessment |
-| `recover_session` | 只走 audited `session resolve` → `session resume`；不得隐式 resume |
-| `seal_session` | 校验 Runs、decisions、goals 与 Session gates 后 seal |
-| `offer_recommendations` | 只展示 chain 外建议；不得隐式创建新 Run |
-| `repair_chain` / `stop` | 停止续跑并报告结构化原因，不绕过 authority |
+| `load_run` | Load the same exact `run_id` with `run brief`; never create a duplicate Run |
+| `execute_run` | Execute its Resume Packet, then check; executor never completes |
+| `repair_run` | Reattach the same Run, repair gates, then check again |
+| `dispatch_next` | Invoke fenced `maestro run next ... --json` once |
+| `evaluate_decision` | Read one decision card, dispatch a read-only evaluator, then invoke fenced `maestro run decide` |
+| `accept_reuse` | Apply REVIEW rules below without changing the Execution anchor |
+| `recover_execution` / legacy `recover_session` | Use `maestro execution resolve` then `maestro execution resume` |
+| `seal_execution` / legacy `seal_session` | Revalidate Execution terminal gates, then use `maestro execution seal` |
+| `offer_recommendations` | Show chain-external suggestions only; never allocate a Run implicitly |
+| `repair_chain` / `stop` | Stop and report structured reasons; never bypass authority |
 
-### REVIEW reuse
+### REVIEW Reuse
 
-`REUSE` 直接使用 canonical upstream；`REJECT` 与 `CONFLICT` 永不接受。`REVIEW` 只有 exact acceptance receipt 才能打开 required consume gate：
+`REUSE` consumes canonical upstream directly; `REJECT` and `CONFLICT` are never accepted. `REVIEW` opens a required consume gate only after an exact acceptance receipt. The current Runtime must supply an Execution-aware acceptance mutation or the orchestrator pauses/fails closed; it must not use a Session-only mutation inside the canonical branch. After acceptance, reload the same exact Run. Treat `assessment.acceptance_status=accepted` as processed even if `assessment.decision=REVIEW` remains the original assessment.
 
-`maestro run accept-reuse {run_id} --session {session_id} --assessment-hash {assessment_hash} --request-id {stable_request_id} --actor {actor} --reason "{reason}" --evidence {evidence} --expected-identity-revision {identity_revision} --expected-activity-revision {activity_revision} --json`
+### `-y` Policy
 
-接受后必须重新调用同一 Run 的 `brief --json`。`assessment.decision=REVIEW` 仍可保留作为原始判断；以 `assessment.acceptance_status=accepted` 为已处理依据，不得重复接受。
+Normal confirmed-chain continuation does not depend on `-y`. It only expands low-risk discretion:
 
-### `-y` policy
-
-正常生命周期续跑不依赖 `-y`。`-y` 只扩大低风险裁量：
-
-- 可自动：pending-tail 内已验证且 intent-aligned 的 proposal；仅含 `QUALITY_MEDIUM`、同 Session、producer/artifact sealed、hash/fence/current revision 完整且有 evidence 的 REVIEW。
-- 必须停：`QUALITY_LOW`、`REJECT`、`CONFLICT`、hash mismatch、source fence/freshness/supersession unknown、边界变化、高风险、低置信度、retry exhausted、paused recovery 或外部 blocker。
-- `-c` 继承 `session.orchestration.auto_mode`；不要求用户重复输入 `-y`。
-
-链内 pending command 是已确认工作，`dispatch_next` 自动继续。handoff `next[]` 只是 chain 外 recommendation；若要在同一 Session 自动续跑，产生它的 Run 必须提交并原子应用有效 `chain-proposal/1.0`。
+- May automate: validated pending-tail proposal; same-Session `QUALITY_MEDIUM` REVIEW with sealed producer/artifact, exact Execution anchor, current hash/fence, and evidence.
+- Must stop: `QUALITY_LOW`, `REJECT`, `CONFLICT`, hash/freshness/supersession uncertainty, boundary change, high risk, low confidence, retry exhaustion, paused recovery, or external blocker.
+- handoff `next[]` remains chain-external recommendation. Automatic same-Execution continuation requires an accepted typed proposal.
 
 ### `complete` / `decide` 闭环
 
-- `session done|done --json` 返回 `dispatch_next` 时，当前 turn 必须立即执行其 command。
-- 若下一节点是 decision，执行 `session next --json` 取得 canonical decision card；decision 不创建 Run，必须通过 `session decide` 提交 verdict。
-- `session decide --json` 与 `complete` 使用同一 Continuation Router：`proceed` 后可继续到下一 Run、下一 decision 或 Session seal；`escalate` 转 audited recovery；`fix` 在获得新的 repair evidence 前不得重复 decide。
-- `session next` 成功后，birth packet 中的 `run_already_created=true` 是严格约束：立即加载该 exact `run_id` 的 brief，只执行其 command/args/goal/canonical upstream，禁止再次 `run create`，并在仍有 automatic continuation 时保持当前 turn。
+- After successful fenced `maestro run complete ... --json` or `maestro run decide ... --json`, consume the fresh fence and immediately execute a satisfiable automatic next action.
+- A decision node does not create a Run. `reason_code=DECISION_CARD_READY` means evaluate the card and call `run decide`; do not call `run next` again first.
+- A birth packet with `run_already_created=true` is strict: use that exact `run_id`/locator and never call `run create` again.
+- `proceed` may route to another Run, another decision, or Execution seal. `escalate` pauses the Execution. `fix` requires new repair evidence before another decision.
 
 ## Lifecycle
 
-### 1. Resolve or create
+### 1. Resolve or Create Identity and Execution
 
-1. `-c` / `--amend`：用 `maestro run recall <command> --intent "{intent}" --json` 定位唯一 live Session。
-2. 新 intent：分类并构建 chain definition。每个 execution step 只声明 `command/args/stage/goal_ref/retry_max`；decision step 声明 `decision_ref`。
-3. 用临时 JSON 文件创建，不把未转义 JSON 拼入 shell：
+1. Negotiate capabilities first. For `-c` / `--amend`, use read-only recall to identify the Session, then resolve its exact current Execution and call `maestro execution status --session {session_id} --execution {execution_id} --json`.
+2. For new intent, classify and validate a chain definition. Each execution step declares `command/args/stage/goal_ref/retry_max`; each decision step declares `decision_ref`. Prevalidate names with `maestro skills --steps --json --platform {target_platform}` where platform is `claude|codex|agent|agy|pi`.
+3. Create only the durable identity with `maestro session create "{intent}" --id {slug} --json`, then start/acquire a bounded generation with `maestro execution start --session {session_id} --request-id {request_id} --expected-identity-revision {identity_revision} --expected-activity-revision {activity_revision} --expected-lease-epoch 0 --execution-owner {owner_id} --owner-kind {owner_kind} --actor {actor} --reason "{reason}" --evidence {evidence} --json`. Chain/engine/quality/auto belong to the Execution, never permanent Session state. Supply the validated chain through the host/Runtime's negotiated Execution bootstrap surface; if that surface is unavailable, fail closed rather than silently storing a new-runtime chain on Session.
+4. Retain the exact returned locator/fence/claim. A later Execution in the same Session must have a greater generation and cannot mutate sealed prior generations.
 
-   `maestro session create "{intent}" --id {slug} --chain-file {path}`
+### 2. Allocate and Execute One Run
 
-4. 建链前 prompt 必须把当前 host 映射为 Skill scanner 支持的 `target_platform`（`claude|codex|agent|agy|pi`），再用 `maestro skills --steps --json --platform {target_platform}` 预校验每个 step 名（省略 `--platform` 会返回全平台混合注册表）；未命中即 E005，阻断建链。`pi` 平台从已安装 `pi-maestro-flow` npm 包的 `package.json#pi.skills` 发现 Skill，不扫描用户主目录下的裸 `.pi/skills`。Runtime resolver 在 `session next` 分配 Run 前独立复校 command、Skill 和 lifecycle step。两级校验都不可省略。
+1. Read canonical Execution status. For an execution step invoke:
 
-### 2. Locate and allocate
+   `maestro run next --session {session_id} --execution {execution_id} --generation {generation} --request-id {request_id} --expected-execution-revision {execution_revision} --owner-id {owner_id} --owner-kind {owner_kind} --lease-epoch {lease_epoch} --lease-id {lease_id} --json`
 
-1. `maestro session status {session_id}` 读取 canonical 状态。
-2. execution step：显式调用 `maestro session next --session {session_id} --inline-brief --json`。只有该动词能分配下一 Run。`--inline-brief` 在 birth packet 中内联 Resume Packet（guidance + contract + continuity），正常前向流程无需再调 `run brief`。
-3. decision step：不创建 Run，转 Decision evaluation。
-4. `CHAIN_COMPLETE`：校验 goals 与 gates 后转 Session seal。
+2. Parse the `run-response/1.1` birth packet and refreshed fence. For normal forward flow use its guidance; otherwise load exact `maestro run brief {run_id} --session {session_id}`.
+3. Dispatch one unnamed `run-executor`. It writes formal artifacts to `{run_dir}/outputs/`, handoff to `{run_dir}/report.md`, and calls `maestro run check {run_id} --session {session_id} --json`. It never completes the Run and never receives the private claim.
 
-### 3. Load and execute one Run
+### 3. Analyze, Gate, and Complete
 
-1. 从 birth packet 取得 `run_id/run_dir/upstream/previous_handoff/queue/goal`。若使用 `--inline-brief`，`inline_brief` 字段已包含完整 Resume Packet 与 Skill 正文，直接使用。
-2. 仅在回溯场景（executor 崩溃恢复、上下文溢出、手动检查）调用 `maestro run brief {run_id} --session {session_id}` 重新加载。正常前向流程不调 `run brief`。
-3. 派发一个 unnamed `run-executor`；executor 只执行该 Run，可按 Skill 自身 contract 选择串行、并行或对抗实现。
-4. executor 写 formal artifacts 到 `{run_dir}/outputs/`，handoff 写 `{run_dir}/report.md`，然后运行 `maestro run check {run_id} --session {session_id}`。
-5. executor 不调用 `session done/complete`；completion authority 属于 orchestrator。
+Extract `summary`, evidence paths, non-obvious decisions, and concerns. Map drift to verdict:
 
-### 4. Analyze, gate, and complete
-
-从 executor 结果提取：
-
-- `summary`：必须，动词开头，≤100 字。
-- `evidence`：验证产物路径。
-- `decision`：非显而易见的技术决策。
-- `note`：concern、deferred 或 minor drift。
-
-Drift policy：
-
-| Result | Action |
+| Result | Verdict |
 |---|---|
-| aligned | `session done --verdict done` |
-| minor drift | `session done --verdict done-with-concerns --note ...` |
-| major drift，未重试 | `session done --verdict needs-retry` |
-| major drift，已重试 | `session done --verdict done-with-concerns` |
-| external blocker | `session done --verdict blocked --reason ...` |
+| aligned | `done` |
+| minor drift | `done-with-concerns` |
+| major drift with retry left | `needs-retry` |
+| major drift exhausted | `done-with-concerns` with explicit concern |
+| external blocker | `blocked` |
 
-日常 completion：
+Complete with the exact locator/fence/claim:
 
-`maestro session done {run_id} --session {session_id} --verdict {verdict} --summary "{summary}" [--evidence ...] [--decision ...] [--note ...]`
+`maestro run complete {run_id} --session {session_id} --execution {execution_id} --generation {generation} --request-id {request_id} --expected-execution-revision {execution_revision} --owner-id {owner_id} --owner-kind {owner_kind} --lease-epoch {lease_epoch} --lease-id {lease_id} --verdict {verdict} --summary "{summary}" [--evidence ...] [--decision ...] [--note ...] [--apply-proposal] --json`
 
-Runtime 返回的 next 仅为 `suggest_only`，因此 Runtime 自身不执行它；canonical `continuation.authority=automatic` 已代表 orchestrator authority，必须在同一 turn 调用 `session next`，无需再次询问用户。
+A blocking result repairs the same Run. A sealed Run is immutable. `needs-retry` allocates a new Run only after Runtime returns the step to pending; `blocked` pauses the Execution and releases the lease.
 
-### 5. Chain proposal
+### 4. Decision Step
 
-`run check` 自动发现并校验当前 Run outputs 中的 typed `chain-proposal/1.0`。
+1. Dispatch a read-only evaluator over canonical artifacts and goal evidence.
+2. Parse `proceed|fix|escalate`; parse failure becomes `fix` with low confidence.
+3. Submit through current Execution:
 
-- accept：必须恰好有一个 valid proposal，调用 `session done ... --apply-proposal`；proposal 与 completion 在同一事务应用。
-- reject：不传 `--apply-proposal`，以 `--note` 记录理由。
-- revise：不 complete；用同一 `run_id` 重新加载 `run brief`，让原 Skill 修订后再次 check。
+   `maestro run decide {point_id} --session {session_id} --execution {execution_id} --generation {generation} --request-id {request_id} --expected-execution-revision {execution_revision} --owner-id {owner_id} --owner-kind {owner_kind} --lease-epoch {lease_epoch} --lease-id {lease_id} --verdict {verdict} --confidence {high|medium|low} [--summary "..."] [--evidence ...] --json`
 
-`-y` 仅可自动接受：proposal valid、只修改 pending tail、未越 budget、intent aligned、无 escalate。路径参数 `--chain-proposal` 只保留 legacy compatibility，不在 orchestrator 中使用。
+4. Parse the new fence and remain in the same loop. Pending-tail changes come from a repair Skill proposal, never direct prompt mutation.
 
-### 6. Decision step
+### 5. Recovery and Amend
 
-1. 派发一个只读 generic evaluator，读取对应 Run artifacts 与 goal evidence。
-2. 严格解析 `proceed|fix|escalate`；解析失败降级为 `fix`，confidence=low，并在 summary 标记 `parse_failed=true`。
-3. 调用：
+Paused recovery is explicit:
 
-   `maestro session decide {point_id} --session {session_id} --verdict {verdict} --confidence {high|medium|low} [--summary "..."] [--evidence ...] --json`
+1. Read `maestro execution status` for exact blockers, locator, revisions, and redacted lease state.
+2. Resolve each blocker with `maestro execution resolve --session {session_id} --execution {execution_id} --request-id {request_id} --expected-execution-revision {execution_revision} --actor {actor} --reason "{reason}" --evidence {evidence} (--decision {point}|--step {step}) --disposition {value} --json`.
+3. After blockers clear, reacquire with `maestro execution resume --session {session_id} --execution {execution_id} --request-id {request_id} --expected-execution-revision {execution_revision} --expected-activity-revision {activity_revision} --expected-lease-epoch {lease_epoch} --execution-owner {owner_id} --owner-kind {owner_kind} --actor {actor} --reason "{reason}" --evidence {evidence} --json`.
+4. Retain the new epoch/claim. Resume restores only the same Execution; the next Run still requires fenced `run next`.
 
-4. 读取 `session decide --json` 的 continuation 并留在同一闭环；`proceed` 立即继续，`escalate` 停在 recovery，`fix` 需要改变 pending tail 时必须由 repair Skill 产生 proposal，prompt 不直接复制 fix-loop template，也不得无新证据重复 decide。
+Goal amendment snapshots the current Execution, performs impact analysis and confirmation, then uses an Execution-owned typed proposal. The old `session meta update` flow is compatibility-only for `session/1.x`.
 
-### 7. Recovery and amend
+### 6. Seal
 
-Paused recovery 仅由显式 `-c` 触发：
+After all Runs are sealed, chain/decisions terminal, no request claimed, goals satisfied, and Execution gates clean:
 
-1. `session status {session_id}` 读取 exact blocker 与 revisions。
-2. 每个 blocker 经用户选择后调用 `maestro session resolve --session {id} --request-id {rid} --actor {actor} --reason "{reason}" --expected-identity-revision {n} --expected-activity-revision {n} (--decision {point}|--step {step}) --disposition {value}`（decision 用 `proceed|retry`，step 用 `retry|skip`）。
-3. blockers 清零后调用 `maestro session resume --session {id} --request-id {rid} --actor {actor} --reason "{reason}" --expected-identity-revision {n} --expected-activity-revision {n}`。
-4. resume 只恢复 Session；下一 Run 仍由显式 `session next` 分配。
+`maestro execution seal --session {session_id} --execution {execution_id} --request-id {request_id} --expected-execution-revision {execution_revision} --expected-activity-revision {activity_revision} --execution-owner {owner_id} --owner-kind {owner_kind} --owner-epoch {lease_epoch} --lease-id {lease_id} --actor {actor} --reason "{reason}" --evidence {evidence} --outcome {done|done_with_concerns|failed} --summary "{summary}" --json`
 
-Goal amend：读取 `ralph-amend-goal.md`，完成 snapshot → impact audit → confirmation → 通过 `maestro session meta update --session {session_id} --decomposition-file -` 整块更新（decomposition 必须含 `execution_criteria`/`goals`/`changelog` 三个键，schema 为 strict） → planning Skill proposal。高风险修改不受 `-y` 影响。
+Verify `execution-seal-receipt/1.0`, stop heartbeat, and discard the claim. The sealed Execution stays immutable; Session identity can later host a higher generation.
 
-### 8. Seal
+## Failure Rules
 
-所有 execution Runs sealed、decision steps terminal、goals done、Session gates clean 后：
+- Blocking `run check`: repair the same Run; do not report success or allocate another.
+- Null/failed executor: complete the attempt honestly; retry only through Runtime transition.
+- Revision/lease/generation conflict or uncertain write: stop, discard unverified authority, reread `execution status`, and recover explicitly. Never force.
+- A sealed Execution is terminal for that generation; a later generation requires `execution start`, not resume. An archived Session identity cannot start an Execution.
 
-`maestro session seal {session_id} --summary "..."`
+## Legacy `session/1.x` Compatibility Branch
 
-## Failure rules
-
-- `run check` blocking：重新附着同一 Run 修复，不得报告成功或分配新 Run。
-- executor failed/null：首次 `needs-retry`；达到 retry budget 后 `blocked` 并暂停。
-- lease/revision conflict：停止并重新读取 status，不猜测或 force。
-- sealed/archived Session：终态，`session next` 应返回 `CHAIN_COMPLETE`，不得 resume。
+Use this branch only for an explicitly selected old CLI/schema lacking the negotiated Execution contract. Old Runtime may use `maestro session create --chain-file`, `session next --inline-brief`, `session done`, `session decide --json`, `session resolve/resume`, and `session seal`, with Session running/paused/sealed state and `run-response/1.0`. These aliases are not canonical authority for `session/2.0`, must not be used to recover a lost core claim, and must remain visibly labeled as legacy compatibility.

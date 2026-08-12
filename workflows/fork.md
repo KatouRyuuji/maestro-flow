@@ -156,7 +156,7 @@ Display:
     cd {wtPath}
 
     # Continue session lifecycle:
-    maestro session next --session {sessionId}
+    maestro run next --session {sessionId} --execution {executionId} --generation {generation} --request-id {requestId} --expected-execution-revision {executionRevision} --owner-id {ownerId} --owner-kind {ownerKind} --lease-epoch {leaseEpoch} --lease-id {leaseId} --json
 
   Or delegate (automated):
     maestro delegate "run full lifecycle for session" --cd {wtPath} --mode write

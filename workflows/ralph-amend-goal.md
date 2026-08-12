@@ -4,66 +4,49 @@
 @~/.maestro/workflows/run-mode.md
 @~/.maestro/workflows/orchestrator-run-loop.md
 </required_reading>
-# Session Goal Amendment Flow
+# Execution Goal Amendment Flow
 
-This filename is retained for compatibility. Goal amendment uses only the canonical Run namespace and never edits protocol files or chain state directly.
+The filename is retained for compatibility. Under `session/2.0`, goal/boundary/decomposition and pending-tail changes belong to the exact current Execution, not durable Session identity.
 
-## 1. Snapshot
+## 1. Capability and Snapshot
 
-1. Resolve exactly one live compatible Session through read-only `maestro run recall`, then call `maestro session status {session_id}`.
-2. Read active goals, `boundary_contract`, completed Run handoffs, pending chain steps and current identity/activity revisions.
-3. Present progress, active goals, boundary counts and changelog count. A sealed or archived Session is terminal; ambiguity requires user selection.
+1. Run `maestro capabilities --json`; require the canonical `session/2.0 + execution/1.0 + core_execution_lease + run-response/1.1` contract or fail closed.
+2. Resolve exactly one compatible Session through read-only recall, then read `maestro execution status --session {session_id} --execution {execution_id} --json`.
+3. Retain exact `session_id + execution_id + generation`, Session identity/activity revisions, `--expected-execution-revision`, and the private `--owner-id + --owner-kind + --lease-epoch + --lease-id` claim. Never infer current authority from Session status.
+4. Snapshot current Execution goals, boundary contract, sealed Run handoffs, pending chain, gates, and revision. A sealed Execution is immutable; amend a new higher generation instead. An archived Session cannot start one.
 
-## 2. Parse and assess
+## 2. Parse and Assess
 
-Use the remaining `--amend` text as `change_request`; ask when it is empty. Classify the change as `modify|add|remove|boundary` and produce:
+Use remaining `--amend` text as `change_request`; ask when empty. Classify `modify|add|remove|boundary` and derive affected goals, invalidated steps, new gaps, boundary additions, risk, reason, and evidence.
 
-```json
-{
-  "affected_goals": [],
-  "invalidated_steps": [],
-  "new_gaps": [],
-  "boundary_changes": { "in_scope_add": [], "out_of_scope_add": [], "constraints_add": [] },
-  "risk_level": "low|medium|high",
-  "risk_reason": ""
-}
-```
+Assessment is read-only. Completed Run evidence remains immutable. High risk always requires explicit confirmation; `-y` cannot bypass it.
 
-Assessment is read-only. It checks whether sealed Run evidence remains valid and whether the pending tail needs a planning proposal. High risk always requires explicit confirmation; `-y` cannot bypass it.
+## 3. Build One Typed Proposal
 
-## 3. Build the replacement decomposition
+Construct the complete replacement decomposition plus pending-tail changes in memory:
 
-Construct the entire next `decomposition` object in memory:
+- Append one `CHG-NNN` entry with before/after goals, reason, risk, and evidence.
+- Supersede only unfinished affected goals; completed goals remain immutable evidence.
+- Give modified goals versioned IDs and added goals the next `G{n}` ID.
+- Add boundaries without deleting historical constraints.
+- Preserve all required `execution_criteria`, `goals`, and `changelog` keys.
 
-- Append one `CHG-NNN` changelog entry with before/after goals, reason, risk and evidence.
-- Supersede only unfinished affected goals; done goals remain immutable evidence.
-- Modified goals receive a versioned ID; added goals receive the next `G{n}` ID.
-- Apply boundary additions without deleting historical constraints.
-- Do not mark, insert, skip, replace or reindex chain steps here.
+Do not edit protocol JSON or issue direct chain mutations. Dispatch a planning Skill inside the same exact Execution through fenced `maestro run next` (or an Execution-aware `maestro run create` only when the current Execution contract explicitly permits an ad-hoc amendment Run). The Skill writes one typed proposal allowed by its Execution contract, then runs `maestro run check`.
 
-Validate the full object before persistence. Goals describe outcomes; lifecycle stages belong to chain steps.
+## 4. Commit Inside the Current Execution
 
-## 4. Persist goal metadata
+After confirmation, accept exactly one valid proposal by adding `--apply-proposal` to the exact fenced completion call:
 
-After confirmation, write the full JSON object to stdin or a temporary file and call:
+`maestro run complete {run_id} --session {session_id} --execution {execution_id} --generation {generation} --request-id {request_id} --expected-execution-revision {execution_revision} --owner-id {owner_id} --owner-kind {owner_kind} --lease-epoch {lease_epoch} --lease-id {lease_id} --verdict done --apply-proposal --json`
 
-`maestro session meta update --session {session_id} --decomposition-file - --request-id {request_id} --expected-identity-revision {n} --expected-activity-revision {n}`
+Runtime must atomically validate and update the current Execution decomposition/chain/gates and return `run-response/1.1`. Consume its fresh locator/fence before continuing. Reject by omitting `--apply-proposal` and recording a concern; revise by reattaching the same Run.
 
-The decomposition object must carry all three required keys — `execution_criteria`, `goals`, `changelog` — even when a list is empty. The `--decomposition-file` schema is strict and rejects a goals-only object.
+If the installed Runtime cannot express the complete goal/decomposition replacement as an Execution-owned typed proposal, stop with a capability blocker. Do not silently call a Session metadata command in the canonical branch.
 
-Runtime performs the audited metadata update. Never write `session.json`, `status.json`, or any secondary goal store.
+## 5. Continue
 
-## 5. Adapt the pending tail
+Display amendment ID, risk, superseded/added goal counts, and proposal disposition. Re-read exact `maestro execution status`, then continue through fenced `maestro run next`. Recovery remains `maestro execution resolve` -> `maestro execution resume`; final completion remains `maestro execution seal`.
 
-When `invalidated_steps` or `new_gaps` is non-empty, a planning Skill must run in the same Session and emit one typed `chain-proposal/1.0`:
+## Legacy `session/1.x` Compatibility Branch
 
-1. Inspect the exact Session chain. If exactly one pending execution step has `command=plan`, allocate that existing step with `maestro session next --session {session_id} --pick {plan_step_id} --inline-brief --json`. Multiple pending plan steps require explicit selection.
-2. If no pending plan step exists, create one ad-hoc amendment Run without changing the chain: `maestro run create plan --session {session_id} --arg "{change_request}"`. Never rebuild or replace the existing Session chain to allocate this Run.
-3. Use the returned inline brief for the picked chain step; use the create response or `run brief` only when re-attaching the ad-hoc Run. Execute the planning contract and call `run check`.
-4. Accept exactly one valid proposal with `session done ... --apply-proposal`; reject by omission and note; revise on the same Run.
-
-The proposal may change only the pending tail and must respect the Run's declared chain effects. Amendment metadata and chain mutation therefore remain separate audited Runtime transitions.
-
-## 6. Continue
-
-Display the amendment ID, risk, superseded/added goal counts and proposal disposition. Resume the shared loop with `maestro session status {session_id}`, then explicitly allocate through `maestro session next`.
+Only an explicitly selected old CLI/schema may use `maestro session status`, `maestro session meta update --decomposition-file`, `maestro session next --inline-brief`, ad-hoc legacy `maestro run create`, and `maestro session done --apply-proposal`. These Session lifecycle/revision commands are compatibility authority only and must never replace a lost or stale new-runtime Execution claim.

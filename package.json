@@ -55,7 +55,8 @@
     "test": "vitest run",
     "test:kg": "vitest run src/graph",
     "lint": "tsc --noEmit",
-    "lint:session-run": "node scripts/lint-invocation-policy.mjs && node scripts/lint-session-run-prompts.mjs && node scripts/lint-session-run-mirrors.mjs",
+    "lint:session-execution-prompts": "node scripts/lint-session-execution-prompts.mjs",
+    "lint:session-run": "node scripts/lint-invocation-policy.mjs && node scripts/lint-session-execution-prompts.mjs && node scripts/lint-session-run-prompts.mjs && node scripts/lint-session-run-mirrors.mjs",
     "lint:invocation-policy": "node scripts/lint-invocation-policy.mjs",
     "sync:invocation-policy": "node scripts/sync-invocation-policy.mjs && node scripts/sync-invocation-policy.mjs --check",
     "sync:codex-skills": "node scripts/sync-codex-run-mode.mjs --write && node scripts/sync-codex-run-mode.mjs --check && node scripts/lint-session-run-mirrors.mjs",
@@ -74,8 +75,8 @@
     "lint:codex-agents": "node scripts/sync-codex-agents.mjs --check",
     "migrate:session-run-prompts": "node scripts/migrate-session-run-prompts.mjs --write",
     "clean": "rm -rf dist",
-    "build:mirrors": "node scripts/lint-session-run-prompts.mjs && node scripts/convert-claude-to-agy.mjs && node scripts/build-agents-standard.mjs && node scripts/build-codex-skills.mjs && node scripts/sync-codex-run-mode.mjs --write && node scripts/sync-codex-run-mode.mjs --check && node scripts/sync-codex-agents.mjs --check && node scripts/lint-session-run-mirrors.mjs",
-    "prepublishOnly": "npm run build:arch-kb && node scripts/lint-invocation-policy.mjs && node scripts/lint-session-run-prompts.mjs && npm run check:docs-reference && npm run check:session-run-contract-parity && npm run check:search-ranking-release-machine:source && npm run build && npm run check:search-ranking-release-machine:built && npm run check:session-run-release-machine && npm run build:mirrors"
+    "build:mirrors": "node scripts/lint-session-execution-prompts.mjs && node scripts/lint-session-run-prompts.mjs && node scripts/convert-claude-to-agy.mjs && node scripts/build-agents-standard.mjs && node scripts/build-codex-skills.mjs && node scripts/sync-codex-run-mode.mjs --write && node scripts/sync-codex-run-mode.mjs --check && node scripts/sync-codex-agents.mjs --check && node scripts/lint-session-run-mirrors.mjs",
+    "prepublishOnly": "npm run build:arch-kb && node scripts/lint-invocation-policy.mjs && node scripts/lint-session-execution-prompts.mjs && node scripts/lint-session-run-prompts.mjs && npm run check:docs-reference && npm run check:session-run-contract-parity && npm run check:search-ranking-release-machine:source && npm run build && npm run check:search-ranking-release-machine:built && npm run check:session-run-release-machine && npm run build:mirrors"
   },
   "engines": {
     "node": ">=22.19.0"

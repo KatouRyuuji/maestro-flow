@@ -10,7 +10,7 @@ finish:
 
 # Workflow: Ralph
 
-Closed-loop policy over the canonical Session/Run chain. Ralph 拥有策略循环（retry、confidence、drift、goal-audit、stopping）；执行循环行为遵循 `orchestrator-run-loop.md`。
+Closed-loop policy over the canonical Session/Execution/Run chain. Ralph 拥有策略循环（retry、confidence、drift、goal-audit、stopping）；执行循环与 mutation authority 遵循 `orchestrator-run-loop.md`。
 
 ## State Persistence
 
@@ -18,22 +18,22 @@ Closed-loop policy over the canonical Session/Run chain. Ralph 拥有策略循�
 
 | State | 持久化 |
 |-------|--------|
-| S_RESOLVE | session_id |
-| S_INFER | position, phase |
-| S_DECOMPOSE | boundary_contract, goals |
-| S_BUILD | chain definition（仅内存，不落盘） |
-| S_CREATE | session（由 `session create --chain-file --no-dispatch` 建） |
-| S_EVALUATE | decision receipt |
-| S_FAIL | step.status |
-| S_RECOVER | session resume |
-| S_AMEND | session meta update |
-| S_DONE | session.status |
+| S_RESOLVE | session_id + execution_id + generation（public locator） |
+| S_INFER | Execution position, phase |
+| S_DECOMPOSE | Execution boundary_contract, goals |
+| S_BUILD | Execution chain definition（仅内存，交给 negotiated bootstrap） |
+| S_CREATE | identity-only Session + bounded Execution + private core claim |
+| S_EVALUATE | Execution decision receipt |
+| S_FAIL | Execution step.status / paused status |
+| S_RECOVER | execution resolve/resume receipt + new claim |
+| S_AMEND | Execution-owned proposal receipt |
+| S_DONE | execution-seal-receipt/1.0 |
 
 S_PARSE / S_CONFIRM / S_RUN_LOOP 无自有持久化产物。
 
 ## Lifecycle Inference（S_INFER）
 
-从 intent + 同 Session sealed outputs 推断起点：
+从 intent + 同 Session 的 sealed Run/Execution snapshots 推断起点：
 
 | 证据 | lifecycle_position |
 |------|-------------------|
@@ -59,9 +59,9 @@ Roadmap 仅在多 release 证据时推断。Quality = quick/standard/full 基于
 
 ## Decision Evaluation（S_EVALUATE）
 
-MANDATORY: execute ~/.maestro/workflows/orchestrator-run-loop.md "6. Decision step"; REQUIRED produce: verdict submitted via `session decide --json` + continuation read. Evaluator 输出格式见 `prepare/ralph.md`；Ralph 策略阈值见 `maestro-ralph.md` A_EVALUATE。
+MANDATORY: execute ~/.maestro/workflows/orchestrator-run-loop.md "4. Decision step"; REQUIRED produce: verdict submitted via fenced `maestro run decide ... --json` + fresh `run-response/1.1` continuation/fence read. Evaluator 输出格式见 `prepare/ralph.md`；Ralph 策略阈值见 `maestro-ralph.md` A_EVALUATE。
 
 ## Boundary
 
-**In scope**: Session lifecycle policy — decompose, build chain, dispatch, evaluate, drift-check, amend, seal.
-**Out of scope**: Step execution (belongs to Skills), CLI administration (belongs to `maestro session/run` commands).
+**In scope**: Execution lifecycle policy - decompose, build chain, dispatch, evaluate, drift-check, amend, recover, seal current generation.
+**Out of scope**: Step execution (belongs to Skills), permanent Session lifecycle mutation (not present in `session/2.0`), CLI administration.

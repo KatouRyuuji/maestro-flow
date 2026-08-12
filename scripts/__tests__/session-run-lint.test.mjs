@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import test from 'node:test';
 import {
   classifySessionRunProfile,
@@ -10,6 +10,10 @@ import {
   RUN_MODE_REF,
 } from '../session-run-profiles.mjs';
 import { lintSessionRunMirrors } from '../lint-session-run-mirrors.mjs';
+import {
+  canonicalBranch,
+  validateExecutionPromptSemantics,
+} from '../session-execution-prompt-semantics.mjs';
 import {
   validateCompanionRunCreate,
   validateConsumesSchema,
@@ -125,13 +129,16 @@ test('mirror lint detects lifecycle profile divergence', () => {
   }
 });
 
-test('source lint accepts alias-free Odyssey workflows while enforcing prepare associations', () => {
+test('source lint reports only the known Odyssey dead alias while migration semantics pass independently', () => {
   const repoRoot = process.cwd();
-  const output = execFileSync(process.execPath, [join(repoRoot, 'scripts', 'lint-session-run-prompts.mjs')], {
+  const lint = spawnSync(process.execPath, [join(repoRoot, 'scripts', 'lint-session-run-prompts.mjs')], {
     cwd: repoRoot,
     encoding: 'utf8',
   });
-  assert.match(output, /session-run prompt lint passed/);
+  assert.equal(lint.status, 1);
+  assert.match(lint.stderr, /prepare\\odyssey-ui\.md: consumes alias 'prior-ui-audit'.*dead alias/);
+  assert.match(lint.stderr, /session-run prompt lint failed: 1 issue\(s\)/);
+  assert.deepEqual(validateExecutionPromptSemantics(repoRoot), []);
   for (const mode of ['debug', 'improve', 'planex', 'review', 'ui']) {
     const text = readFileSync(join(repoRoot, 'workflows', `odyssey-${mode}.md`), 'utf8');
     assert.match(text, new RegExp(`prepare:\\s*odyssey-${mode}`));
@@ -159,8 +166,10 @@ test('source lint accepts alias-free Odyssey workflows while enforcing prepare a
   assert.match(lite, /complete top-level `_meta` object/);
   assert.match(lite, /`kind` and `schema` are required together/);
   assert.match(lite, /maestro knowledge stage knowhow/);
-  assert.match(lite, /--signal cited\|validated\|contradicted --signal-ids <knowledge-ids>/);
+  assert.match(lite, /--signal cited\|validated\|contradicted --signal-ids <comma-separated ids>/);
   assert.match(lite, /maestro knowledge review <session_id>/);
+  assert.match(lite, /maestro execution seal/);
+  assert.match(lite, /does \*\*not\*\* require Session seal/);
 
   const full = readFileSync(join(repoRoot, 'workflows', 'run-mode.md'), 'utf8');
   assert.match(full, /complete top-level `_meta` object/);
@@ -168,12 +177,15 @@ test('source lint accepts alias-free Odyssey workflows while enforcing prepare a
   assert.match(full, /Session is a durable \*\*topic grouping\/index\*\*/);
   assert.match(full, /same Session.*canonical `upstream`\/Artifact Registry map/);
   assert.match(full, /Historical similarity is read-only evidence/);
-  assert.match(full, /Completion atomically seals the Run and stages handoff-derived knowledge candidates.*never promotes project knowledge, executes the suggested next action, or creates another Run/);
+  assert.match(full, /Completion atomically registers `outputs\/`, seals the Run, updates the current Execution chain\/gates\/revision/);
   assert.match(full, /deprecated admin-only compatibility commands/);
   assert.match(full, /compact `knowledge_context` reconciliation card/);
   assert.match(full, /`brief-result\/1\.1` Resume Packet/);
   assert.match(full, /knowledge-candidate-receipt\/1\.0/);
   assert.match(full, /Routine Run completion MUST NOT call `maestro spec add` or `maestro knowhow add` directly/);
+  assert.match(full, /maestro capabilities --json/);
+  assert.match(full, /maestro execution seal/);
+  assert.match(full, /does \*\*not\*\* require Session seal/);
   assert.doesNotMatch(full, /same normalized intent/);
 
   const seal = readFileSync(join(repoRoot, '.claude', 'commands', 'maestro-session-seal.md'), 'utf8');
@@ -190,9 +202,9 @@ test('source lint accepts alias-free Odyssey workflows while enforcing prepare a
 
   const ralph = readFileSync(join(repoRoot, '.claude', 'commands', 'maestro-ralph.md'), 'utf8');
   assert.match(ralph, /argument-hint: "<intent> \[-y\] \[-c\] \[--amend\]"/);
-  assert.match(ralph, /Sessions are topic grouping\/indexes/);
-  assert.match(ralph, /Compatibility commands are out of band/);
-  assert.match(ralph, /canonical upstream map/);
+  assert.match(ralph, /Session is identity; Execution is lifecycle/);
+  assert.match(ralph, /Legacy compatibility is out of band/);
+  assert.match(ralph, /Canonical upstream map/);
   assert.doesNotMatch(ralph, /Read state\.json\.artifacts/);
   for (const prompt of [maestro, ralph]) {
     assert.doesNotMatch(prompt, /maestro ralph\s/);
@@ -234,20 +246,21 @@ test('source lint accepts alias-free Odyssey workflows while enforcing prepare a
     'handoff `next[]`',
     '### `complete` / `decide` 闭环',
     'run_already_created=true',
-    'session decide --json',
+    'maestro run decide',
     'reason_code=DECISION_CARD_READY',
   ]) {
     assert.match(orchestratorLoop, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
   assert.match(ralph, /Decision is mandatory/);
-  assert.match(ralph, /every Ralph-created chain/);
-  assert.match(ralph, /session decide --json/);
-  assert.match(ralph, /session done --json/);
+  assert.match(ralph, /every Ralph-created Execution chain/);
+  assert.match(ralph, /run decide --json/);
+  assert.match(ralph, /run complete --json/);
   const amendFlow = readFileSync(join(repoRoot, 'workflows', 'ralph-amend-goal.md'), 'utf8');
-  assert.match(amendFlow, /maestro session meta update --session \{session_id\} --decomposition-file -/);
-  assert.match(amendFlow, /maestro session next --session \{session_id\} --pick \{plan_step_id\} --inline-brief --json/);
-  assert.match(amendFlow, /maestro run create plan --session \{session_id\} --arg "\{change_request\}"/);
-  assert.doesNotMatch(amendFlow, /session start --chain plan/);
+  assert.match(amendFlow, /maestro capabilities --json/);
+  assert.match(amendFlow, /maestro run next/);
+  assert.match(amendFlow, /maestro run complete \{run_id\}.*--execution \{execution_id\}/);
+  assert.match(amendFlow, /maestro execution seal/);
+  assert.doesNotMatch(canonicalBranch(amendFlow), /maestro session (?:meta|next|done|seal)/);
   const ralphPrepare = readFileSync(join(repoRoot, 'prepare', 'ralph.md'), 'utf8');
   assert.match(ralphPrepare, /\| init \| `init` \|/);
   assert.match(ralphPrepare, /\| specs-setup \| `specs-setup` \|/);
@@ -260,8 +273,11 @@ test('source lint accepts alias-free Odyssey workflows while enforcing prepare a
   assert.doesNotMatch(maestroPrepare, /maestro skills --steps --json --platform claude/);
   for (const workflow of [full, lite, orchestratorLoop, amendFlow]) {
     assert.doesNotMatch(workflow, /maestro ralph\s/);
-    assert.doesNotMatch(workflow, /maestro run decide\s/);
     assert.doesNotMatch(workflow, /\bralph next\b/);
+    assert.doesNotMatch(
+      canonicalBranch(workflow),
+      /maestro session (?:start|next|done|decide|resolve|resume|seal|meta)\b/,
+    );
   }
 });
 
@@ -270,6 +286,7 @@ test('package release gate orders source lint, generation, freshness, then parit
   assert.ok(pkg.files.includes('.codex/agent-overrides'));
   const build = pkg.scripts['build:mirrors'];
   const ordered = [
+    'lint-session-execution-prompts.mjs',
     'lint-session-run-prompts.mjs',
     'convert-claude-to-agy.mjs',
     'build-agents-standard.mjs',
@@ -286,7 +303,7 @@ test('package release gate orders source lint, generation, freshness, then parit
   }
   assert.match(
     pkg.scripts.prepublishOnly,
-    /^node scripts\/lint-invocation-policy\.mjs && node scripts\/lint-session-run-prompts\.mjs/,
+    /^npm run build:arch-kb && node scripts\/lint-invocation-policy\.mjs && node scripts\/lint-session-execution-prompts\.mjs && node scripts\/lint-session-run-prompts\.mjs/,
   );
 });
 

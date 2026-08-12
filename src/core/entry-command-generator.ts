@@ -104,15 +104,13 @@ This skill is for internal orchestration use only. Do not invoke it manually.
 </purpose>
 
 <execution>
-1. \`maestro run prepare ${info.step}\` — read the returned pre-task thinking (purpose, contract, boundaries, risks) before doing anything. Note the returned \`workflow.path\`.
-2. Follow run-mode.md: compose an ASCII session slug \`YYYYMMDD-${info.step}-{topic}\`, then run:
-   \`maestro run start "<one-line goal>" --cmd ${info.step} --session <slug> [--arg "<command input>"]\`
-   Intent text is Session metadata only and never enters the target command's \`Run input.args\`. When the command contract or \`argument-hint\` requires inputs, pass them with repeatable \`--arg <value>\`; use lower-level \`maestro run create\` only when a compatibility caller needs raw positional passthrough after \`--\`.
-   Retain the returned \`run_id\`, \`run_dir\`, and \`upstream\`.
-3. (Optional) \`maestro run brief <run_id>\` — re-attach the execution manual, goals, gate status, and upstream handoff. Recommended when resuming a Run or consuming upstream artifacts; a fresh Run with no upstream may instead read \`workflow.path\` from step 1 directly and skip this.
-4. Execute the workflow completely. Write formal artifacts to \`{run_dir}/outputs/\`.
-5. \`maestro run check <run_id>\` — repair any blocking artifact or exit gate it reports.
-6. \`maestro run done <run_id>\` — report success only after the Run is completed.
+1. \`maestro run prepare ${info.step}\` - read the returned pre-task thinking and note \`workflow.path\`. This is read-only.
+2. Follow \`run-mode.md\` exactly. Before any mutation, negotiate \`maestro capabilities --json\`; require the canonical \`session/2.0 + execution/1.0 + core_execution_lease + run-response/1.1\` contract, then use or acquire the exact current Execution. Retain \`session_id\`, \`execution_id\`, \`generation\`, revisions, private core claim, \`run_id\`, \`run_dir\`, and \`upstream\`. Never persist the raw lease token.
+3. If an orchestrator birth packet already contains the exact Run locator, do NOT create another Run. Otherwise create the self-started Run through the Execution-aware \`maestro run create\` command in \`run-mode.md\`, passing required command inputs with repeatable \`--arg <value>\`; \`--intent\` is Session metadata only.
+4. Optionally use \`maestro run brief <run_id> --session <session_id>\` for read-only re-attach/backtracking.
+5. Execute the workflow completely. Write formal artifacts to \`{run_dir}/outputs/\`.
+6. Run \`maestro run check <run_id> --session <session_id>\` and repair blocking gates.
+7. If dispatched, return to the claim-holding orchestrator without completing. If self-started and still holding the exact current claim, complete through Execution-aware \`maestro run complete ... --json\`, consume the fresh \`run-response/1.1\` fence, then finish the bounded generation with \`maestro execution seal ... --json\`. Session lifecycle aliases are legacy compatibility only.
 </execution>
 `;
 }

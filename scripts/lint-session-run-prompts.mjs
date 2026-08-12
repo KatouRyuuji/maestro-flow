@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
-import { basename, join, relative } from 'node:path';
+import { basename, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   classifySessionRunProfile,
   parseFrontmatter,
   SESSION_MODES,
 } from './session-run-profiles.mjs';
+import { validateExecutionPromptSemantics } from './session-execution-prompt-semantics.mjs';
 
 const root = process.cwd();
 const errors = [];
@@ -220,6 +222,8 @@ for (const dir of readdirSync(skillDir)) {
   }
 }
 
+for (const semanticError of validateExecutionPromptSemantics(root)) errors.push(semanticError);
+
 const canonicalRunMode = join(root, 'workflows', 'run-mode.md');
 if (!existsSync(canonicalRunMode)) errors.push('workflows/run-mode.md: missing canonical Run workflow');
 else {
@@ -233,9 +237,9 @@ else {
     'complete top-level `_meta` object',
     '`kind` and `schema` are required together',
     'maestro run check',
-    'session done',
+    'maestro run complete',
     'suggest_only',
-    'session next',
+    'maestro run next',
     'deprecated admin-only',
     'brief-result/1.1',
     'knowledge_context',
@@ -246,6 +250,8 @@ else {
     'review_required',
     'knowledge-candidate-receipt/1.0',
     'maestro knowledge promote',
+    'maestro execution seal',
+    'run-response/1.1',
   ]) {
     if (!text.includes(token)) errors.push(`workflows/run-mode.md: missing ${token}`);
   }
@@ -267,6 +273,8 @@ else {
     '--signal-ids',
     'maestro knowledge stage',
     'maestro knowledge review',
+    'maestro execution seal',
+    'run-response/1.1',
   ]) {
     if (!text.includes(token)) errors.push(`workflows/run-mode-lite.md: missing ${token}`);
   }
@@ -292,7 +300,7 @@ if (!existsSync(canonicalOrchestratorLoop)) {
     'handoff `next[]`',
     '### `complete` / `decide` 闭环',
     'run_already_created=true',
-    'session decide --json',
+    'maestro run decide',
     'reason_code=DECISION_CARD_READY',
   ]) {
     if (!text.includes(token)) errors.push(`workflows/orchestrator-run-loop.md: missing ${token}`);
@@ -304,9 +312,9 @@ if (existsSync(canonicalRalphCommand)) {
   const text = readFileSync(canonicalRalphCommand, 'utf8');
   for (const token of [
     'Decision is mandatory',
-    'every Ralph-created chain',
-    'session decide --json',
-    'session done --json',
+    'every Ralph-created Execution chain',
+    'run decide --json',
+    'run complete --json',
   ]) {
     if (!text.includes(token)) errors.push(`.claude/commands/maestro-ralph.md: missing ${token}`);
   }
@@ -444,12 +452,14 @@ for (const { path, contract } of contractSources) {
   }
 }
 
-if (errors.length > 0) {
-  console.error(errors.join('\n'));
-  console.error(`session-run prompt lint failed: ${errors.length} issue(s)`);
-  process.exit(1);
-}
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  if (errors.length > 0) {
+    console.error(errors.join('\n'));
+    console.error(`session-run prompt lint failed: ${errors.length} issue(s)`);
+    process.exit(1);
+  }
 
-const commandCount = readdirSync(commandDir).filter((name) => name.endsWith('.md')).length;
-const skillCount = readdirSync(skillDir).filter((dir) => existsSync(join(skillDir, dir, 'SKILL.md'))).length;
-console.log(`session-run prompt lint passed: ${commandCount} commands, ${skillCount} skills`);
+  const commandCount = readdirSync(commandDir).filter((name) => name.endsWith('.md')).length;
+  const skillCount = readdirSync(skillDir).filter((dir) => existsSync(join(skillDir, dir, 'SKILL.md'))).length;
+  console.log(`session-run prompt lint passed: ${commandCount} commands, ${skillCount} skills`);
+}

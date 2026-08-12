@@ -8,6 +8,7 @@ import {
   CODEX_RUN_REF,
   parseFrontmatter,
 } from './session-run-profiles.mjs';
+import { inspectExecutionPromptMirrors } from './session-execution-prompt-semantics.mjs';
 
 const MIRRORS = [
   { root: '.agy', platform: 'agy' },
@@ -156,6 +157,7 @@ export function lintSessionRunMirrors(root = process.cwd()) {
       if (expected === 'deprecated' && !target.text.includes('<deprecated_command>')) errors.push(`${relative(root, path)}: deprecated skill missing replacement boundary`);
     }
   }
+  for (const result of inspectExecutionPromptMirrors(root)) errors.push(...result.errors);
   return errors.sort();
 }
 

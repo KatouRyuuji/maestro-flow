@@ -1,61 +1,57 @@
 <!-- session-mode: inherited -->
 # Run Mode Lite
 
-Lightweight Session/Run lifecycle for team skills. Only two actions: **start** and **done**. `run create` / `run complete` remain compatibility spellings. No `prepare`, no `brief`, no workflow content loading.
+Lightweight Session/Execution/Run lifecycle for team skills. Canonical actions are **negotiate -> start/attach Execution -> create/complete Run -> seal Execution**. There is no prepare/workflow loading requirement. Old Session start/done aliases appear only in the labeled compatibility branch.
+
+## New Runtime Authority
+
+1. Before the first mutation, run `maestro capabilities --json`. Require exact `maestro-capabilities/1.0` support for `session/2.0`, `execution/1.0`, `run-response/1.1`, `session_statusless`, `execution_generation`, and `core_execution_lease`; otherwise fail closed unless the caller explicitly selected the legacy branch.
+2. Session is durable topic identity. The bounded Execution owns chain/gates/lifecycle/revision/core lease; every Run is immutable and bound to exact `session_id + execution_id + generation`.
+3. Retain every `run-response/1.1` locator and fence: `session_id`, `execution_id`, `generation`, `run_id`, Session identity/activity revisions, `execution_revision`, and `lease_epoch`. Retain the private owner/kind/epoch/`lease_id` claim only in coordinator-private memory or a mode-0600 claim file.
+4. Every mutation uses a stable unique `--request-id`, the exact locator, `--expected-execution-revision`, and the current full claim (`--owner-id`, `--owner-kind`, `--lease-epoch`, `--lease-id`). Execution acquisition also retains and supplies the exact `--expected-identity-revision` and `--expected-activity-revision` from the Session identity response. Refresh revisions after every receipt. Never infer a current Session/Execution, reuse a stale claim, or fall back to a host-only lock.
 
 ## Create
 
-> **Dispatched by an orchestrator?** If the dispatch context already carries `run_id` / `run_dir` (a birth packet from `maestro session next`), store them in `team-session.json` under `"run"` and do **NOT** call `maestro run create` — a second create mints an empty duplicate Run. The steps below apply only to a skill starting its own Run.
+> **Dispatched by an orchestrator?** If the birth packet already carries exact `session_id` / `execution_id` / `generation` / `run_id` / `run_dir`, store the public locator in `team-session.json` and do **NOT** call `maestro run create`. The dispatching orchestrator owns completion and keeps the private core lease claim out of team state.
 
-1. Compose a session slug: `YYYYMMDD-<skill>-<topic>` — ASCII-only, ≤64 characters. NEVER let the runtime auto-generate from a Chinese or long intent string.
-2. Run `maestro session start "<short session goal>" --chain <skill-name> --session <slug> [--arg "<required command input>"]` before domain work.
-   - The intent text is **Session metadata only**. It does not enter `Run input.args` and does not satisfy the skill's command contract or `argument-hint`.
-   - When command inputs are required, pass them with repeatable `--arg <value>`. Runtime still validates every required command argument.
-   - Compatibility spelling remains valid for older callers and raw positional passthrough: `maestro run create <skill-name> --session <slug> --intent "<short session goal>" --arg <value> -- <args...>`. `--intent` is Session metadata only.
-3. Retain the returned `run_id`, `run_dir`. Merge them into `{run_dir}/work/team/team-session.json` under `"run": { "run_id": "<id>", "run_dir": "<path>" }`.
+For a self-started team Run:
+
+1. Compose an ASCII-only Session slug `YYYYMMDD-<skill>-<topic>` (<=64 characters), create or explicitly resolve the Session identity, then acquire its next bounded generation with:
+   `maestro execution start --session {session_id} --request-id {request_id} --expected-identity-revision {identity_revision} --expected-activity-revision {activity_revision} --expected-lease-epoch 0 --execution-owner {owner_id} --owner-kind {owner_kind} --actor {actor} --reason "{reason}" --evidence {evidence} --json`.
+2. Create the Run with:
+
+   `maestro run create <skill-name> --session {session_id} --execution {execution_id} --generation {generation} --request-id {request_id} --expected-execution-revision {execution_revision} --owner-id {owner_id} --owner-kind {owner_kind} --lease-epoch {lease_epoch} --lease-id {lease_id} --intent "<short goal>" [--arg <value> ...] --json`
+
+   `--intent` is Session metadata only. Required command inputs use repeatable `--arg <value>`; raw compatibility callers may pass `-- <args...>`.
+3. Retain `run_id` and `run_dir`. Merge the public locator into `{run_dir}/work/team/team-session.json` under `"run"`; never persist `lease_id`.
 
 ### Team State Authority
 
-- `{run_dir}/work/team/team-session.json` is the single coordinator-owned state file. It contains both coordination state and the `run` block used by the team-worker fallback.
+- `{run_dir}/work/team/team-session.json` is the single coordinator-owned state file. It contains coordination state and the public `run` locator used by the team-worker fallback.
 - Every state update is a merge-write: coordination updates MUST preserve `run`; Run updates MUST preserve coordination fields. Do not create a sibling `team-state.json`.
 - Workers may read `team-session.json` to resolve `run.run_dir`, but only the coordinator writes it.
 
 ## Artifact Boundary
 
-- Formal deliverables: write to `{run_dir}/outputs/` (filename stem = artifact kind).
-- Every new formal JSON deliverable MUST contain a complete top-level `_meta` object. `kind` and `schema` are required together; `role` and `alias` are optional. Use `{"_meta":{"kind":"<kind>","schema":"<kind>/1.0"},...}` and keep `kind` stable across filename changes.
-- A legacy JSON deliverable with no `_meta` remains readable through filename inference. Never write a partial, null, or non-object `_meta`; strict validation rejects the artifact and blocks Run completion.
-- Team coordination files (session bus, role-specs, process logs): stay in `{run_dir}/work/team/`, not formal artifacts, and do not carry artifact `_meta`.
-- `{run_dir}` MUST be resolved to the actual Run path before it is joined onto an `outputs/` path — never write a path that still contains the literal `{run_dir}` placeholder (such artifacts land outside the real Run and never reach the `session done` gate).
+- Formal deliverables go under `{run_dir}/outputs/` (filename stem = artifact kind).
+- Every new formal JSON deliverable MUST contain a complete top-level `_meta` object. `kind` and `schema` are required together; `role` and `alias` are optional. Use `{"_meta":{"kind":"<kind>","schema":"<kind>/1.0"},...}`.
+- A legacy JSON deliverable with no `_meta` remains readable through filename inference. Never write a partial, null, or non-object `_meta`; strict validation blocks completion.
+- Team coordination files stay in `{run_dir}/work/team/`, not formal artifacts, and do not carry artifact `_meta`.
+- Resolve the actual `{run_dir}` before joining an `outputs/` path; never write a literal `{run_dir}` placeholder.
 
 ## Complete
 
-> **Who completes?** When the Run was dispatched via a birth packet (an orchestrator already created it, see Create), `session done` belongs to the dispatching orchestrator — the skill only writes `outputs/` + `report.md` and does NOT self-complete. Only a self-started Run (the skill called `run create` itself) is completed by the skill via the steps below.
+> **Who completes?** For an orchestrator-dispatched Run, the team writes `outputs/` + `report.md` and returns; only the claim-holding orchestrator completes it. A self-started team Run is completed and its Execution sealed by its coordinator.
 
-1. Optionally write `{run_dir}/report.md` with YAML frontmatter keys `verdict`, `summary`, `constraints`, `decisions`, `concerns`, `next`, `details` (whitelist; extra keys are ignored). Constraints/decisions items are `{ text, status }` objects — `id` is auto-derived by the runtime (`C-001`/`D-001`…), never write it yourself. `next` items are `{ command, reason, needs }`. Accepted decisions and locked constraints become pending knowledge candidates at completion; omitting report.md is legal.
+1. Optionally write `{run_dir}/report.md` with the fixed frontmatter keys `verdict`, `summary`, `constraints`, `decisions`, `concerns`, `next`, `details`. Accepted decisions and locked constraints become pending knowledge candidates at completion.
+2. Stage reusable recipes/pitfalls with `maestro knowledge stage knowhow "<title>" --content-file <path|-> --run <run_id>`; explicit relations use `--signal cited|validated|contradicted --signal-ids <comma-separated ids>`. For a session-source candidate without a Run, use `--session <session-id> --evidence <immutable-ref>`.
+3. Complete through the current Execution with `maestro run complete <run_id> --session {session_id} --execution {execution_id} --generation {generation} --request-id {request_id} --expected-execution-revision {execution_revision} --owner-id {owner_id} --owner-kind {owner_kind} --lease-epoch {lease_epoch} --lease-id {lease_id} --verdict {verdict} --json`.
+4. Completion is fail-closed. Repair blocking outputs/gates and retry with the same transition identity as directed; never claim success, discard the team, or invent a new Run while completion is blocked. A `blocked` verdict pauses the Execution and invalidates the old claim.
+5. Recover a paused self-started Execution by first reading `maestro execution status --session {session_id} --execution {execution_id} --json`. Resolve each exact blocker with `maestro execution resolve --session {session_id} --execution {execution_id} --request-id {request_id} --expected-execution-revision {execution_revision} --actor {actor} --reason "{reason}" --evidence {evidence} (--decision {point}|--step {step}) --disposition {value} --json`, then reacquire with `maestro execution resume --session {session_id} --execution {execution_id} --request-id {request_id} --expected-execution-revision {execution_revision} --expected-activity-revision {activity_revision} --expected-lease-epoch {lease_epoch} --execution-owner {owner_id} --owner-kind {owner_kind} --actor {actor} --reason "{reason}" --evidence {evidence} --json`. Resume returns a new epoch/private claim, and the old claim remains invalid.
+6. When the self-started Run and all Execution gates are terminal, finish with `maestro execution seal --session {session_id} --execution {execution_id} --request-id {request_id} --expected-execution-revision {execution_revision} --expected-activity-revision {activity_revision} --execution-owner {owner_id} --owner-kind {owner_kind} --owner-epoch {lease_epoch} --lease-id {lease_id} --actor {actor} --reason "{reason}" --evidence {evidence} --outcome {done|done_with_concerns|failed} --summary "{summary}" --json`. Verify `execution-seal-receipt/1.0`, then discard the claim. Session identity remains available for a later generation.
+7. Review durable candidates with `maestro knowledge review <session_id>` and apply the Review Presentation Protocol. The happy-path adjudication entry is `maestro knowledge promote <session_id> --resolve <candidate-id> --as <choice> [--target <knowledge-id>] --reason "<reason>"`; `review --resolve` remains the compatibility fallback.
+8. Run-source promotion requires sealed source Runs and fresh reconciliation. A `session/2.0` session-source candidate does **not** require Session seal: require immutable `candidate_version` + `content_hash`, exact `session_id` + `observed_activity_revision`, non-empty `evidence_roots` + `evidence_root_hash`, and a fresh session reconciliation receipt for the current `candidate_snapshot_hash` + `corpus_fingerprint`, revalidated at final commit.
 
-```yaml
----
-verdict: ready
-summary: "one-line outcome"
-constraints:
-  - text: "adopted constraint"
-    status: locked
-  - text: "open constraint"
-    status: open
-decisions:
-  - text: "accepted decision"
-    status: accepted
-concerns:
-  - "risk or caveat"
-next:
-  - command: <next-command>
-    reason: "why next"
-    needs: [<artifact-ref>]
----
-```
+## Legacy `session/1.x` Compatibility Branch
 
-2. Before completion, stage reusable recipes/pitfalls with `maestro knowledge stage knowhow "<title>" --content-file <path|-> --run <run_id>` (session source without a Run: `--session <session-id> --evidence <file:line,...>` — no Run required); write content to a temp file, never inline. Apply the Staging Quality Bar: stage only pitfalls ("when doing X, watch out for Y because Z"), failure lessons, non-trivial trade-offs, or newly established constraints — never process notes, pattern re-descriptions, or raw traces; zero candidates is a legitimate outcome. Search/injection is exposure only; use `--signal cited|validated|contradicted --signal-ids <comma-separated ids>` on the same stage command for explicit relations.
-3. Run `maestro session done <run_id> --session <session_id>` (always pass `--session` — omitting it degrades to non-authoritative Session resolution). The `check` step is optional — done includes the same evaluation through the completion engine. Completion returns candidate IDs but never promotes project knowledge.
-4. Completion is fail-closed: if `session done` fails, fix the blocking gate (missing or malformed `outputs/` artifacts) and retry. While it keeps failing, do not archive/clean the team or claim success — keep the team active (status=paused) and surface the blocking gate to the user.
-5. Review durable candidates with `maestro knowledge review <session_id>` — apply the Review Presentation Protocol (present each candidate + recommendation, collect user decisions, then execute the resolution; never hand the raw command to the user as the whole task). The happy-path adjudication entry is promote inline `--resolve`: `maestro knowledge promote <session_id> --resolve <candidate-id> --as <choice> [--target <knowledge-id>] --reason "<reason>"` (freshness fence + resolve + promote in one call); `review --resolve` remains the compatibility fallback for missing/stale receipt repair (`--refresh`), batch triage, and re-presentation. Promote only through the dual-source gates: run-source candidates require their source Runs sealed + fresh reconciliation receipt; session-source candidates require the Session sealed + fresh session receipt + non-empty `--evidence` at stage. Session seal does not discard an unreviewed backlog.
+Use this branch only when an explicitly selected old CLI/schema lacks the negotiated Execution contract. Old callers may use `maestro session start`, `maestro session done`, `maestro session resolve/resume/seal`, or `maestro run create/complete` with `run-response/1.0`. Those aliases and permanent Session states are compatibility authority only and must never replace a lost or stale new-runtime Execution claim.

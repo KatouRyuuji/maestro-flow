@@ -3,6 +3,10 @@
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import ts from 'typescript';
+import {
+  inspectExecutionPromptSuite,
+  inspectExecutionPromptSupport,
+} from './session-execution-prompt-semantics.mjs';
 
 const LEGACY_OPERATIONS = [
   'create', 'next', 'complete', 'brief', 'recall', 'resolve', 'resume', 'fork', 'import',
@@ -30,6 +34,7 @@ const EXPECTED_FOCUSED_RELEASE_TESTS = [
 ];
 
 const REQUIRED_RELEASE_MACHINE_OPERATION_TOKENS = [
+  "'execution', 'handoff', 'prepare'",
   "'execution', 'seal'",
   "'execution', 'lease', 'release'",
   "'execution-chain-bootstrap'",
@@ -488,6 +493,22 @@ const checks = [];
 function addCheck(id, actual, expected, pass) {
   checks.push({ id, actual, expected, pass });
 }
+
+for (const result of inspectExecutionPromptSuite(root)) {
+  addCheck(
+    `prompt.execution.${result.id}`,
+    { path: result.path, errors: result.errors },
+    { errors: [] },
+    result.errors.length === 0,
+  );
+}
+const promptSupport = inspectExecutionPromptSupport(root);
+addCheck(
+  'prompt.execution.support-sources',
+  promptSupport.map(result => ({ id: result.id, path: result.path, errors: result.errors })),
+  { errors: [] },
+  promptSupport.every(result => result.errors.length === 0),
+);
 
 const writerPath = 'src/run/schemas.ts';
 const sessionWriterVersion = zodLiteral(writerPath, 'sessionStateV13Schema');

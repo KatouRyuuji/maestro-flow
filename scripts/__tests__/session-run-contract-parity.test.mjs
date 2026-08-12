@@ -18,6 +18,19 @@ const fixtureFiles = [
   'src/commands/plan.ts',
   'src/cli.ts',
   'scripts/check-session-run-release-machine.mjs',
+  'scripts/session-execution-prompt-semantics.mjs',
+  'workflows/run-mode.md',
+  'workflows/run-mode-lite.md',
+  'workflows/orchestrator-run-loop.md',
+  'workflows/ralph.md',
+  'workflows/ralph-amend-goal.md',
+  'workflows/codex-run-mode.md',
+  'workflows/claude-instructions.md',
+  'workflows/agy-instructions.md',
+  'workflows/codex-instructions.md',
+  'prepare/ralph.md',
+  '.claude/commands/maestro-ralph.md',
+  'src/core/entry-command-generator.ts',
   'dashboard/src/server/wiki/virtual-wiki-adapters.ts',
   'dashboard/src/server/wiki/wiki-indexer.ts',
   'guide/search-system-guide.md',
@@ -71,6 +84,11 @@ describe('Session Run contract parity release gate', () => {
     const result = runGate();
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.stdout).toContain('PASS writer.session.current');
+    expect(result.stdout).toContain('PASS prompt.execution.full');
+    expect(result.stdout).toContain('PASS prompt.execution.lite');
+    expect(result.stdout).toContain('PASS prompt.execution.orchestrator');
+    expect(result.stdout).toContain('PASS prompt.execution.ralph');
+    expect(result.stdout).toContain('PASS prompt.execution.support-sources');
     expect(result.stdout).toContain('PASS writer.session.statusless-explicit');
     expect(result.stdout).toContain('PASS writer.session.selection-default');
     expect(result.stdout).toContain('PASS writer.command-run.legacy-default');
@@ -100,6 +118,58 @@ describe('Session Run contract parity release gate', () => {
 
   it('fails each independent Session Run contract drift dimension', () => {
     const cases = [
+      {
+        dimension: 'prompt-full-capability-negotiation',
+        id: 'prompt.execution.full',
+        mutate(root) {
+          replaceOnce(root, 'workflows/run-mode.md', 'maestro capabilities --json', 'maestro legacy-capabilities --json');
+        },
+      },
+      {
+        dimension: 'prompt-lite-execution-seal',
+        id: 'prompt.execution.lite',
+        mutate(root) {
+          replacePattern(root, 'workflows/run-mode-lite.md', /maestro execution seal/g, 'maestro legacy seal');
+        },
+      },
+      {
+        dimension: 'prompt-orchestrator-revision-fence',
+        id: 'prompt.execution.orchestrator',
+        mutate(root) {
+          replacePattern(root, 'workflows/orchestrator-run-loop.md', /--expected-execution-revision/g, '--expected-session-revision');
+        },
+      },
+      {
+        dimension: 'prompt-ralph-core-lease',
+        id: 'prompt.execution.ralph',
+        mutate(root) {
+          replacePattern(root, 'prepare/ralph.md', /core_execution_lease/g, 'host_only_lease');
+        },
+      },
+      {
+        dimension: 'prompt-full-session-seal-regression',
+        id: 'prompt.execution.full',
+        mutate(root) {
+          replaceOnce(
+            root,
+            'workflows/run-mode.md',
+            '## Completion',
+            'maestro session seal {session_id} --summary "canonical regression"\n\n## Completion',
+          );
+        },
+      },
+      {
+        dimension: 'prompt-session-source-seal-regression',
+        id: 'prompt.execution.lite',
+        mutate(root) {
+          replaceOnce(
+            root,
+            'workflows/run-mode-lite.md',
+            'does **not** require Session seal',
+            'requires Session seal',
+          );
+        },
+      },
       {
         dimension: 'writer',
         id: 'writer.session.current',

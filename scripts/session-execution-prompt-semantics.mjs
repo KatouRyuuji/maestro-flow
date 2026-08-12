@@ -1,0 +1,474 @@
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+
+const LEGACY_HEADING = /^## Legacy `session\/1\.x` Compatibility Branch\s*$/m;
+
+const COMMON_REQUIRED = [
+  'maestro capabilities --json',
+  'session/2.0',
+  'execution/1.0',
+  'run-response/1.1',
+  'session_statusless',
+  'execution_generation',
+  'core_execution_lease',
+  'session_id',
+  'execution_id',
+  'generation',
+  '--request-id',
+  '--expected-identity-revision',
+  '--expected-activity-revision',
+  '--expected-execution-revision',
+  '--owner-id',
+  '--owner-kind',
+  '--lease-epoch',
+  '--lease-id',
+  'maestro execution start',
+  'maestro execution status',
+  'maestro execution resolve',
+  'maestro execution resume',
+  'maestro execution seal',
+  'execution-seal-receipt/1.0',
+];
+
+const KNOWLEDGE_REQUIRED = [
+  'candidate_version',
+  'content_hash',
+  'observed_activity_revision',
+  'evidence_roots',
+  'evidence_root_hash',
+  'candidate_snapshot_hash',
+  'corpus_fingerprint',
+  'does **not** require Session seal',
+];
+
+const CANONICAL_FORBIDDEN = [
+  {
+    description: 'Session lifecycle mutation command',
+    pattern: /maestro session (?:start|next|done|decide|resolve|resume|seal)\b/i,
+  },
+  {
+    description: 'Session-owned orchestration authority',
+    pattern: /session\.json\.orchestration|\bsession\.(?:status|scope_verdict)\b/i,
+  },
+  {
+    description: 'permanent running/paused/sealed Session assumption',
+    pattern: /\b(?:running|paused|sealed) Session\b|\bSession (?:is|remains|stays) (?:running|paused|sealed)\b|Session\s*(?:为|保持)\s*(?:running|paused|sealed)/i,
+  },
+  {
+    description: 'Session-owned chain authority',
+    pattern: /Every Session uses[^\n]*chain|Session (?:owns|stores|persists)[^\n]*chain/i,
+  },
+  {
+    description: 'Session-owned gate authority',
+    pattern: /\bSession gates?\b/i,
+  },
+  {
+    description: 'Session seal promotion prerequisite',
+    pattern: /session-source candidates? require(?:s)? (?:the )?Session (?:itself )?sealed|sealed Session \+ fresh session receipt|promote only after the Session is sealed/i,
+  },
+];
+
+const EXECUTION_MUTATIONS = {
+  'maestro execution start': [
+    '--session', '--request-id', '--expected-identity-revision', '--expected-activity-revision',
+    '--expected-lease-epoch', '--execution-owner', '--owner-kind', '--actor', '--reason', '--evidence', '--json',
+  ],
+  'maestro run create': [
+    '--session', '--execution', '--generation', '--request-id', '--expected-execution-revision',
+    '--owner-id', '--owner-kind', '--lease-epoch', '--lease-id', '--intent', '--json',
+  ],
+  'maestro run next': [
+    '--session', '--execution', '--generation', '--request-id', '--expected-execution-revision',
+    '--owner-id', '--owner-kind', '--lease-epoch', '--lease-id', '--json',
+  ],
+  'maestro run complete': [
+    '--session', '--execution', '--generation', '--request-id', '--expected-execution-revision',
+    '--owner-id', '--owner-kind', '--lease-epoch', '--lease-id', '--verdict', '--json',
+  ],
+  'maestro run decide': [
+    '--session', '--execution', '--generation', '--request-id', '--expected-execution-revision',
+    '--owner-id', '--owner-kind', '--lease-epoch', '--lease-id', '--verdict', '--confidence', '--json',
+  ],
+  'maestro execution resolve': [
+    '--session', '--execution', '--request-id', '--expected-execution-revision', '--actor', '--reason',
+    '--evidence', '--disposition', '--json',
+  ],
+  'maestro execution resume': [
+    '--session', '--execution', '--request-id', '--expected-execution-revision', '--expected-activity-revision',
+    '--expected-lease-epoch', '--execution-owner', '--owner-kind', '--actor', '--reason', '--evidence', '--json',
+  ],
+  'maestro execution seal': [
+    '--session', '--execution', '--request-id', '--expected-execution-revision', '--expected-activity-revision',
+    '--execution-owner', '--owner-kind', '--owner-epoch', '--lease-id', '--actor', '--reason', '--evidence',
+    '--outcome', '--json',
+  ],
+};
+
+export const EXECUTION_PROMPT_PROFILES = [
+  {
+    id: 'full',
+    path: 'workflows/run-mode.md',
+    mutations: Object.keys(EXECUTION_MUTATIONS),
+    required: [
+      ...COMMON_REQUIRED,
+      'maestro run create',
+      'maestro run next',
+      'maestro run complete',
+      'maestro run decide',
+      ...KNOWLEDGE_REQUIRED,
+    ],
+  },
+  {
+    id: 'lite',
+    path: 'workflows/run-mode-lite.md',
+    mutations: [
+      'maestro execution start', 'maestro run create', 'maestro run complete',
+      'maestro execution resolve', 'maestro execution resume', 'maestro execution seal',
+    ],
+    required: [
+      ...COMMON_REQUIRED,
+      'maestro run create',
+      'maestro run complete',
+      ...KNOWLEDGE_REQUIRED,
+    ],
+  },
+  {
+    id: 'orchestrator',
+    path: 'workflows/orchestrator-run-loop.md',
+    mutations: [
+      'maestro execution start', 'maestro run next', 'maestro run complete', 'maestro run decide',
+      'maestro execution resolve', 'maestro execution resume', 'maestro execution seal',
+    ],
+    required: [
+      ...COMMON_REQUIRED,
+      'maestro run next',
+      'maestro run complete',
+      'maestro run decide',
+      'Execution is the only authority for chain',
+    ],
+  },
+  {
+    id: 'ralph',
+    path: 'prepare/ralph.md',
+    required: [
+      ...COMMON_REQUIRED,
+      'maestro run next',
+      'maestro run complete',
+      'maestro run decide',
+      'execution-seal',
+      'post-execution',
+    ],
+  },
+];
+
+const SUPPORT_PROFILES = [
+  {
+    id: 'ralph-command-source',
+    path: '.claude/commands/maestro-ralph.md',
+    required: [
+      'maestro capabilities --json', 'session/2.0', 'execution/1.0', 'run-response/1.1',
+      'core_execution_lease', 'execution_id', 'generation', 'maestro execution seal',
+    ],
+    forbidden: [
+      { description: 'Session terminal state', pattern: /S_DONE\s+[^\n]*seal Session|Session auto-paused/i },
+      { description: 'Session decision mutation', pattern: /`session decide/i },
+    ],
+  },
+  {
+    id: 'ralph-workflow-source',
+    path: 'workflows/ralph.md',
+    required: ['execution-seal-receipt/1.0', 'run-response/1.1', 'bounded Execution'],
+    forbidden: [
+      { description: 'Session status persistence', pattern: /\bsession\.status\b|\bsession resume\b|`session decide/i },
+    ],
+  },
+  {
+    id: 'ralph-amend-source',
+    path: 'workflows/ralph-amend-goal.md',
+    required: [
+      'maestro capabilities --json', 'session/2.0', 'execution/1.0', 'core_execution_lease',
+      'run-response/1.1', 'execution_id', 'generation', '--expected-execution-revision',
+      '--owner-id', '--owner-kind', '--lease-epoch', '--lease-id',
+      'maestro execution status', 'maestro execution resolve', 'maestro execution resume', 'maestro execution seal',
+    ],
+    forbidden: [
+      { description: 'canonical Session amendment mutation', pattern: /maestro session (?:meta|next|done|resolve|resume|seal)\b/i },
+    ],
+    canonicalOnly: true,
+  },
+  {
+    id: 'codex-run-adapter',
+    path: 'workflows/codex-run-mode.md',
+    required: ['run-response/1.1', '--execution {execution_id}', '--generation {generation}', 'maestro execution seal'],
+    forbidden: [
+      { description: 'Session completion command', pattern: /maestro session done/i },
+    ],
+  },
+  {
+    id: 'entry-command-generator',
+    path: 'src/core/entry-command-generator.ts',
+    required: [
+      'maestro capabilities --json', 'execution/1.0', 'core_execution_lease', 'run-response/1.1',
+      'maestro run complete', 'maestro execution seal',
+    ],
+    forbidden: [
+      { description: 'generated Session convenience start', pattern: /maestro run start/i },
+      { description: 'generated legacy done alias', pattern: /maestro run done/i },
+    ],
+  },
+  {
+    id: 'runtime-finish-checklist',
+    path: 'src/run/runtime.ts',
+    required: [
+      'do not require Session seal under `session/2.0`',
+      'candidate version/content hash',
+      'evidence roots/hash',
+      'current corpus fingerprint',
+    ],
+    forbidden: [
+      { description: 'runtime Session seal promotion prerequisite', pattern: /promote only after the Session is sealed with a fresh session reconciliation receipt/i },
+    ],
+  },
+  ...['claude', 'agy', 'codex'].map(platform => ({
+    id: `${platform}-instruction-knowledge`,
+    path: `workflows/${platform}-instructions.md`,
+    required: [
+      'does not require Session seal',
+      'immutable candidate version/content hash',
+      'evidence roots/hash',
+      'current corpus fingerprint',
+    ],
+    forbidden: [
+      { description: 'instruction Session seal promotion prerequisite', pattern: /sealed Session \+ fresh session receipt/i },
+    ],
+  })),
+];
+
+function read(root, relativePath) {
+  const path = join(root, relativePath);
+  return existsSync(path) ? readFileSync(path, 'utf8') : null;
+}
+
+function missingTokens(text, required) {
+  return required.filter(token => !text.includes(token));
+}
+
+function normalizedCommandLine(line) {
+  return line.trim()
+    .replace(/^[-*+]\s+/, '')
+    .replace(/^\d+\.\s+/, '')
+    .replace(/^`+/, '')
+    .replace(/`+$/, '')
+    .trim();
+}
+
+function commandLines(text, command) {
+  return text.split(/\r?\n/)
+    .map(normalizedCommandLine)
+    .filter(line => line.startsWith(command));
+}
+
+function commandMentions(text, command) {
+  return text.split(/\r?\n/)
+    .filter(line => line.includes(command))
+    .map(line => line.slice(line.indexOf(command)).replace(/`/g, '').trim());
+}
+
+function missingMutationOptions(line, command) {
+  return EXECUTION_MUTATIONS[command].filter(option => !line.includes(option));
+}
+
+function validateExecutableMutations(text, profile) {
+  const errors = [];
+  for (const command of profile.mutations ?? []) {
+    const requiredOptions = EXECUTION_MUTATIONS[command];
+    const invocations = commandMentions(text, command);
+    const complete = invocations.some(line => missingMutationOptions(line, command).length === 0);
+    if (!complete) {
+      errors.push(
+        `${profile.path}: missing executable canonical command option set for ${command}: ${requiredOptions.join(' ')}`,
+      );
+    }
+  }
+  return errors;
+}
+
+function validateImportedMutationInvocations(text, path, ellipsisOnly = false) {
+  const errors = [];
+  for (const command of Object.keys(EXECUTION_MUTATIONS)) {
+    for (const line of commandLines(text, command)) {
+      if (ellipsisOnly && !/(?:\.\.\.|…)/.test(line)) continue;
+      const missing = missingMutationOptions(line, command);
+      if (missing.length > 0) {
+        errors.push(`${path}: executable canonical ${command} is missing required options: ${missing.join(' ')}`);
+      }
+    }
+  }
+  return errors;
+}
+
+function validateRequiredAndForbidden(text, profile, canonicalOnly) {
+  const errors = missingTokens(text, profile.required).map(token => (
+    `${profile.path}: missing Execution semantic token: ${token}`
+  ));
+  const inspected = canonicalOnly ? canonicalBranch(text) : text;
+  for (const rule of profile.forbidden ?? (canonicalOnly ? CANONICAL_FORBIDDEN : [])) {
+    if (rule.pattern.test(inspected)) {
+      errors.push(`${profile.path}: canonical new-runtime path contains ${rule.description}`);
+    }
+  }
+  return errors;
+}
+
+export function canonicalBranch(text) {
+  const match = LEGACY_HEADING.exec(text);
+  return match ? text.slice(0, match.index) : text;
+}
+
+function walkMarkdown(dir) {
+  if (!existsSync(dir)) return [];
+  const paths = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) paths.push(...walkMarkdown(path));
+    else if (entry.isFile() && entry.name.endsWith('.md')) paths.push(path);
+  }
+  return paths;
+}
+
+function frontmatterSessionMode(text) {
+  return text.match(/^session-mode:\s*([^\r\n]+)$/m)?.[1]?.trim() ?? null;
+}
+
+function inheritedWorkflow(text) {
+  return /^<!-- session-mode:\s*inherited\s*-->/m.test(text);
+}
+
+function importedRunMode(text) {
+  return text.includes('@~/.maestro/workflows/run-mode.md')
+    || text.includes('@~/.maestro/workflows/run-mode-lite.md');
+}
+
+function activeImportedPromptPaths(root, platformRoot = '.claude') {
+  const paths = new Set();
+  const commandDir = join(root, platformRoot, 'commands');
+  for (const path of walkMarkdown(commandDir)) {
+    const text = readFileSync(path, 'utf8');
+    if (frontmatterSessionMode(text) === 'run' && importedRunMode(text)) paths.add(path);
+  }
+
+  const skillDir = join(root, platformRoot, 'skills');
+  if (existsSync(skillDir)) {
+    for (const entry of readdirSync(skillDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const owner = join(skillDir, entry.name, 'SKILL.md');
+      if (!existsSync(owner)) continue;
+      const text = readFileSync(owner, 'utf8');
+      if (frontmatterSessionMode(text) !== 'run' || !importedRunMode(text)) continue;
+      for (const path of walkMarkdown(join(skillDir, entry.name))) paths.add(path);
+    }
+  }
+
+  if (platformRoot === '.claude') {
+    for (const path of walkMarkdown(join(root, 'workflows'))) {
+      const text = readFileSync(path, 'utf8');
+      if (inheritedWorkflow(text) && importedRunMode(text)) paths.add(path);
+    }
+  }
+  return [...paths].sort();
+}
+
+function relativePromptPath(root, path) {
+  const normalizedRoot = root.replaceAll('\\', '/').replace(/\/$/, '');
+  return path.replaceAll('\\', '/').replace(`${normalizedRoot}/`, '');
+}
+
+export function inspectActiveExecutionPromptImporters(root = process.cwd(), platformRoot = '.claude') {
+  return activeImportedPromptPaths(root, platformRoot).map(path => {
+    const relativePath = relativePromptPath(root, path);
+    const text = canonicalBranch(readFileSync(path, 'utf8'));
+    const errors = [];
+    for (const rule of CANONICAL_FORBIDDEN.slice(0, 1)) {
+      if (rule.pattern.test(text)) {
+        errors.push(`${relativePath}: canonical new-runtime path contains ${rule.description}`);
+      }
+    }
+    errors.push(...validateImportedMutationInvocations(text, relativePath));
+    return { id: `active-importer:${relativePath}`, path: relativePath, errors };
+  });
+}
+
+export function inspectExecutionPromptSuite(root = process.cwd()) {
+  return EXECUTION_PROMPT_PROFILES.map(profile => {
+    const text = read(root, profile.path);
+    if (text === null) {
+      return { id: profile.id, path: profile.path, errors: [`${profile.path}: missing prompt source`] };
+    }
+    const errors = [];
+    if (!LEGACY_HEADING.test(text)) {
+      errors.push(`${profile.path}: missing labeled Legacy \`session/1.x\` Compatibility Branch`);
+    }
+    errors.push(...validateRequiredAndForbidden(text, profile, true));
+    errors.push(...validateExecutableMutations(canonicalBranch(text), profile));
+    errors.push(...validateImportedMutationInvocations(canonicalBranch(text), profile.path, true));
+    if (!/\bRun\b[^\n]*(?:immutable|不可变)/i.test(canonicalBranch(text))) {
+      errors.push(`${profile.path}: canonical new-runtime path must state that each Run is immutable`);
+    }
+    return { id: profile.id, path: profile.path, errors };
+  });
+}
+
+export function inspectExecutionPromptSupport(root = process.cwd()) {
+  return SUPPORT_PROFILES.map(profile => {
+    const text = read(root, profile.path);
+    if (text === null) {
+      return { id: profile.id, path: profile.path, errors: [`${profile.path}: missing prompt/generator source`] };
+    }
+    const inspected = profile.canonicalOnly ? canonicalBranch(text) : text;
+    return {
+      id: profile.id,
+      path: profile.path,
+      errors: validateRequiredAndForbidden(inspected, profile, false),
+    };
+  });
+}
+
+export function validateExecutionPromptSemantics(root = process.cwd()) {
+  return [
+    ...inspectExecutionPromptSuite(root),
+    ...inspectExecutionPromptSupport(root),
+    ...inspectActiveExecutionPromptImporters(root),
+  ].flatMap(result => result.errors);
+}
+
+export function inspectExecutionPromptMirrors(root = process.cwd()) {
+  const sourcePath = '.claude/commands/maestro-ralph.md';
+  if (!existsSync(join(root, sourcePath))) return [];
+  const required = [
+    'maestro capabilities --json', 'session/2.0', 'execution/1.0', 'run-response/1.1',
+    'core_execution_lease', 'execution_id', 'generation', 'maestro execution seal',
+  ];
+  const forbidden = [
+    { description: 'Session terminal state', pattern: /S_DONE\s+[^\n]*seal Session|Session auto-paused/i },
+    { description: 'Session decision mutation', pattern: /`session decide/i },
+  ];
+  const ralphResults = [
+    { id: 'agy-ralph-mirror', path: '.agy/skills/maestro-ralph/SKILL.md' },
+    { id: 'agents-ralph-mirror', path: '.agents/skills/maestro-ralph/SKILL.md' },
+    { id: 'codex-ralph-mirror', path: '.codex/skills/maestro-ralph/SKILL.md' },
+  ].map(profile => {
+    const text = read(root, profile.path);
+    if (text === null) {
+      return { id: profile.id, path: profile.path, errors: [`${profile.path}: missing generated mirror`] };
+    }
+    return {
+      id: profile.id,
+      path: profile.path,
+      errors: validateRequiredAndForbidden(text, { ...profile, required, forbidden }, false),
+    };
+  });
+  return [
+    ...ralphResults,
+    ...inspectActiveExecutionPromptImporters(root, '.codex'),
+  ];
+}
