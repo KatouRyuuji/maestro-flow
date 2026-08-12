@@ -1,16 +1,33 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { z } from 'zod';
 
 import type { CommandRun, ReportFrontmatter } from './schemas.js';
-import { SessionStore, type StoreTransaction } from './store.js';
-import { parseSpecEntries } from '../tools/spec-entry-parser.js';
+import {
+  SessionStore,
+  type ExecutionRunSidecarAuthority,
+  type StoreTransaction,
+} from './store.js';
+import { formatNewEntry, parseSpecEntries } from '../tools/spec-entry-parser.js';
 import { appendSpecEntry } from '../tools/spec-writer.js';
-import { resolveSpecDir, type SpecCategory } from '../tools/spec-loader.js';
+import { CATEGORY_MAP, resolveSpecDir, type SpecCategory } from '../tools/spec-loader.js';
 import { executeAdd } from '../tools/store-knowhow.js';
 import { supersedeEntry } from '../tools/spec-conflict-marker.js';
 import { supersedeKnowhowEntry } from '../tools/knowhow-lifecycle.js';
+import { findSeedByFilename, renderSeedContent } from '../tools/spec-seeds.js';
+import {
+  escapeYamlValue,
+  generateKnowhowFilename,
+  normalizeKnowhowBody,
+  parseFrontmatter,
+} from '../utils/frontmatter.js';
+import { hashDirectory, readVerifiedContainedFile } from './artifacts.js';
+import {
+  parseTranscriptUri,
+  quoteSha256,
+  transcriptEvidenceSnapshotSchema,
+} from './transcript-evidence.js';
 import {
   knowledgeReconciliationSchema,
   type KnowledgeCandidateReconciliation,
@@ -18,6 +35,49 @@ import {
 } from '../knowledge/reconciliation-schema.js';
 
 const nonEmptyString = z.string().min(1);
+const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
+
+export const sessionKnowledgeEvidenceRootSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('file'),
+    ref: nonEmptyString,
+    path: nonEmptyString,
+    anchor: nonEmptyString.nullable(),
+    content_hash: sha256Schema,
+    size: z.number().int().nonnegative(),
+  }).strict(),
+  z.object({
+    kind: z.literal('run'),
+    ref: nonEmptyString,
+    run_id: nonEmptyString,
+    path: nonEmptyString,
+    content_hash: sha256Schema,
+    size: z.number().int().nonnegative(),
+  }).strict(),
+  z.object({
+    kind: z.literal('artifact'),
+    ref: nonEmptyString,
+    artifact_id: nonEmptyString,
+    path: nonEmptyString,
+    content_hash: sha256Schema,
+    size: z.number().int().nonnegative(),
+  }).strict(),
+  z.object({
+    kind: z.literal('inline'),
+    ref: nonEmptyString,
+    encoding: z.literal('utf8'),
+    content: nonEmptyString,
+    content_hash: sha256Schema,
+    size: z.number().int().nonnegative(),
+  }).strict(),
+  z.object({
+    kind: z.literal('transcript'),
+    ref: nonEmptyString,
+    path: nonEmptyString,
+    content_hash: sha256Schema,
+    size: z.number().int().nonnegative(),
+  }).strict(),
+]);
 
 export const knowledgeInputSignalSchema = z.enum([
   'consumed', 'cited', 'validated', 'contradicted',
@@ -32,6 +92,18 @@ export const knowledgeInputSchema = z.object({
   last_recorded_at: nonEmptyString,
   /** Optional evidence anchors (artifact/output/test refs) for high-value signals. */
   evidence: z.array(nonEmptyString).optional(),
+}).strict();
+
+export const sessionKnowledgeCandidateSourceSchema = z.object({
+  schema_version: z.literal('session-knowledge-candidate-source/1.0'),
+  candidate_version: z.literal(1),
+  session_id: nonEmptyString,
+  observed_activity_revision: z.number().int().nonnegative(),
+  content_hash: sha256Schema,
+  evidence_roots: z.array(nonEmptyString).min(1),
+  evidence_root_hash: sha256Schema,
+  /** Additive typed content addresses; absent only on legacy snapshots. */
+  evidence_root_descriptors: z.array(sessionKnowledgeEvidenceRootSchema).min(1).optional(),
 }).strict();
 
 export const knowledgeCandidateSchema = z.object({
@@ -53,6 +125,8 @@ export const knowledgeCandidateSchema = z.object({
     promoted_at: nonEmptyString,
     content_hash: z.string().regex(/^[a-f0-9]{64}$/),
   }).strict().nullable().optional(),
+  /** Immutable source binding for newly staged origin=session candidates. */
+  source_snapshot: sessionKnowledgeCandidateSourceSchema.optional(),
 }).strict();
 
 export type KnowledgeInputSource = z.infer<typeof knowledgeInputSchema>['source'];
@@ -96,6 +170,8 @@ export const sessionKnowledgeDeltaSchema = z.object({
 export type RunKnowledgeDelta = z.infer<typeof runKnowledgeDeltaSchema>;
 export type SessionKnowledgeDelta = z.infer<typeof sessionKnowledgeDeltaSchema>;
 export type KnowledgeCandidate = z.infer<typeof knowledgeCandidateSchema>;
+export type SessionKnowledgeCandidateSource = z.infer<typeof sessionKnowledgeCandidateSourceSchema>;
+export type SessionKnowledgeEvidenceRoot = z.infer<typeof sessionKnowledgeEvidenceRootSchema>;
 export type KnowledgeInputSignal = z.infer<typeof knowledgeInputSignalSchema>;
 
 export interface SessionKnowledgeSummary {
@@ -129,6 +205,10 @@ export interface SessionKnowledgeSummary {
 export interface PromoteSessionKnowledgeOptions {
   candidateIds?: string[];
   all?: boolean;
+  /** Internal deterministic interleaving hook used by focused CAS tests. */
+  _beforeFinalSessionValidation?: () => void;
+  /** Wrapper-supplied corpus/receipt validator, executed under the final store lock. */
+  _finalSessionValidation?: (store: SessionStore) => void;
 }
 
 export interface KnowledgePromotionResult {
@@ -281,6 +361,8 @@ export function sessionKnowledgeSnapshotHash(delta: SessionKnowledgeDelta): stri
       content: normalizedText(candidate.content),
       category: candidate.category,
       source_kind: candidate.source_kind,
+      evidence_roots: normalizeKnowledgeEvidenceRoots(candidate.evidence_refs),
+      source_snapshot: candidate.source_snapshot ?? null,
     }))
     .sort((left, right) => left.candidate_id.localeCompare(right.candidate_id));
   return createHash('sha256').update(JSON.stringify(views)).digest('hex');
@@ -298,6 +380,252 @@ function normalizedText(value: string): string {
 
 function contentHash(value: string): string {
   return createHash('sha256').update(normalizedText(value)).digest('hex');
+}
+
+export function knowledgeCandidateContentHash(value: string): string {
+  return contentHash(value);
+}
+
+export function normalizeKnowledgeEvidenceRoots(refs: readonly string[]): string[] {
+  return [...new Set(refs
+    .map(ref => ref.normalize('NFKC').trim().replaceAll('\\', '/').replace(/\s+/g, ' '))
+    .filter(Boolean))]
+    .sort();
+}
+
+export function knowledgeEvidenceRootHash(refs: readonly string[]): string {
+  return createHash('sha256')
+    .update(JSON.stringify(normalizeKnowledgeEvidenceRoots(refs)))
+    .digest('hex');
+}
+
+function evidenceDescriptorHash(descriptors: readonly SessionKnowledgeEvidenceRoot[]): string {
+  return createHash('sha256').update(JSON.stringify(descriptors)).digest('hex');
+}
+
+function rawHash(value: string | Buffer): string {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function projectRelativePath(projectRoot: string, absolutePath: string): string {
+  const path = relative(resolve(projectRoot), absolutePath).replaceAll('\\', '/');
+  if (!path || path === '.' || path.startsWith('../') || isAbsolute(path)) {
+    throw new Error(`Evidence path escapes the project root: ${absolutePath}`);
+  }
+  return path;
+}
+
+function splitFileEvidenceRef(
+  projectRoot: string,
+  ref: string,
+): { path: string; anchor: string | null } {
+  const exact = resolve(projectRoot, ref);
+  if (existsSync(exact)) return { path: ref, anchor: null };
+  const hashAnchor = ref.match(/^(.*?)(#.+)$/);
+  if (hashAnchor) return { path: hashAnchor[1], anchor: hashAnchor[2] };
+  const lineAnchor = ref.match(/^(.*?)(:\d+(?::\d+)?)$/);
+  if (lineAnchor) return { path: lineAnchor[1], anchor: lineAnchor[2] };
+  return { path: ref, anchor: null };
+}
+
+function resolveTranscriptEvidenceRoot(
+  projectRoot: string,
+  store: SessionStore,
+  sessionId: string,
+  ref: string,
+): SessionKnowledgeEvidenceRoot | null {
+  const parsed = parseTranscriptUri(ref);
+  if (!parsed) return null;
+  const dir = join(store.sessionDir(sessionId), 'transcript-evidence');
+  if (!existsSync(dir)) throw new Error(`Unresolved transcript evidence: ${ref}`);
+  const matches = readdirSync(dir)
+    .filter(name => name.endsWith('.json'))
+    .map(name => {
+      const path = join(dir, name);
+      const snapshot = store.readJsonFileReadOnly(path, transcriptEvidenceSnapshotSchema);
+      return { path, snapshot };
+    })
+    .filter(({ snapshot }) => snapshot.host_kind === parsed.hostKind
+      && snapshot.host_session_id === parsed.hostSessionId
+      && snapshot.entry_id === parsed.entryId
+      && snapshot.sha256.startsWith(parsed.sha256Prefix));
+  if (matches.length !== 1) {
+    throw new Error(`Transcript evidence must resolve to exactly one immutable snapshot: ${ref}`);
+  }
+  const { path, snapshot } = matches[0];
+  if (quoteSha256(snapshot.quote) !== snapshot.normalized_sha256) {
+    throw new Error(`Transcript evidence snapshot bytes changed: ${ref}`);
+  }
+  return {
+    kind: 'transcript',
+    ref,
+    path: projectRelativePath(projectRoot, path),
+    content_hash: snapshot.normalized_sha256,
+    size: Buffer.byteLength(snapshot.quote, 'utf8'),
+  };
+}
+
+export function resolveSessionKnowledgeEvidenceRoots(
+  projectRoot: string,
+  store: SessionStore,
+  sessionId: string,
+  refs: readonly string[],
+): SessionKnowledgeEvidenceRoot[] {
+  const normalizedRefs = normalizeKnowledgeEvidenceRoots(refs)
+    .filter(ref => ref !== `session:${sessionId}`);
+  if (normalizedRefs.length === 0) {
+    throw new Error('Session-source candidate evidence must contain a resolvable immutable root');
+  }
+  const bundle = store.readBundle(sessionId);
+  const descriptors = normalizedRefs.map((ref): SessionKnowledgeEvidenceRoot => {
+    if (ref.startsWith('inline:')) {
+      const content = ref.slice('inline:'.length);
+      if (!content) throw new Error('Inline evidence must explicitly include immutable content');
+      return {
+        kind: 'inline',
+        ref,
+        encoding: 'utf8',
+        content,
+        content_hash: rawHash(content),
+        size: Buffer.byteLength(content, 'utf8'),
+      };
+    }
+    if (ref.startsWith('transcript:')) {
+      const transcript = resolveTranscriptEvidenceRoot(projectRoot, store, sessionId, ref);
+      if (!transcript) throw new Error(`Unresolved transcript evidence: ${ref}`);
+      return transcript;
+    }
+    if (ref.startsWith('run:')) {
+      const runId = ref.slice('run:'.length).trim();
+      if (!runId) throw new Error(`Invalid Run evidence reference: ${ref}`);
+      const runPath = join(store.runDir(sessionId, runId), 'run.json');
+      const verified = readVerifiedContainedFile(projectRoot, runPath);
+      store.readRunReadOnly(sessionId, runId);
+      return {
+        kind: 'run',
+        ref,
+        run_id: runId,
+        path: projectRelativePath(projectRoot, verified.canonicalPath),
+        content_hash: verified.contentHash,
+        size: verified.size,
+      };
+    }
+    if (ref.startsWith('artifact:')) {
+      const artifactId = ref.slice('artifact:'.length).trim();
+      const artifact = bundle.artifacts.artifacts[artifactId];
+      if (!artifact || artifact.status !== 'sealed') {
+        throw new Error(`Artifact evidence is missing or not sealed: ${artifactId || ref}`);
+      }
+      const artifactPath = join(store.sessionDir(sessionId), artifact.relative_path);
+      const stat = lstatSync(artifactPath);
+      if (stat.isSymbolicLink()) throw new Error(`Artifact evidence cannot be a symbolic link: ${artifactId}`);
+      const observed = stat.isDirectory()
+        ? hashDirectory(artifactPath)
+        : (() => {
+            const verified = readVerifiedContainedFile(projectRoot, artifactPath);
+            return { hash: verified.contentHash, size: verified.size };
+          })();
+      if (observed.hash !== artifact.content_hash) {
+        throw new Error(`Sealed artifact evidence bytes changed: ${artifactId}`);
+      }
+      return {
+        kind: 'artifact',
+        ref,
+        artifact_id: artifactId,
+        path: projectRelativePath(projectRoot, resolve(artifactPath)),
+        content_hash: observed.hash,
+        size: observed.size,
+      };
+    }
+    const parsed = splitFileEvidenceRef(projectRoot, ref);
+    try {
+      const verified = readVerifiedContainedFile(projectRoot, parsed.path);
+      return {
+        kind: 'file',
+        ref,
+        path: projectRelativePath(projectRoot, verified.canonicalPath),
+        anchor: parsed.anchor,
+        content_hash: verified.contentHash,
+        size: verified.size,
+      };
+    } catch (error) {
+      throw new Error(`Unresolved or mutable session evidence "${ref}": ${(error as Error).message}`);
+    }
+  });
+  return descriptors.sort((left, right) => left.ref.localeCompare(right.ref)
+    || left.kind.localeCompare(right.kind));
+}
+
+export function createSessionKnowledgeCandidateSource(
+  projectRoot: string,
+  store: SessionStore,
+  sessionId: string,
+  observedActivityRevision: number,
+  content: string,
+  evidenceRefs: readonly string[],
+): SessionKnowledgeCandidateSource {
+  const evidenceRoots = normalizeKnowledgeEvidenceRoots(evidenceRefs);
+  if (evidenceRoots.length === 0) {
+    throw new Error('Session-source candidate evidence must remain non-empty');
+  }
+  const descriptors = resolveSessionKnowledgeEvidenceRoots(projectRoot, store, sessionId, evidenceRoots);
+  return sessionKnowledgeCandidateSourceSchema.parse({
+    schema_version: 'session-knowledge-candidate-source/1.0',
+    candidate_version: 1,
+    session_id: sessionId,
+    observed_activity_revision: observedActivityRevision,
+    content_hash: knowledgeCandidateContentHash(content),
+    evidence_roots: evidenceRoots,
+    evidence_root_hash: evidenceDescriptorHash(descriptors),
+    evidence_root_descriptors: descriptors,
+  });
+}
+
+export function assertSessionKnowledgeCandidateSource(
+  candidate: KnowledgeCandidate,
+  sessionId: string,
+): SessionKnowledgeCandidateSource {
+  const source = candidate.source_snapshot;
+  if (!source) {
+    throw new Error(`Session-source candidate ${candidate.candidate_id} has no immutable source snapshot`);
+  }
+  const evidenceRoots = normalizeKnowledgeEvidenceRoots(candidate.evidence_refs);
+  if (evidenceRoots.length === 0) {
+    throw new Error(`Session-source candidate ${candidate.candidate_id} has empty evidence`);
+  }
+  const expectedRootHash = source.evidence_root_descriptors
+    ? evidenceDescriptorHash(source.evidence_root_descriptors)
+    : knowledgeEvidenceRootHash(evidenceRoots);
+  if (source.session_id !== sessionId
+    || source.content_hash !== knowledgeCandidateContentHash(candidate.content)
+    || source.evidence_root_hash !== expectedRootHash
+    || JSON.stringify(source.evidence_roots) !== JSON.stringify(evidenceRoots)) {
+    throw new Error(`Session-source candidate ${candidate.candidate_id} source snapshot is stale or mismatched`);
+  }
+  return source;
+}
+
+export function revalidateSessionKnowledgeCandidateSource(
+  projectRoot: string,
+  store: SessionStore,
+  candidate: KnowledgeCandidate,
+  sessionId: string,
+): SessionKnowledgeCandidateSource {
+  const source = assertSessionKnowledgeCandidateSource(candidate, sessionId);
+  if (!source.evidence_root_descriptors) {
+    throw new Error(`Session-source candidate ${candidate.candidate_id} has legacy unfenced evidence roots`);
+  }
+  const current = resolveSessionKnowledgeEvidenceRoots(
+    projectRoot,
+    store,
+    sessionId,
+    candidate.evidence_refs,
+  );
+  if (JSON.stringify(current) !== JSON.stringify(source.evidence_root_descriptors)
+    || evidenceDescriptorHash(current) !== source.evidence_root_hash) {
+    throw new Error(`Session-source candidate ${candidate.candidate_id} evidence bytes changed`);
+  }
+  return source;
 }
 
 export function addInput(
@@ -333,7 +661,7 @@ export function addInput(
 export function addCandidate(
   draft: KnowledgeLedgerDraft,
   input: Pick<KnowledgeCandidate, 'target' | 'action' | 'title' | 'content' | 'category' | 'source_kind'>
-    & { evidence_refs: string[] },
+    & { evidence_refs: string[]; source_snapshot?: SessionKnowledgeCandidateSource },
   now: string,
 ): string {
   const id = knowledgeCandidateId(input.target, input.content);
@@ -344,6 +672,16 @@ export function addCandidate(
         `Candidate ${id} already exists with action ${existing.action}; `
         + `cannot restage the same content as ${input.action}`,
       );
+    }
+    if (existing.source_snapshot || input.source_snapshot) {
+      if (!existing.source_snapshot || !input.source_snapshot) {
+        throw new Error(`Candidate ${id} cannot change its immutable source snapshot`);
+      }
+      assertSessionKnowledgeCandidateSource(existing, existing.source_snapshot.session_id);
+      if (JSON.stringify(existing.source_snapshot) !== JSON.stringify(input.source_snapshot)
+        || knowledgeEvidenceRootHash(existing.evidence_refs) !== knowledgeEvidenceRootHash(input.evidence_refs)) {
+        throw new Error(`Candidate ${id} cannot change its immutable content or evidence binding`);
+      }
     }
     existing.occurrences++;
     existing.last_recorded_at = now;
@@ -459,6 +797,17 @@ export function recordActiveRunKnowledgeInputs(
   }
 }
 
+export type KnowledgeExecutionAuthority = ExecutionRunSidecarAuthority;
+
+function executionKnowledgeAuthorityRequired(runId: string): Error {
+  return new Error(
+    `Run ${runId} is bound to an active Execution; exact sidecar authority is required. `
+    + 'Pass --execution, --generation, --request-id, --expected-execution-revision, '
+    + '--owner-id, --owner-kind, --lease-epoch, and --lease-id, or provide a private '
+    + 'authority JSON file with --execution-authority / MAESTRO_EXECUTION_AUTHORITY_FILE.',
+  );
+}
+
 /**
  * Record an explicit knowledge relation against one authoritative active Run.
  * Unlike the best-effort load hook, this command-facing surface fails closed.
@@ -471,6 +820,7 @@ export function recordRunKnowledgeInputs(
   source: z.infer<typeof knowledgeInputSchema>['source'] = 'manual',
   sessionId?: string,
   evidence: readonly string[] = [],
+  executionAuthority?: KnowledgeExecutionAuthority,
 ): { session_id: string; run_id: string; recorded: number } {
   const ids = [...new Set(knowledgeIds.map(id => id.trim()).filter(Boolean))];
   if (ids.length === 0) throw new Error('At least one knowledge ID is required');
@@ -478,18 +828,42 @@ export function recordRunKnowledgeInputs(
   const located = store.findRun(runId, sessionId);
   const now = nowIso();
   const path = runKnowledgeDeltaPath(store, located.sessionId, runId);
+  const mutate = (draft: RunKnowledgeDelta) => {
+    for (const id of ids) addInput(draft, id, signal, source, now, evidence);
+    draft.revision++;
+    draft.updated_at = now;
+    return { session_id: located.sessionId, run_id: runId, recorded: ids.length };
+  };
+  if (store.readOpenExecution(located.sessionId)) {
+    if (!executionAuthority) throw executionKnowledgeAuthorityRequired(runId);
+    return store.updateActiveExecutionRunSidecar({
+      sessionId: located.sessionId,
+      runId,
+      path,
+      schema: runKnowledgeDeltaSchema,
+      initial: createDelta(located.sessionId, runId, now),
+      authority: executionAuthority,
+      operation: 'knowledge-record',
+      requestPayload: {
+        knowledge_ids: ids,
+        signal,
+        source,
+        evidence: [...evidence],
+      },
+      revisionOf: draft => draft.revision,
+      mutator: mutate,
+    }).result;
+  }
+  if (executionAuthority) {
+    throw new Error(`Run ${runId} uses ${located.run.schema_version}; Execution sidecar authority is not applicable`);
+  }
   return store.updateActiveRunSidecar(
     located.sessionId,
     runId,
     path,
     runKnowledgeDeltaSchema,
     createDelta(located.sessionId, runId, now),
-    draft => {
-      for (const id of ids) addInput(draft, id, signal, source, now, evidence);
-      draft.revision++;
-      draft.updated_at = now;
-      return { session_id: located.sessionId, run_id: runId, recorded: ids.length };
-    },
+    mutate,
   );
 }
 
@@ -505,6 +879,7 @@ export function stageRunKnowledgeCandidate(
     evidenceRefs?: string[];
   },
   sessionId?: string,
+  executionAuthority?: KnowledgeExecutionAuthority,
 ): { session_id: string; run_id: string; candidate_id: string; reused: boolean } {
   const title = input.title.trim();
   const content = input.content.trim();
@@ -526,29 +901,55 @@ export function stageRunKnowledgeCandidate(
   const reused = Boolean(prior);
   const now = nowIso();
   const path = runKnowledgeDeltaPath(store, located.sessionId, runId);
+  const mutate = (draft: RunKnowledgeDelta) => {
+    const candidateId = addCandidate(draft, {
+      target: input.target,
+      action: input.action ?? 'propose',
+      title,
+      content,
+      category: input.category?.trim() || null,
+      source_kind: 'manual',
+      evidence_refs: [...new Set([
+        `run:${runId}`,
+        ...(input.evidenceRefs ?? []).map(ref => ref.trim()).filter(Boolean),
+      ])],
+    }, now);
+    draft.revision++;
+    draft.updated_at = now;
+    return { session_id: located.sessionId, run_id: runId, candidate_id: candidateId, reused };
+  };
+  if (store.readOpenExecution(located.sessionId)) {
+    if (!executionAuthority) throw executionKnowledgeAuthorityRequired(runId);
+    return store.updateActiveExecutionRunSidecar({
+      sessionId: located.sessionId,
+      runId,
+      path,
+      schema: runKnowledgeDeltaSchema,
+      initial: createDelta(located.sessionId, runId, now),
+      authority: executionAuthority,
+      operation: 'knowledge-stage',
+      requestPayload: {
+        target: input.target,
+        action: input.action ?? 'propose',
+        title,
+        content,
+        category: input.category?.trim() || null,
+        evidence_refs: [...new Set((input.evidenceRefs ?? []).map(ref => ref.trim()).filter(Boolean))],
+      },
+      revisionOf: draft => draft.revision,
+      mutator: mutate,
+    }).result;
+  }
+  if (executionAuthority) {
+    throw new Error(`Run ${runId} uses ${located.run.schema_version}; Execution sidecar authority is not applicable`);
+  }
   return store.updateActiveRunSidecar(
     located.sessionId,
     runId,
     path,
     runKnowledgeDeltaSchema,
     createDelta(located.sessionId, runId, now),
-    draft => {
-      const candidateId = addCandidate(draft, {
-        target: input.target,
-        action: input.action ?? 'propose',
-        title,
-        content,
-        category: input.category?.trim() || null,
-        source_kind: 'manual',
-        evidence_refs: [...new Set([
-          `run:${runId}`,
-          ...(input.evidenceRefs ?? []).map(ref => ref.trim()).filter(Boolean),
-        ])],
-      }, now);
-      draft.revision++;
-      draft.updated_at = now;
-      return { session_id: located.sessionId, run_id: runId, candidate_id: candidateId, reused };
-    },
+    mutate,
   );
 }
 
@@ -945,6 +1346,100 @@ function promoteKnowhowCandidate(
   }
 }
 
+function atomicSpecFilename(category: SpecCategory): string {
+  const filename = Object.entries(CATEGORY_MAP).find(([, value]) => value === category)?.[0];
+  if (!filename) throw new Error(`No project spec file is registered for category ${category}`);
+  return filename;
+}
+
+function stageAtomicSessionCorpusPromotion(
+  projectRoot: string,
+  sessionId: string,
+  tx: StoreTransaction,
+  candidate: KnowledgeCandidate,
+  promotedId: string,
+  promotedAt: string,
+): { promoted_id: string; outcome: 'created' | 'reaffirmed' } {
+  if (candidate.target === 'spec') {
+    const content = safeSpecContent(candidate.content);
+    const plannedExisting = findSpecById(projectRoot, promotedId);
+    if (plannedExisting) {
+      if (normalizedText(plannedExisting.content) !== normalizedText(content)) {
+        throw new Error(`Persisted promotion ID ${promotedId} has different content for ${candidate.candidate_id}`);
+      }
+      return { promoted_id: promotedId, outcome: 'reaffirmed' };
+    }
+    const existing = findExistingSpec(projectRoot, candidate.title);
+    if (existing) {
+      if (normalizedText(existing.content) !== normalizedText(content)) {
+        throw new Error(`Candidate ${candidate.candidate_id} conflicts with existing spec title "${candidate.title}"`);
+      }
+      return { promoted_id: existing.id, outcome: 'reaffirmed' };
+    }
+    const validCategories: SpecCategory[] = ['coding', 'arch', 'debug', 'test', 'review', 'learning', 'ui'];
+    const category = validCategories.includes(candidate.category as SpecCategory)
+      ? candidate.category as SpecCategory
+      : 'learning';
+    const filename = atomicSpecFilename(category);
+    const path = join(resolveSpecDir(projectRoot, 'project'), filename);
+    const seed = findSeedByFilename(filename);
+    const current = tx.pendingText(path) ?? (existsSync(path)
+      ? readFileSync(path, 'utf8')
+      : seed ? renderSeedContent(seed) : '');
+    const entry = formatNewEntry(
+      category,
+      ['session-knowledge', candidate.source_kind],
+      promotedAt.slice(0, 10),
+      candidate.title,
+      content,
+      `session:${sessionId}:${candidate.candidate_id}`,
+      undefined,
+      `Promoted from ${candidate.evidence_refs.join(', ')}`,
+      undefined,
+      undefined,
+      undefined,
+      { sid: promotedId },
+    );
+    tx.writeText(path, `${current.replace(/\s*$/, '')}\n\n${entry}\n`);
+    return { promoted_id: promotedId, outcome: 'created' };
+  }
+
+  const generated = generateKnowhowFilename('tip', candidate.title, promotedId);
+  const path = join(projectRoot, '.workflow', 'knowhow', generated.filename);
+  if (existsSync(path)) {
+    const parsed = parseFrontmatter(readFileSync(path, 'utf8'));
+    const existingBody = normalizeKnowhowBody(parsed.body);
+    if (parsed.data.title !== candidate.title
+      || parsed.data.type !== 'tip'
+      || parsed.data.explicitId !== promotedId
+      || existingBody !== normalizeKnowhowBody(candidate.content)) {
+      throw new Error(`Persisted promotion ID ${promotedId} has different content for ${candidate.candidate_id}`);
+    }
+    return { promoted_id: generated.id, outcome: 'reaffirmed' };
+  }
+  const body = normalizeKnowhowBody(candidate.content);
+  if (!body) throw new Error(`Knowledge candidate ${candidate.candidate_id} has empty content`);
+  const description = `Promoted from ${candidate.evidence_refs.join(', ')}`;
+  const document = [
+    '---',
+    `title: ${escapeYamlValue(candidate.title)}`,
+    `description: ${escapeYamlValue(description)}`,
+    'type: tip',
+    `explicitId: ${promotedId}`,
+    `created: ${promotedAt}`,
+    'keywords:',
+    '  - session-knowledge',
+    `  - ${candidate.source_kind}`,
+    'tags:',
+    '  - promoted',
+    '---',
+    '',
+    body,
+  ].join('\n');
+  tx.writeText(path, document);
+  return { promoted_id: generated.id, outcome: 'created' };
+}
+
 function candidateReconciliationPolicies(
   store: SessionStore,
   sessionId: string,
@@ -1148,31 +1643,46 @@ export function promoteSessionKnowledge(
       + 'complete and seal each source Run first: maestro run check <run-id> && maestro session done',
     );
   }
-  // Session-origin gate (K5, equivalent strength): the Session must be sealed
-  // (delta immutability) and the session reconciliation receipt must exist.
-  // Receipt FRESHNESS is enforced one layer up: promoteReconciledSessionKnowledge
-  // (and review --refresh) re-issue the receipt in the TOCTOU fence position
-  // immediately before this transaction — the same model as run receipts, whose
-  // sealed-run check here likewise trusts the wrapper's refresh. Direct callers
-  // of this low-level entry bypass the freshness fence by contract.
+  // Session-origin candidates are fenced by their immutable staged source and
+  // an existing review receipt, not by permanent Session sealing. The wrapper
+  // revalidates the receipt's corpus fingerprint immediately before entering
+  // this lower-level promotion path.
   const sessionSourceSelected = selected.filter(candidate => (candidate.origin ?? 'run') === 'session');
   if (sessionSourceSelected.length > 0) {
-    const sessionStatus = store.readBundle(sessionId).session.status;
-    if (sessionStatus !== 'sealed') {
-      const sealHint = sessionStatus === 'paused'
-        ? ` (it is paused; resume it with \`maestro session resume ${sessionId}\` first, then seal)`
-        : ' with: `maestro session seal <session-id>`';
-      throw new Error(
-        `Session-source candidates require Session ${sessionId} to be sealed before promotion `
-        + `(current status: ${sessionStatus}); seal it${sealHint}. Run-source candidates are not affected by this gate.`,
-      );
-    }
+    const sessionDelta = readSessionKnowledgeDelta(store, sessionId, true);
     const sessionReceipt = readSessionKnowledgeReconciliation(store, sessionId, true);
     if (!sessionReceipt) {
       throw new Error(
         `Session ${sessionId} has no session knowledge reconciliation receipt; `
         + `run "maestro knowledge review ${sessionId} --refresh" first`,
       );
+    }
+    if (!sessionReceipt.session_source
+      || sessionReceipt.candidate_snapshot_hash !== sessionKnowledgeSnapshotHash(sessionDelta)) {
+      throw new Error(
+        `Session ${sessionId} has a stale or mismatched session knowledge reconciliation receipt; `
+        + `run "maestro knowledge review ${sessionId} --refresh" before promotion`,
+      );
+    }
+    for (const candidate of sessionSourceSelected) {
+      const source = revalidateSessionKnowledgeCandidateSource(
+        projectRoot,
+        store,
+        candidate,
+        sessionId,
+      );
+      const bound = sessionReceipt.session_source.candidates.find(item =>
+        item.candidate_id === candidate.candidate_id
+      );
+      if (!bound
+        || bound.candidate_version !== source.candidate_version
+        || bound.observed_activity_revision !== source.observed_activity_revision
+        || bound.content_hash !== source.content_hash
+        || bound.evidence_root_hash !== source.evidence_root_hash) {
+        throw new Error(
+          `Session-source candidate ${candidate.candidate_id} has stale or mismatched receipt evidence`,
+        );
+      }
     }
   }
   if (selected.length === 0 && alreadyPromoted.length === 0) {
@@ -1229,44 +1739,181 @@ export function promoteSessionKnowledge(
     return { candidate, promotedId, supersessionTarget };
   });
 
+  const atomicSessionPlan = plan.length > 0
+    && plan.every(item => (item.candidate.origin ?? 'run') === 'session' && !item.supersessionTarget);
+  if (atomicSessionPlan) {
+    if (!options._finalSessionValidation) {
+      throw new Error(
+        'Session-source promotion requires the reconciled wrapper final corpus validation',
+      );
+    }
+    const promotedAt = nowIso();
+    const promoted = store.updateKnowledgeTransaction(sessionId, tx => {
+      options._beforeFinalSessionValidation?.();
+      const lockedDelta = readSessionKnowledgeDelta(store, sessionId, true);
+      const lockedReceipt = readSessionKnowledgeReconciliation(store, sessionId, true);
+      if (!lockedReceipt?.session_source
+        || lockedReceipt.candidate_snapshot_hash !== sessionKnowledgeSnapshotHash(lockedDelta)) {
+        throw new Error(`Session ${sessionId} has a stale session knowledge reconciliation receipt`);
+      }
+      options._finalSessionValidation?.(store);
+
+      for (const item of plan) {
+        const lockedCandidate = lockedDelta.candidates.find(candidate =>
+          candidate.candidate_id === item.candidate.candidate_id
+        );
+        if (!lockedCandidate
+          || lockedCandidate.status === 'promoted'
+          || lockedCandidate.target !== item.candidate.target
+          || lockedCandidate.action !== item.candidate.action
+          || lockedCandidate.title !== item.candidate.title
+          || lockedCandidate.content !== item.candidate.content
+          || lockedCandidate.category !== item.candidate.category
+          || lockedCandidate.source_kind !== item.candidate.source_kind
+          || JSON.stringify(lockedCandidate.evidence_refs) !== JSON.stringify(item.candidate.evidence_refs)
+          || JSON.stringify(lockedCandidate.source_snapshot) !== JSON.stringify(item.candidate.source_snapshot)) {
+          throw new Error(`Session-source candidate ${item.candidate.candidate_id} changed before final commit`);
+        }
+        const source = revalidateSessionKnowledgeCandidateSource(
+          projectRoot,
+          store,
+          lockedCandidate,
+          sessionId,
+        );
+        const bound = lockedReceipt.session_source.candidates.find(candidate =>
+          candidate.candidate_id === lockedCandidate.candidate_id
+        );
+        if (!bound
+          || bound.candidate_version !== source.candidate_version
+          || bound.content_hash !== source.content_hash
+          || bound.evidence_root_hash !== source.evidence_root_hash
+          || JSON.stringify(bound.evidence_root_descriptors)
+            !== JSON.stringify(source.evidence_root_descriptors)) {
+          throw new Error(
+            `Session-source candidate ${lockedCandidate.candidate_id} has stale receipt evidence`,
+          );
+        }
+      }
+
+      const results = plan.map(item => {
+        const result = stageAtomicSessionCorpusPromotion(
+          projectRoot,
+          sessionId,
+          tx,
+          item.candidate,
+          item.promotedId,
+          promotedAt,
+        );
+        return {
+          candidate_id: item.candidate.candidate_id,
+          target: item.candidate.target,
+          promoted_id: result.promoted_id,
+          outcome: result.outcome,
+        };
+      });
+      for (const candidate of lockedDelta.candidates) {
+        const result = results.find(item => item.candidate_id === candidate.candidate_id);
+        if (!result) continue;
+        candidate.status = 'promoted';
+        candidate.promoted_id = result.promoted_id;
+        candidate.promotion_receipt = {
+          outcome: result.outcome,
+          promoted_at: promotedAt,
+          content_hash: contentHash(candidate.content),
+        };
+      }
+      lockedDelta.revision++;
+      lockedDelta.updated_at = promotedAt;
+      tx.writeJson(
+        sessionKnowledgeDeltaPath(store, sessionId),
+        lockedDelta,
+        sessionKnowledgeDeltaSchema,
+      );
+      if (store.readSessionRecordReadOnly(sessionId).schema_version !== 'session/2.0') {
+        const bundle = structuredClone(store.readBundle(sessionId));
+        for (const item of results) {
+          const target = item.target === 'spec'
+            ? bundle.session.lifecycle.promoted_spec_ids
+            : bundle.session.lifecycle.promoted_knowhow_ids;
+          if (!target.includes(item.promoted_id)) target.push(item.promoted_id);
+        }
+        tx.addBundle(bundle);
+      }
+      return results;
+    });
+    return {
+      schema_version: 'knowledge-promotion-result/1.0',
+      session_id: sessionId,
+      promoted,
+      already_promoted: alreadyPromoted,
+      skipped_observed: skippedObserved,
+      skipped_review_required: skippedReviewRequired,
+      skipped_suppressed: skippedSuppressed,
+    };
+  }
+
   // Phase 1: persist deterministic promotion intents before any project write.
   // A crash after this point is resumable because `promoting` candidates remain selectable.
   const intentAt = nowIso();
-  store.updateKnowledgeLifecycle(sessionId, (_lifecycle, tx) => {
-    for (const runId of new Set(plan.flatMap(item => item.candidate.run_ids))) {
-      const delta = readRunKnowledgeDelta(store, sessionId, runId);
-      let changed = false;
-      for (const candidate of delta.candidates) {
-        const item = plan.find(entry => entry.candidate.candidate_id === candidate.candidate_id);
-        if (!item || candidate.status === 'promoted') continue;
-        candidate.status = 'promoting';
-        candidate.promoted_id = item.promotedId;
-        changed = true;
+  const canonicalSessionV20 = store.readSessionRecordReadOnly(sessionId).schema_version === 'session/2.0';
+  const sessionOnlyPlan = plan.every(item => (item.candidate.origin ?? 'run') === 'session');
+  if (canonicalSessionV20 && sessionOnlyPlan) {
+    store.updateJsonFile(
+      sessionKnowledgeDeltaPath(store, sessionId),
+      sessionKnowledgeDeltaSchema,
+      createSessionDelta(sessionId, intentAt),
+      sessionDelta => {
+        let changed = false;
+        for (const candidate of sessionDelta.candidates) {
+          const item = plan.find(entry => entry.candidate.candidate_id === candidate.candidate_id);
+          if (!item || candidate.status === 'promoted') continue;
+          candidate.status = 'promoting';
+          candidate.promoted_id = item.promotedId;
+          changed = true;
+        }
+        if (changed) {
+          sessionDelta.revision++;
+          sessionDelta.updated_at = intentAt;
+        }
+      },
+    );
+  } else {
+    store.updateKnowledgeLifecycle(sessionId, (_lifecycle, tx) => {
+      for (const runId of new Set(plan.flatMap(item => item.candidate.run_ids))) {
+        const delta = readRunKnowledgeDelta(store, sessionId, runId);
+        let changed = false;
+        for (const candidate of delta.candidates) {
+          const item = plan.find(entry => entry.candidate.candidate_id === candidate.candidate_id);
+          if (!item || candidate.status === 'promoted') continue;
+          candidate.status = 'promoting';
+          candidate.promoted_id = item.promotedId;
+          changed = true;
+        }
+        if (changed) {
+          delta.revision++;
+          delta.updated_at = intentAt;
+          tx.writeJson(runKnowledgeDeltaPath(store, sessionId, runId), delta, runKnowledgeDeltaSchema);
+        }
       }
-      if (changed) {
-        delta.revision++;
-        delta.updated_at = intentAt;
-        tx.writeJson(runKnowledgeDeltaPath(store, sessionId, runId), delta, runKnowledgeDeltaSchema);
+      // K7 origin dispatch: session-source intents land in the session delta.
+      if (plan.some(item => (item.candidate.origin ?? 'run') === 'session')) {
+        const sessionDelta = readSessionKnowledgeDelta(store, sessionId);
+        let changed = false;
+        for (const candidate of sessionDelta.candidates) {
+          const item = plan.find(entry => entry.candidate.candidate_id === candidate.candidate_id);
+          if (!item || candidate.status === 'promoted') continue;
+          candidate.status = 'promoting';
+          candidate.promoted_id = item.promotedId;
+          changed = true;
+        }
+        if (changed) {
+          sessionDelta.revision++;
+          sessionDelta.updated_at = intentAt;
+          tx.writeJson(sessionKnowledgeDeltaPath(store, sessionId), sessionDelta, sessionKnowledgeDeltaSchema);
+        }
       }
-    }
-    // K7 origin dispatch: session-source intents land in the session delta.
-    if (plan.some(item => (item.candidate.origin ?? 'run') === 'session')) {
-      const sessionDelta = readSessionKnowledgeDelta(store, sessionId);
-      let changed = false;
-      for (const candidate of sessionDelta.candidates) {
-        const item = plan.find(entry => entry.candidate.candidate_id === candidate.candidate_id);
-        if (!item || candidate.status === 'promoted') continue;
-        candidate.status = 'promoting';
-        candidate.promoted_id = item.promotedId;
-        changed = true;
-      }
-      if (changed) {
-        sessionDelta.revision++;
-        sessionDelta.updated_at = intentAt;
-        tx.writeJson(sessionKnowledgeDeltaPath(store, sessionId), sessionDelta, sessionKnowledgeDeltaSchema);
-      }
-    }
-  });
+    });
+  }
 
   const promoted = plan.map(({ candidate, promotedId, supersessionTarget }) => {
     const result = candidate.target === 'spec'
@@ -1292,57 +1939,84 @@ export function promoteSessionKnowledge(
   });
 
   const promotedAt = nowIso();
-  store.updateKnowledgeLifecycle(sessionId, (lifecycle, tx) => {
-    for (const item of promoted) {
-      const target = item.target === 'spec'
-        ? lifecycle.promoted_spec_ids
-        : lifecycle.promoted_knowhow_ids;
-      if (!target.includes(item.promoted_id)) target.push(item.promoted_id);
-    }
-    for (const runId of new Set(summary.candidates.flatMap(candidate => candidate.run_ids))) {
-      const delta = readRunKnowledgeDelta(store, sessionId, runId);
-      let changed = false;
-      for (const candidate of delta.candidates) {
-        const item = promoted.find(entry => entry.candidate_id === candidate.candidate_id);
-        if (!item) continue;
-        candidate.status = 'promoted';
-        candidate.promoted_id = item.promoted_id;
-        candidate.promotion_receipt = {
-          outcome: item.outcome,
-          promoted_at: promotedAt,
-          content_hash: contentHash(candidate.content),
-        };
-        changed = true;
+  if (canonicalSessionV20 && sessionOnlyPlan) {
+    store.updateJsonFile(
+      sessionKnowledgeDeltaPath(store, sessionId),
+      sessionKnowledgeDeltaSchema,
+      createSessionDelta(sessionId, promotedAt),
+      sessionDelta => {
+        let changed = false;
+        for (const candidate of sessionDelta.candidates) {
+          const item = promoted.find(entry => entry.candidate_id === candidate.candidate_id);
+          if (!item) continue;
+          candidate.status = 'promoted';
+          candidate.promoted_id = item.promoted_id;
+          candidate.promotion_receipt = {
+            outcome: item.outcome,
+            promoted_at: promotedAt,
+            content_hash: contentHash(candidate.content),
+          };
+          changed = true;
+        }
+        if (changed) {
+          sessionDelta.revision++;
+          sessionDelta.updated_at = promotedAt;
+        }
+      },
+    );
+  } else {
+    store.updateKnowledgeLifecycle(sessionId, (lifecycle, tx) => {
+      for (const item of promoted) {
+        const target = item.target === 'spec'
+          ? lifecycle.promoted_spec_ids
+          : lifecycle.promoted_knowhow_ids;
+        if (!target.includes(item.promoted_id)) target.push(item.promoted_id);
       }
-      if (changed) {
-        delta.revision++;
-        delta.updated_at = promotedAt;
-        tx.writeJson(runKnowledgeDeltaPath(store, sessionId, runId), delta, runKnowledgeDeltaSchema);
+      for (const runId of new Set(summary.candidates.flatMap(candidate => candidate.run_ids))) {
+        const delta = readRunKnowledgeDelta(store, sessionId, runId);
+        let changed = false;
+        for (const candidate of delta.candidates) {
+          const item = promoted.find(entry => entry.candidate_id === candidate.candidate_id);
+          if (!item) continue;
+          candidate.status = 'promoted';
+          candidate.promoted_id = item.promoted_id;
+          candidate.promotion_receipt = {
+            outcome: item.outcome,
+            promoted_at: promotedAt,
+            content_hash: contentHash(candidate.content),
+          };
+          changed = true;
+        }
+        if (changed) {
+          delta.revision++;
+          delta.updated_at = promotedAt;
+          tx.writeJson(runKnowledgeDeltaPath(store, sessionId, runId), delta, runKnowledgeDeltaSchema);
+        }
       }
-    }
-    // K7 origin dispatch: session-source completion lands in the session delta.
-    if (summary.candidates.some(candidate => (candidate.origin ?? 'run') === 'session')) {
-      const sessionDelta = readSessionKnowledgeDelta(store, sessionId);
-      let changed = false;
-      for (const candidate of sessionDelta.candidates) {
-        const item = promoted.find(entry => entry.candidate_id === candidate.candidate_id);
-        if (!item) continue;
-        candidate.status = 'promoted';
-        candidate.promoted_id = item.promoted_id;
-        candidate.promotion_receipt = {
-          outcome: item.outcome,
-          promoted_at: promotedAt,
-          content_hash: contentHash(candidate.content),
-        };
-        changed = true;
+      // K7 origin dispatch: session-source completion lands in the session delta.
+      if (summary.candidates.some(candidate => (candidate.origin ?? 'run') === 'session')) {
+        const sessionDelta = readSessionKnowledgeDelta(store, sessionId);
+        let changed = false;
+        for (const candidate of sessionDelta.candidates) {
+          const item = promoted.find(entry => entry.candidate_id === candidate.candidate_id);
+          if (!item) continue;
+          candidate.status = 'promoted';
+          candidate.promoted_id = item.promoted_id;
+          candidate.promotion_receipt = {
+            outcome: item.outcome,
+            promoted_at: promotedAt,
+            content_hash: contentHash(candidate.content),
+          };
+          changed = true;
+        }
+        if (changed) {
+          sessionDelta.revision++;
+          sessionDelta.updated_at = promotedAt;
+          tx.writeJson(sessionKnowledgeDeltaPath(store, sessionId), sessionDelta, sessionKnowledgeDeltaSchema);
+        }
       }
-      if (changed) {
-        sessionDelta.revision++;
-        sessionDelta.updated_at = promotedAt;
-        tx.writeJson(sessionKnowledgeDeltaPath(store, sessionId), sessionDelta, sessionKnowledgeDeltaSchema);
-      }
-    }
-  });
+    });
+  }
 
   return {
     schema_version: 'knowledge-promotion-result/1.0',

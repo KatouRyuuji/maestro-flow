@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -30,6 +31,7 @@ import {
 } from './session-knowledge.js';
 import {
   promoteReconciledSessionKnowledge,
+  persistSessionKnowledgeReconciliation,
   reconcileSessionKnowledgeSync,
 } from '../knowledge/reconcile.js';
 import { sealSession } from './runtime.js';
@@ -40,6 +42,9 @@ const roots: string[] = [];
 function root(): string {
   const path = mkdtempSync(join(tmpdir(), 'maestro-transcript-evidence-'));
   roots.push(path);
+  mkdirSync(join(path, 'src'), { recursive: true });
+  writeFileSync(join(path, 'src', 'foo.ts'), '// file evidence\n', 'utf8');
+  writeFileSync(join(path, 'src', 'bar.ts'), '// file evidence\n', 'utf8');
   return path;
 }
 
@@ -47,6 +52,16 @@ const HOST = { host_kind: 'hook', host_session_id: 'window-session-1', entry_id:
 
 function evidenceDir(projectRoot: string, sessionId: string): string {
   return join(projectRoot, '.workflow', 'sessions', sessionId, 'transcript-evidence');
+}
+
+function immutableTranscriptRef(projectRoot: string, sessionId: string): string {
+  const stored = storeTranscriptEvidence(projectRoot, sessionId, 'reviewed transcript quote', HOST);
+  return buildTranscriptUri(
+    HOST.host_kind,
+    HOST.host_session_id,
+    HOST.entry_id,
+    stored.sha256,
+  );
 }
 
 afterEach(() => {
@@ -283,17 +298,18 @@ describe('K17 trust gate', () => {
   it('defaults transcript-only candidates to review_required in the session receipt', () => {
     const projectRoot = root();
     const { sessionId } = ensureSyntheticKnowledgeSession(projectRoot, 'k17-host');
+    const transcriptRef = immutableTranscriptRef(projectRoot, sessionId);
     const staged = stageSessionKnowledgeCandidate(projectRoot, sessionId, {
       target: 'knowhow',
       title: 'Quote-backed insight',
       content: 'Transcript-only rule: never auto-promote raw quotes.',
-      evidenceRefs: ['transcript:hook:sid:entry:abc'],
+      evidenceRefs: [transcriptRef],
     });
     const mixed = stageSessionKnowledgeCandidate(projectRoot, sessionId, {
       target: 'knowhow',
       title: 'Mixed evidence insight',
       content: 'Mixed evidence rule: file anchors keep the normal gate.',
-      evidenceRefs: ['transcript:hook:sid:entry:abc', 'src/foo.ts:12'],
+      evidenceRefs: [transcriptRef, 'src/foo.ts:12'],
     });
     const receipt = reconcileSessionKnowledgeSync(projectRoot, sessionId);
     expect(receipt.candidates.find(item => item.candidate_id === staged.candidate_id)
@@ -305,17 +321,18 @@ describe('K17 trust gate', () => {
   it('excludes transcript-only candidates from --all auto-promotion', () => {
     const projectRoot = root();
     const { sessionId } = ensureSyntheticKnowledgeSession(projectRoot, 'k17-all-host');
+    const transcriptRef = immutableTranscriptRef(projectRoot, sessionId);
     const staged = stageSessionKnowledgeCandidate(projectRoot, sessionId, {
       target: 'knowhow',
       title: 'Quote-only insight',
       content: 'Quote-only rule content for the --all gate.',
-      evidenceRefs: ['transcript:hook:sid:entry:abc'],
+      evidenceRefs: [transcriptRef],
     });
     const mixed = stageSessionKnowledgeCandidate(projectRoot, sessionId, {
       target: 'knowhow',
       title: 'File-anchored insight',
       content: 'File-anchored rule content for the --all gate.',
-      evidenceRefs: ['transcript:hook:sid:entry:abc', 'src/bar.ts:3'],
+      evidenceRefs: [transcriptRef, 'src/bar.ts:3'],
     });
     sealSession(projectRoot, sessionId, 'sealed for k17 --all gate');
     const result = promoteReconciledSessionKnowledge(projectRoot, sessionId, { all: true });
@@ -323,6 +340,12 @@ describe('K17 trust gate', () => {
     expect(result.promoted.map(item => item.candidate_id)).toContain(mixed.candidate_id);
     // Explicit promotion of the review_required transcript-only candidate keeps
     // the existing V11 gate semantics: it must be resolved first.
+    // Refresh the remaining candidate's receipt after the mixed candidate was
+    // promoted and removed from the pending snapshot.
+    persistSessionKnowledgeReconciliation(
+      projectRoot,
+      reconcileSessionKnowledgeSync(projectRoot, sessionId),
+    );
     expect(() => promoteReconciledSessionKnowledge(projectRoot, sessionId, {
       candidateIds: [staged.candidate_id],
     })).toThrow(/resolve it .* first/);
@@ -331,11 +354,12 @@ describe('K17 trust gate', () => {
   it('defends explicit promotion against an eligible-but-unresolved transcript-only receipt', () => {
     const projectRoot = root();
     const { sessionId } = ensureSyntheticKnowledgeSession(projectRoot, 'k17-defensive-host');
+    const transcriptRef = immutableTranscriptRef(projectRoot, sessionId);
     const staged = stageSessionKnowledgeCandidate(projectRoot, sessionId, {
       target: 'knowhow',
       title: 'Quote-only insight (defensive)',
       content: 'Defensive gate: an eligible receipt must not auto-promote quotes.',
-      evidenceRefs: ['transcript:hook:sid:entry:abc'],
+      evidenceRefs: [transcriptRef],
     });
     sealSession(projectRoot, sessionId, 'sealed for defensive gate');
     // Forge the receipt entry to eligible without any human resolution — the
@@ -391,11 +415,12 @@ describe('K17 trust gate', () => {
     it('a locally forged confirmed resolution can bypass the gate (accepted, §10.4)', () => {
       const projectRoot = root();
       const { sessionId } = ensureSyntheticKnowledgeSession(projectRoot, 'k17-boundary-host');
+      const transcriptRef = immutableTranscriptRef(projectRoot, sessionId);
       const staged = stageSessionKnowledgeCandidate(projectRoot, sessionId, {
         target: 'knowhow',
         title: 'Quote-only insight (boundary)',
         content: 'Boundary: local receipt forgery bypasses the gate by design.',
-        evidenceRefs: ['transcript:hook:sid:entry:abc'],
+        evidenceRefs: [transcriptRef],
       });
       sealSession(projectRoot, sessionId, 'sealed for boundary test');
       const store = new SessionStore(projectRoot);
@@ -420,11 +445,12 @@ describe('K17 trust gate', () => {
     it('a structurally incomplete confirmed resolution does NOT bypass the gate', () => {
       const projectRoot = root();
       const { sessionId } = ensureSyntheticKnowledgeSession(projectRoot, 'k17-boundary-host-2');
+      const transcriptRef = immutableTranscriptRef(projectRoot, sessionId);
       const staged = stageSessionKnowledgeCandidate(projectRoot, sessionId, {
         target: 'knowhow',
         title: 'Quote-only insight (boundary 2)',
         content: 'Boundary 2: partial resolution must not count as human review.',
-        evidenceRefs: ['transcript:hook:sid:entry:abc'],
+        evidenceRefs: [transcriptRef],
       });
       sealSession(projectRoot, sessionId, 'sealed for boundary test 2');
       const store = new SessionStore(projectRoot);
