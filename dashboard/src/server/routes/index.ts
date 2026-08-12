@@ -33,6 +33,7 @@ import { createRequirementRoutes } from './requirements.js';
 // Supervisor routes hidden — replaced by MaestroCoordinatePage
 // import { createSupervisorRoutes } from './supervisor.js';
 import { createMaestroCoordinateRoutes } from './maestro-coordinate.js';
+import { createMaestroStatusRoutes } from './maestro-status.js';
 import { createWorkspaceRoutes } from './workspace.js';
 import { createGitRoutes } from './git.js';
 import { createCsvWaveRoutes } from './csv-waves.js';
@@ -98,6 +99,9 @@ export function createRoutes(
 
   // Maestro Coordinate routes (reads from .workflow/.maestro/)
   routes.route('/', createMaestroCoordinateRoutes(getRoot));
+
+  // Maestro Status routes (Session/Run 架构状态 + 知识积累统计)
+  routes.route('/', createMaestroStatusRoutes(getRoot));
 
   // SSE events route (depends on StateManager, EventBus, SSEHub)
   routes.route('/', createEventsRoute(stateManager, eventBus, sseHub));
