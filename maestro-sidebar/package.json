@@ -1,7 +1,7 @@
 {
   "name": "maestro-sidebar",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "常驻桌面的 Maestro 观察者 — Agent 调用 / Session·Run 状态 / 知识积累",
   "scripts": {
     "tauri": "tauri",

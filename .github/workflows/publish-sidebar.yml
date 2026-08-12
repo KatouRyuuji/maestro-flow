@@ -2,6 +2,11 @@ name: Publish Maestro Sidebar
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing sidebar-vX.Y.Z tag to publish"
+        required: true
+        type: string
   push:
     tags:
       - "sidebar-v*"
@@ -9,8 +14,77 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: sidebar-release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
-  publish:
+  prepare:
+    runs-on: ubuntu-22.04
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      commit: ${{ steps.release.outputs.commit }}
+      release-id: ${{ steps.release.outputs.release-id }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Verify exact tag and version contract
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SIDEBAR_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        shell: bash
+        run: |
+          node scripts/sidebar-release.mjs check-version --tag "$SIDEBAR_TAG"
+          git show-ref --verify --quiet "refs/tags/$SIDEBAR_TAG"
+          commit="$(git rev-parse HEAD)"
+          test "$(git rev-list -n 1 "refs/tags/$SIDEBAR_TAG")" = "$commit"
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            test "$GITHUB_SHA" = "$commit"
+          fi
+
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq ".[] | select(.tag_name == \"$SIDEBAR_TAG\")" > matching-releases.jsonl
+          release_count="$(grep -c . matching-releases.jsonl || true)"
+          if [ "$release_count" -gt 1 ]; then
+            echo "Multiple releases already use $SIDEBAR_TAG" >&2
+            exit 1
+          fi
+
+          if [ "$release_count" -eq 1 ]; then
+            release_id="$(jq -r '.id' matching-releases.jsonl)"
+            test "$(jq -r '.draft' matching-releases.jsonl)" = "true"
+          else
+            jq -n \
+              --arg tag "$SIDEBAR_TAG" \
+              --arg commit "$commit" \
+              --arg name "Maestro Sidebar v${SIDEBAR_TAG#sidebar-v}" \
+              --arg body $'## Downloads\n\nRelease assets are still being assembled. This draft must not be published until the finalize job replaces this text with verified direct download links.' \
+              '{tag_name:$tag,target_commitish:$commit,name:$name,body:$body,draft:true,prerelease:false}' \
+              | gh api --method POST "repos/$GITHUB_REPOSITORY/releases" --input - > draft-release.json
+            release_id="$(jq -r '.id' draft-release.json)"
+          fi
+
+          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" > verified-draft.json
+          node scripts/sidebar-release.mjs verify-draft \
+            --tag "$SIDEBAR_TAG" \
+            --commit "$commit" \
+            --release-json verified-draft.json
+          echo "tag=$SIDEBAR_TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${SIDEBAR_TAG#sidebar-v}" >> "$GITHUB_OUTPUT"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "release-id=$release_id" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
@@ -28,6 +102,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
 
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-22.04'
@@ -68,12 +144,81 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: maestro-sidebar
-          tagName: ${{ github.ref_name }}
-          releaseName: "Maestro Sidebar ${{ github.ref_name }}"
-          releaseBody: |
-            Maestro Sidebar desktop release.
-
-            Download the installer for your operating system below.
+          releaseId: ${{ needs.prepare.outputs.release-id }}
+          tagName: ${{ needs.prepare.outputs.tag }}
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+  finalize:
+    needs: [prepare, build]
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Read draft assets and generated notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.prepare.outputs.release-id }}
+          SIDEBAR_TAG: ${{ needs.prepare.outputs.tag }}
+        shell: bash
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > release.json
+          gh api --method POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$SIDEBAR_TAG" > generated-notes.json
+
+      - name: Generate release note with direct downloads
+        env:
+          SIDEBAR_TAG: ${{ needs.prepare.outputs.tag }}
+          SIDEBAR_COMMIT: ${{ needs.prepare.outputs.commit }}
+        shell: bash
+        run: |
+          node scripts/sidebar-release.mjs render-notes \
+            --tag "$SIDEBAR_TAG" \
+            --repository "$GITHUB_REPOSITORY" \
+            --commit "$SIDEBAR_COMMIT" \
+            --release-json release.json \
+            --generated-notes-json generated-notes.json \
+            --output release-notes.md
+
+      - name: Publish verified release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.prepare.outputs.release-id }}
+          SIDEBAR_TAG: ${{ needs.prepare.outputs.tag }}
+          SIDEBAR_COMMIT: ${{ needs.prepare.outputs.commit }}
+        shell: bash
+        run: |
+          remote_commit="$(git ls-remote origin "refs/tags/$SIDEBAR_TAG^{}" | awk '{print $1}')"
+          if [ -z "$remote_commit" ]; then
+            remote_commit="$(git ls-remote origin "refs/tags/$SIDEBAR_TAG" | awk '{print $1}')"
+          fi
+          test "$remote_commit" = "$SIDEBAR_COMMIT"
+          jq -Rs '{body:.}' release-notes.md \
+            | gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --input - > release-with-notes.json
+          node scripts/sidebar-release.mjs verify-release \
+            --tag "$SIDEBAR_TAG" \
+            --release-json release-with-notes.json
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            -F draft=false -f make_latest=false > published-release.json
+          node scripts/sidebar-release.mjs verify-release \
+            --tag "$SIDEBAR_TAG" \
+            --release-json published-release.json \
+            --require-published
+
+      - name: Publish summary
+        env:
+          SIDEBAR_TAG: ${{ needs.prepare.outputs.tag }}
+        shell: bash
+        run: |
+          echo "### Maestro Sidebar release" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/$SIDEBAR_TAG" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Release Note: verified direct links for every required platform asset" >> "$GITHUB_STEP_SUMMARY"
