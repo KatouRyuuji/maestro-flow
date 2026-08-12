@@ -6,7 +6,15 @@ import { join } from 'node:path';
 
 import { registerKnowledgeCommand } from './knowledge.js';
 import { runUnifiedSearch } from './search.js';
-import { completeRun, createRun, sealSession } from '../run/runtime.js';
+import { startExecution } from '../run/execution.js';
+import type { ExecutionLeaseClaim } from '../run/lease.js';
+import {
+  completeExecutionRun,
+  completeRun,
+  createExecutionRun,
+  createRun,
+  sealSession,
+} from '../run/runtime.js';
 import { readRunKnowledgeDelta, summarizeSessionKnowledge } from '../run/knowledge.js';
 import { SessionStore } from '../run/store.js';
 
@@ -14,6 +22,7 @@ let projectRoot: string;
 let previousCwd: string;
 let logs: string[];
 let errors: string[];
+const previousExecutionAuthorityFile = process.env.MAESTRO_EXECUTION_AUTHORITY_FILE;
 
 beforeEach(() => {
   projectRoot = mkdtempSync(join(tmpdir(), 'maestro-knowledge-cli-'));
@@ -24,6 +33,7 @@ beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(value => { logs.push(String(value)); });
   vi.spyOn(console, 'error').mockImplementation(value => { errors.push(String(value)); });
   process.exitCode = undefined;
+  delete process.env.MAESTRO_EXECUTION_AUTHORITY_FILE;
 
   const commandDir = join(projectRoot, '.claude', 'commands');
   mkdirSync(commandDir, { recursive: true });
@@ -39,6 +49,8 @@ afterEach(() => {
   rmSync(projectRoot, { recursive: true, force: true });
   vi.restoreAllMocks();
   process.exitCode = undefined;
+  if (previousExecutionAuthorityFile === undefined) delete process.env.MAESTRO_EXECUTION_AUTHORITY_FILE;
+  else process.env.MAESTRO_EXECUTION_AUTHORITY_FILE = previousExecutionAuthorityFile;
 });
 
 function program(): Command {
@@ -51,6 +63,224 @@ function program(): Command {
 async function run(...args: string[]): Promise<void> {
   await program().parseAsync(['node', 'maestro', 'knowledge', ...args]);
 }
+
+function executionClaim(value: {
+  owner_id: string;
+  owner_kind: ExecutionLeaseClaim['ownerKind'];
+  epoch: number;
+  lease_id: string;
+}): ExecutionLeaseClaim {
+  return { ownerId: value.owner_id, ownerKind: value.owner_kind, epoch: value.epoch, leaseId: value.lease_id };
+}
+
+function createExecutionKnowledgeRun(sessionId: string) {
+  const store = new SessionStore(projectRoot);
+  store.createSession(sessionId, 'execution knowledge authority');
+  const started = startExecution(projectRoot, sessionId, {
+    requestId: `req-start-${sessionId}`,
+    ownerId: `owner-${sessionId}`,
+    ownerKind: 'pi',
+  });
+  const created = createExecutionRun({
+    projectRoot,
+    sessionId,
+    command: 'knowledge-cli',
+    executionId: started.execution.execution_id,
+    generation: started.execution.generation,
+    expectedExecutionRevision: started.execution.revision,
+    executionLease: executionClaim(started.lease_claim),
+    requestId: `req-run-${sessionId}`,
+  });
+  return {
+    store,
+    created,
+    executionId: started.execution.execution_id,
+    generation: started.execution.generation,
+    revision: store.readExecution(sessionId, started.execution.execution_id).revision,
+    claim: started.lease_claim,
+  };
+}
+
+function executionAuthorityArgs(
+  context: ReturnType<typeof createExecutionKnowledgeRun>,
+  requestId: string,
+  overrides: Partial<{ generation: number; revision: number; leaseId: string }> = {},
+): string[] {
+  return [
+    '--execution', context.executionId,
+    '--generation', String(overrides.generation ?? context.generation),
+    '--request-id', requestId,
+    '--expected-execution-revision', String(overrides.revision ?? context.revision),
+    '--owner-id', context.claim.owner_id,
+    '--owner-kind', context.claim.owner_kind,
+    '--lease-epoch', String(context.claim.epoch),
+    '--lease-id', overrides.leaseId ?? context.claim.lease_id,
+  ];
+}
+
+describe('maestro knowledge Execution Run authority', () => {
+  it('stages and records with exact authority, replays idempotently, and redacts the lease token', async () => {
+    const context = createExecutionKnowledgeRun('knowledge-execution-success');
+    const authorityPath = join(projectRoot, 'knowledge-authority.json');
+    const writeAuthority = (requestId: string): void => writeFileSync(authorityPath, JSON.stringify({
+      schema_version: 'knowledge-execution-authority/1.0',
+      session_id: context.created.session_id,
+      execution_id: context.executionId,
+      generation: context.generation,
+      run_id: context.created.run_id,
+      request_id: requestId,
+      expected_execution_revision: context.revision,
+      owner_id: context.claim.owner_id,
+      owner_kind: context.claim.owner_kind,
+      lease_epoch: context.claim.epoch,
+      lease_id: context.claim.lease_id,
+    }), 'utf8');
+    writeAuthority('req-knowledge-stage');
+    process.env.MAESTRO_EXECUTION_AUTHORITY_FILE = authorityPath;
+
+    const stageArgs = [
+      'stage', 'knowhow', 'Execution sidecar rule', 'Fence Run sidecars with Execution authority.',
+      '--run', context.created.run_id, '--session', context.created.session_id,
+      '--signal', 'validated', '--signal-ids', 'spec:execution-stage', '--allow-unknown', '--json',
+    ];
+    await run(...stageArgs);
+    expect(process.exitCode ?? 0).toBe(0);
+    const staged = JSON.parse(logs.at(-1)!) as { candidate_id: string };
+    await run(...stageArgs);
+    expect(JSON.parse(logs.at(-1)!)).toMatchObject({ candidate_id: staged.candidate_id });
+    expect(readRunKnowledgeDelta(context.store, context.created.session_id, context.created.run_id)
+      .candidates[0].occurrences).toBe(1);
+    expect(readRunKnowledgeDelta(context.store, context.created.session_id, context.created.run_id).inputs)
+      .toEqual([expect.objectContaining({ knowledge_id: 'spec:execution-stage', signal: 'validated' })]);
+
+    writeAuthority('req-knowledge-record');
+    await run(
+      'record', 'spec:execution-authority', '--signal', 'validated', '--source', 'manual',
+      '--run', context.created.run_id, '--session', context.created.session_id,
+      '--allow-unknown', '--json',
+    );
+    expect(JSON.parse(logs.at(-1)!)).toMatchObject({ recorded: 1, run_id: context.created.run_id });
+
+    const receiptDir = join(
+      context.store.executionDir(context.created.session_id, context.executionId),
+      'sidecar-transitions',
+    );
+    const receipts = readdirSync(receiptDir)
+      .map(file => readFileSync(join(receiptDir, file), 'utf8'))
+      .join('\n');
+    expect(receipts).not.toContain(context.claim.lease_id);
+    expect(receipts).toContain('lease_id_hash');
+    expect(receipts).toContain('knowledge-stage');
+    expect(receipts).toContain('knowledge-record');
+    expect(errors).toEqual([]);
+  });
+
+  it('rejects stale revision, stale or spoofed lease, wrong generation, and wrong Session authority', async () => {
+    const context = createExecutionKnowledgeRun('knowledge-execution-fences');
+    const attempts: Array<{
+      request: string;
+      override: Parameters<typeof executionAuthorityArgs>[2];
+      error: string;
+    }> = [
+      { request: 'req-stale-revision', override: { revision: context.revision - 1 }, error: 'execution revision conflict' },
+      { request: 'req-spoofed-token', override: { leaseId: `${context.claim.lease_id}-spoofed` }, error: 'lease fence conflict' },
+      { request: 'req-wrong-generation', override: { generation: context.generation + 1 }, error: 'generation conflict' },
+    ];
+    for (const attempt of attempts) {
+      errors = [];
+      process.exitCode = undefined;
+      await run(
+        'record', 'spec:fenced', '--run', context.created.run_id, '--session', context.created.session_id,
+        '--allow-unknown', ...executionAuthorityArgs(context, attempt.request, attempt.override),
+      );
+      expect(process.exitCode).toBe(1);
+      expect(errors.join('\n')).toContain(attempt.error);
+    }
+
+    context.store.updateExecution(
+      context.created.session_id,
+      context.executionId,
+      context.revision,
+      execution => { execution.lease!.heartbeat_at = new Date(0).toISOString(); },
+    );
+    errors = [];
+    process.exitCode = undefined;
+    await run(
+      'record', 'spec:stale-lease', '--run', context.created.run_id, '--session', context.created.session_id,
+      '--allow-unknown', ...executionAuthorityArgs(context, 'req-stale-lease'),
+    );
+    expect(process.exitCode).toBe(1);
+    expect(errors.join('\n')).toContain('lease is stale');
+
+    const wrongAuthority = join(projectRoot, 'wrong-session-authority.json');
+    writeFileSync(wrongAuthority, JSON.stringify({
+      schema_version: 'knowledge-execution-authority/1.0',
+      session_id: 'spoofed-session',
+      execution_id: context.executionId,
+      generation: context.generation,
+      run_id: context.created.run_id,
+      request_id: 'req-wrong-session',
+      expected_execution_revision: context.revision,
+      owner_id: context.claim.owner_id,
+      owner_kind: context.claim.owner_kind,
+      lease_epoch: context.claim.epoch,
+      lease_id: context.claim.lease_id,
+    }), 'utf8');
+    errors = [];
+    process.exitCode = undefined;
+    await run(
+      'record', 'spec:wrong-session', '--run', context.created.run_id, '--session', context.created.session_id,
+      '--allow-unknown', '--execution-authority', wrongAuthority,
+    );
+    expect(process.exitCode).toBe(1);
+    expect(errors.join('\n')).toContain('not knowledge-execution-fences');
+    expect(readRunKnowledgeDelta(context.store, context.created.session_id, context.created.run_id).inputs).toEqual([]);
+  });
+
+  it('rejects request conflicts and a sealed Run without mutating its ledger', async () => {
+    const context = createExecutionKnowledgeRun('knowledge-execution-sealed');
+    const authority = executionAuthorityArgs(context, 'req-stage-conflict');
+    await run(
+      'stage', 'spec', 'First request', 'First content.',
+      '--run', context.created.run_id, '--session', context.created.session_id, ...authority,
+    );
+    expect(process.exitCode ?? 0).toBe(0);
+    errors = [];
+    process.exitCode = undefined;
+    await run(
+      'stage', 'spec', 'Conflicting request', 'Different content.',
+      '--run', context.created.run_id, '--session', context.created.session_id, ...authority,
+    );
+    expect(process.exitCode).toBe(1);
+    expect(errors.join('\n')).toContain('request_id req-stage-conflict was already used');
+
+    const runDir = context.store.runDir(context.created.session_id, context.created.run_id);
+    writeFileSync(
+      join(runDir, 'report.md'),
+      '---\nverdict: ready\nsummary: sealed\nconstraints: []\ndecisions: []\nconcerns: []\nnext: []\n---\nsealed\n',
+      'utf8',
+    );
+    completeExecutionRun(projectRoot, context.created.run_id, {
+      sessionId: context.created.session_id,
+      executionId: context.executionId,
+      generation: context.generation,
+      expectedExecutionRevision: context.revision,
+      executionLease: executionClaim(context.claim),
+      requestId: 'req-complete-knowledge-run',
+    });
+    const sealedRevision = context.store.readExecution(context.created.session_id, context.executionId).revision;
+    errors = [];
+    process.exitCode = undefined;
+    await run(
+      'record', 'spec:sealed', '--run', context.created.run_id, '--session', context.created.session_id,
+      '--allow-unknown', ...executionAuthorityArgs(context, 'req-record-sealed', { revision: sealedRevision }),
+    );
+    expect(process.exitCode).toBe(1);
+    expect(errors.join('\n')).toMatch(/not the active Run|sealed/);
+    expect(readRunKnowledgeDelta(context.store, context.created.session_id, context.created.run_id).candidates)
+      .toHaveLength(1);
+  });
+});
 
 describe('maestro knowledge Run lifecycle CLI', () => {
   it('stages candidates with inline signals on the active Run', async () => {
@@ -808,6 +1038,9 @@ Full knowledge lifecycle verified.
       sessionId: 'session-source-cli',
       intent: 'session-source staging via CLI',
     });
+    const srcDir = join(projectRoot, 'src');
+    mkdirSync(srcDir, { recursive: true });
+    writeFileSync(join(srcDir, 'session-source.ts'), '// reviewed CLI evidence\n', 'utf8');
     await run(
       'stage',
       'knowhow',

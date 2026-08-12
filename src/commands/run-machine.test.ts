@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -408,10 +408,23 @@ gates:
     expect(sealBlocked.body).toMatchObject({ operation: 'seal-session', ok: false, error: { code: 'SESSION_SEAL_BLOCKED' } });
   });
 
+  it('treats omitted check run-id as active-target resolution, not Commander usage', () => {
+    const { root } = fixture();
+    const result = invoke(root, ['run', 'check', '--json']);
+    expect(result.lines).toHaveLength(1);
+    expect(result.stderr).toBe('');
+    expect(result.status).toBe(1);
+    expect(result.body).toMatchObject({
+      operation: 'check',
+      ok: false,
+      exit_code: 1,
+    });
+    expect((result.body as any).error.code).not.toBe('COMMANDER_USAGE');
+  });
+
   it('captures every Commander usage exit in machine mode', () => {
     const { root } = fixture();
     const cases = [
-      { args: ['run', 'check', '--json'], operation: 'check' },
       { args: ['run', 'decide', '--json'], operation: 'decide' },
       { args: ['run', 'seal-session', '--json'], operation: 'seal-session' },
       { args: ['run', 'accept-reuse', 'missing', '--json'], operation: 'accept-reuse' },
@@ -431,6 +444,96 @@ gates:
     }
   });
 
+  it('never reflects secret-bearing Commander argv in 1.0 or 1.1 envelopes', () => {
+    const { root } = fixture();
+    const cases = [
+      {
+        args: ['run', 'fork', '--confirmation-token', 'confirmation-secret-rv009', '--json'],
+        schema: 'run-response/1.0',
+        secrets: ['confirmation-secret-rv009'],
+      },
+      {
+        args: ['run', 'create', 'demo', '--retry-token', 'retry-secret-rv009', '--unknown-option', '--json'],
+        schema: 'run-response/1.0',
+        secrets: ['retry-secret-rv009'],
+      },
+      {
+        args: ['execution', 'handoff', 'accept', '--handoff-token', 'handoff-secret-rv009', '--json'],
+        schema: 'run-response/1.1',
+        secrets: ['handoff-secret-rv009'],
+      },
+      {
+        args: [
+          'execution', 'pause', '--lease-id', 'lease-secret-rv009',
+          '--claim-output', join(root, 'private', 'claim-secret-rv009.json'), '--json',
+        ],
+        schema: 'run-response/1.1',
+        secrets: ['lease-secret-rv009', 'claim-secret-rv009.json'],
+      },
+    ];
+
+    for (const item of cases) {
+      const result = invoke(root, item.args);
+      const emitted = `${result.lines.join('\n')}${result.stderr}${JSON.stringify(result.body)}`;
+      expect(result.status, emitted).toBe(2);
+      expect(result.lines).toHaveLength(1);
+      expect(result.stderr).toBe('');
+      expect(result.body).toMatchObject({
+        schema_version: item.schema,
+        ok: false,
+        exit_code: 2,
+        error: { code: 'COMMANDER_USAGE' },
+      });
+      expect((result.body as any).error.details).toEqual({ commander_code: expect.any(String) });
+      for (const secret of item.secrets) expect(emitted).not.toContain(secret);
+    }
+  });
+
+  it('publishes human Execution claims privately in a fresh process and refuses existing targets', () => {
+    const { root } = fixture();
+    const store = new SessionStore(root);
+    store.createSession('fresh-claim', 'fresh claim');
+    const common = [
+      'execution', 'start', '--session', 'fresh-claim', '--request-id', 'req-fresh-claim',
+      '--expected-identity-revision', '1', '--expected-activity-revision', '0',
+      '--execution-owner', 'manual-fresh', '--owner-kind', 'manual', '--expected-lease-epoch', '0',
+      '--actor', 'manual-fresh', '--reason', 'fresh claim', '--evidence', 'TEST-fresh-claim',
+      '--workflow-root', root,
+    ];
+    const started = spawnSync(process.execPath, [resolve('bin/maestro.js'), ...common], {
+      encoding: 'utf8', cwd: resolve('.'),
+    });
+    expect(started.status, started.stderr).toBe(0);
+    expect(started.stderr).toBe('');
+    const projected = JSON.parse(started.stdout) as { claim_output: string; lease_claim: null };
+    const privateClaim = JSON.parse(readFileSync(projected.claim_output, 'utf8')) as { lease_id: string };
+    expect(projected.lease_claim).toBeNull();
+    expect(started.stdout).not.toContain(privateClaim.lease_id);
+    if (process.platform !== 'win32') {
+      expect(statSync(join(root, '.workflow', 'tmp', 'claims')).mode & 0o777).toBe(0o700);
+      expect(statSync(projected.claim_output).mode & 0o777).toBe(0o600);
+    }
+
+    store.createSession('fresh-existing', 'fresh existing target');
+    const existing = join(root, 'private', 'existing-claim.json');
+    mkdirSync(join(root, 'private'), { recursive: true });
+    writeFileSync(existing, 'do-not-replace\n');
+    const refused = spawnSync(process.execPath, [
+      resolve('bin/maestro.js'),
+      'execution', 'start', '--session', 'fresh-existing', '--request-id', 'req-fresh-existing',
+      '--expected-identity-revision', '1', '--expected-activity-revision', '0',
+      '--execution-owner', 'manual-fresh', '--owner-kind', 'manual', '--expected-lease-epoch', '0',
+      '--actor', 'manual-fresh', '--reason', 'fresh existing', '--evidence', 'TEST-fresh-existing',
+      '--claim-output', existing, '--workflow-root', root,
+    ], { encoding: 'utf8', cwd: resolve('.') });
+    expect(refused.status).toBe(1);
+    expect(refused.stdout).toBe('');
+    expect(refused.stderr).toContain('Unable to prepare private claim output securely');
+    expect(refused.stderr).not.toContain(existing);
+    expect(readFileSync(existing, 'utf8')).toBe('do-not-replace\n');
+    expect(store.readOpenExecution('fresh-existing')).toBeNull();
+  });
+
   it('rejects the non-machine mutations --json flag instead of succeeding silently', () => {
     const { root } = fixture();
     const result = spawnSync(process.execPath, [
@@ -448,5 +551,5 @@ gates:
     expect(result.status, result.stderr).toBe(0);
     expect(result.stderr).toBe('');
     expect(result.stdout).toContain('session-run release machine parity passed');
-  });
+  }, 120_000);
 });

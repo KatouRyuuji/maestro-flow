@@ -30,6 +30,8 @@ program
 const commandLoaders: Record<string, () => Promise<(p: Command) => void>> = {
   serve:      async () => (await import('./commands/serve.js')).registerServeCommand,
   run:        async () => (await import('./commands/run.js')).registerRunCommand,
+  execution:  async () => (await import('./commands/execution.js')).registerExecutionCommand,
+  capabilities: async () => (await import('./commands/execution.js')).registerCapabilitiesCommand,
   plan:       async () => (await import('./commands/plan.js')).registerPlanCommand,
   session:    async () => (await import('./commands/session.js')).registerSessionCommand,
   skills:     async () => (await import('./commands/skills.js')).registerSkillsCommand,
@@ -104,7 +106,22 @@ const planMachineSubcommands = new Set(['publish']);
 const sessionMachineSubcommands = new Set(['create', 'resolve', 'resume', 'seal', 'chain', 'meta']);
 const requestedCommandIndex = requestedCommand ? argv.indexOf(requestedCommand) : -1;
 const requestedSubcommand = requestedCommandIndex >= 0 ? argv[requestedCommandIndex + 1] : undefined;
-const runMachineMode = argv.includes('--json') && (
+const executionRunFlags = [
+  '--execution', '--generation', '--expected-execution-revision', '--owner-id', '--owner-kind', '--lease-epoch',
+  '--lease-id',
+];
+const executionAwareRunMode = requestedCommand === 'run' && executionRunFlags.some(flag => argv.includes(flag));
+const executionAwareAliasMode = requestedCommand === 'session' && argv.includes('--execution');
+const statuslessSessionMachineMode = requestedCommand === 'session'
+  && (requestedSubcommand === 'archive' || requestedSubcommand === 'unarchive');
+const executionMachineMode = argv.includes('--json') && (
+  requestedCommand === 'execution'
+  || requestedCommand === 'capabilities'
+  || executionAwareRunMode
+  || executionAwareAliasMode
+  || statuslessSessionMachineMode
+);
+const runMachineMode = argv.includes('--json') && !executionMachineMode && (
   (requestedCommand === 'run' && runMachineSubcommands.has(requestedSubcommand ?? ''))
   || (requestedCommand === 'plan' && planMachineSubcommands.has(requestedSubcommand ?? ''))
   || (requestedCommand === 'session' && sessionMachineSubcommands.has(requestedSubcommand ?? ''))
@@ -142,7 +159,40 @@ function inferMachineOperation(command: 'run' | 'session' | 'plan', args: string
   return 'resolve';
 }
 
-if (runMachineMode) {
+function inferExecutionMachineOperation(command: string | undefined, args: string[]): string {
+  if (command === 'capabilities') return 'capabilities';
+  if (command === 'run') {
+    const runIndex = args.indexOf('run');
+    const operation = args.slice(runIndex + 1).find(token => !token.startsWith('-'));
+    if (operation === 'status') return 'execution-status';
+    return operation === 'create' || operation === 'complete' || operation === 'decide' ? operation : 'next';
+  }
+  if (command === 'session') {
+    const sessionIndex = args.indexOf('session');
+    const operation = args.slice(sessionIndex + 1).find(token => !token.startsWith('-')) ?? 'status';
+    if (operation === 'archive' || operation === 'unarchive') return `session-${operation}`;
+    return ['resolve', 'resume', 'seal', 'status'].includes(operation)
+      ? `execution-${operation}`
+      : 'execution-status';
+  }
+  const executionIndex = args.indexOf('execution');
+  const tail = args.slice(executionIndex + 1);
+  const primaryIndex = tail.findIndex(token => !token.startsWith('-'));
+  const primary = primaryIndex >= 0 ? tail[primaryIndex] : 'status';
+  if (primary === 'handoff' || primary === 'lease') {
+    const fallback = primary === 'handoff' ? 'prepare' : 'status';
+    const candidate = tail.slice(primaryIndex + 1).find(token => !token.startsWith('-')) ?? fallback;
+    const valid = primary === 'handoff'
+      ? ['prepare', 'accept', 'cancel']
+      : ['status', 'heartbeat', 'release', 'recover'];
+    return `execution-${primary}-${valid.includes(candidate) ? candidate : fallback}`;
+  }
+  return ['start', 'attach', 'status', 'pause', 'resolve', 'resume', 'seal'].includes(primary)
+    ? `execution-${primary}`
+    : 'execution-status';
+}
+
+if (runMachineMode || executionMachineMode) {
   program.exitOverride();
   program.configureOutput({ writeOut: () => undefined, writeErr: () => undefined });
 }
@@ -183,14 +233,35 @@ if (requestedCommand && requestedCommand in commandLoaders) {
 try {
   await program.parseAsync();
 } catch (error) {
-  if (!runMachineMode || !(error instanceof CommanderError)) throw error;
-  const operation = inferMachineOperation(requestedCommand as 'run' | 'session' | 'plan', argv);
-  const { createRunResponseError, emitRunResponse } = await import('./run/response.js');
-  emitRunResponse(createRunResponseError({
-    operation,
-    exit_code: 2,
-    code: 'COMMANDER_USAGE',
-    message: error.message,
-    details: { commander_code: error.code, argv },
-  }));
+  if (!(error instanceof CommanderError) || (!runMachineMode && !executionMachineMode)) throw error;
+  const { sanitizeCommanderError } = await import('./commands/execution-cli-shared.js');
+  const commanderError = sanitizeCommanderError(error, argv);
+  if (executionMachineMode) {
+    const { emitExecutionError } = await import('./commands/execution-cli-shared.js');
+    const executionIndex = argv.indexOf('--execution');
+    const sessionIndex = argv.indexOf('--session');
+    const requestIndex = argv.indexOf('--request-id');
+    emitExecutionError({
+      operation: inferExecutionMachineOperation(requestedCommand, argv) as never,
+      error: new Error(commanderError.message),
+      projectRoot: process.cwd(),
+      sessionId: sessionIndex >= 0 ? argv[sessionIndex + 1] : undefined,
+      executionId: executionIndex >= 0 ? argv[executionIndex + 1] : undefined,
+      requestId: requestIndex >= 0 ? argv[requestIndex + 1] : undefined,
+      exitCode: 2,
+      disposition: 'usage_error',
+      code: 'COMMANDER_USAGE',
+      details: commanderError.details,
+    });
+  } else {
+    const operation = inferMachineOperation(requestedCommand as 'run' | 'session' | 'plan', argv);
+    const { createRunResponseError, emitRunResponse } = await import('./run/response.js');
+    emitRunResponse(createRunResponseError({
+      operation,
+      exit_code: 2,
+      code: 'COMMANDER_USAGE',
+      message: commanderError.message,
+      details: commanderError.details,
+    }));
+  }
 }

@@ -5,13 +5,15 @@
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Command } from 'commander';
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve as resolvePath } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { registerSessionCommand } from './session.js';
 import { SessionStore } from '../run/store.js';
 import { runResponseSchema } from '../run/protocol-schemas.js';
+import { startExecution } from '../run/execution.js';
+import { migrateV1toV2, readStateJson, writeStateJson } from '../utils/state-schema.js';
 
 let root: string;
 let logs: string[];
@@ -31,6 +33,17 @@ afterEach(() => {
   vi.restoreAllMocks();
   process.exitCode = undefined;
 });
+
+function enableV20(projectRoot: string): void {
+  mkdirSync(join(projectRoot, '.workflow'), { recursive: true });
+  writeFileSync(join(projectRoot, '.workflow', 'config.json'), JSON.stringify({
+    session_schema: {
+      schema_version: 'session-schema-selection/1.0',
+      writer: 'session/2.0',
+      features: { session_statusless: true },
+    },
+  }));
+}
 
 function program(): Command {
   const p = new Command();
@@ -68,6 +81,7 @@ describe('maestro session create', () => {
     const session = p.commands.find(c => c.name() === 'session');
     expect(session?.description()).toContain('Session orchestration');
     expect(session?.commands.map(c => c.name()).sort()).toEqual([
+      'archive',
       'chain',
       'check',
       'create',
@@ -79,12 +93,14 @@ describe('maestro session create', () => {
       'meta',
       'migrate',
       'next',
+      'prune',
       'resolve',
       'resume',
       'seal',
       'show',
       'start',
       'status',
+      'unarchive',
     ]);
     const chain = session?.commands.find(c => c.name() === 'chain');
     expect(chain?.commands.map(c => c.name()).sort()).toEqual(['insert', 'replace', 'skip']);
@@ -203,6 +219,88 @@ describe('maestro session create', () => {
     expect(store.readBundle(String(out.session_id)).session.orchestration.chain).toHaveLength(0);
   });
 
+  it('creates a strict statusless identity only with explicit project opt-in', async () => {
+    enableV20(root);
+    writeStateJson(root, migrateV1toV2({ project_name: 'statusless', status: 'active' }));
+    const writes: string[] = [];
+    vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: string | Uint8Array) => {
+      writes.push(String(chunk));
+      return true;
+    }) as typeof process.stdout.write);
+    await run('create', 'statusless topic', '--id', 'statusless', '--json', '--workflow-root', root);
+    expect(runResponseSchema.parse(JSON.parse(writes[0]))).toMatchObject({
+      schema_version: 'run-response/1.1', operation: 'session-create', ok: true,
+      result: { schema_version: 'session/2.0' },
+    });
+
+    const store = new SessionStore(root);
+    const sessionId = readdirSync(store.sessionsRoot).find(name => name.startsWith('statusless-'))!;
+    const record = store.readSessionRecord(sessionId);
+    expect(record).toMatchObject({
+      schema_version: 'session/2.0', current_execution_id: null, latest_execution_id: null,
+    });
+    expect(record).not.toHaveProperty('status');
+    expect(record).not.toHaveProperty('active_run_id');
+    expect(readStateJson(root)?.sessions).toEqual([expect.objectContaining({
+      session_id: sessionId,
+      session_schema_version: 'session/2.0',
+      current_execution_id: null,
+      latest_execution_id: null,
+      archived_at: null,
+    })]);
+    expect(readStateJson(root)?.sessions?.[0]).not.toHaveProperty('status');
+    expect(readStateJson(root)?.sessions?.[0]).not.toHaveProperty('active_run_id');
+
+    await run('list', '--workflow-root', root);
+    expect(lastJson()).toEqual([expect.objectContaining({
+      session_id: sessionId, schema_version: 'session/2.0', derived_status: 'running',
+      current_execution_id: null, latest_execution_id: null,
+    })]);
+    await run('show', sessionId, '--workflow-root', root);
+    expect(lastJson()).toMatchObject({
+      schema_version: 'session/2.0', session_id: sessionId,
+      derived: { availability: 'available', execution_status: null, active_run_id: null },
+    });
+    await run('status', sessionId, '--workflow-root', root);
+    expect(lastJson()).toMatchObject({ schema_version: 'session/2.0', current_execution_id: null });
+
+    writes.length = 0;
+    await run(
+      'archive', '--session', sessionId, '--request-id', 'archive-cli',
+      '--actor', 'operator', '--reason', 'historical', '--evidence', 'evidence/archive.json',
+      '--expected-identity-revision', '1', '--expected-activity-revision', '0',
+      '--json', '--workflow-root', root,
+    );
+    expect(writes).toHaveLength(1);
+    expect(runResponseSchema.parse(JSON.parse(writes[0]))).toMatchObject({
+      schema_version: 'run-response/1.1', operation: 'session-archive', ok: true,
+      request_id: 'archive-cli', result: { session: { archived_by: 'operator' } },
+    });
+    expect(readStateJson(root)).toMatchObject({
+      active_session_id: null,
+      sessions: [expect.objectContaining({
+        session_schema_version: 'session/2.0', archived_at: expect.any(String),
+      })],
+    });
+  });
+
+  it('requires an explicit 2.0 migration target in addition to config opt-in', async () => {
+    const store = new SessionStore(root);
+    store.createSession('legacy', 'legacy migration');
+    enableV20(root);
+
+    await run('migrate', '--session', 'legacy', '--workflow-root', root);
+    expect(process.exitCode).toBe(1);
+    expect(errs.join('\n')).toContain('explicit --to session/2.0');
+    expect(store.readSessionRecord('legacy').schema_version).toBe('session/1.3');
+
+    process.exitCode = undefined;
+    errs = [];
+    await run('migrate', '--session', 'legacy', '--to', 'session/2.0', '--workflow-root', root);
+    expect(process.exitCode).toBeUndefined();
+    expect(store.readSessionRecord('legacy').schema_version).toBe('session/2.0');
+  });
+
   it('reports engine-neutral canonical status and check results', async () => {
     await run('create', 'neutral', '--intent', 'neutral', '--engine', 'manual', '--workflow-root', root);
     const sessionId = String(lastJson().session_id);
@@ -227,6 +325,140 @@ describe('maestro session create', () => {
 
     await run('evidence', sessionId, '--workflow-root', root);
     expect(lastJson()).toEqual({ session_id: sessionId, registry_revision: 0, count: 0, records: [] });
+  });
+
+  it('bridges explicit Execution status with a machine deprecation warning', async () => {
+    const store = new SessionStore(root);
+    store.createSession('execution-alias', 'execution alias');
+    const started = startExecution(root, 'execution-alias', {
+      requestId: 'req-alias-start', ownerId: 'pi-alias', ownerKind: 'pi',
+    });
+    const writes: string[] = [];
+    vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: string | Uint8Array) => {
+      writes.push(String(chunk));
+      return true;
+    }) as typeof process.stdout.write);
+
+    await run(
+      'status', 'execution-alias', '--execution', started.execution.execution_id,
+      '--json', '--workflow-root', root,
+    );
+
+    expect(writes).toHaveLength(1);
+    expect(runResponseSchema.parse(JSON.parse(writes[0]))).toMatchObject({
+      schema_version: 'run-response/1.1', operation: 'execution-status', ok: true,
+      warnings: [{ code: 'DEPRECATED_ALIAS', replacement_command: 'maestro execution status' }],
+    });
+    expect(errs).toEqual([]);
+  });
+
+  it('auto-resolves the unique compatible Session when seal omits its positional ID', async () => {
+    const store = new SessionStore(root);
+    store.createSession('auto-seal', 'auto-resolved seal');
+
+    await run('seal', '--summary', 'complete', '--workflow-root', root);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(lastJson()).toMatchObject({ session_id: 'auto-seal', status: 'sealed' });
+    expect(store.readBundle('auto-seal').session).toMatchObject({
+      status: 'sealed', lifecycle: { sealed_at: expect.any(String) },
+    });
+  });
+
+  it('auto-resolves the current Execution without --execution and replays through the 1.1 seal alias', async () => {
+    enableV20(root);
+    const store = new SessionStore(root);
+    store.createSession('auto-execution-seal', 'auto-resolved Execution seal');
+    const started = startExecution(root, 'auto-execution-seal', {
+      requestId: 'req-auto-execution-start', ownerId: 'pi-auto', ownerKind: 'pi',
+    });
+    const writes: string[] = [];
+    vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: string | Uint8Array) => {
+      writes.push(String(chunk));
+      return true;
+    }) as typeof process.stdout.write);
+    const incompleteArgs = [
+      'seal', '--request-id', 'req-auto-execution-seal',
+      '--expected-execution-revision', '1',
+      '--owner-id', started.lease_claim.owner_id,
+      '--owner-kind', started.lease_claim.owner_kind,
+      '--lease-epoch', String(started.lease_claim.epoch),
+      '--lease-id', started.lease_claim.lease_id,
+      '--summary', 'complete', '--json', '--workflow-root', root,
+    ];
+    const args = [
+      'seal', '--request-id', 'req-auto-execution-seal',
+      '--expected-execution-revision', '1',
+      '--expected-activity-revision', '1',
+      '--owner-id', started.lease_claim.owner_id,
+      '--owner-kind', started.lease_claim.owner_kind,
+      '--lease-epoch', String(started.lease_claim.epoch),
+      '--lease-id', started.lease_claim.lease_id,
+      '--actor', 'session-reviewer', '--reason', 'verified session alias',
+      '--evidence', 'evidence/session-review.json',
+      '--summary', 'complete', '--json', '--workflow-root', root,
+    ];
+
+    await run(...incompleteArgs);
+    expect(writes).toHaveLength(1);
+    expect(runResponseSchema.parse(JSON.parse(writes[0]))).toMatchObject({
+      schema_version: 'run-response/1.1', operation: 'execution-seal', ok: false,
+      exit_code: 2, error: { code: 'COMMANDER_USAGE' },
+      warnings: [{ code: 'DEPRECATED_ALIAS', replacement_command: 'maestro execution seal' }],
+    });
+    expect(store.readExecution('auto-execution-seal', started.execution.execution_id))
+      .toMatchObject({ status: 'active', revision: 1 });
+    expect(store.readExecutionTransition(
+      'auto-execution-seal', started.execution.execution_id, 'req-auto-execution-seal',
+    )).toBeNull();
+    writes.length = 0;
+
+    await run(...args);
+    await run(...args);
+
+    expect(writes).toHaveLength(2);
+    const applied = runResponseSchema.parse(JSON.parse(writes[0]));
+    const replayed = runResponseSchema.parse(JSON.parse(writes[1]));
+    expect(applied).toMatchObject({
+      schema_version: 'run-response/1.1', operation: 'execution-seal', ok: true,
+      replay: { status: 'applied' },
+      locator: { session_id: 'auto-execution-seal', execution_id: started.execution.execution_id },
+      warnings: [{ code: 'DEPRECATED_ALIAS', replacement_command: 'maestro execution seal' }],
+    });
+    expect(replayed).toMatchObject({
+      schema_version: 'run-response/1.1', operation: 'execution-seal', ok: true,
+      replay: { status: 'replayed', transition_id: applied.replay?.transition_id },
+      warnings: [{ code: 'DEPRECATED_ALIAS', replacement_command: 'maestro execution seal' }],
+    });
+    expect(store.readExecutionTransition(
+      'auto-execution-seal', started.execution.execution_id, 'req-auto-execution-seal',
+    )).toMatchObject({
+      payload: {
+        preconditions: { session_activity_revision: 1, execution_revision: 1 },
+        payload: {
+          actor: 'session-reviewer', reason: 'verified session alias',
+          evidence_refs: ['evidence/session-review.json'],
+        },
+      },
+    });
+    expect(store.readExecution('auto-execution-seal', started.execution.execution_id).status).toBe('sealed');
+  });
+
+  it('never seals Session identity while an Execution is open', async () => {
+    const store = new SessionStore(root);
+    store.createSession('open-execution', 'open execution');
+    const started = startExecution(root, 'open-execution', {
+      requestId: 'req-open-start', ownerId: 'pi-open', ownerKind: 'pi',
+    });
+
+    await run('seal', 'open-execution', '--workflow-root', root);
+
+    expect(process.exitCode).toBe(1);
+    expect(errs.join('\n')).toContain('--expected-activity-revision');
+    expect(errs.join('\n')).toContain('at least one --evidence');
+    expect(store.readBundle('open-execution').session).toMatchObject({
+      status: 'running', lifecycle: { sealed_at: null },
+    });
   });
 
   it('rejects an invalid --engine', async () => {
@@ -350,8 +582,9 @@ describe('maestro session chain', () => {
       intent: 'skip invalid', steps: [{ command: 'not-registered' }],
     }));
     await run('create', 'invalid-step', '--id', 'invalid-step', '--chain-file', chainFile, '--workflow-root', root);
+    const sessionId = String(lastJson().session_id);
 
-    await run('check', 'invalid-step', '--workflow-root', root);
+    await run('check', sessionId, '--workflow-root', root);
     expect(lastJson()).toMatchObject({
       ok: false,
       errors: 1,
@@ -359,11 +592,11 @@ describe('maestro session chain', () => {
     });
 
     process.exitCode = undefined;
-    await run('chain', 'skip', '--session', 'invalid-step', '--step', 'step-000-not-registered', '--workflow-root', root);
-    await run('check', 'invalid-step', '--workflow-root', root);
+    await run('chain', 'skip', '--session', sessionId, '--step', 'step-000-not-registered', '--workflow-root', root);
+    await run('check', sessionId, '--workflow-root', root);
     expect(lastJson()).toEqual({
       ok: true,
-      session_id: 'invalid-step',
+      session_id: sessionId,
       errors: 0,
       warnings: 0,
       findings: [],
@@ -556,7 +789,6 @@ describe('built-bin session run-response/1.0', () => {
     const cases = [
       { args: ['session', 'resolve', '--json'], operation: 'resolve' },
       { args: ['session', 'resume', '--json'], operation: 'resume' },
-      { args: ['session', 'seal', '--json'], operation: 'seal-session' },
       { args: ['session', 'chain', 'insert', '--json'], operation: 'chain-insert' },
       { args: ['session', 'chain', 'replace', '--json'], operation: 'chain-replace' },
       { args: ['session', 'chain', 'skip', '--json'], operation: 'chain-skip' },

@@ -1,19 +1,20 @@
 import { z } from 'zod';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { Command } from 'commander';
+import { InvalidArgumentError, type Command } from 'commander';
 import { migrateAllSessions, migrateSession } from '../run/migrate.js';
 import { SessionStore } from '../run/store.js';
-import { completeRunWithVerdict, createRun, ensureSessionProjectionOnDisk, pruneOrphanSessions, sealSession, type CompletionVerdict } from '../run/runtime.js';
-import { runNextStep } from '../run/next.js';
+import { completeExecutionRun, completeRunWithVerdict, createExecutionRun as createExecutionRunCore, createRun, ensureSessionProjectionOnDisk, pruneOrphanSessions, sealSession, type CompletionVerdict } from '../run/runtime.js';
+import { runNextExecutionStep, runNextStep } from '../run/next.js';
 import { runDecide, type DecisionConfidence, type DecisionVerdict } from '../run/decide.js';
 import { continuationAfterDecide, inspectSessionContinuation } from '../run/continuation.js';
 import { buildGraph, renderGraphHuman } from '../run/graph.js';
 import { resolveActiveRunTarget, resolveRunningRun } from '../run/resolve.js';
-import { targetPlatformSchema, type SessionState } from '../run/schemas.js';
+import { sessionStateV20Schema, targetPlatformSchema, type SessionState } from '../run/schemas.js';
 import {
   chainDefinitionSchema,
   createChainSession,
+  deriveSessionId,
   insertChainStep,
   parseDecompositionInput,
   parsePositionInput,
@@ -22,8 +23,9 @@ import {
   updateSessionMeta,
   type ChainDefinition,
 } from '../run/chain-admin.js';
-import { resolveSession, resumeSession } from '../run/session-transition.js';
-import { resolveCompatibleSession } from '../run/session-resolver.js';
+import { archiveSession, resolveSession, resumeSession, unarchiveSession } from '../run/session-transition.js';
+import { executionStatus, resolveExecution, resumeExecution, sealExecution, startExecution } from '../run/execution.js';
+import { readResolvedSession, resolveCompatibleSession } from '../run/session-resolver.js';
 import { summarizeSession } from '../run/session-status.js';
 import { checkResolvedSession, summarizeSessionCheck } from '../run/session-check.js';
 import {
@@ -31,9 +33,21 @@ import {
   createRunResponseSuccess,
   emitRunResponse,
   stableRunResponseErrorCode,
+  stableRunResponseErrorCodeV11,
   type RunResponse,
 } from '../run/response.js';
 import type { TransitionMutationReceipt } from '../run/transition-receipts.js';
+import {
+  deprecationWarning,
+  emitExecutionError,
+  emitExecutionSuccess,
+  executionLeaseClaim,
+  parseNonNegativeInteger,
+  parseOwnerKind,
+  parsePositiveInteger,
+  printExecutionHuman,
+  type ExecutionOwnerKind,
+} from './execution-cli-shared.js';
 
 function print(value: unknown): void {
   console.log(JSON.stringify(value, null, 2));
@@ -46,7 +60,7 @@ function reportError(error: unknown): void {
 
 type SessionMachineOperation = Extract<
   RunResponse['operation'],
-  'resolve' | 'resume' | 'seal-session' | 'chain-insert' | 'chain-replace' | 'chain-skip' | 'meta-update'
+  'create' | 'resolve' | 'resume' | 'seal-session' | 'chain-insert' | 'chain-replace' | 'chain-skip' | 'meta-update'
 >;
 
 function machineSuccess(
@@ -80,6 +94,61 @@ function machineError(
     message: error instanceof Error ? error.message : String(error),
     request_id: opts.requestId ?? null,
     locator: { session_id: opts.session ?? null, run_id: null },
+  }));
+}
+
+function statuslessMachineSuccess(
+  operation: 'session-create' | 'session-archive' | 'session-unarchive',
+  sessionId: string,
+  result: unknown,
+  revisions: { identity_revision: number; activity_revision: number },
+  requestId: string | null = null,
+  replay?: { replayed: boolean; transitionId: string },
+): void {
+  emitRunResponse(createRunResponseSuccess({
+    schema_version: 'run-response/1.1',
+    operation,
+    result,
+    request_id: requestId,
+    locator: { session_id: sessionId, execution_id: null, generation: null, run_id: null },
+    fence: {
+      session_identity_revision: revisions.identity_revision,
+      session_activity_revision: revisions.activity_revision,
+      execution_revision: null,
+      lease_epoch: null,
+    },
+    replay: replay
+      ? { status: replay.replayed ? 'replayed' : 'applied', transition_id: replay.transitionId }
+      : null,
+    warnings: [],
+  }));
+}
+
+function statuslessMachineError(
+  operation: 'session-create' | 'session-archive' | 'session-unarchive',
+  error: unknown,
+  opts: { session?: string; requestId?: string },
+): void {
+  const message = error instanceof Error ? error.message : String(error);
+  const code = /has (?:active|paused) current Execution/i.test(message)
+    ? 'SESSION_ARCHIVE_BLOCKED'
+    : stableRunResponseErrorCodeV11(error);
+  emitRunResponse(createRunResponseError({
+    schema_version: 'run-response/1.1',
+    operation,
+    exit_code: 1,
+    disposition: 'domain_error',
+    code,
+    message,
+    request_id: opts.requestId ?? null,
+    locator: {
+      session_id: opts.session ?? null,
+      execution_id: null,
+      generation: null,
+      run_id: null,
+    },
+    fence: null,
+    warnings: [],
   }));
 }
 
@@ -175,6 +244,182 @@ function persistedChainSummary(session: { orchestration: { chain: Array<{ comman
 
 function collect(value: string, prior: string[] = []): string[] { return prior.concat(value); }
 
+function resolveSessionSealReplay(
+  store: SessionStore,
+  sessionId: string,
+  requestId: string | undefined,
+): string | undefined {
+  if (!requestId) return undefined;
+  const matches = store.listExecutions(sessionId).filter(execution => (
+    store.readExecutionTransition(sessionId, execution.execution_id, requestId)?.payload.operation === 'execution-seal'
+  ));
+  if (matches.length > 1) {
+    throw new Error(`request_id ${requestId} is ambiguous across Execution generations`);
+  }
+  return matches[0]?.execution_id;
+}
+
+interface AliasExecutionOptions {
+  session?: string;
+  execution?: string;
+  generation?: number;
+  requestId?: string;
+  expectedExecutionRevision?: number;
+  ownerId?: string;
+  ownerKind?: ExecutionOwnerKind;
+  leaseEpoch?: number;
+  leaseId?: string;
+}
+
+interface AliasExecutionContext {
+  protocol: boolean;
+  sessionId?: string;
+  execution?: ReturnType<SessionStore['readExecution']>;
+}
+
+function addAliasExecutionRunOptions(command: Command): Command {
+  return command
+    .option('--execution <id>', 'exact Execution ID; otherwise resolve the unique current Execution')
+    .option('--generation <n>', 'exact Execution generation', parsePositiveInteger)
+    .option('--request-id <id>', 'idempotent Execution transition request ID')
+    .option('--expected-execution-revision <n>', 'expected Execution revision', parseNonNegativeInteger)
+    .option('--owner-id <id>', 'Execution lease owner ID')
+    .option('--owner-kind <kind>', 'Execution lease owner kind', parseOwnerKind)
+    .option('--lease-epoch <n>', 'Execution lease epoch', parsePositiveInteger);
+}
+
+function resolveAliasExecutionContext(
+  projectRoot: string,
+  requestedSessionId?: string,
+  requestedExecutionId?: string,
+): AliasExecutionContext {
+  const store = new SessionStore(projectRoot);
+  const inspect = (sessionId: string): AliasExecutionContext => {
+    const record = store.readSessionRecord(sessionId);
+    const executions = store.listExecutions(sessionId);
+    if (requestedExecutionId) {
+      return { protocol: true, sessionId, execution: store.readExecution(sessionId, requestedExecutionId) };
+    }
+    const current = store.readOpenExecution(sessionId);
+    if (record.schema_version === 'session/2.0') {
+      const identity = sessionStateV20Schema.parse(record);
+      if (identity.current_execution_id !== (current?.execution_id ?? null)) {
+        throw new Error(
+          `Session ${sessionId} current Execution pointer is inconsistent: ${identity.current_execution_id ?? 'null'}`,
+        );
+      }
+      return { protocol: true, sessionId, execution: current ?? undefined };
+    }
+    return executions.length > 0
+      ? { protocol: true, sessionId, execution: current ?? undefined }
+      : { protocol: false, sessionId };
+  };
+
+  if (requestedExecutionId && !requestedSessionId) {
+    throw new InvalidArgumentError('--session is required with --execution');
+  }
+  if (requestedSessionId) {
+    if (!store.sessionExists(requestedSessionId)) throw new Error(`Session not found: ${requestedSessionId}`);
+    return inspect(requestedSessionId);
+  }
+
+  const current = store.listSessionsReadOnly().candidates.flatMap(candidate => {
+    const context = inspect(candidate.sessionId);
+    return context.execution ? [context] : [];
+  });
+  if (current.length > 1) {
+    throw new Error(`current Execution is ambiguous across Sessions: ${current.map(item => item.sessionId).join(', ')}`);
+  }
+  if (current.length === 1) return current[0];
+
+  const resolved = resolveCompatibleSession(projectRoot);
+  return resolved ? inspect(resolved.sessionId) : { protocol: false };
+}
+
+function aliasExecutionAuthority(
+  context: AliasExecutionContext,
+  opts: AliasExecutionOptions,
+): {
+  sessionId: string;
+  execution: NonNullable<AliasExecutionContext['execution']>;
+  requestId: string;
+  expectedExecutionRevision: number;
+  lease: { ownerId: string; ownerKind: ExecutionOwnerKind; epoch: number; leaseId: string };
+} {
+  if (!context.sessionId || !context.execution) {
+    throw new Error(`current Execution not found${context.sessionId ? ` for Session ${context.sessionId}` : ''}`);
+  }
+  if (opts.execution && opts.execution !== context.execution.execution_id) {
+    throw new Error(`Execution locator mismatch: expected ${opts.execution}, current ${context.execution.execution_id}`);
+  }
+  if (opts.generation !== undefined && opts.generation !== context.execution.generation) {
+    throw new Error(`Execution generation mismatch: expected ${opts.generation}, current ${context.execution.generation}`);
+  }
+  const missing = [
+    ['--request-id', opts.requestId],
+    ['--expected-execution-revision', opts.expectedExecutionRevision],
+    ['--owner-id', opts.ownerId],
+    ['--owner-kind', opts.ownerKind],
+    ['--lease-epoch', opts.leaseEpoch],
+    ['--lease-id', opts.leaseId],
+  ].filter(([, value]) => value === undefined || value === '');
+  if (missing.length > 0) {
+    throw new InvalidArgumentError(`Execution alias requires ${missing.map(([flag]) => flag).join(', ')}`);
+  }
+  return {
+    sessionId: context.sessionId,
+    execution: context.execution,
+    requestId: opts.requestId!,
+    expectedExecutionRevision: opts.expectedExecutionRevision!,
+    lease: {
+      ownerId: opts.ownerId!, ownerKind: opts.ownerKind!, epoch: opts.leaseEpoch!, leaseId: opts.leaseId!,
+    },
+  };
+}
+
+function projectUsesExecutionProtocol(projectRoot: string, sessionId?: string): boolean {
+  try {
+    const store = new SessionStore(projectRoot);
+    const sessionIds = sessionId
+      ? [sessionId]
+      : store.listSessionsReadOnly().candidates.map(candidate => candidate.sessionId);
+    return sessionIds.some(id => store.sessionExists(id)
+      && (store.readSessionRecord(id).schema_version === 'session/2.0' || store.listExecutions(id).length > 0));
+  } catch {
+    return false;
+  }
+}
+
+function aliasExecutionReplay(
+  projectRoot: string,
+  authority: ReturnType<typeof aliasExecutionAuthority>,
+  wasPresent: boolean,
+): { replayed: boolean; transition_id: string } | null {
+  const receipt = new SessionStore(projectRoot).readExecutionTransition(
+    authority.sessionId,
+    authority.execution.execution_id,
+    authority.requestId,
+  );
+  return receipt ? { replayed: wasPresent, transition_id: receipt.outcome.transition_id } : null;
+}
+
+function createExecutionRun(
+  options: Parameters<typeof createExecutionRunCore>[0],
+): ReturnType<typeof createExecutionRunCore> {
+  const store = new SessionStore(options.projectRoot);
+  const existing = store.readExecutionTransition(options.sessionId!, options.executionId, options.requestId);
+  try {
+    return createExecutionRunCore(options);
+  } catch (error) {
+    if (existing?.payload.operation === 'create'
+      && error instanceof Error
+      && /outcome no longer matches current authority revisions/i.test(error.message)) {
+      return structuredClone(existing.outcome.result.value) as ReturnType<typeof createExecutionRunCore>;
+    }
+    throw error;
+  }
+}
+
 function slugifySessionTopic(text: string, fallback = 'session'): string {
   const slug = text
     .normalize('NFKD')
@@ -249,10 +494,14 @@ export function registerSessionCommand(program: Command): void {
     addTransitionOptions(session.command('resolve').description('Resolve one canonical paused recovery target; Session remains paused')),
     'resolve',
   )
+    .option('--execution <id>', 'deprecated alias bridge to an exact Execution')
+    .option('--expected-execution-revision <n>', 'expected Execution revision', parseNonNegativeInteger)
     .option('--decision <id>', 'escalated decision point ID')
     .option('--step <id>', 'failed chain step ID')
     .requiredOption('--disposition <value>', 'decision: proceed|retry; step: retry|skip')
     .action((opts: any) => {
+      const root = resolve(opts.workflowRoot);
+      let context: AliasExecutionContext | undefined;
       try {
         if (Boolean(opts.decision) === Boolean(opts.step)) throw new Error('exactly one of --decision or --step is required');
         const target = opts.decision
@@ -260,7 +509,37 @@ export function registerSessionCommand(program: Command): void {
           : { kind: 'step' as const, id: opts.step, disposition: opts.disposition };
         if (target.kind === 'decision' && !['proceed', 'retry'].includes(target.disposition)) throw new Error('decision disposition must be proceed|retry');
         if (target.kind === 'step' && !['retry', 'skip'].includes(target.disposition)) throw new Error('step disposition must be retry|skip');
-        const result = resolveSession(resolve(opts.workflowRoot), opts.session, transitionOptions(opts, target));
+        context = resolveAliasExecutionContext(root, opts.session, opts.execution);
+        if (context.protocol) {
+          if (!context.execution) throw new Error(`current Execution not found for Session ${context.sessionId}`);
+          if (opts.expectedExecutionRevision === undefined) {
+            throw new InvalidArgumentError('--expected-execution-revision is required for Execution resolve');
+          }
+          const result = resolveExecution(root, {
+            sessionId: context.sessionId!,
+            executionId: context.execution.execution_id,
+            requestId: opts.requestId,
+            expectedExecutionRevision: opts.expectedExecutionRevision,
+            actor: opts.actor,
+            reason: opts.reason,
+            evidence: opts.evidence,
+            target,
+          });
+          const warning = deprecationWarning('maestro session resolve', 'maestro execution resolve');
+          if (opts.json) {
+            emitExecutionSuccess({
+              operation: 'execution-resolve', result, projectRoot: root, execution: result.execution,
+              requestId: opts.requestId,
+              replay: { replayed: result.replayed, transition_id: result.transition_id },
+              warnings: [warning],
+            });
+          } else {
+            console.error(`[maestro session] deprecated: ${warning.message}`);
+            print(result);
+          }
+          return;
+        }
+        const result = resolveSession(root, opts.session, transitionOptions(opts, target));
         if (opts.json) {
           machineSuccess(
             'resolve',
@@ -276,16 +555,76 @@ export function registerSessionCommand(program: Command): void {
         } else {
           print(result);
         }
-      } catch (error) { if (opts.json) machineError('resolve', error, opts); else reportError(error); }
+      } catch (error) {
+        const executionProtocol = context?.protocol ?? projectUsesExecutionProtocol(root, opts.session);
+        if (opts.json && executionProtocol) {
+          emitExecutionError({
+            operation: 'execution-resolve', error, projectRoot: root,
+            sessionId: context?.sessionId ?? opts.session,
+            executionId: context?.execution?.execution_id ?? opts.execution,
+            requestId: opts.requestId,
+            ...(error instanceof InvalidArgumentError
+              ? { exitCode: 2 as const, disposition: 'usage_error' as const, code: 'COMMANDER_USAGE' as const }
+              : {}),
+            warnings: [deprecationWarning('maestro session resolve', 'maestro execution resolve')],
+          });
+        } else if (opts.json) machineError('resolve', error, opts);
+        else reportError(error);
+      }
     });
 
   addCanonicalRecoveryHelp(
     addTransitionOptions(session.command('resume').description('Resume a canonical paused Session after every recovery blocker is cleared')),
     'resume',
   )
+    .option('--execution <id>', 'deprecated alias bridge to an exact Execution')
+    .option('--expected-execution-revision <n>', 'expected Execution revision', parseNonNegativeInteger)
+    .option('--owner-id <id>', 'new Execution lease owner ID')
+    .option('--owner-kind <kind>', 'new Execution lease owner kind', parseOwnerKind)
+    .option('--expected-lease-epoch <n>', 'latest observed Execution lease epoch', parseNonNegativeInteger)
+    .option('--claim-output <path>', 'write the private acquisition claim to a mode-0600 file')
     .action((opts: any) => {
+      const root = resolve(opts.workflowRoot);
+      let context: AliasExecutionContext | undefined;
       try {
-        const result = resumeSession(resolve(opts.workflowRoot), opts.session, transitionOptions(opts));
+        context = resolveAliasExecutionContext(root, opts.session, opts.execution);
+        if (context.protocol) {
+          if (!context.execution) throw new Error(`current Execution not found for Session ${context.sessionId}`);
+          if (opts.expectedExecutionRevision === undefined || opts.expectedActivityRevision === undefined
+            || opts.expectedLeaseEpoch === undefined || !opts.ownerId || !opts.ownerKind) {
+            throw new InvalidArgumentError(
+              '--expected-execution-revision, --expected-activity-revision, --expected-lease-epoch, '
+              + '--owner-id, and --owner-kind are required for Execution resume',
+            );
+          }
+          const result = resumeExecution(root, {
+            sessionId: context.sessionId!,
+            executionId: context.execution.execution_id,
+            requestId: opts.requestId,
+            expectedExecutionRevision: opts.expectedExecutionRevision,
+            expectedActivityRevision: opts.expectedActivityRevision,
+            expectedLeaseEpoch: opts.expectedLeaseEpoch,
+            ownerId: opts.ownerId,
+            ownerKind: opts.ownerKind,
+            actor: opts.actor,
+            reason: opts.reason,
+            evidence: opts.evidence,
+          });
+          const warning = deprecationWarning('maestro session resume', 'maestro execution resume');
+          if (opts.json) {
+            emitExecutionSuccess({
+              operation: 'execution-resume', result, projectRoot: root, execution: result.execution,
+              requestId: opts.requestId,
+              replay: { replayed: result.replayed, transition_id: result.transition_id },
+              warnings: [warning],
+            });
+          } else {
+            console.error(`[maestro session] deprecated: ${warning.message}`);
+            printExecutionHuman(result, opts.claimOutput);
+          }
+          return;
+        }
+        const result = resumeSession(root, opts.session, transitionOptions(opts));
         if (opts.json) {
           machineSuccess(
             'resume',
@@ -301,17 +640,46 @@ export function registerSessionCommand(program: Command): void {
         } else {
           print(result);
         }
-      } catch (error) { if (opts.json) machineError('resume', error, opts); else reportError(error); }
+      } catch (error) {
+        const executionProtocol = context?.protocol ?? projectUsesExecutionProtocol(root, opts.session);
+        if (opts.json && executionProtocol) {
+          emitExecutionError({
+            operation: 'execution-resume', error, projectRoot: root,
+            sessionId: context?.sessionId ?? opts.session,
+            executionId: context?.execution?.execution_id ?? opts.execution,
+            requestId: opts.requestId,
+            ...(error instanceof InvalidArgumentError
+              ? { exitCode: 2 as const, disposition: 'usage_error' as const, code: 'COMMANDER_USAGE' as const }
+              : {}),
+            warnings: [deprecationWarning('maestro session resume', 'maestro execution resume')],
+          });
+        } else if (opts.json) machineError('resume', error, opts);
+        else reportError(error);
+      }
     });
 
   session
     .command('migrate')
-    .description('Fold legacy ralph-meta.json into session.json and stamp session/1.3 (idempotent)')
+    .description('Fold legacy ralph-meta.json and migrate to an explicitly selected Session schema')
     .option('--session <id>', 'migrate one Session; omit to migrate every Session under .workflow/sessions/')
+    .option('--to <version>', 'target Session schema: session/1.3|session/2.0')
     .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
-    .action((opts: { session?: string; workflowRoot: string }) => {
+    .action((opts: { session?: string; to?: string; workflowRoot: string }) => {
       try {
         const root = resolve(opts.workflowRoot);
+        if (opts.to && !['session/1.3', 'session/2.0'].includes(opts.to)) {
+          throw new Error('--to must be session/1.3 or session/2.0');
+        }
+        const writer = new SessionStore(root).sessionSchemaSelection().writer;
+        if (writer === 'session/2.0' && opts.to !== 'session/2.0') {
+          throw new Error('session/2.0 migration requires explicit --to session/2.0');
+        }
+        if (opts.to === 'session/2.0' && writer !== 'session/2.0') {
+          throw new Error('session/2.0 migration also requires explicit .workflow/config.json opt-in');
+        }
+        if (opts.to === 'session/1.3' && writer !== 'session/1.3') {
+          throw new Error('project writer selection conflicts with --to session/1.3');
+        }
         if (opts.session) {
           print(migrateSession(root, opts.session));
           return;
@@ -336,17 +704,38 @@ export function registerSessionCommand(program: Command): void {
         }
         const status = opts.status as SessionState['status'] | undefined;
         const store = new SessionStore(resolve(opts.workflowRoot));
-        const result = store.listSessions(status ? { statuses: [status] } : {});
-        print(result.candidates.map(candidate => ({
-          session_id: candidate.sessionId,
-          status: candidate.session.status,
-          engine: candidate.session.orchestration.engine,
-          active_run_id: candidate.session.active_run_id,
-          latest_completed_run_id: candidate.session.latest_completed_run_id,
-          chain_total: candidate.session.orchestration.chain.length,
-          pending_steps: candidate.session.orchestration.chain.filter(step => step.status === 'pending').length,
-          intent: candidate.session.intent,
-        })));
+        const result: unknown[] = [];
+        for (const candidate of store.listSessions().candidates) {
+          const resolved = readResolvedSession(store, candidate.sessionId);
+          if (status && resolved.derivedStatus !== status) continue;
+          if (resolved.record.schema_version === 'session/2.0') {
+            const identity = sessionStateV20Schema.parse(resolved.record);
+            result.push({
+              session_id: resolved.sessionId,
+              schema_version: 'session/2.0',
+              derived_status: resolved.derivedStatus,
+              current_execution_id: identity.current_execution_id,
+              latest_execution_id: identity.latest_execution_id,
+              execution_status: (resolved.currentExecution ?? resolved.latestExecution)?.status ?? null,
+              active_run_id: resolved.currentExecution?.active_run_id ?? null,
+              archived_at: identity.archived_at,
+              intent: identity.intent,
+            });
+            continue;
+          }
+          result.push({
+            session_id: candidate.sessionId,
+            schema_version: candidate.session.schema_version,
+            status: candidate.session.status,
+            engine: candidate.session.orchestration.engine,
+            active_run_id: candidate.session.active_run_id,
+            latest_completed_run_id: candidate.session.latest_completed_run_id,
+            chain_total: candidate.session.orchestration.chain.length,
+            pending_steps: candidate.session.orchestration.chain.filter(step => step.status === 'pending').length,
+            intent: candidate.session.intent,
+          });
+        }
+        print(result);
       } catch (error) {
         reportError(error);
       }
@@ -359,24 +748,116 @@ export function registerSessionCommand(program: Command): void {
     .action((sessionId: string, opts: { workflowRoot: string }) => {
       try {
         const store = new SessionStore(resolve(opts.workflowRoot));
-        print(store.readBundle(sessionId).session);
+        const resolved = readResolvedSession(store, sessionId);
+        print(resolved.record.schema_version === 'session/2.0'
+          ? summarizeSession(resolve(opts.workflowRoot), resolved)
+          : resolved.bundle.session);
       } catch (error) {
         reportError(error);
       }
     });
 
+  const registerArchiveCommand = (operation: 'archive' | 'unarchive'): void => {
+    session
+      .command(operation)
+      .description(`${operation === 'archive' ? 'Archive' : 'Unarchive'} a statusless session/2.0 identity with an audited CAS receipt`)
+      .requiredOption('--session <id>', 'exact Session ID')
+      .requiredOption('--request-id <id>', 'idempotent archive request ID')
+      .requiredOption('--actor <name>', 'authorized actor')
+      .requiredOption('--reason <text>', 'audit reason')
+      .requiredOption('--evidence <ref>', 'nonempty evidence reference (repeatable)', collect)
+      .requiredOption('--expected-identity-revision <n>', 'expected Session identity revision', parseNonNegativeInteger)
+      .requiredOption('--expected-activity-revision <n>', 'expected Session activity revision', parseNonNegativeInteger)
+      .option('--json', 'emit one run-response/1.1 envelope on stdout')
+      .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
+      .action((opts: {
+        session: string;
+        requestId: string;
+        actor: string;
+        reason: string;
+        evidence: string[];
+        expectedIdentityRevision: number;
+        expectedActivityRevision: number;
+        json?: boolean;
+        workflowRoot: string;
+      }) => {
+        const root = resolve(opts.workflowRoot);
+        try {
+          const result = operation === 'archive'
+            ? archiveSession(root, opts.session, opts)
+            : unarchiveSession(root, opts.session, opts);
+          const projectionWarning = ensureSessionProjectionOnDisk(root, opts.session, false);
+          const output = {
+            session: result.session,
+            receipt: result.receipt,
+            replayed: result.replayed,
+            ...(projectionWarning ? { warning: projectionWarning } : {}),
+          };
+          if (opts.json) {
+            statuslessMachineSuccess(
+              operation === 'archive' ? 'session-archive' : 'session-unarchive',
+              opts.session,
+              output,
+              result.session,
+              opts.requestId,
+              { replayed: result.replayed, transitionId: result.receipt.receipt_hash },
+            );
+          } else {
+            print(output);
+          }
+        } catch (error) {
+          if (opts.json) {
+            statuslessMachineError(
+              operation === 'archive' ? 'session-archive' : 'session-unarchive',
+              error,
+              opts,
+            );
+          } else {
+            reportError(error);
+          }
+        }
+      });
+  };
+  registerArchiveCommand('archive');
+  registerArchiveCommand('unarchive');
+
   session
     .command('status [session-id]')
-    .description('Show canonical status for an explicit or latest compatible Session')
+    .description('Show canonical status; --execution is a deprecated bridge to Execution status')
+    .option('--execution <id>', 'exact Execution ID')
+    .option('--stale-after-ms <n>', 'lease staleness threshold in milliseconds', parsePositiveInteger)
+    .option('--json', 'emit run-response/1.1 only with --execution')
     .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
-    .action((sessionId: string | undefined, opts: { workflowRoot: string }) => {
+    .action((sessionId: string | undefined, opts: { execution?: string; staleAfterMs?: number; json?: boolean; workflowRoot: string }) => {
       try {
         const projectRoot = resolve(opts.workflowRoot);
+        if (opts.execution) {
+          if (!sessionId) throw new Error('[session-id] is required with --execution');
+          const result = executionStatus(projectRoot, sessionId, opts.execution, { staleAfterMs: opts.staleAfterMs });
+          const warning = deprecationWarning('maestro session status --execution', 'maestro execution status');
+          if (opts.json) {
+            emitExecutionSuccess({
+              operation: 'execution-status', result, projectRoot, execution: result.execution,
+              warnings: [warning],
+            });
+          } else {
+            console.error(`[maestro session] deprecated: ${warning.message}`);
+            print(result);
+          }
+          return;
+        }
+        if (opts.json) throw new Error('--json on session status requires --execution');
         const resolved = resolveCompatibleSession(projectRoot, sessionId);
         if (!resolved) throw new Error(sessionId ? `Session not found: ${sessionId}` : 'no compatible Session found');
         print(summarizeSession(projectRoot, resolved));
       } catch (error) {
-        reportError(error);
+        if (opts.json && opts.execution) {
+          emitExecutionError({
+            operation: 'execution-status', error, projectRoot: resolve(opts.workflowRoot),
+            sessionId, executionId: opts.execution,
+            warnings: [deprecationWarning('maestro session status --execution', 'maestro execution status')],
+          });
+        } else reportError(error);
       }
     });
 
@@ -444,18 +925,136 @@ export function registerSessionCommand(program: Command): void {
     });
 
   session
-    .command('seal <session-id>')
-    .description('Seal a Session after all Runs and gates are complete')
+    .command('seal [session-id]')
+    .description('Seal a legacy Session, auto-resolving the unique compatible Session, or bridge explicitly to Execution seal')
     .option('--summary <text>', 'human-readable seal summary', '')
-    .option('--json', 'emit one run-response/1.0 envelope on stdout')
+    .option('--execution <id>', 'deprecated alias bridge to an exact Execution')
+    .option('--request-id <id>', 'idempotent Execution seal request ID')
+    .option('--expected-execution-revision <n>', 'expected Execution revision', parseNonNegativeInteger)
+    .option('--expected-activity-revision <n>', 'expected Session activity revision', parseNonNegativeInteger)
+    .option('--owner-id <id>', 'Execution lease owner ID')
+    .option('--owner-kind <kind>', 'Execution lease owner kind', parseOwnerKind)
+    .option('--lease-epoch <n>', 'Execution lease epoch', parsePositiveInteger)
+    .option('--lease-id <token>', 'private Execution lease token')
+    .option('--actor <name>', 'authorized actor')
+    .option('--reason <text>', 'audit reason')
+    .option('--evidence <ref>', 'evidence reference (repeatable)', collect)
+    .option('--outcome <value>', 'done|done_with_concerns|failed', 'done')
+    .option('--json', 'emit run-response/1.0, or 1.1 with --execution')
     .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
-    .action((sessionId: string, opts: { summary: string; json?: boolean; workflowRoot: string }) => {
+    .action((sessionId: string | undefined, opts: {
+      summary: string;
+      execution?: string;
+      requestId?: string;
+      expectedExecutionRevision?: number;
+      expectedActivityRevision?: number;
+      ownerId?: string;
+      ownerKind?: ExecutionOwnerKind;
+      leaseEpoch?: number;
+      leaseId?: string;
+      actor?: string;
+      reason?: string;
+      evidence?: string[];
+      outcome: string;
+      json?: boolean;
+      workflowRoot: string;
+    }) => {
+      const root = resolve(opts.workflowRoot);
+      let targetSessionId = sessionId;
+      let executionId = opts.execution;
+      let executionProtocol = false;
+      const warning = deprecationWarning('maestro session seal', 'maestro execution seal');
       try {
-        const result = sealSession(resolve(opts.workflowRoot), sessionId, opts.summary);
-        if (opts.json) machineSuccess('seal-session', result, sessionId);
+        const resolved = resolveCompatibleSession(root, sessionId);
+        if (!resolved) {
+          throw new Error(sessionId ? `Session not found: ${sessionId}` : 'no unique compatible Session found');
+        }
+        targetSessionId = resolved.sessionId;
+        const store = new SessionStore(root);
+        const replayExecutionId = resolveSessionSealReplay(store, targetSessionId, opts.requestId);
+        const sessionRecord = store.readSessionRecord(targetSessionId);
+        if (opts.execution) {
+          executionProtocol = true;
+        } else if (sessionRecord.schema_version === 'session/2.0') {
+          executionProtocol = true;
+          const identity = sessionStateV20Schema.parse(sessionRecord);
+          executionId = identity.current_execution_id ?? replayExecutionId;
+          if (identity.current_execution_id) {
+            const current = store.readOpenExecution(targetSessionId);
+            if (!current || current.execution_id !== executionId) {
+              throw new Error(
+                `Session ${targetSessionId} current Execution pointer is inconsistent: ${executionId}`,
+              );
+            }
+          }
+        } else {
+          const current = store.readOpenExecution(targetSessionId);
+          executionId = current?.execution_id ?? replayExecutionId;
+          executionProtocol = Boolean(executionId) || store.listExecutions(targetSessionId).length > 0;
+        }
+
+        if (executionProtocol) {
+          if (!executionId) throw new Error(`Execution not found for Session ${targetSessionId}`);
+          if (!opts.requestId || opts.expectedExecutionRevision === undefined
+            || opts.expectedActivityRevision === undefined || !opts.ownerId || !opts.ownerKind
+            || opts.leaseEpoch === undefined || !opts.leaseId || !opts.actor || !opts.reason
+            || !opts.evidence?.length) {
+            throw new InvalidArgumentError(
+              '--request-id, --expected-execution-revision, --expected-activity-revision, '
+              + 'the full lease tuple, --actor, --reason, and at least one --evidence are required',
+            );
+          }
+          if (!['done', 'done_with_concerns', 'failed'].includes(opts.outcome)) {
+            throw new InvalidArgumentError('outcome must be done|done_with_concerns|failed');
+          }
+          const result = sealExecution(root, {
+            sessionId: targetSessionId,
+            executionId,
+            requestId: opts.requestId,
+            expectedExecutionRevision: opts.expectedExecutionRevision,
+            expectedActivityRevision: opts.expectedActivityRevision,
+            lease: executionLeaseClaim({
+              ownerId: opts.ownerId,
+              ownerKind: opts.ownerKind,
+              leaseEpoch: opts.leaseEpoch,
+              leaseId: opts.leaseId,
+            }),
+            summary: opts.summary,
+            outcome: opts.outcome as 'done' | 'done_with_concerns' | 'failed',
+            actor: opts.actor,
+            reason: opts.reason,
+            evidence: opts.evidence,
+          });
+          if (opts.json) {
+            emitExecutionSuccess({
+              operation: 'execution-seal', result, projectRoot: root, execution: result.execution,
+              requestId: opts.requestId,
+              replay: { replayed: result.replayed, transition_id: result.transition_id },
+              warnings: [warning],
+            });
+          } else {
+            console.error(`[maestro session] deprecated: ${warning.message}`);
+            print(result);
+          }
+          return;
+        }
+
+        const result = sealSession(root, targetSessionId, opts.summary);
+        if (opts.json) machineSuccess('seal-session', result, targetSessionId);
         else print(result);
       } catch (error) {
-        if (opts.json) machineError('seal-session', error, { session: sessionId });
+        if (opts.json && executionProtocol) {
+          emitExecutionError({
+            operation: 'execution-seal', error, projectRoot: root, sessionId: targetSessionId, executionId,
+            requestId: opts.requestId,
+            ...(error instanceof InvalidArgumentError
+              ? { exitCode: 2 as const, disposition: 'usage_error' as const, code: 'COMMANDER_USAGE' as const }
+              : error instanceof Error && /different execution-seal inputs/i.test(error.message)
+                ? { code: 'REQUEST_CONFLICT' as const }
+                : {}),
+            warnings: [warning],
+          });
+        } else if (opts.json) machineError('seal-session', error, { session: targetSessionId });
         else reportError(error);
       }
     });
@@ -471,6 +1070,17 @@ export function registerSessionCommand(program: Command): void {
     .option('--engine <name>', 'orchestration engine: ralph|coordinator|manual')
     .option('--quality <mode>', 'quality mode: quick|standard|full')
     .option('--auto', 'enable auto mode')
+    .option('--request-id <id>', 'idempotent Execution start request ID')
+    .option('--expected-identity-revision <n>', 'expected Session identity revision', parseNonNegativeInteger)
+    .option('--expected-activity-revision <n>', 'expected Session activity revision', parseNonNegativeInteger)
+    .option('--owner-id <id>', 'Execution lease owner ID')
+    .option('--owner-kind <kind>', 'Execution lease owner kind', parseOwnerKind)
+    .option('--expected-lease-epoch <n>', 'latest observed Execution lease epoch', parseNonNegativeInteger)
+    .option('--actor <name>', 'authorized actor')
+    .option('--reason <text>', 'audit reason')
+    .option('--evidence <ref>', 'evidence reference (repeatable)', collect)
+    .option('--claim-output <path>', 'write a human-mode acquisition claim to a private file')
+    .option('--json', 'emit run-response/1.0, or 1.1 for session/2.0')
     .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
     .action(async (topic: string, opts: {
       intent?: string;
@@ -481,6 +1091,17 @@ export function registerSessionCommand(program: Command): void {
       engine?: string;
       quality?: string;
       auto?: boolean;
+      requestId?: string;
+      expectedIdentityRevision?: number;
+      expectedActivityRevision?: number;
+      ownerId?: string;
+      ownerKind?: ExecutionOwnerKind;
+      expectedLeaseEpoch?: number;
+      actor?: string;
+      reason?: string;
+      evidence?: string[];
+      claimOutput?: string;
+      json?: boolean;
       workflowRoot: string;
     }) => {
       try {
@@ -501,6 +1122,68 @@ export function registerSessionCommand(program: Command): void {
         const definition = opts.chainFile
           ? await loadChainDefinition(opts.chainFile)
           : simpleChainDefinition(intent, opts.chain);
+        const store = new SessionStore(root);
+        if (store.sessionSchemaSelection().writer === 'session/2.0') {
+          if (definition) {
+            const missing = [
+              ['--request-id', opts.requestId],
+              ['--expected-identity-revision', opts.expectedIdentityRevision],
+              ['--expected-activity-revision', opts.expectedActivityRevision],
+              ['--expected-lease-epoch', opts.expectedLeaseEpoch],
+              ['--owner-id', opts.ownerId],
+              ['--owner-kind', opts.ownerKind],
+              ['--actor', opts.actor],
+              ['--reason', opts.reason],
+              ['--evidence', opts.evidence?.length ? opts.evidence : undefined],
+            ].filter(([, value]) => value === undefined || value === '');
+            if (missing.length > 0) {
+              throw new InvalidArgumentError(`session create --chain requires ${missing.map(([flag]) => flag).join(', ')}`);
+            }
+            throw new InvalidArgumentError(
+              'fresh session/2.0 multi-step chain initialization requires a canonical Execution chain operation',
+            );
+          }
+          if (opts.engine || opts.quality || opts.auto || platform) {
+            throw new Error(
+              'session/2.0 create is identity-only; engine, quality, auto, and platform belong to an Execution',
+            );
+          }
+          const sessionId = deriveSessionId(slug);
+          store.createSession(sessionId, intent, { ifExists: 'error' });
+          const rawRecord = store.readSessionRecord(sessionId);
+          if (rawRecord.schema_version !== 'session/2.0') {
+            throw new Error('statusless Session writer did not persist session/2.0');
+          }
+          const record = sessionStateV20Schema.parse(rawRecord);
+          const projectionWarning = ensureSessionProjectionOnDisk(root, sessionId);
+          const output = {
+            session_id: sessionId,
+            session_dir: store.sessionDir(sessionId),
+            schema_version: record.schema_version,
+            current_execution_id: record.current_execution_id,
+            latest_execution_id: record.latest_execution_id,
+            next: `maestro execution start --session ${sessionId}`,
+            ...(projectionWarning ? { warning: projectionWarning } : {}),
+          };
+          if (opts.json) statuslessMachineSuccess('session-create', sessionId, output, record);
+          else print(output);
+          return;
+        }
+        if (definition && opts.requestId) {
+          const missing = [
+            ['--expected-identity-revision', opts.expectedIdentityRevision],
+            ['--expected-activity-revision', opts.expectedActivityRevision],
+            ['--expected-lease-epoch', opts.expectedLeaseEpoch],
+            ['--owner-id', opts.ownerId],
+            ['--owner-kind', opts.ownerKind],
+            ['--actor', opts.actor],
+            ['--reason', opts.reason],
+            ['--evidence', opts.evidence?.length ? opts.evidence : undefined],
+          ].filter(([, value]) => value === undefined || value === '');
+          if (missing.length > 0) {
+            throw new InvalidArgumentError(`session create --chain requires ${missing.map(([flag]) => flag).join(', ')}`);
+          }
+        }
         const result = createChainSession(root, slug, {
           intent,
           engine: opts.engine as 'ralph' | 'coordinator' | 'manual' | undefined,
@@ -509,17 +1192,72 @@ export function registerSessionCommand(program: Command): void {
           executor: platform ? { platform, cli_tool: platform } : undefined,
           definition,
         });
+        if (definition && opts.requestId) {
+          const started = startExecution(root, result.sessionId, {
+            requestId: opts.requestId, ownerId: opts.ownerId!, ownerKind: opts.ownerKind!,
+            expectedIdentityRevision: opts.expectedIdentityRevision,
+            expectedActivityRevision: opts.expectedActivityRevision,
+            expectedLeaseEpoch: opts.expectedLeaseEpoch,
+            actor: opts.actor, reason: opts.reason, evidence: opts.evidence,
+          });
+          const output = {
+            session_id: result.sessionId, session_dir: result.sessionDir,
+            chain: chainSummary(definition.steps), execution: started.execution,
+            lease_claim: started.lease_claim,
+          };
+          const warning = deprecationWarning(
+            'maestro session create --chain',
+            'maestro session create + maestro execution start',
+          );
+          if (opts.json) {
+            emitExecutionSuccess({
+              operation: 'execution-start', result: output, projectRoot: root, execution: started.execution,
+              requestId: opts.requestId,
+              replay: { replayed: started.replayed, transition_id: started.transition_id },
+              warnings: [warning],
+            });
+          } else {
+            console.error(`[maestro session] deprecated: ${warning.message}`);
+            printExecutionHuman(output, opts.claimOutput, 'lease_claim', root);
+          }
+          return;
+        }
         const projectionWarning = ensureSessionProjectionOnDisk(root, result.sessionId);
-        print({
+        const output = {
           session_id: result.sessionId,
           session_dir: result.sessionDir,
           engine: result.session.orchestration.engine,
           chain: definition ? chainSummary(definition.steps) : persistedChainSummary(result.session),
           next: `maestro session next --session ${result.sessionId}`,
           ...(projectionWarning ? { warning: projectionWarning } : {}),
-        });
+        };
+        if (opts.json) machineSuccess('create', output, result.sessionId);
+        else print(output);
       } catch (error) {
-        reportError(error);
+        if (opts.json) {
+          let statusless = false;
+          try {
+            statusless = new SessionStore(resolve(opts.workflowRoot)).sessionSchemaSelection().writer === 'session/2.0';
+          } catch {
+            // The invalid config error is still returned without stderr.
+          }
+          if (statusless && (opts.chainFile || (opts.chain?.length ?? 0) > 0)) {
+            emitExecutionError({
+              operation: 'execution-start', error, projectRoot: resolve(opts.workflowRoot),
+              requestId: opts.requestId,
+              ...(error instanceof InvalidArgumentError
+                ? { exitCode: 2 as const, disposition: 'usage_error' as const, code: 'COMMANDER_USAGE' as const }
+                : {}),
+              warnings: [deprecationWarning(
+                'maestro session create --chain',
+                'maestro session create + maestro execution start',
+              )],
+            });
+          } else if (statusless) statuslessMachineError('session-create', error, { session: opts.id });
+          else machineError('create', error, { session: opts.id });
+        } else {
+          reportError(error);
+        }
       }
     });
 
@@ -537,26 +1275,203 @@ export function registerSessionCommand(program: Command): void {
     .option('--engine <name>', 'orchestration engine: ralph|coordinator|manual')
     .option('--quality <mode>', 'quality mode: quick|standard|full')
     .option('--auto', 'enable auto mode')
+    .option('--execution <id>', 'exact Execution ID; otherwise resolve the unique current Execution')
+    .option('--generation <n>', 'exact Execution generation', parsePositiveInteger)
+    .option('--request-id <id>', 'idempotent Execution transition request ID')
+    .option('--expected-execution-revision <n>', 'expected current Execution revision', parseNonNegativeInteger)
+    .option('--expected-identity-revision <n>', 'expected Session identity revision', parseNonNegativeInteger)
+    .option('--expected-activity-revision <n>', 'expected Session activity revision', parseNonNegativeInteger)
+    .option('--owner-id <id>', 'Execution lease owner ID')
+    .option('--owner-kind <kind>', 'Execution lease owner kind', parseOwnerKind)
+    .option('--lease-epoch <n>', 'current Execution lease epoch', parsePositiveInteger)
+    .option('--lease-id <token>', 'private Execution lease token')
+    .option('--expected-lease-epoch <n>', 'latest observed lease epoch when starting an Execution', parseNonNegativeInteger)
+    .option('--actor <name>', 'authorized actor')
+    .option('--reason <text>', 'audit reason')
+    .option('--evidence <ref>', 'evidence reference (repeatable)', collect)
+    .option('--claim-output <path>', 'write a human-mode acquisition claim to a private file')
+    .option('--json', 'emit run-response/1.1 for Execution authority')
     .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
-    .action((intentParts: string[], opts: {
-      chain?: string[];
-      chainFile?: string;
-      id?: string;
-      session?: string;
-      topic?: string;
-      arg: string[];
-      platform?: string;
-      dispatch: boolean;
-      engine?: string;
-      quality?: string;
-      auto?: boolean;
-      workflowRoot: string;
-    }) => {
+    .action((intentParts: string[], opts: any) => {
+      const root = resolve(opts.workflowRoot);
+      let context: AliasExecutionContext | undefined;
       try {
-        const root = resolve(opts.workflowRoot);
-        const intent = intentParts.join(' ').trim() || opts.topic || opts.chain?.join(' → ') || '';
+        const intent = intentParts.join(' ').trim() || opts.topic || opts.chain?.join(' -> ') || '';
         if (!intent && !opts.session) throw new Error('session start requires an intent or --session');
         const platform = opts.platform ? targetPlatformSchema.parse(opts.platform) : undefined;
+        const storeBeforeResolution = new SessionStore(root);
+        const createStatuslessIdentity = storeBeforeResolution.sessionSchemaSelection().writer === 'session/2.0'
+          && ((opts.session && !storeBeforeResolution.sessionExists(opts.session))
+            || (!opts.session && storeBeforeResolution.listSessionsReadOnly().candidates.length === 0));
+        if (createStatuslessIdentity) {
+          if (opts.chainFile || (opts.chain?.length ?? 0) > 1) {
+            throw new InvalidArgumentError(
+              'fresh statusless session start supports one command; multi-step chain initialization requires a canonical Execution chain operation',
+            );
+          }
+          const missing = [
+            ['--request-id', opts.requestId],
+            ['--expected-identity-revision', opts.expectedIdentityRevision],
+            ['--expected-activity-revision', opts.expectedActivityRevision],
+            ['--expected-lease-epoch', opts.expectedLeaseEpoch],
+            ['--owner-id', opts.ownerId],
+            ['--owner-kind', opts.ownerKind],
+            ['--actor', opts.actor],
+            ['--reason', opts.reason],
+            ['--evidence', opts.evidence?.length ? opts.evidence : undefined],
+          ].filter(([, value]) => value === undefined || value === '');
+          if (missing.length > 0) {
+            throw new InvalidArgumentError(`Execution start requires ${missing.map(([flag]) => flag).join(', ')}`);
+          }
+          const fallbackSlug = opts.chain?.length ? opts.chain.join('-') : 'session';
+          const slug = opts.id ?? slugifySessionTopic(intent, slugifySessionTopic(fallbackSlug));
+          const sessionId = deriveSessionId(slug);
+          storeBeforeResolution.createSession(sessionId, intent, { ifExists: 'error' });
+          opts.session = sessionId;
+        }
+        context = resolveAliasExecutionContext(root, opts.session, opts.execution);
+
+        if (context.protocol) {
+          if (!context.sessionId) throw new Error('Execution Session could not be resolved');
+          const startAliasReplay = Boolean(
+            context.execution && opts.requestId
+            && new SessionStore(root).readExecutionTransition(
+              context.sessionId, context.execution.execution_id, opts.requestId,
+            )?.payload.operation === 'execution-start',
+          );
+          if (opts.chainFile || (opts.chain?.length ?? 0) > 1) {
+            throw new InvalidArgumentError('session start cannot replace the chain of a statusless/current Execution; use run next');
+          }
+          if (!context.execution || startAliasReplay) {
+            const missing = [
+              ['--request-id', opts.requestId],
+              ['--expected-identity-revision', opts.expectedIdentityRevision],
+              ['--expected-activity-revision', opts.expectedActivityRevision],
+              ['--expected-lease-epoch', opts.expectedLeaseEpoch],
+              ['--owner-id', opts.ownerId],
+              ['--owner-kind', opts.ownerKind],
+              ['--actor', opts.actor],
+              ['--reason', opts.reason],
+              ['--evidence', opts.evidence?.length ? opts.evidence : undefined],
+            ].filter(([, value]) => value === undefined || value === '');
+            if (missing.length > 0) {
+              throw new InvalidArgumentError(`Execution start requires ${missing.map(([flag]) => flag).join(', ')}`);
+            }
+            const started = startExecution(root, context.sessionId, {
+              requestId: opts.requestId, ownerId: opts.ownerId, ownerKind: opts.ownerKind,
+              expectedIdentityRevision: opts.expectedIdentityRevision,
+              expectedActivityRevision: opts.expectedActivityRevision,
+              expectedLeaseEpoch: opts.expectedLeaseEpoch,
+              actor: opts.actor, reason: opts.reason, evidence: opts.evidence,
+            });
+            let dispatched: unknown = null;
+            if (opts.dispatch) {
+              const lease = {
+                ownerId: started.lease_claim.owner_id,
+                ownerKind: started.lease_claim.owner_kind,
+                epoch: started.lease_claim.epoch,
+                leaseId: started.lease_claim.lease_id,
+              };
+              if (opts.chain?.length === 1) {
+                dispatched = createExecutionRun({
+                  projectRoot: root, command: opts.chain[0], sessionId: context.sessionId,
+                  intent, topic: opts.topic, platform, args: opts.arg,
+                  executionId: started.execution.execution_id, generation: started.execution.generation,
+                  expectedExecutionRevision: 1, executionLease: lease,
+                  requestId: `${opts.requestId}-create`,
+                });
+              } else {
+                const next = runNextExecutionStep(root, {
+                  sessionId: context.sessionId, executionId: started.execution.execution_id,
+                  generation: started.execution.generation, expectedExecutionRevision: 1,
+                  executionLease: lease, requestId: `${opts.requestId}-next`,
+                  args: opts.arg.length > 0 ? opts.arg : undefined, json: opts.json,
+                });
+                if (next.exitCode !== 0) throw new Error(next.message);
+                dispatched = next.result;
+              }
+            }
+            const result = { ...started, dispatched };
+            const execution = new SessionStore(root).readExecution(
+              context.sessionId, started.execution.execution_id,
+            );
+            const warning = deprecationWarning('maestro session start', 'maestro execution start');
+            if (opts.json) {
+              emitExecutionSuccess({
+                operation: 'execution-start', result, projectRoot: root, execution,
+                requestId: opts.requestId,
+                replay: { replayed: started.replayed, transition_id: started.transition_id },
+                warnings: [warning],
+              });
+            } else {
+              console.error(`[maestro session] deprecated: ${warning.message}`);
+              printExecutionHuman(result, opts.claimOutput, 'lease_claim', root);
+            }
+            return;
+          }
+
+          const authority = aliasExecutionAuthority(context, opts);
+          const store = new SessionStore(root);
+          const wasPresent = Boolean(store.readExecutionTransition(
+            authority.sessionId, authority.execution.execution_id, authority.requestId,
+          ));
+          const command = opts.chain?.length === 1 ? opts.chain[0] : null;
+          const warning = deprecationWarning(
+            'maestro session start', command ? 'maestro run create' : 'maestro run next',
+          );
+          if (command) {
+            const result = createExecutionRun({
+              projectRoot: root, command, sessionId: authority.sessionId, intent,
+              topic: opts.topic, platform, args: opts.arg,
+              executionId: authority.execution.execution_id,
+              generation: authority.execution.generation,
+              expectedExecutionRevision: authority.expectedExecutionRevision,
+              executionLease: authority.lease, requestId: authority.requestId,
+            });
+            const execution = store.readExecution(authority.sessionId, authority.execution.execution_id);
+            if (opts.json) {
+              emitExecutionSuccess({
+                operation: 'create', result, projectRoot: root, execution,
+                requestId: authority.requestId,
+                replay: aliasExecutionReplay(root, authority, wasPresent), warnings: [warning],
+              });
+            } else {
+              console.error(`[maestro session] deprecated: ${warning.message}`);
+              print(result);
+            }
+            return;
+          }
+          if (!opts.dispatch) throw new InvalidArgumentError('--no-dispatch is not valid for a current Execution');
+          const next = runNextExecutionStep(root, {
+            sessionId: authority.sessionId, executionId: authority.execution.execution_id,
+            generation: authority.execution.generation,
+            expectedExecutionRevision: authority.expectedExecutionRevision,
+            executionLease: authority.lease, requestId: authority.requestId,
+            args: opts.arg.length > 0 ? opts.arg : undefined, json: opts.json,
+          });
+          if (opts.json && next.exitCode === 0 && next.result) {
+            emitExecutionSuccess({
+              operation: 'next', result: next.result, projectRoot: root,
+              execution: store.readExecution(authority.sessionId, authority.execution.execution_id),
+              requestId: authority.requestId,
+              replay: aliasExecutionReplay(root, authority, wasPresent), warnings: [warning],
+            });
+          } else if (opts.json) {
+            emitExecutionError({
+              operation: 'next', error: new Error(next.message), projectRoot: root,
+              sessionId: authority.sessionId, executionId: authority.execution.execution_id,
+              requestId: authority.requestId, exitCode: next.exitCode as 1 | 2 | 3,
+              disposition: next.exitCode === 1 ? 'domain_error' : 'control_flow',
+              code: next.reasonCode as never, warnings: [warning],
+            });
+          } else {
+            console.error(`[maestro session] deprecated: ${warning.message}`);
+            const stream = next.exitCode === 0 ? process.stdout : process.stderr;
+            stream.write(`${next.message}\n`);
+            if (next.exitCode !== 0) process.exitCode = next.exitCode;
+          }
+          return;
+        }
 
         // Single-Run mode: --session + exactly one --chain command, no chain-file
         if (opts.session && opts.chain?.length === 1 && !opts.chainFile) {
@@ -621,7 +1536,28 @@ export function registerSessionCommand(program: Command): void {
         }
         print(result);
       } catch (error) {
-        reportError(error);
+        const executionProtocol = context?.protocol ?? projectUsesExecutionProtocol(root, opts.session);
+        if (opts.json && executionProtocol) {
+          const operation = context?.execution
+            ? (opts.chain?.length === 1 ? 'create' : 'next')
+            : 'execution-start';
+          emitExecutionError({
+            operation, error, projectRoot: root,
+            sessionId: context?.sessionId ?? opts.session,
+            executionId: context?.execution?.execution_id ?? opts.execution,
+            requestId: opts.requestId,
+            ...(error instanceof InvalidArgumentError
+              ? { exitCode: 2 as const, disposition: 'usage_error' as const, code: 'COMMANDER_USAGE' as const }
+              : {}),
+            warnings: [deprecationWarning(
+              'maestro session start', context?.execution
+                ? (opts.chain?.length === 1 ? 'maestro run create' : 'maestro run next')
+                : 'maestro execution start',
+            )],
+          });
+        } else {
+          reportError(error);
+        }
       }
     });
 
@@ -790,29 +1726,76 @@ export function registerSessionCommand(program: Command): void {
     return VERDICT_ALIASES[normalized] ?? null;
   };
 
-  session
+  addAliasExecutionRunOptions(session
     .command('next')
-    .description('Advance chain: create the next pending Run and emit a birth packet')
+    .description('Deprecated alias for run next; Execution authority is auto-resolved when present')
     .option('--session <id>', 'explicit Session ID')
     .option('--inline-brief', 'include full brief-level guidance in the response (normal forward flow)')
     .option('--pick <step-id>', 'advance a specific pending execution step instead of the queue head')
-    .option('--json', 'emit structured JSON instead of the human-readable birth packet')
-    .option('--execution-owner <owner>', 'lease execution owner')
-    .option('--owner-epoch <epoch>', 'lease owner epoch', Number.parseInt)
+    .option('--json', 'emit run-response/1.1 for Execution authority, otherwise the legacy result')
+    .option('--execution-owner <owner>', 'legacy Session lease execution owner')
+    .option('--owner-epoch <epoch>', 'legacy Session lease owner epoch', Number.parseInt)
     .option('--lease-id <id>', 'lease identifier for concurrency safety')
-    .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
-    .action((opts: {
-      session?: string;
+    .option('--workflow-root <path>', 'project root containing .workflow', process.cwd()))
+    .action((opts: AliasExecutionOptions & {
       inlineBrief?: boolean;
       pick?: string;
       json?: boolean;
       executionOwner?: string;
       ownerEpoch?: number;
-      leaseId?: string;
       workflowRoot: string;
     }) => {
+      const projectRoot = resolve(opts.workflowRoot);
+      let context: AliasExecutionContext | undefined;
       try {
-        const outcome = runNextStep(resolve(opts.workflowRoot), {
+        context = resolveAliasExecutionContext(projectRoot, opts.session, opts.execution);
+        if (context.protocol) {
+          const authority = aliasExecutionAuthority(context, opts);
+          const store = new SessionStore(projectRoot);
+          const wasPresent = Boolean(store.readExecutionTransition(
+            authority.sessionId, authority.execution.execution_id, authority.requestId,
+          ));
+          const outcome = runNextExecutionStep(projectRoot, {
+            sessionId: authority.sessionId,
+            executionId: authority.execution.execution_id,
+            generation: authority.execution.generation,
+            expectedExecutionRevision: authority.expectedExecutionRevision,
+            executionLease: authority.lease,
+            requestId: authority.requestId,
+            pick: opts.pick,
+            json: opts.json,
+            inlineBrief: opts.inlineBrief,
+          });
+          const warning = deprecationWarning('maestro session next', 'maestro run next');
+          if (opts.json) {
+            if (outcome.exitCode === 0 && outcome.result) {
+              const execution = store.readExecution(authority.sessionId, authority.execution.execution_id);
+              emitExecutionSuccess({
+                operation: 'next', result: outcome.result, projectRoot, execution,
+                requestId: authority.requestId,
+                replay: aliasExecutionReplay(projectRoot, authority, wasPresent),
+                warnings: [warning],
+              });
+            } else {
+              emitExecutionError({
+                operation: 'next', error: new Error(outcome.message), projectRoot,
+                sessionId: authority.sessionId, executionId: authority.execution.execution_id,
+                requestId: authority.requestId, exitCode: outcome.exitCode as 1 | 2 | 3,
+                disposition: outcome.exitCode === 1 ? 'domain_error' : 'control_flow',
+                code: outcome.reasonCode as never, details: { reason_code: outcome.reasonCode },
+                warnings: [warning],
+              });
+            }
+          } else {
+            console.error(`[maestro session] deprecated: ${warning.message}`);
+            const stream = outcome.exitCode === 0 ? process.stdout : process.stderr;
+            stream.write(`${outcome.message}\n`);
+            if (outcome.exitCode !== 0) process.exitCode = outcome.exitCode;
+          }
+          return;
+        }
+
+        const outcome = runNextStep(projectRoot, {
           sessionId: opts.session,
           pick: opts.pick,
           json: opts.json,
@@ -821,16 +1804,54 @@ export function registerSessionCommand(program: Command): void {
           ownerEpoch: opts.ownerEpoch,
           leaseId: opts.leaseId,
         });
-        process.stdout.write(outcome.message + '\n');
-        process.exitCode = outcome.exitCode;
+        if (opts.json) {
+          if (outcome.exitCode === 0 && outcome.result) {
+            machineSuccess(
+              'next' as never,
+              outcome.result,
+              outcome.result.session_id,
+              undefined,
+              undefined,
+            );
+          } else {
+            emitRunResponse(createRunResponseError({
+              operation: 'next',
+              exit_code: outcome.exitCode as 1 | 2 | 3,
+              code: outcome.reasonCode as never,
+              message: outcome.message,
+              details: { reason_code: outcome.reasonCode },
+            }));
+          }
+        } else {
+          process.stdout.write(outcome.message + '\n');
+          process.exitCode = outcome.exitCode;
+        }
       } catch (error) {
-        reportError(error);
+        const executionProtocol = context?.protocol ?? projectUsesExecutionProtocol(projectRoot, opts.session);
+        if (opts.json && executionProtocol) {
+          emitExecutionError({
+            operation: 'next', error, projectRoot,
+            sessionId: context?.sessionId ?? opts.session,
+            executionId: context?.execution?.execution_id ?? opts.execution,
+            requestId: opts.requestId,
+            ...(error instanceof InvalidArgumentError
+              ? { exitCode: 2 as const, disposition: 'usage_error' as const, code: 'COMMANDER_USAGE' as const }
+              : error instanceof Error && /ambiguous across Sessions/i.test(error.message)
+                ? { code: 'EXECUTION_ALREADY_ACTIVE' as const }
+                : {}),
+            warnings: [deprecationWarning('maestro session next', 'maestro run next')],
+          });
+        } else if (opts.json) {
+          machineError('next' as never, error, { session: opts.session, requestId: opts.requestId });
+        } else {
+          reportError(error);
+        }
       }
     });
 
-  session
+  addAliasExecutionRunOptions(session
     .command('done [run-id]')
-    .description('Complete a Run step and advance the chain (returns continuation)')
+    .description('Deprecated alias for run complete; Execution authority is auto-resolved when present')
     .option('--session <id>', 'explicit Session ID')
     .option('--skip-artifact-metadata-validation', 'downgrade artifact kind/schema/role/alias contract mismatches to warnings')
     .option('--verdict <verdict>', `completion verdict: ${VALID_VERDICTS.join('|')} (default done; ${VERDICT_ALIAS_LABEL})`)
@@ -842,10 +1863,10 @@ export function registerSessionCommand(program: Command): void {
     .option('--artifact <path>', 'run-relative artifact path (repeatable)', collect, [])
     .option('--chain-proposal <path>', 'run-relative chain-proposal artifact applied atomically with completion')
     .option('--apply-proposal', 'apply the single validated chain-proposal discovered in this Run')
-    .option('--json', 'emit structured JSON')
-    .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
-    .action((runIdArg: string | undefined, opts: {
-      session?: string;
+    .option('--lease-id <token>', 'private Execution lease token')
+    .option('--json', 'emit run-response/1.1 for Execution authority, otherwise run-response/1.0')
+    .option('--workflow-root <path>', 'project root containing .workflow', process.cwd()))
+    .action((runIdArg: string | undefined, opts: AliasExecutionOptions & {
       skipArtifactMetadataValidation?: boolean;
       verdict?: string;
       summary?: string;
@@ -859,10 +1880,63 @@ export function registerSessionCommand(program: Command): void {
       json?: boolean;
       workflowRoot: string;
     }) => {
+      const projectRoot = resolve(opts.workflowRoot);
+      let context: AliasExecutionContext | undefined;
       try {
-        const projectRoot = resolve(opts.workflowRoot);
         const verdict = parseVerdict(opts.verdict);
         if (!verdict) throw new Error(`invalid --verdict "${opts.verdict}"; valid: ${VALID_VERDICTS.join(', ')} (${VERDICT_ALIAS_LABEL})`);
+        context = resolveAliasExecutionContext(projectRoot, opts.session, opts.execution);
+        if (context.protocol) {
+          const authority = aliasExecutionAuthority(context, opts);
+          const runId = runIdArg ?? authority.execution.active_run_id;
+          if (!runId) throw new InvalidArgumentError('Execution completion requires [run-id] or an active Execution Run');
+          const result = completeExecutionRun(projectRoot, runId, {
+            sessionId: authority.sessionId,
+            executionId: authority.execution.execution_id,
+            generation: authority.execution.generation,
+            expectedExecutionRevision: authority.expectedExecutionRevision,
+            executionLease: authority.lease,
+            requestId: authority.requestId,
+            chainVerdict: verdict,
+            notes: opts.note,
+            decisions: opts.decision,
+            extraArtifacts: [...opts.artifact, ...opts.evidence],
+            summaryFallback: opts.summary,
+            chainProposal: opts.chainProposal,
+            applyChainProposal: opts.applyProposal,
+            skipArtifactMetadataValidation: opts.skipArtifactMetadataValidation,
+          });
+          const warning = deprecationWarning('maestro session done', 'maestro run complete');
+          if (opts.json) {
+            const execution = new SessionStore(projectRoot).readExecution(
+              authority.sessionId, authority.execution.execution_id,
+            );
+            if (result.sealed) {
+              emitExecutionSuccess({
+                operation: 'complete', result, projectRoot, execution,
+                requestId: authority.requestId,
+                replay: {
+                  replayed: result.transition.status === 'replayed',
+                  transition_id: result.transition.transition_id,
+                },
+                warnings: [warning],
+              });
+            } else {
+              emitExecutionError({
+                operation: 'complete', error: new Error('Run gates are blocking completion'), projectRoot,
+                sessionId: authority.sessionId, executionId: authority.execution.execution_id,
+                requestId: authority.requestId, code: 'RUN_GATES_BLOCKING', details: { result },
+                warnings: [warning],
+              });
+            }
+          } else {
+            console.error(`[maestro session] deprecated: ${warning.message}`);
+            print(result);
+            if (!result.sealed) process.exitCode = 1;
+          }
+          return;
+        }
+
         const store = new SessionStore(projectRoot);
         let sessionId: string;
         let runId: string;
@@ -904,20 +1978,13 @@ export function registerSessionCommand(program: Command): void {
                 status: result.seal.transition.status,
                 transition_id: result.seal.transition.transition_id,
               },
-              next: {
-                suggest_only: true,
-                command: result.next.command,
-                reason: result.next.reason,
-              },
+              next: { suggest_only: true, command: result.next.command, reason: result.next.reason },
               continuation: inspectSessionContinuation(projectRoot, result.session_id),
             }));
           } else {
             emitRunResponse(createRunResponseError({
-              operation: 'complete',
-              exit_code: 1,
-              code: 'RUN_GATES_BLOCKING',
-              message: 'Run gates are blocking completion',
-              details: { result },
+              operation: 'complete', exit_code: 1, code: 'RUN_GATES_BLOCKING',
+              message: 'Run gates are blocking completion', details: { result },
               next: { suggest_only: true, command: result.next.command, reason: result.next.reason },
               continuation: inspectSessionContinuation(projectRoot, result.session_id, { runId: result.run_id }),
             }));
@@ -928,13 +1995,22 @@ export function registerSessionCommand(program: Command): void {
           if (!result.run_sealed) process.exitCode = 1;
         }
       } catch (error) {
-        if (opts.json) {
+        const executionProtocol = context?.protocol ?? projectUsesExecutionProtocol(projectRoot, opts.session);
+        if (opts.json && executionProtocol) {
+          emitExecutionError({
+            operation: 'complete', error, projectRoot,
+            sessionId: context?.sessionId ?? opts.session,
+            executionId: context?.execution?.execution_id ?? opts.execution,
+            requestId: opts.requestId,
+            ...(error instanceof InvalidArgumentError
+              ? { exitCode: 2 as const, disposition: 'usage_error' as const, code: 'COMMANDER_USAGE' as const }
+              : {}),
+            warnings: [deprecationWarning('maestro session done', 'maestro run complete')],
+          });
+        } else if (opts.json) {
           emitRunResponse(createRunResponseError({
-            operation: 'complete',
-            exit_code: 1,
-            code: stableRunResponseErrorCode(error),
-            message: error instanceof Error ? error.message : String(error),
-            request_id: null,
+            operation: 'complete', exit_code: 1, code: stableRunResponseErrorCode(error),
+            message: error instanceof Error ? error.message : String(error), request_id: null,
             locator: { session_id: opts.session ?? null, run_id: runIdArg ?? null },
           }));
         } else {

@@ -1,12 +1,14 @@
 import type { Command } from 'commander';
-import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, lstatSync, mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { z } from 'zod';
 
 import {
   recordRunKnowledgeInputs,
   readSessionKnowledgeReconciliation,
   stageRunKnowledgeCandidate,
   summarizeSessionKnowledge,
+  type KnowledgeExecutionAuthority,
   type KnowledgeInputSignal,
 } from '../run/knowledge.js';
 import {
@@ -42,6 +44,13 @@ import type {
   KnowledgeCandidateReconciliation,
 } from '../knowledge/reconciliation-schema.js';
 import { readReportFrontmatter } from '../run/report.js';
+import {
+  EXECUTION_OWNER_KINDS,
+  parseNonNegativeInteger,
+  parseOwnerKind,
+  parsePositiveInteger,
+  type ExecutionOwnerKind,
+} from './execution-cli-shared.js';
 
 const KNOWLEDGE_INPUT_SIGNALS = ['consumed', 'cited', 'validated', 'contradicted'] as const;
 const KNOWLEDGE_CANDIDATE_TARGETS = ['spec', 'knowhow'] as const;
@@ -49,6 +58,125 @@ const KNOWLEDGE_CANDIDATE_ACTIONS = ['propose', 'reaffirm', 'supersede', 'contes
 const KNOWLEDGE_RESOLUTIONS = ['duplicate', 'related', 'conflict', 'supersede', 'unique'] as const;
 /** Attribution sources exposed for explicit recording (injection stays automatic-only). */
 const KNOWLEDGE_INPUT_SOURCES = ['search', 'load', 'manual'] as const;
+const EXECUTION_AUTHORITY_FILE_ENV = 'MAESTRO_EXECUTION_AUTHORITY_FILE';
+
+interface KnowledgeExecutionOptions {
+  execution?: string;
+  generation?: number;
+  requestId?: string;
+  expectedExecutionRevision?: number;
+  ownerId?: string;
+  ownerKind?: ExecutionOwnerKind;
+  leaseEpoch?: number;
+  leaseId?: string;
+  executionAuthority?: string;
+}
+
+const knowledgeExecutionAuthorityFileSchema = z.object({
+  schema_version: z.literal('knowledge-execution-authority/1.0').optional(),
+  session_id: z.string().min(1),
+  execution_id: z.string().min(1),
+  generation: z.number().int().positive(),
+  run_id: z.string().min(1),
+  request_id: z.string().min(1),
+  expected_execution_revision: z.number().int().nonnegative(),
+  owner_id: z.string().min(1),
+  owner_kind: z.enum(EXECUTION_OWNER_KINDS),
+  lease_epoch: z.number().int().positive(),
+  lease_id: z.string().min(1),
+}).strict();
+
+function suppliedExecutionFields(options: KnowledgeExecutionOptions): Array<[string, unknown]> {
+  return [
+    ['--execution', options.execution],
+    ['--generation', options.generation],
+    ['--request-id', options.requestId],
+    ['--expected-execution-revision', options.expectedExecutionRevision],
+    ['--owner-id', options.ownerId],
+    ['--owner-kind', options.ownerKind],
+    ['--lease-epoch', options.leaseEpoch],
+    ['--lease-id', options.leaseId],
+  ];
+}
+
+function resolveKnowledgeExecutionAuthority(
+  projectRoot: string,
+  options: KnowledgeExecutionOptions,
+  target: { sessionId: string; runId: string },
+  required: boolean,
+): KnowledgeExecutionAuthority | undefined {
+  const authorityFile = options.executionAuthority ?? process.env[EXECUTION_AUTHORITY_FILE_ENV];
+  const explicitFields = suppliedExecutionFields(options);
+  const explicitAttempt = explicitFields.some(([, value]) => value !== undefined && value !== '');
+  if (authorityFile && explicitAttempt) {
+    throw new Error('Use either --execution-authority / MAESTRO_EXECUTION_AUTHORITY_FILE or the explicit Execution flag tuple, not both');
+  }
+
+  if (authorityFile) {
+    const path = resolve(projectRoot, authorityFile);
+    const stat = lstatSync(path);
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      throw new Error(`Execution authority path must be a regular non-symlink file: ${path}`);
+    }
+    let raw: unknown;
+    try {
+      raw = JSON.parse(readFileSync(path, 'utf8'));
+    } catch (error) {
+      throw new Error(`Invalid Execution authority JSON at ${path}: ${(error as Error).message}`);
+    }
+    const parsed = knowledgeExecutionAuthorityFileSchema.parse(raw);
+    if (parsed.session_id !== target.sessionId || parsed.run_id !== target.runId) {
+      throw new Error(
+        `Execution authority file targets ${parsed.session_id}/${parsed.run_id}, `
+        + `not ${target.sessionId}/${target.runId}`,
+      );
+    }
+    return {
+      executionId: parsed.execution_id,
+      generation: parsed.generation,
+      requestId: parsed.request_id,
+      expectedExecutionRevision: parsed.expected_execution_revision,
+      lease: {
+        ownerId: parsed.owner_id,
+        ownerKind: parsed.owner_kind,
+        epoch: parsed.lease_epoch,
+        leaseId: parsed.lease_id,
+      },
+    };
+  }
+
+  if (!explicitAttempt) {
+    if (!required) return undefined;
+    throw new Error(
+      `Run ${target.runId} is Execution-bound and requires exact sidecar authority. `
+      + 'Pass --execution, --generation, --request-id, --expected-execution-revision, '
+      + '--owner-id, --owner-kind, --lease-epoch, and --lease-id; or use '
+      + `--execution-authority <private-json> / ${EXECUTION_AUTHORITY_FILE_ENV}.`,
+    );
+  }
+  const missing = explicitFields
+    .filter(([, value]) => value === undefined || value === '')
+    .map(([flag]) => flag);
+  if (missing.length > 0) {
+    throw new Error(`Execution-bound knowledge mutation requires ${missing.join(', ')}`);
+  }
+  return {
+    executionId: options.execution!,
+    generation: options.generation!,
+    requestId: options.requestId!,
+    expectedExecutionRevision: options.expectedExecutionRevision!,
+    lease: {
+      ownerId: options.ownerId!,
+      ownerKind: options.ownerKind!,
+      epoch: options.leaseEpoch!,
+      leaseId: options.leaseId!,
+    },
+  };
+}
+
+function signalExecutionAuthority(authority: KnowledgeExecutionAuthority): KnowledgeExecutionAuthority {
+  return { ...authority, requestId: `${authority.requestId}-signal` };
+}
 
 function percent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
@@ -407,6 +535,15 @@ export function registerKnowledgeCommand(program: Command): void {
     .option('--run <run-id>', 'Explicit Run ID (run-source staging)')
     .option('--session <session-id>', 'Explicit Session ID (session-source staging; usable without --run)')
     .option('--channel <name>', 'Caller identity channel (write authorization, see knowledge-session-decoupling-mvp.md)')
+    .option('--execution <id>', 'exact Execution ID for an Execution-bound Run')
+    .option('--generation <n>', 'exact Execution generation', parsePositiveInteger)
+    .option('--request-id <id>', 'idempotent knowledge sidecar request ID')
+    .option('--expected-execution-revision <n>', 'expected Execution revision', parseNonNegativeInteger)
+    .option('--owner-id <id>', 'Execution lease owner ID')
+    .option('--owner-kind <kind>', `Execution lease owner kind: ${EXECUTION_OWNER_KINDS.join('|')}`, parseOwnerKind)
+    .option('--lease-epoch <n>', 'Execution lease epoch', parsePositiveInteger)
+    .option('--lease-id <token>', 'private Execution lease token (prefer --execution-authority to keep it out of argv)')
+    .option('--execution-authority <path>', `private knowledge-execution-authority/1.0 JSON file; defaults from ${EXECUTION_AUTHORITY_FILE_ENV}`)
     .option('--allow-unknown', 'Record unknown signal IDs with a degraded marker instead of rejecting')
     .option('--json', 'Output as JSON')
     .option('--workflow-root <path>', 'Project root containing .workflow', process.cwd())
@@ -428,7 +565,7 @@ export function registerKnowledgeCommand(program: Command): void {
         allowUnknown?: boolean;
         json?: boolean;
         workflowRoot: string;
-      },
+      } & KnowledgeExecutionOptions,
     ) => {
       try {
         if (!KNOWLEDGE_CANDIDATE_TARGETS.includes(target as 'spec' | 'knowhow')) {
@@ -459,6 +596,19 @@ export function registerKnowledgeCommand(program: Command): void {
           explicitChannel: opts.channel,
         });
         if (authority.warning) console.error(`Warning: ${authority.warning}`);
+        let executionAuthority: KnowledgeExecutionAuthority | undefined;
+        if (authority.kind === 'run') {
+          executionAuthority = resolveKnowledgeExecutionAuthority(
+            projectRoot,
+            opts,
+            { sessionId: authority.sessionId, runId: authority.runId },
+            store.readOpenExecution(authority.sessionId) !== null,
+          );
+        } else if (opts.executionAuthority
+          || process.env[EXECUTION_AUTHORITY_FILE_ENV]
+          || suppliedExecutionFields(opts).some(([, value]) => value !== undefined && value !== '')) {
+          throw new Error('Execution sidecar authority is valid only with a Run-source target; pass --run <run-id>');
+        }
 
         let signal: KnowledgeInputSignal | null = null;
         let signalIds: string[] = [];
@@ -537,6 +687,7 @@ export function registerKnowledgeCommand(program: Command): void {
               evidenceRefs,
             },
             authority.sessionId,
+            executionAuthority,
           );
           if (signal) {
             signalResult = recordRunKnowledgeInputs(
@@ -546,6 +697,8 @@ export function registerKnowledgeCommand(program: Command): void {
               signal,
               'manual',
               authority.sessionId,
+              [],
+              executionAuthority ? signalExecutionAuthority(executionAuthority) : undefined,
             );
           }
         } else {
@@ -614,6 +767,15 @@ export function registerKnowledgeCommand(program: Command): void {
     .option('--run <run-id>', 'Explicit Run ID (run-source attribution)')
     .option('--session <session-id>', 'Explicit Session ID (session-source attribution; usable without --run)')
     .option('--channel <name>', 'Caller identity channel (write authorization)')
+    .option('--execution <id>', 'exact Execution ID for an Execution-bound Run')
+    .option('--generation <n>', 'exact Execution generation', parsePositiveInteger)
+    .option('--request-id <id>', 'idempotent knowledge sidecar request ID')
+    .option('--expected-execution-revision <n>', 'expected Execution revision', parseNonNegativeInteger)
+    .option('--owner-id <id>', 'Execution lease owner ID')
+    .option('--owner-kind <kind>', `Execution lease owner kind: ${EXECUTION_OWNER_KINDS.join('|')}`, parseOwnerKind)
+    .option('--lease-epoch <n>', 'Execution lease epoch', parsePositiveInteger)
+    .option('--lease-id <token>', 'private Execution lease token (prefer --execution-authority to keep it out of argv)')
+    .option('--execution-authority <path>', `private knowledge-execution-authority/1.0 JSON file; defaults from ${EXECUTION_AUTHORITY_FILE_ENV}`)
     .option('--allow-unknown', 'Record unknown knowledge IDs with a degraded marker instead of rejecting')
     .option('--json', 'Output as JSON')
     .option('--workflow-root <path>', 'Project root containing .workflow', process.cwd())
@@ -629,7 +791,7 @@ export function registerKnowledgeCommand(program: Command): void {
         allowUnknown?: boolean;
         json?: boolean;
         workflowRoot: string;
-      },
+      } & KnowledgeExecutionOptions,
     ) => {
       try {
         if (!KNOWLEDGE_INPUT_SIGNALS.includes(opts.signal as KnowledgeInputSignal)) {
@@ -648,6 +810,19 @@ export function registerKnowledgeCommand(program: Command): void {
           explicitChannel: opts.channel,
         });
         if (authority.warning) console.error(`Warning: ${authority.warning}`);
+        let executionAuthority: KnowledgeExecutionAuthority | undefined;
+        if (authority.kind === 'run') {
+          executionAuthority = resolveKnowledgeExecutionAuthority(
+            projectRoot,
+            opts,
+            { sessionId: authority.sessionId, runId: authority.runId },
+            store.readOpenExecution(authority.sessionId) !== null,
+          );
+        } else if (opts.executionAuthority
+          || process.env[EXECUTION_AUTHORITY_FILE_ENV]
+          || suppliedExecutionFields(opts).some(([, value]) => value !== undefined && value !== '')) {
+          throw new Error('Execution sidecar authority is valid only with a Run-source target; pass --run <run-id>');
+        }
         await validateKnowledgeSignalIds(projectRoot, knowledgeIds, opts.allowUnknown);
         const evidence = opts.evidence?.split(',').map(ref => ref.trim()).filter(Boolean) ?? [];
         let result: { session_id: string; recorded: number; run_id?: string; origin?: 'session' };
@@ -660,6 +835,7 @@ export function registerKnowledgeCommand(program: Command): void {
             opts.source as typeof KNOWLEDGE_INPUT_SOURCES[number],
             authority.sessionId,
             evidence,
+            executionAuthority,
           );
         } else {
           result = recordSessionKnowledgeInputs(
