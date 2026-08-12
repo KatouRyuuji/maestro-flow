@@ -22,5 +22,8 @@ export function registerViewCommand(program: Command): void {
       console.error('');
       console.error('  Use `maestro run brief` or `maestro run check` for workflow status.');
       console.error('');
+      console.error('  💡 Want a resident desktop view of agent calls / Session·Run / knowledge?');
+      console.error('     Try the Maestro Sidebar desktop app (maestro-sidebar/).');
+      console.error('');
     });
 }

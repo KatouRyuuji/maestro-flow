@@ -1,14 +1,16 @@
-import { useEffect, useCallback, useMemo } from 'react';
+import { useEffect, useCallback, useMemo, useState } from 'react';
 import { useMaestroCoordinateStore } from '@/client/store/maestro-coordinate-store.js';
 import { useI18n } from '@/client/i18n/index.js';
 import type { MaestroSessionListItem } from '@/shared/maestro-session-types.js';
 import { SessionListPanel } from '@/client/components/maestro-coordinate/SessionListPanel.js';
 import { SessionDetailContent } from '@/client/components/maestro-coordinate/SessionDetailContent.js';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, X } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
 // MaestroCoordinatePage — main page layout
 // ---------------------------------------------------------------------------
+
+const SIDEBAR_TIP_DISMISS_KEY = 'maestro-sidebar-tip-dismissed';
 
 export function MaestroCoordinatePage() {
   const { t } = useI18n();
@@ -38,6 +40,15 @@ export function MaestroCoordinatePage() {
     void fetchSessions();
   }, [fetchSessions]);
 
+  // Sidebar 桌面应用提醒条（可关闭，localStorage 记忆）
+  const [sidebarTipDismissed, setSidebarTipDismissed] = useState(
+    () => localStorage.getItem(SIDEBAR_TIP_DISMISS_KEY) === '1',
+  );
+  const handleDismissSidebarTip = useCallback(() => {
+    localStorage.setItem(SIDEBAR_TIP_DISMISS_KEY, '1');
+    setSidebarTipDismissed(true);
+  }, []);
+
   const handleSelectSession = useCallback(
     (dirName: string) => {
       selectSession(dirName === selectedDir ? null : dirName);
@@ -65,6 +76,23 @@ export function MaestroCoordinatePage() {
           <RefreshCw size={14} />
         </button>
       </header>
+
+      {/* ---- Sidebar 桌面应用提醒条 ---- */}
+      {!sidebarTipDismissed && (
+        <div className="flex items-center gap-2 px-4 py-2 text-[11px] text-accent-blue bg-[rgba(59,130,246,0.08)] border-b border-border-divider shrink-0">
+          <span className="flex-1">{t('maestro_coordinate.sidebar_tip')}</span>
+          <button
+            type="button"
+            onClick={handleDismissSidebarTip}
+            title={t('maestro_coordinate.sidebar_tip_dismiss')}
+            aria-label={t('maestro_coordinate.sidebar_tip_dismiss')}
+            className="flex items-center gap-1 px-1.5 py-0.5 border-none rounded bg-transparent text-accent-blue cursor-pointer text-[11px] font-semibold hover:bg-bg-hover transition-colors duration-150"
+          >
+            <X size={12} />
+            {t('maestro_coordinate.sidebar_tip_dismiss')}
+          </button>
+        </div>
+      )}
 
       {/* ---- Error banner ---- */}
       {error && (

@@ -302,7 +302,9 @@
     "empty_desc": "来自 .workflow/.maestro/ 的会话数据将显示在此",
     "source_ralph": "Ralph",
     "source_maestro": "Maestro",
-    "source_coordinate": "Coordinate"
+    "source_coordinate": "Coordinate",
+    "sidebar_tip": "💡 想常驻桌面实时观察 Agent 调用 / Session·Run / 知识积累？试试 Maestro Sidebar 桌面应用",
+    "sidebar_tip_dismiss": "不再提醒"
   },
   "settings": {
     "title": "设置",

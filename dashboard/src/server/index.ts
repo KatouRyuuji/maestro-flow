@@ -242,6 +242,9 @@ async function main(): Promise<void> {
     },
     (info) => {
       console.log(`Dashboard server listening on http://${config.host}:${info.port}`);
+      console.log(
+        '💡 Tip: for a resident desktop view of agent calls / Session·Run / knowledge stats, try the Maestro Sidebar desktop app (maestro-sidebar/).',
+      );
     },
   );
 

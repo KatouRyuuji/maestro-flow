@@ -300,7 +300,9 @@
     "empty_desc": "Session data from .workflow/.maestro/ will appear here",
     "source_ralph": "Ralph",
     "source_maestro": "Maestro",
-    "source_coordinate": "Coordinate"
+    "source_coordinate": "Coordinate",
+    "sidebar_tip": "💡 Want a resident desktop view of agent calls, Session/Run state and knowledge stats? Try the Maestro Sidebar desktop app",
+    "sidebar_tip_dismiss": "Don't show again"
   },
   "settings": {
     "title": "Settings",
