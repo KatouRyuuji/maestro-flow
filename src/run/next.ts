@@ -38,14 +38,26 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveStepContent } from './contract.js';
-import { briefRun, createRun, projectSessionEntry, resolveArgumentRequirements, resolveUnknownFlags, type CreateRunResult, type NamedGateBlocker, type PrevHandoff, type RunUpstream } from './runtime.js';
+import {
+  briefRun,
+  createExecutionRun,
+  createRun,
+  projectSessionEntry,
+  resolveArgumentRequirements,
+  resolveUnknownFlags,
+  type CreateRunResult,
+  type NamedGateBlocker,
+  type PrevHandoff,
+  type RunUpstream,
+} from './runtime.js';
 import {
   activeStepIndex,
   nextPendingIndex,
   nextPendingDecisionIndex,
 } from './chain.js';
-import { checkLease } from './lease.js';
+import { assertExecutionLease, checkLease, type ExecutionLeaseClaim } from './lease.js';
 import { SessionStore } from './store.js';
+import { readResolvedSession } from './session-resolver.js';
 import { readStateJson, writeStateJson, ensureSessionProjection } from '../utils/state-schema.js';
 import type { SessionState, Handoff } from './schemas.js';
 import type { TargetPlatform } from '../core/skill-converter.js';
@@ -127,6 +139,14 @@ export interface NextCmdOptions {
    * `maestro run brief` separately — the normal forward flow path.
    */
   inlineBrief?: boolean;
+  /** Internal execution binding; omitted legacy calls retain the current unleased path. */
+  execution?: {
+    executionId: string;
+    generation: number;
+    expectedRevision: number;
+    lease: ExecutionLeaseClaim;
+    requestId: string;
+  };
 }
 
 export type NextReasonCode =
@@ -177,8 +197,10 @@ function listRunningSessions(store: SessionStore): SessionCandidate[] {
   for (const name of names) {
     if (!store.sessionExists(name)) continue;
     try {
-      const session = store.readBundle(name).session;
-      if (session.status === 'running') candidates.push({ sessionId: name, session });
+      const resolved = readResolvedSession(store, name);
+      if (resolved.derivedStatus === 'running') {
+        candidates.push({ sessionId: name, session: resolved.bundle.session });
+      }
     } catch {
       /* skip corrupt */
     }
@@ -211,8 +233,10 @@ function resolveSession(projectRoot: string, store: SessionStore, sessionId?: st
   const active = state?.active_session_id;
   if (active && store.sessionExists(active)) {
     try {
-      const session = store.readBundle(active).session;
-      if (session.status === 'running') return { kind: 'ok', sessionId: active, session };
+      const resolved = readResolvedSession(store, active);
+      if (resolved.derivedStatus === 'running') {
+        return { kind: 'ok', sessionId: active, session: resolved.bundle.session };
+      }
     } catch {
       /* fall through to scan */
     }
@@ -543,6 +567,101 @@ export function runNextStep(projectRoot: string, opts: NextCmdOptions = {}): Nex
 
   const { sessionId } = resolved;
   let session = resolved.session;
+  const sessionRecord = store.readSessionRecord(sessionId);
+  const statusless = sessionRecord.schema_version === 'session/2.0';
+
+  if (statusless && sessionRecord.archived_at) {
+    return {
+      exitCode: 2,
+      reasonCode: 'CHAIN_COMPLETE',
+      result: null,
+      message: `[run next] Session ${sessionId} is archived; automatic dispatch is closed.`,
+    };
+  }
+  if (statusless && !opts.execution) {
+    return {
+      exitCode: 1,
+      reasonCode: 'INTERNAL_ERROR',
+      result: null,
+      message: `[run next] Session ${sessionId} uses session/2.0; an explicit current Execution binding is required.`,
+    };
+  }
+
+  if (opts.execution) {
+    const existing = store.readExecutionTransition(sessionId, opts.execution.executionId, opts.execution.requestId);
+    const execution = store.readExecution(sessionId, opts.execution.executionId);
+    if (statusless && sessionRecord.current_execution_id !== execution.execution_id) {
+      return {
+        exitCode: 1,
+        reasonCode: 'RESUME_REQUIRED',
+        result: null,
+        message: `[run next] Execution ${execution.execution_id} is not the current Execution for Session ${sessionId}`,
+      };
+    }
+    if (execution.generation !== opts.execution.generation) {
+      return { exitCode: 1, reasonCode: 'INTERNAL_ERROR', result: null, message: '[run next] Execution generation changed' };
+    }
+    if (!existing && execution.revision !== opts.execution.expectedRevision) {
+      return {
+        exitCode: 1,
+        reasonCode: 'INTERNAL_ERROR',
+        result: null,
+        message: `[run next] execution revision conflict: expected ${opts.execution.expectedRevision}, current ${execution.revision}`,
+      };
+    }
+    if (existing && (existing.payload.operation !== 'next'
+      || existing.payload.subject.execution_id !== execution.execution_id
+      || existing.payload.subject.generation !== execution.generation)) {
+      return {
+        exitCode: 1,
+        reasonCode: 'INTERNAL_ERROR',
+        result: null,
+        message: `[run next] request_id ${opts.execution.requestId} was already used for another transition`,
+      };
+    }
+    if (execution.status !== 'active') {
+      return { exitCode: 1, reasonCode: 'RESUME_REQUIRED', result: null, message: `[run next] Execution is ${execution.status}` };
+    }
+    try {
+      assertExecutionLease(execution.lease, opts.execution.lease);
+    } catch (error) {
+      return { exitCode: 1, reasonCode: 'LEASE_CONFLICT', result: null, message: `[run next] ${(error as Error).message}` };
+    }
+
+    session = structuredClone(session);
+    if (existing) {
+      const replayStepId = existing.payload.subject.chain_step_id;
+      const replayRunId = existing.outcome.result.value && typeof existing.outcome.result.value === 'object'
+        ? (existing.outcome.result.value as { run_id?: unknown }).run_id
+        : null;
+      const replayStep = replayStepId
+        ? session.orchestration.chain.find(step => step.step_id === replayStepId)
+        : null;
+      if (!replayStep || typeof replayRunId !== 'string'
+        || replayStep.status !== 'running' || replayStep.run_id !== replayRunId
+        || session.active_run_id !== replayRunId) {
+        return {
+          exitCode: 1,
+          reasonCode: 'INTERNAL_ERROR',
+          result: null,
+          message: `[run next] request_id ${opts.execution.requestId} outcome diverged from current Run authority`,
+        };
+      }
+      replayStep.status = 'pending';
+      replayStep.run_id = null;
+      session.active_run_id = null;
+    } else {
+      for (const step of session.orchestration.chain) {
+        if (step.status !== 'running' || !step.run_id) continue;
+        try {
+          const status = store.readRun(sessionId, step.run_id).status;
+          if (status === 'sealed' || status === 'completed') step.status = 'sealed';
+        } catch {
+          // The fenced create transaction revalidates every candidate.
+        }
+      }
+    }
+  }
 
   // Lease guard (§1.4): a leased session refuses advancement unless the claim
   // matches. Inert for null-lease sessions, so it also replaces the old engine
@@ -556,7 +675,7 @@ export function runNextStep(projectRoot: string, opts: NextCmdOptions = {}): Nex
     return { exitCode: 1, reasonCode: 'LEASE_CONFLICT', result: null, message: `[run next] ${conflict}` };
   }
 
-  if (session.status === 'sealed' || session.status === 'archived') {
+  if (!statusless && (session.status === 'sealed' || session.status === 'archived')) {
     return {
       exitCode: 2,
       reasonCode: 'CHAIN_COMPLETE',
@@ -565,7 +684,7 @@ export function runNextStep(projectRoot: string, opts: NextCmdOptions = {}): Nex
     };
   }
 
-  if (session.status !== 'running') {
+  if (!statusless && session.status !== 'running') {
     const escalated = session.orchestration.decision_points
       .filter(point => point.status === 'escalated')
       .map(point => point.point_id);
@@ -592,7 +711,9 @@ export function runNextStep(projectRoot: string, opts: NextCmdOptions = {}): Nex
   // the driver does not stall on a step the executor completed via `run complete`.
   // `run complete` seals the Run without touching the chain, keeping it engine-
   // agnostic; the step-driver owns chain progression.
-  session = reconcileSealedSteps(projectRoot, store, session);
+  if (!opts.execution) {
+    session = reconcileSealedSteps(projectRoot, store, session);
+  }
 
   // Refuse when a step is already running — caller must complete it first. The
   // single-running guard wins over --pick.
@@ -675,7 +796,10 @@ export function runNextStep(projectRoot: string, opts: NextCmdOptions = {}): Nex
     try {
       const state = readStateJson(projectRoot);
       if (state) {
-        writeStateJson(projectRoot, ensureSessionProjection(state, projectSessionEntry(session)));
+        writeStateJson(projectRoot, ensureSessionProjection(
+          state,
+          projectSessionEntry(session, store.readSessionRecord(sessionId)),
+        ));
       } else {
         projectionWarning = 'state.json missing; session projection not registered';
       }
@@ -700,7 +824,7 @@ export function runNextStep(projectRoot: string, opts: NextCmdOptions = {}): Nex
 
   let created;
   try {
-    created = createRun({
+    const createOptions = {
       projectRoot,
       command: chainStep.command,
       sessionId,
@@ -716,7 +840,18 @@ export function runNextStep(projectRoot: string, opts: NextCmdOptions = {}): Nex
         ownerEpoch: opts.ownerEpoch,
         leaseId: opts.leaseId,
       },
-    });
+    };
+    created = opts.execution
+      ? createExecutionRun({
+          ...createOptions,
+          executionId: opts.execution.executionId,
+          generation: opts.execution.generation,
+          expectedExecutionRevision: opts.execution.expectedRevision,
+          executionLease: opts.execution.lease,
+          requestId: opts.execution.requestId,
+          transitionOperation: 'next',
+        })
+      : createRun(createOptions);
   } catch (err) {
     const current = store.readBundle(sessionId).session;
     const concurrentRunning = activeStepIndex(current);
@@ -781,6 +916,29 @@ export function runNextStep(projectRoot: string, opts: NextCmdOptions = {}): Nex
     result,
     message: opts.json ? JSON.stringify(result, null, 2) : renderBirthPacket(result),
   };
+}
+
+export interface NextExecutionOptions extends Omit<NextCmdOptions, 'execution'> {
+  sessionId: string;
+  executionId: string;
+  generation: number;
+  expectedExecutionRevision: number;
+  executionLease: ExecutionLeaseClaim;
+  requestId: string;
+}
+
+/** Execution-aware next; all legacy runNextStep callers remain unchanged. */
+export function runNextExecutionStep(projectRoot: string, options: NextExecutionOptions): NextOutcome {
+  return runNextStep(projectRoot, {
+    ...options,
+    execution: {
+      executionId: options.executionId,
+      generation: options.generation,
+      expectedRevision: options.expectedExecutionRevision,
+      lease: options.executionLease,
+      requestId: options.requestId,
+    },
+  });
 }
 
 /**
