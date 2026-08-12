@@ -3814,7 +3814,12 @@ function openMdPreview(content, title) {
   close.addEventListener('click', closeMdPreview);
   head.appendChild(close);
   const body = el('div', 'md-preview-body');
-  body.innerHTML = typeof renderMd === 'function' ? renderMd(content) : `<pre>${String(content || '')}</pre>`;
+  if (typeof renderMd === 'function') {
+    body.innerHTML = renderMd(content);
+  } else {
+    // 降级分支必须走 textContent，原文不可未转义注入
+    body.appendChild(el('pre', '', String(content || '')));
+  }
   box.appendChild(head);
   box.appendChild(body);
   overlay.appendChild(box);
