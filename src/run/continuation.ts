@@ -4,7 +4,7 @@ import {
   type ContinuationDirective,
 } from './protocol-schemas.js';
 import type { ReuseAssessment } from './reuse-assessment.js';
-import type { CommandRun, SessionState } from './schemas.js';
+import type { CommandRun, GateRegistry, SessionState } from './schemas.js';
 import { SessionStore } from './store.js';
 import { stableJsonUtf8 } from './transition-receipts.js';
 
@@ -96,20 +96,39 @@ function directive(
   });
 }
 
+function assessmentIsBlocking(
+  assessment: ReuseAssessment,
+  run: CommandRun,
+  gates: GateRegistry,
+): boolean {
+  return run.gate_ids.some(gateId => {
+    const gate = gates.gates[gateId];
+    if (!gate || gate.scope !== 'entry' || !gate.blocking || gate.check.type !== 'artifact') {
+      return false;
+    }
+    return gate.check.kind === assessment.consumer.kind
+      && (gate.check.alias ?? null) === assessment.consumer.alias;
+  });
+}
+
 function activeRunDirective(
   session: SessionState,
   run: CommandRun,
+  gates: GateRegistry,
 ): ContinuationDirective {
   const assessments = run.input.reuse_assessments as ReuseAssessment[];
-  const pendingReview = assessments.find(item => (
+  const blockingAssessments = assessments.filter(item => assessmentIsBlocking(item, run, gates));
+  const pendingReview = blockingAssessments.find(item => (
     item.decision === 'REVIEW'
     && reuseAcceptanceStatus(session, run, item) === 'pending_review'
   ));
-  const acceptedReview = assessments.find(item => (
+  const acceptedReview = blockingAssessments.find(item => (
     item.decision === 'REVIEW'
     && reuseAcceptanceStatus(session, run, item) === 'accepted'
   ));
-  const invalid = assessments.find(item => item.decision === 'REJECT' || item.decision === 'CONFLICT');
+  const invalid = blockingAssessments.find(
+    item => item.decision === 'REJECT' || item.decision === 'CONFLICT',
+  );
 
   if (run.status === 'blocked' && invalid) {
     return directive(session, {
@@ -208,7 +227,8 @@ export function inspectSessionContinuation(
   options: InspectContinuationOptions = {},
 ): ContinuationDirective {
   const store = new SessionStore(projectRoot);
-  const session = store.readBundle(sessionId).session;
+  const bundle = store.readBundle(sessionId);
+  const session = bundle.session;
 
   if (session.status === 'sealed' || session.status === 'archived' || session.status === 'failed') {
     return directive(session, {
@@ -241,7 +261,7 @@ export function inspectSessionContinuation(
   const runId = options.runId ?? session.active_run_id;
   if (runId) {
     try {
-      return activeRunDirective(session, store.readRun(sessionId, runId));
+      return activeRunDirective(session, store.readRun(sessionId, runId), bundle.gates);
     } catch {
       return directive(session, {
         action: 'stop',

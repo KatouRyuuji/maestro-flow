@@ -100,6 +100,40 @@ describe('explicit REVIEW reuse acceptance', () => {
     expect(completeRun(projectRoot, consumer.run_id, 's').sealed).toBe(true);
   });
 
+  it('prioritizes a required REVIEW when an optional REJECT assessment is also present', () => {
+    const projectRoot = root();
+    const execute = seedReviewedPlan(projectRoot);
+    const store = new SessionStore(projectRoot);
+    const requiredReview = store.readRun('s', execute.run_id).input.reuse_assessments.find(
+      item => item.decision === 'REVIEW',
+    )!;
+
+    store.update('s', (draft, tx) => {
+      const run = tx.readRun(execute.run_id);
+      run.input.reuse_assessments = [
+        {
+          ...requiredReview,
+          assessment_hash: `sha256:${'f'.repeat(64)}`,
+          consumer: { kind: 'review-findings', alias: 'latest-review', schema: null, role: null },
+          decision: 'REJECT',
+          reason_codes: ['QUALITY_LOW'],
+        },
+        requiredReview,
+      ];
+      tx.writeRun(run);
+      draft.session.activity_revision++;
+    });
+
+    expect(inspectSessionContinuation(projectRoot, 's')).toMatchObject({
+      action: 'accept_reuse',
+      assessment: {
+        assessment_hash: requiredReview.assessment_hash,
+        decision: 'REVIEW',
+        acceptance_status: 'pending_review',
+      },
+    });
+  });
+
   it('requires actual consumes binding and revalidates only the exact accepted REVIEW', () => {
     const projectRoot = root();
     const execute = seedReviewedPlan(projectRoot);
