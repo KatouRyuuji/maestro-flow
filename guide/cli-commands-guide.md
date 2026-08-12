@@ -390,7 +390,7 @@ Schema compatibility 必须区分读取与写入。历史 `session/1.0`-`session
 maestro capabilities --json
 ```
 
-它输出一行原始 `maestro-capabilities/1.0`：`session_schema_writes` exact 为 `session/1.3` + `session/2.0`，Execution writes 只有 `execution/1.0`，response writes 是 `run-response/1.0` + `run-response/1.1`；features exact 为 `execution_generation=true`、`core_execution_lease=true`、`execution_handoff=true`、`session_statusless=true`、`legacy_session_aliases=true`。capability 支持不等于项目 writer 选择；没有下面的显式配置时，新 Session 仍写 `session/1.3`。
+它输出一行原始 `maestro-capabilities/1.0`：`session_schema_writes` exact 为 `session/1.3` + `session/2.0`，Execution writes 只有 `execution/1.0`，response writes 是 `run-response/1.0` + `run-response/1.1`；features exact 为 `execution_generation=true`、`core_execution_lease=true`、`execution_handoff=true`、`execution_operation_drain=true`、`session_statusless=true`、`legacy_session_aliases=true`。capability 支持不等于项目 writer 选择；没有下面的显式配置时，新 Session 仍写 `session/1.3`。
 
 ```json
 {
@@ -506,6 +506,7 @@ maestro run next --session <id> --json
 | `decide` | `run decide <point-id>` | 必填 `--session --verdict --confidence`；receipt-backed |
 | `seal-session` | `run seal-session <session-id>` | 仅历史 `session/1.x` 兼容；不是 Wave 2 completion 或 promotion gate |
 | `execution-seal` | `execution seal` | seal 一个 Execution generation 并写 `execution-seal-receipt/1.0` snapshot；Session identity 可继续复用 |
+| `execution-operation-claim` / `execution-operation-heartbeat` / `execution-operation-release` / `execution-operation-status` | `execution operation claim|heartbeat|release|status` | 用 Execution revision + operation registry revision CAS 管理 root/child lineage；只有 claim success 返回 raw `operation_token`，registry/receipt/status 与持久化或日志投影只保留 hash 或删除 token |
 | `session-archive` / `session-unarchive` | `session archive` / `session unarchive` | statusless identity lifecycle，要求 audited CAS flags 与 hash-linked receipt chain |
 | `resolve` | `session resolve` | 必填 audit/revision flags 和且仅一个 recovery target；保持 paused |
 | `resume` | `session resume` | 必填 audit/revision flags；只执行 paused → running |
@@ -522,7 +523,7 @@ maestro run next --session <id> --json
 
 显式 `--json` 时，legacy/default surface 的 success、business error、replay 和 Commander usage 继续只写一行 strict `run-response/1.0`；stderr 为空，process status 与 envelope `exit_code` 一致。
 
-Execution lifecycle、Execution-aware Run mutation 与 deprecated Execution aliases 使用 strict `run-response/1.1`。它接受全部 1.0 operations，并加入 `capabilities`、`session-create`、`session-archive`、`session-unarchive`、`execution-start`、`execution-attach`、`execution-status`、`execution-pause`、`execution-resolve`、`execution-resume`、`execution-seal`、`execution-handoff-prepare`、`execution-handoff-accept`、`execution-handoff-cancel`、`execution-lease-status`、`execution-lease-heartbeat`、`execution-lease-release`、`execution-lease-recover`。1.1 增加 `disposition`、Execution locator、revision/lease fence 与 warnings，同样保持一行 stdout、空 stderr、exit parity；usage error 是 `COMMANDER_USAGE`、exit 2。`maestro capabilities --json` 则直接输出一行 capability JSON。
+Execution lifecycle、Execution-aware Run mutation 与 deprecated Execution aliases 使用 strict `run-response/1.1`。它接受全部 1.0 operations，并加入 `capabilities`、`session-create`、`session-archive`、`session-unarchive`、`execution-start`、`execution-attach`、`execution-status`、`execution-pause`、`execution-resolve`、`execution-resume`、`execution-seal`、`execution-handoff-prepare`、`execution-handoff-accept`、`execution-handoff-cancel`、`execution-lease-status`、`execution-lease-heartbeat`、`execution-lease-release`、`execution-lease-recover`、`execution-operation-claim`、`execution-operation-heartbeat`、`execution-operation-release`、`execution-operation-status`。1.1 增加 `disposition`、Execution locator、revision/lease fence 与 warnings，同样保持一行 stdout、空 stderr、exit parity；usage error 是 `COMMANDER_USAGE`、exit 2。`maestro capabilities --json` 则直接输出一行 capability JSON。
 
 </details>
 

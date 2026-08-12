@@ -191,7 +191,7 @@ Discover the protocol surface before selecting it:
 maestro capabilities --json
 ```
 
-This writes one raw `maestro-capabilities/1.0` line. `session_schema_writes` is exactly `session/1.3` + `session/2.0`, Execution writes are exactly `execution/1.0`, and response writes are `run-response/1.0` + `run-response/1.1`. The exact features are `execution_generation=true`, `core_execution_lease=true`, `execution_handoff=true`, `session_statusless=true`, and `legacy_session_aliases=true`. Capability support does not select a project writer; without the explicit selection below, new Sessions still use `session/1.3`.
+This writes one raw `maestro-capabilities/1.0` line. `session_schema_writes` is exactly `session/1.3` + `session/2.0`, Execution writes are exactly `execution/1.0`, and response writes are `run-response/1.0` + `run-response/1.1`. The exact features are `execution_generation=true`, `core_execution_lease=true`, `execution_handoff=true`, `execution_operation_drain=true`, `session_statusless=true`, and `legacy_session_aliases=true`. Capability support does not select a project writer; without the explicit selection below, new Sessions still use `session/1.3`.
 
 ```json
 {
@@ -299,6 +299,7 @@ Every entry point shares one Session and one chain; the historical `engine` fiel
 | `decide` | `run decide <point-id>` | Requires `--session --verdict --confidence`; receipt-backed |
 | `seal-session` | `run seal-session <session-id>` | Historical `session/1.x` compatibility only; not the Wave 2 completion or promotion gate |
 | `execution-seal` | `execution seal` | Seals one Execution generation and writes an `execution-seal-receipt/1.0` snapshot; Session identity remains reusable |
+| `execution-operation-claim` / `execution-operation-heartbeat` / `execution-operation-release` / `execution-operation-status` | `execution operation claim|heartbeat|release|status` | Manages root/child operation lineage with Execution revision and operation registry revision CAS; only claim success returns a raw `operation_token`, while registry/receipt/status and persisted or logged projections retain a hash or remove the token |
 | `session-archive` / `session-unarchive` | `session archive` / `session unarchive` | Statusless identity lifecycle with audited CAS flags and a hash-linked receipt chain |
 | `resolve` | `session resolve` | Requires audit/revision flags and exactly one recovery target; stays paused |
 | `resume` | `session resume` | Requires audit/revision flags; performs only paused → running |
@@ -315,7 +316,7 @@ For `decide`, recovery, chain, and meta mutations, `--request-id` supplies the i
 
 With explicit `--json`, legacy/default success, business errors, replay, and Commander usage continue to write exactly one strict `run-response/1.0` line to stdout, keep stderr empty, and match process status to envelope `exit_code`.
 
-Execution lifecycle, Execution-aware Run mutations, and deprecated Execution aliases use strict `run-response/1.1`. It accepts all 1.0 operations and adds `capabilities`, `session-create`, `session-archive`, `session-unarchive`, `execution-start`, `execution-attach`, `execution-status`, `execution-pause`, `execution-resolve`, `execution-resume`, `execution-seal`, `execution-handoff-prepare`, `execution-handoff-accept`, `execution-handoff-cancel`, `execution-lease-status`, `execution-lease-heartbeat`, `execution-lease-release`, and `execution-lease-recover`. Version 1.1 adds `disposition`, an Execution locator, revision/lease fences, and warnings while retaining one-line stdout, empty stderr, and exit parity. Usage failures are `COMMANDER_USAGE` with exit 2. `maestro capabilities --json` instead writes one raw capability JSON line.
+Execution lifecycle, Execution-aware Run mutations, and deprecated Execution aliases use strict `run-response/1.1`. It accepts all 1.0 operations and adds `capabilities`, `session-create`, `session-archive`, `session-unarchive`, `execution-start`, `execution-attach`, `execution-status`, `execution-pause`, `execution-resolve`, `execution-resume`, `execution-seal`, `execution-handoff-prepare`, `execution-handoff-accept`, `execution-handoff-cancel`, `execution-lease-status`, `execution-lease-heartbeat`, `execution-lease-release`, `execution-lease-recover`, `execution-operation-claim`, `execution-operation-heartbeat`, `execution-operation-release`, and `execution-operation-status`. Version 1.1 adds `disposition`, an Execution locator, revision/lease fences, and warnings while retaining one-line stdout, empty stderr, and exit parity. Usage failures are `COMMANDER_USAGE` with exit 2. `maestro capabilities --json` instead writes one raw capability JSON line.
 
 </details>
 
