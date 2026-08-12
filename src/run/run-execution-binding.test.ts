@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -90,6 +91,14 @@ function report(store: SessionStore, runId: string): void {
     '---\nverdict: ready\nsummary: complete\nconstraints: []\ndecisions: []\nconcerns: []\nnext: []\n---\n',
     'utf8',
   );
+}
+
+function runBytes(store: SessionStore, runId: string): Buffer {
+  return readFileSync(join(store.runDir('s', runId), 'run.json'));
+}
+
+function hash(value: Buffer): string {
+  return createHash('sha256').update(value).digest('hex');
 }
 
 function escalationFixture(): {
@@ -225,9 +234,7 @@ describe('execution-bound Run authority', () => {
       expectedExecutionRevision: 2, executionLease: claim(started), requestId: 'req-complete-for-divergence',
       chainVerdict: 'done',
     });
-    expect(() => createExecutionRun(input)).toThrowError(
-      expect.objectContaining({ code: 'REPLAY_STATE_DIVERGED' }),
-    );
+    expect(createExecutionRun(input)).toMatchObject({ run_id: created.run_id });
   });
 
   it('reconciles a sealed prior Run and allocates next under one execution-fenced transaction', () => {
@@ -266,6 +273,14 @@ describe('execution-bound Run authority', () => {
       sessionId: 's', executionId: started.execution.execution_id, generation: 1,
       expectedExecutionRevision: 3, executionLease: lease, requestId: 'req-next',
     }).result?.run_id).toBe(next.result?.run_id);
+    expect(completeExecutionRun(projectRoot, first.run_id, {
+      sessionId: 's', executionId: started.execution.execution_id, generation: 1,
+      expectedExecutionRevision: 2, executionLease: lease, requestId: 'req-complete-first',
+    })).toMatchObject({
+      transition: { status: 'replayed' },
+      run_id: first.run_id,
+      sealed: true,
+    });
   });
 
   it('replays complete exactly, rejects changed requests, and preserves command-run/1.4', () => {
@@ -341,6 +356,45 @@ describe('execution-bound Run authority', () => {
     }
   });
 
+  it('keeps a sealed retry parent byte-identical when an Execution replacement is allocated', () => {
+    const projectRoot = root();
+    command(projectRoot, 'demo');
+    const store = seedChain(projectRoot, [{ command: 'demo' }]);
+    const started = startExecution(projectRoot, 's', {
+      requestId: 'req-start', ownerId: 'worker', ownerKind: 'codex',
+    });
+    const lease = claim(started);
+    const first = createExecutionRun({
+      projectRoot, command: 'demo', sessionId: 's', chainStepId: 'step-1',
+      executionId: started.execution.execution_id, generation: 1,
+      expectedExecutionRevision: 1, executionLease: lease, requestId: 'req-create-first',
+    });
+    report(store, first.run_id);
+    completeExecutionRun(projectRoot, first.run_id, {
+      sessionId: 's', executionId: started.execution.execution_id, generation: 1,
+      expectedExecutionRevision: 2, executionLease: lease, requestId: 'req-retry-first',
+      chainVerdict: 'needs-retry',
+    });
+    const before = runBytes(store, first.run_id);
+    const beforeHash = hash(before);
+
+    const replacement = runNextExecutionStep(projectRoot, {
+      sessionId: 's', executionId: started.execution.execution_id, generation: 1,
+      expectedExecutionRevision: 3, executionLease: lease, requestId: 'req-next-retry',
+    });
+    expect(replacement.exitCode).toBe(0);
+    expect(store.readExecutionRun('s', replacement.result!.run_id)).toMatchObject({
+      parent_run_id: first.run_id,
+      chain_step_id: 'step-1',
+    });
+    const after = runBytes(store, first.run_id);
+    expect(after.equals(before)).toBe(true);
+    expect(hash(after)).toBe(beforeHash);
+    expect(JSON.parse(after.toString('utf8')).retry_fence.consumed_at).toBeNull();
+    expect(store.readRun('s', first.run_id).retry_fence?.consumed_at).not.toBeNull();
+    expect(store.readBundle('s').session.orchestration.chain[0].pending_retry).toBeNull();
+  });
+
   it('replays the exact escalation after its first commit pauses and releases the Execution', () => {
     const fixture = escalationFixture();
     const first = fixture.decide();
@@ -377,7 +431,7 @@ describe('execution-bound Run authority', () => {
     })).toThrow(`Execution ${fixture.executionId} is paused`);
   });
 
-  it('fails closed for corrupt and state-diverged escalation receipts', () => {
+  it('fails closed for corrupt, illegally rewritten, and state-diverged escalation receipts', () => {
     const corrupt = escalationFixture();
     corrupt.decide();
     const receiptPath = corrupt.store.executionTransitionPath('s', corrupt.executionId, 'req-decide');
@@ -388,6 +442,18 @@ describe('execution-bound Run authority', () => {
     writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, 'utf8');
     expect(() => corrupt.decide()).toThrowError(
       expect.objectContaining({ code: 'INVALID_TRANSITION_RECEIPT' }),
+    );
+
+    const rewritten = escalationFixture();
+    rewritten.decide();
+    const rewrittenPath = rewritten.store.executionTransitionPath('s', rewritten.executionId, 'req-decide');
+    const rewrittenReceipt = JSON.parse(readFileSync(rewrittenPath, 'utf8')) as {
+      outcome: { postconditions: { execution_status: string } };
+    };
+    rewrittenReceipt.outcome.postconditions.execution_status = 'active';
+    writeFileSync(rewrittenPath, `${JSON.stringify(rewrittenReceipt, null, 2)}\n`, 'utf8');
+    expect(() => rewritten.decide()).toThrowError(
+      expect.objectContaining({ code: 'REPLAY_STATE_DIVERGED' }),
     );
 
     const diverged = escalationFixture();

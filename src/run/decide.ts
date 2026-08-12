@@ -303,7 +303,8 @@ export function runDecideExecution(
         run_hash: null,
         artifact_registry_revision: draft.artifacts.revision,
       };
-      const existing = store.readExecutionTransition(sessionId, executionId, options.requestId);
+      const records = tx.listExecutionTransitions(executionId);
+      const existing = records.find(record => record.request_id === options.requestId) ?? null;
       const request = createTransitionRequestV11({
         request_id: options.requestId,
         operation: 'decide',
@@ -324,7 +325,7 @@ export function runDecideExecution(
           },
         },
       });
-      const receipt = replayOrApplyTransitionV11(existing ? [existing] : [], request, before, () => {
+      const receipt = replayOrApplyTransitionV11(records, request, before, () => {
         if (execution.status !== 'active') throw new Error(`Execution ${executionId} is ${execution.status}`);
         assertExecutionLease(execution.lease, options.executionLease);
         const result = applyDecideMutation(draft, pointId, options, transitionId, appliedAt);

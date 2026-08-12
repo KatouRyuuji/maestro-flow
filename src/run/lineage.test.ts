@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { completeRun, completeRunWithVerdict, createRun } from './runtime.js';
@@ -61,6 +62,14 @@ function outputs(projectRoot: string, sessionId: string, runId: string): void {
   writeFileSync(join(runDir, 'report.md'), '---\nverdict: ready\nsummary: verified\n---\n');
 }
 
+function runBytes(projectRoot: string, sessionId: string, runId: string): Buffer {
+  return readFileSync(join(projectRoot, '.workflow', 'sessions', sessionId, 'runs', runId, 'run.json'));
+}
+
+function hash(value: Buffer): string {
+  return createHash('sha256').update(value).digest('hex');
+}
+
 afterEach(() => {
   for (const value of roots.splice(0)) rmSync(value, { recursive: true, force: true });
 });
@@ -77,6 +86,8 @@ describe('Run retry lineage', () => {
 
     const store = new SessionStore(projectRoot);
     const pending = store.readBundle('s').session.orchestration.chain[0].pending_retry;
+    const parentBefore = runBytes(projectRoot, 's', first.result!.run_id);
+    const parentHashBefore = hash(parentBefore);
     expect(pending?.parent_run_id).toBe(first.result!.run_id);
     store.createSession('other', 'other session');
     expect(() => createRun({
@@ -94,6 +105,10 @@ describe('Run retry lineage', () => {
     const replacement = store.readRun('s', second.result!.run_id);
     expect(replacement.parent_run_id).toBe(first.result!.run_id);
     expect(replacement.chain_step_id).toBe('step-000-retry-demo');
+    const parentAfter = runBytes(projectRoot, 's', first.result!.run_id);
+    expect(parentAfter.equals(parentBefore)).toBe(true);
+    expect(hash(parentAfter)).toBe(parentHashBefore);
+    expect(JSON.parse(parentAfter.toString('utf8')).retry_fence.consumed_at).toBeNull();
     expect(store.readRun('s', first.result!.run_id).retry_fence?.consumed_at).not.toBeNull();
     expect(store.readBundle('s').session.orchestration.chain[0].pending_retry).toBeNull();
     outputs(projectRoot, 's', second.result!.run_id);

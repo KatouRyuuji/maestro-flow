@@ -1126,10 +1126,44 @@ export class SessionStore {
 
   private readRunUnlocked(sessionId: string, runId: string): CommandRun {
     const raw = this.readValidated(join(this.runDir(sessionId, runId), 'run.json'), commandRunReadSchema);
-    if (raw.schema_version === 'command-run/1.3') return raw as CommandRun;
     const session = this.readBundleUnlocked(sessionId).session;
     const executorPlatform = targetPlatformSchema.safeParse(session.orchestration.executor?.platform);
-    return normalizeCommandRun(raw, executorPlatform.success ? executorPlatform.data : 'claude');
+    const fallbackPlatform = executorPlatform.success ? executorPlatform.data : 'claude';
+    const run = raw.schema_version === 'command-run/1.3'
+      ? raw as CommandRun
+      : normalizeCommandRun(raw, fallbackPlatform);
+    if (run.retry_fence && run.retry_fence.consumed_at === null) {
+      const replacement = this.findRetryReplacementUnlocked(sessionId, run, fallbackPlatform);
+      if (replacement) run.retry_fence.consumed_at = replacement.started_at;
+    }
+    return run;
+  }
+
+  private findRetryReplacementUnlocked(
+    sessionId: string,
+    parent: CommandRun,
+    fallbackPlatform: z.infer<typeof targetPlatformSchema>,
+  ): CommandRun | null {
+    const root = join(this.sessionDir(sessionId), 'runs');
+    if (!existsSync(root)) return null;
+    for (const candidateId of readdirSync(root).sort()) {
+      if (candidateId === parent.run_id) continue;
+      const path = join(root, candidateId, 'run.json');
+      if (!existsSync(path)) continue;
+      const raw = this.readValidated(path, commandRunReadSchema);
+      const candidate = raw.schema_version === 'command-run/1.3'
+        ? raw as CommandRun
+        : normalizeCommandRun(raw, fallbackPlatform);
+      if (candidate.parent_run_id === parent.run_id
+        && candidate.chain_step_id === parent.retry_fence?.chain_step_id
+        && candidate.command.name === parent.command.name
+        && candidate.creation_decision?.mode === 'retry'
+        && candidate.creation_provenance.source_run_id === parent.run_id
+        && candidate.sequence > parent.sequence) {
+        return candidate;
+      }
+    }
+    return null;
   }
 
   createExecutionAtomic<T>(

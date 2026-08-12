@@ -1,7 +1,15 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -31,6 +39,7 @@ import {
   executionSealReceiptHash,
   SessionStore,
   SessionStoreLock,
+  StoreTransaction,
 } from './store.js';
 
 const roots: string[] = [];
@@ -43,6 +52,25 @@ function root(): string {
 
 function claim(value: { owner_id: string; owner_kind: ExecutionLeaseClaim['ownerKind']; epoch: number; lease_id: string }): ExecutionLeaseClaim {
   return { ownerId: value.owner_id, ownerKind: value.owner_kind, epoch: value.epoch, leaseId: value.lease_id };
+}
+
+function prepareHandoff(
+  projectRoot: string,
+  store: SessionStore,
+  sessionId: string,
+  executionId: string,
+  leaseValue: Parameters<typeof claim>[0],
+  requestId: string,
+  toOwnerId: string,
+) {
+  return prepareExecutionHandoff(projectRoot, {
+    sessionId,
+    executionId,
+    requestId,
+    expectedExecutionRevision: store.readExecution(sessionId, executionId).revision,
+    lease: claim(leaseValue),
+    toOwnerId,
+  });
 }
 
 function commandFile(projectRoot: string, name = 'demo'): void {
@@ -65,6 +93,57 @@ function enableSessionV20(projectRoot: string): void {
 
 function fileHash(path: string): string {
   return `sha256:${createHash('sha256').update(readFileSync(path)).digest('hex')}`;
+}
+
+function authorityBytes(store: SessionStore, sessionId: string, executionId: string): {
+  session: Buffer;
+  execution: Buffer;
+  handoff: Buffer | null;
+} {
+  const handoffPath = join(store.executionDir(sessionId, executionId), '.handoff-claim.json');
+  return {
+    session: readFileSync(join(store.sessionDir(sessionId), 'session.json')),
+    execution: readFileSync(store.executionPath(sessionId, executionId)),
+    handoff: existsSync(handoffPath) ? readFileSync(handoffPath) : null,
+  };
+}
+
+function expectAuthorityBytesUnchanged(
+  before: ReturnType<typeof authorityBytes>,
+  after: ReturnType<typeof authorityBytes>,
+): void {
+  expect(after.session.equals(before.session)).toBe(true);
+  expect(after.execution.equals(before.execution)).toBe(true);
+  if (before.handoff === null) expect(after.handoff).toBeNull();
+  else expect(after.handoff?.equals(before.handoff)).toBe(true);
+}
+
+function expectTransitionReceiptsHashOnly(
+  store: SessionStore,
+  sessionId: string,
+  executionId: string,
+  rawSecrets: readonly string[],
+): void {
+  const corpus = JSON.stringify(store.listExecutionTransitions(sessionId, executionId));
+  expect(corpus).toContain('lease_id_hash');
+  expect(corpus).not.toContain('"lease_id":');
+  for (const secret of rawSecrets) expect(corpus).not.toContain(secret);
+}
+
+function expectUnavailableAcquisitionReplay(
+  replay: unknown,
+  status: 'superseded' | 'released' | 'different_current_claim',
+  forbiddenToken?: string,
+): void {
+  expect(replay).toMatchObject({
+    replayed: true,
+    lease_claim: null,
+    credential_status: status,
+    recovery_instruction: expect.stringMatching(/authorized acquisition|current claim/),
+  });
+  const serialized = JSON.stringify(replay);
+  expect(serialized).not.toContain('"lease_id":');
+  if (forbiddenToken) expect(serialized).not.toContain(forbiddenToken);
 }
 
 function expectReleaseBlocked(operation: () => unknown, message: RegExp): void {
@@ -862,18 +941,21 @@ describe('Execution lifecycle and lease authority', () => {
     });
     expect(() => recoverExecutionLease(projectRoot, {
       sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-too-soon',
-      expectedExecutionRevision: 1, ownerId: 'new', ownerKind: 'pi',
+      expectedExecutionRevision: 1,
+      ownerId: 'new', ownerKind: 'pi',
       now: new Date('2026-01-01T00:00:10.000Z'), staleAfterMs: 30_000,
     })).toThrow(/not stale/);
     const recovered = recoverExecutionLease(projectRoot, {
       sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-recover',
-      expectedExecutionRevision: 1, ownerId: 'new', ownerKind: 'pi',
+      expectedExecutionRevision: 1,
+      ownerId: 'new', ownerKind: 'pi',
       now: new Date('2026-01-01T00:00:31.000Z'), staleAfterMs: 30_000,
     });
     expect(recovered.lease_claim.epoch).toBe(2);
     const replayedRecovery = recoverExecutionLease(projectRoot, {
       sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-recover',
-      expectedExecutionRevision: 1, ownerId: 'new', ownerKind: 'pi',
+      expectedExecutionRevision: 1,
+      ownerId: 'new', ownerKind: 'pi',
       now: new Date('2026-01-01T00:00:32.000Z'), staleAfterMs: 30_000,
     });
     expect(replayedRecovery).toMatchObject({ replayed: true, lease_claim: recovered.lease_claim });
@@ -894,13 +976,19 @@ describe('Execution lifecycle and lease authority', () => {
     const started = startExecution(projectRoot, 's', {
       requestId: 'req-start', ownerId: 'old', ownerKind: 'codex',
     });
-    const prepared = prepareExecutionHandoff(projectRoot, {
-      sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-prepare',
-      expectedExecutionRevision: 1, lease: claim(started.lease_claim), toOwnerId: 'new',
-    });
+    const prepared = prepareHandoff(
+      projectRoot,
+      store,
+      's',
+      started.execution.execution_id,
+      started.lease_claim,
+      'req-prepare',
+      'new',
+    );
     const accepted = acceptExecutionHandoff(projectRoot, {
       sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-accept',
-      expectedExecutionRevision: 2, ownerId: 'new', ownerKind: 'pi', handoffToken: prepared.handoff_token,
+      expectedExecutionRevision: 2,
+      ownerId: 'new', ownerKind: 'pi', handoffToken: prepared.handoff_token!,
     });
     expect(accepted.lease_claim.epoch).toBe(2);
     expect(JSON.stringify(accepted.execution)).not.toContain(accepted.lease_claim.lease_id);
@@ -909,6 +997,96 @@ describe('Execution lifecycle and lease authority', () => {
       expectedExecutionRevision: 3, lease: claim(started.lease_claim),
     })).toThrow(/fence conflict/);
   });
+  it('refuses handoff prepare atomically until active work reaches stable idle', () => {
+    const projectRoot = root();
+    commandFile(projectRoot);
+    const store = new SessionStore(projectRoot);
+    store.createSession('s', 'prepare stable idle');
+    store.update('s', draft => {
+      draft.session.orchestration.chain = [{
+        step_id: 'running-step', command: 'demo', status: 'pending', run_id: null,
+        inserted_by: 'test', decision_ref: null,
+      }];
+    });
+    const started = startExecution(projectRoot, 's', {
+      requestId: 'req-start', ownerId: 'old', ownerKind: 'codex',
+    });
+    createExecutionRun({
+      projectRoot, sessionId: 's', command: 'demo', intent: 'in flight', chainStepId: 'running-step',
+      executionId: started.execution.execution_id, generation: 1,
+      expectedExecutionRevision: 1, executionLease: claim(started.lease_claim), requestId: 'req-create',
+    });
+    store.updateExecutionAtomic('s', started.execution.execution_id, 2, (draft) => {
+      draft.session.requests.push({
+        request_id: 'claimed-request', type: 'transition', status: 'claimed', payload: {}, claimed_by_run_id: null,
+      });
+      return null;
+    });
+    const before = authorityBytes(store, 's', started.execution.execution_id);
+
+    expect(() => prepareExecutionHandoff(projectRoot, {
+      sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-prepare',
+      expectedExecutionRevision: 2,
+      lease: claim(started.lease_claim), toOwnerId: 'new',
+    })).toThrow(/stable idle.*active_run_id=.*claimed requests=claimed-request.*non-stable-idle Runs=.*in-flight chain transitions=/);
+
+    expectAuthorityBytesUnchanged(before, authorityBytes(store, 's', started.execution.execution_id));
+    expect(store.readExecutionTransition('s', started.execution.execution_id, 'req-prepare')).toBeNull();
+    expect(store.readExecution('s', started.execution.execution_id)).toMatchObject({
+      revision: 2,
+      lease: { owner_id: 'old', epoch: 1, handoff_to: null },
+    });
+  });
+
+  it('refuses handoff accept atomically when work appears after prepare', () => {
+    const projectRoot = root();
+    const store = new SessionStore(projectRoot);
+    store.createSession('s', 'accept stable idle');
+    const started = startExecution(projectRoot, 's', {
+      requestId: 'req-start', ownerId: 'old', ownerKind: 'codex',
+    });
+    const prepared = prepareExecutionHandoff(projectRoot, {
+      sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-prepare',
+      expectedExecutionRevision: 1,
+      lease: claim(started.lease_claim), toOwnerId: 'new',
+    });
+    store.updateExecutionAtomic('s', started.execution.execution_id, 2, (draft, execution) => {
+      const running = {
+        step_id: 'running-step', command: 'demo', status: 'running' as const, run_id: 'inflight-run',
+        inserted_by: 'test', decision_ref: null,
+      };
+      draft.session.active_run_id = 'inflight-run';
+      draft.session.orchestration.chain = [running];
+      draft.session.requests.push({
+        request_id: 'claimed-request', type: 'transition', status: 'claimed', payload: {}, claimed_by_run_id: null,
+      });
+      execution.active_run_id = 'inflight-run';
+      execution.chain = [structuredClone(running)];
+      return null;
+    });
+    const listRuns = vi.spyOn(StoreTransaction.prototype, 'listBoundExecutionRuns').mockReturnValue([{
+      run_id: 'inflight-run', status: 'running',
+    } as never]);
+    const before = authorityBytes(store, 's', started.execution.execution_id);
+    try {
+      expect(() => acceptExecutionHandoff(projectRoot, {
+        sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-accept',
+        expectedExecutionRevision: 2,
+        ownerId: 'new', ownerKind: 'pi',
+        handoffToken: prepared.handoff_token!,
+      })).toThrow(/stable idle.*active_run_id=inflight-run.*claimed requests=claimed-request.*non-stable-idle Runs=inflight-run:running.*in-flight chain transitions=running-step/);
+    } finally {
+      listRuns.mockRestore();
+    }
+
+    expectAuthorityBytesUnchanged(before, authorityBytes(store, 's', started.execution.execution_id));
+    expect(store.readExecutionTransition('s', started.execution.execution_id, 'req-accept')).toBeNull();
+    expect(store.readExecution('s', started.execution.execution_id)).toMatchObject({
+      revision: 2,
+      lease: { owner_id: 'old', epoch: 1, handoff_to: 'new' },
+    });
+  });
+
   it('replays lifecycle mutations before CAS and keeps credentials usable only in explicit claims', () => {
     const projectRoot = root();
     const store = new SessionStore(projectRoot);
@@ -953,6 +1131,14 @@ describe('Execution lifecycle and lease authority', () => {
     expect(replayedResume.replayed).toBe(true);
     expect(replayedResume.lease_claim).toEqual(resumed.lease_claim);
     expect(JSON.stringify(resumed.execution)).not.toContain(resumed.lease_claim.lease_id);
+    expect(pauseExecution(projectRoot, {
+      sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-pause',
+      expectedExecutionRevision: 1, lease: claim(started.lease_claim),
+    })).toMatchObject({
+      replayed: true,
+      transition_id: paused.transition_id,
+      execution: { revision: 3, status: 'active', lease: { epoch: 2 } },
+    });
 
     const released = releaseExecutionLease(projectRoot, {
       sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-release',
@@ -1019,48 +1205,227 @@ describe('Execution lifecycle and lease authority', () => {
     expect(replayedAttach.lease_claim).toEqual(attached.lease_claim);
     expect(attached.lease_claim.epoch).toBe(2);
 
-    const prepared = prepareExecutionHandoff(projectRoot, {
+    const prepareInput = {
       sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-prepare',
-      expectedExecutionRevision: 3, lease: claim(attached.lease_claim), toOwnerId: 'worker-b',
-    });
-    const replayedPrepare = prepareExecutionHandoff(projectRoot, {
-      sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-prepare',
-      expectedExecutionRevision: 3, lease: claim(attached.lease_claim), toOwnerId: 'worker-b',
-    });
+      expectedExecutionRevision: 3,
+      lease: claim(attached.lease_claim), toOwnerId: 'worker-b',
+    };
+    const prepared = prepareExecutionHandoff(projectRoot, prepareInput);
+    const replayedPrepare = prepareExecutionHandoff(projectRoot, prepareInput);
     expect(prepared).toMatchObject({ credential_status: 'issued', recovery: 'none' });
     expect(replayedPrepare).toMatchObject({
       replayed: true, handoff_token: null, credential_status: 'already_applied', recovery: 'cancel_and_prepare_new',
     });
     expect(() => prepareExecutionHandoff(projectRoot, {
-      sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-prepare',
-      expectedExecutionRevision: 3, lease: claim(attached.lease_claim), toOwnerId: 'different-worker',
+      ...prepareInput,
+      toOwnerId: 'different-worker',
     })).toThrow(/already used/);
 
-    const accepted = acceptExecutionHandoff(projectRoot, {
+    const acceptInput = {
       sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-accept',
-      expectedExecutionRevision: 4, ownerId: 'worker-b', ownerKind: 'pi', handoffToken: prepared.handoff_token!,
-    });
-    const replayedAccept = acceptExecutionHandoff(projectRoot, {
-      sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-accept',
-      expectedExecutionRevision: 4, ownerId: 'worker-b', ownerKind: 'pi', handoffToken: prepared.handoff_token!,
-    });
+      expectedExecutionRevision: 4,
+      ownerId: 'worker-b', ownerKind: 'pi' as const, handoffToken: prepared.handoff_token!,
+    };
+    const accepted = acceptExecutionHandoff(projectRoot, acceptInput);
+    const replayedAccept = acceptExecutionHandoff(projectRoot, acceptInput);
     expect(replayedAccept.lease_claim).toEqual(accepted.lease_claim);
 
     const preparedCancel = prepareExecutionHandoff(projectRoot, {
       sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-prepare-cancel',
-      expectedExecutionRevision: 5, lease: claim(accepted.lease_claim), toOwnerId: 'worker-c',
+      expectedExecutionRevision: 5,
+      lease: claim(accepted.lease_claim), toOwnerId: 'worker-c',
     });
     expect(preparedCancel.handoff_token).not.toBeNull();
-    const cancelled = cancelExecutionHandoff(projectRoot, {
+    const cancelInput = {
       sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-cancel',
-      expectedExecutionRevision: 6, lease: claim(accepted.lease_claim),
-    });
-    const replayedCancel = cancelExecutionHandoff(projectRoot, {
-      sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-cancel',
-      expectedExecutionRevision: 6, lease: claim(accepted.lease_claim),
-    });
+      expectedExecutionRevision: 6,
+      lease: claim(accepted.lease_claim),
+    };
+    const cancelled = cancelExecutionHandoff(projectRoot, cancelInput);
+    const replayedCancel = cancelExecutionHandoff(projectRoot, cancelInput);
     expect(cancelled.execution.lease?.handoff_to).toBeNull();
     expect(replayedCancel.replayed).toBe(true);
+  });
+
+  it('binds attach replay to the exact acquisition instead of a later same-owner lease', () => {
+    const projectRoot = root();
+    const store = new SessionStore(projectRoot);
+    store.createSession('s', 'attach acquisition binding');
+    const started = startExecution(projectRoot, 's', {
+      requestId: 'req-start', ownerId: 'worker', ownerKind: 'codex',
+    });
+    releaseExecutionLease(projectRoot, {
+      sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-release-start',
+      expectedExecutionRevision: 1, lease: claim(started.lease_claim),
+    });
+    const attachAInput = {
+      sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-attach-a',
+      expectedExecutionRevision: 2, ownerId: 'worker', ownerKind: 'codex' as const,
+    };
+    const acquisitionA = attachExecution(projectRoot, attachAInput);
+    expect(attachExecution(projectRoot, attachAInput)).toMatchObject({
+      replayed: true,
+      lease_claim: acquisitionA.lease_claim,
+    });
+
+    releaseExecutionLease(projectRoot, {
+      sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-release-a',
+      expectedExecutionRevision: 3, lease: claim(acquisitionA.lease_claim!),
+    });
+    expectUnavailableAcquisitionReplay(
+      attachExecution(projectRoot, attachAInput),
+      'released',
+      acquisitionA.lease_claim!.lease_id,
+    );
+
+    const acquisitionB = attachExecution(projectRoot, {
+      sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-attach-b',
+      expectedExecutionRevision: 4, ownerId: 'worker', ownerKind: 'codex',
+    });
+    const replayA = attachExecution(projectRoot, attachAInput);
+    expectUnavailableAcquisitionReplay(replayA, 'superseded', acquisitionB.lease_claim!.lease_id);
+    expect(replayA.lease_claim).not.toEqual(acquisitionB.lease_claim);
+    expectTransitionReceiptsHashOnly(store, 's', started.execution.execution_id, [
+      started.lease_claim.lease_id,
+      acquisitionA.lease_claim!.lease_id,
+      acquisitionB.lease_claim!.lease_id,
+    ]);
+  });
+
+  it('binds resume replay to the exact acquisition instead of a later same-owner lease', () => {
+    const projectRoot = root();
+    const store = new SessionStore(projectRoot);
+    store.createSession('s', 'resume acquisition binding');
+    const started = startExecution(projectRoot, 's', {
+      requestId: 'req-start', ownerId: 'worker', ownerKind: 'codex',
+    });
+    pauseExecution(projectRoot, {
+      sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-pause-start',
+      expectedExecutionRevision: 1, lease: claim(started.lease_claim),
+    });
+    const resumeAInput = {
+      sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-resume-a',
+      expectedExecutionRevision: 2, ownerId: 'worker', ownerKind: 'codex' as const,
+    };
+    const acquisitionA = resumeExecution(projectRoot, resumeAInput);
+    expect(resumeExecution(projectRoot, resumeAInput)).toMatchObject({
+      replayed: true,
+      lease_claim: acquisitionA.lease_claim,
+    });
+
+    pauseExecution(projectRoot, {
+      sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-pause-a',
+      expectedExecutionRevision: 3, lease: claim(acquisitionA.lease_claim!),
+    });
+    expectUnavailableAcquisitionReplay(
+      resumeExecution(projectRoot, resumeAInput),
+      'released',
+      acquisitionA.lease_claim!.lease_id,
+    );
+
+    const acquisitionB = resumeExecution(projectRoot, {
+      sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-resume-b',
+      expectedExecutionRevision: 4, ownerId: 'worker', ownerKind: 'codex',
+    });
+    const replayA = resumeExecution(projectRoot, resumeAInput);
+    expectUnavailableAcquisitionReplay(replayA, 'superseded', acquisitionB.lease_claim!.lease_id);
+    expect(replayA.lease_claim).not.toEqual(acquisitionB.lease_claim);
+    expectTransitionReceiptsHashOnly(store, 's', started.execution.execution_id, [
+      started.lease_claim.lease_id,
+      acquisitionA.lease_claim!.lease_id,
+      acquisitionB.lease_claim!.lease_id,
+    ]);
+  });
+
+  it('binds recovery replay to the exact acquisition instead of a later same-owner lease', () => {
+    const projectRoot = root();
+    const store = new SessionStore(projectRoot);
+    store.createSession('s', 'recovery acquisition binding');
+    const started = startExecution(projectRoot, 's', {
+      requestId: 'req-start', ownerId: 'old', ownerKind: 'codex',
+      now: new Date('2026-01-01T00:00:00.000Z'),
+    });
+    const recoverAInput = {
+      sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-recover-a',
+      expectedExecutionRevision: 1,
+      ownerId: 'worker', ownerKind: 'codex' as const,
+      now: new Date('2026-01-01T00:00:31.000Z'), staleAfterMs: 30_000,
+    };
+    const acquisitionA = recoverExecutionLease(projectRoot, recoverAInput);
+    expect(recoverExecutionLease(projectRoot, recoverAInput)).toMatchObject({
+      replayed: true,
+      lease_claim: acquisitionA.lease_claim,
+    });
+
+    const acquisitionB = recoverExecutionLease(projectRoot, {
+      sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-recover-b',
+      expectedExecutionRevision: 2,
+      ownerId: 'worker', ownerKind: 'codex',
+      now: new Date('2026-01-01T00:01:02.000Z'), staleAfterMs: 30_000,
+    });
+    const replayA = recoverExecutionLease(projectRoot, recoverAInput);
+    expectUnavailableAcquisitionReplay(replayA, 'superseded', acquisitionB.lease_claim!.lease_id);
+    expect(replayA.lease_claim).not.toEqual(acquisitionB.lease_claim);
+    expectTransitionReceiptsHashOnly(store, 's', started.execution.execution_id, [
+      started.lease_claim.lease_id,
+      acquisitionA.lease_claim!.lease_id,
+      acquisitionB.lease_claim!.lease_id,
+    ]);
+  });
+
+  it('binds handoff acceptance replay to the exact acquisition instead of a later same-owner lease', () => {
+    const projectRoot = root();
+    const store = new SessionStore(projectRoot);
+    store.createSession('s', 'handoff acquisition binding');
+    const started = startExecution(projectRoot, 's', {
+      requestId: 'req-start', ownerId: 'old', ownerKind: 'codex',
+    });
+    const preparedA = prepareHandoff(
+      projectRoot,
+      store,
+      's',
+      started.execution.execution_id,
+      started.lease_claim,
+      'req-prepare-a',
+      'worker',
+    );
+    const acceptAInput = {
+      sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-accept-a',
+      expectedExecutionRevision: 2,
+      ownerId: 'worker', ownerKind: 'pi' as const,
+      handoffToken: preparedA.handoff_token!,
+    };
+    const acquisitionA = acceptExecutionHandoff(projectRoot, acceptAInput);
+    expect(acceptExecutionHandoff(projectRoot, acceptAInput)).toMatchObject({
+      replayed: true,
+      lease_claim: acquisitionA.lease_claim,
+    });
+
+    const preparedB = prepareHandoff(
+      projectRoot,
+      store,
+      's',
+      started.execution.execution_id,
+      acquisitionA.lease_claim!,
+      'req-prepare-b',
+      'worker',
+    );
+    const acquisitionB = acceptExecutionHandoff(projectRoot, {
+      sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-accept-b',
+      expectedExecutionRevision: 4,
+      ownerId: 'worker', ownerKind: 'pi',
+      handoffToken: preparedB.handoff_token!,
+    });
+    const replayA = acceptExecutionHandoff(projectRoot, acceptAInput);
+    expectUnavailableAcquisitionReplay(replayA, 'superseded', acquisitionB.lease_claim!.lease_id);
+    expect(replayA.lease_claim).not.toEqual(acquisitionB.lease_claim);
+    expectTransitionReceiptsHashOnly(store, 's', started.execution.execution_id, [
+      started.lease_claim.lease_id,
+      acquisitionA.lease_claim!.lease_id,
+      acquisitionB.lease_claim!.lease_id,
+      preparedA.handoff_token!,
+      preparedB.handoff_token!,
+    ]);
   });
 
   it('rejects sealed mutation and release during an in-flight handoff', () => {
@@ -1080,7 +1445,8 @@ describe('Execution lifecycle and lease authority', () => {
     }), /in-flight handoff=other/);
     cancelExecutionHandoff(projectRoot, {
       sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-cancel',
-      expectedExecutionRevision: 2, lease: claim(started.lease_claim),
+      expectedExecutionRevision: 2,
+      lease: claim(started.lease_claim),
     });
     sealExecution(projectRoot, {
       sessionId: 's', executionId: started.execution.execution_id, requestId: 'req-seal',

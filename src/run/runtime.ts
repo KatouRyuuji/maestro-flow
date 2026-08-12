@@ -70,7 +70,6 @@ import {
   executionContractV11Schema,
   executionContractV12Schema,
   guidanceSnapshotSchema,
-  persistedTransitionRecordV11Schema,
   sessionProvenanceSchema,
   type BriefResult,
   type CompleteInputSnapshot,
@@ -82,6 +81,7 @@ import {
   type SessionProvenance,
   type SourceFenceRead,
   type PersistedTransitionRecord,
+  type PersistedTransitionRecordV11,
   type TransitionFenceV11,
   type TransitionPointer,
 } from './protocol-schemas.js';
@@ -552,6 +552,61 @@ function sha256(value: string | Buffer): string {
 
 function protocolSha256(value: string | Buffer): string {
   return `sha256:${sha256(value)}`;
+}
+
+function runHashForReplay(store: SessionStore, sessionId: string, runId: string | null): string | null {
+  if (!runId) return null;
+  const path = join(store.runDir(sessionId, runId), 'run.json');
+  return existsSync(path) ? protocolSha256(readFileSync(path)) : null;
+}
+
+function assertRunTransitionReplayEvidence(
+  store: SessionStore,
+  sessionId: string,
+  record: PersistedTransitionRecordV11,
+  records: readonly PersistedTransitionRecordV11[],
+  _currentFence: TransitionFenceV11,
+): void {
+  const value = typeof record.outcome.result.value === 'object' && record.outcome.result.value !== null
+    ? record.outcome.result.value as { run_id?: unknown }
+    : null;
+  const runId = record.outcome.subject.run_id
+    ?? (typeof value?.run_id === 'string' ? value.run_id : null);
+  const expectedHash = record.outcome.postconditions.run_hash;
+  if (!runId || !expectedHash) {
+    throw new TransitionReceiptError(
+      'REPLAY_STATE_DIVERGED',
+      `request_id ${record.request_id} has no verifiable Run postcondition`,
+    );
+  }
+
+  let evidencedHash = expectedHash;
+  const successors = records
+    .filter(candidate => candidate.status === 'applied'
+      && candidate.payload.operation === 'complete'
+      && candidate.outcome.subject.run_id === runId
+      && (candidate.payload.preconditions.execution_revision ?? -1)
+        >= (record.outcome.postconditions.execution_revision ?? 0))
+    .sort((left, right) => (
+      (left.payload.preconditions.execution_revision ?? 0)
+      - (right.payload.preconditions.execution_revision ?? 0)
+    ));
+  for (const successor of successors) {
+    if (successor.payload.preconditions.run_hash !== evidencedHash
+      || !successor.outcome.postconditions.run_hash) {
+      throw new TransitionReceiptError(
+        'REPLAY_STATE_DIVERGED',
+        `request_id ${record.request_id} Run hash successor evidence is inconsistent`,
+      );
+    }
+    evidencedHash = successor.outcome.postconditions.run_hash;
+  }
+  if (runHashForReplay(store, sessionId, runId) !== evidencedHash) {
+    throw new TransitionReceiptError(
+      'REPLAY_STATE_DIVERGED',
+      `request_id ${record.request_id} Run postcondition evidence diverged from canonical bytes`,
+    );
+  }
 }
 
 function buildGuidanceSnapshot(
@@ -2182,14 +2237,31 @@ export function createRun(options: CreateRunOptions): CreateRunResult {
       if (parent.command.name !== options.command) throw new Error('retry parent command mismatch');
       if (parent.chain_step_id !== boundStep.step_id) throw new Error('retry parent chain step mismatch');
       if (parent.sequence >= sequence) throw new Error('retry parent must precede the replacement Run');
+      if (parent.status !== 'sealed') throw new Error('retry parent must be sealed before replacement allocation');
       if (!parent.retry_fence || parent.retry_fence.token !== pending.token) {
         throw new Error('retry parent fence does not match the pending token');
       }
       if (parent.retry_fence.consumed_at) throw new Error('retry token was already consumed');
-      parent.retry_fence.consumed_at = now;
+      const priorReplacements = execution
+        ? tx.listBoundExecutionRuns(execution.execution_id, execution.generation)
+        : (() => {
+            const runsRoot = join(store.sessionDir(sessionId), 'runs');
+            if (!existsSync(runsRoot)) return [];
+            return readdirSync(runsRoot)
+              .filter(candidate => existsSync(join(runsRoot, candidate, 'run.json')))
+              .map(candidate => tx.readRun(candidate));
+          })();
+      if (priorReplacements.some(candidate => (
+        candidate.parent_run_id === parent.run_id
+        && candidate.chain_step_id === boundStep!.step_id
+        && candidate.command.name === options.command
+        && candidate.creation_decision?.mode === 'retry'
+        && candidate.creation_provenance.source_run_id === parent.run_id
+      ))) {
+        throw new Error('retry token was already consumed by a replacement Run');
+      }
       boundStep.pending_retry = null;
       parentRunId = parent.run_id;
-      tx.writeRun(parent);
     } else if (options.retryToken) {
       throw new Error('invalid, expired, or already-consumed retry token');
     }
@@ -2383,7 +2455,8 @@ export function createRun(options: CreateRunOptions): CreateRunResult {
         run_hash: activeRunPath && existsSync(activeRunPath) ? protocolSha256(readFileSync(activeRunPath)) : null,
         artifact_registry_revision: bundle.artifacts.revision,
       };
-      const existing = store.readExecutionTransition(sessionId, execution.execution_id, requestId);
+      const records = tx.listExecutionTransitions(execution.execution_id);
+      const existing = records.find(record => record.request_id === requestId) ?? null;
       const operation = executionOptions.operation ?? 'create';
       const request = createTransitionRequestV11({
         request_id: requestId,
@@ -2415,7 +2488,7 @@ export function createRun(options: CreateRunOptions): CreateRunResult {
         },
       });
       const evaluated = replayOrApplyTransitionV11(
-        existing ? [persistedTransitionRecordV11Schema.parse(existing)] : [],
+        records,
         request,
         before,
         () => {
@@ -2448,6 +2521,13 @@ export function createRun(options: CreateRunOptions): CreateRunResult {
             result: { value },
           });
         },
+        (record, history, current) => assertRunTransitionReplayEvidence(
+          store,
+          sessionId,
+          record,
+          history,
+          current,
+        ),
       );
       if (!evaluated.replayed) tx.writeExecutionTransition(execution.execution_id, evaluated.record);
       return structuredClone(evaluated.outcome.result.value) as CreateRunResult;
@@ -2493,7 +2573,7 @@ function buildFinishChecklist(projectRoot: string, run: CommandRun, frontmatter:
     lines.push('report.md handoff frontmatter is empty — fill summary (plus concerns/decisions) before completing; the sealed handoff is derived from it.');
   }
   lines.push(`Stage knowledge before sealing: put accepted decisions and locked constraints in report.md frontmatter (completion stages them automatically); reusable recipes/pitfalls → \`maestro knowledge stage knowhow "<title>" --content-file <path|-> --run ${run.run_id}\` (write content to a temp file or stdin, never inline). Quality bar: stage only pitfalls ("when doing X, watch out for Y because Z"), failure lessons, non-trivial trade-offs, or newly established prescriptive constraints — never process notes, re-descriptions of existing patterns, trivial operations, or raw tool/log traces; zero candidates is a legitimate outcome. Do not write project spec/knowhow directly from routine Run completion.`);
-  lines.push('Session-source candidates (staged with `--session`, run-less work) promote only after the Session is sealed with a fresh session reconciliation receipt; `maestro knowledge review <session-id> --refresh` repairs missing/stale session receipts.');
+  lines.push('Session-source candidates (staged with `--session`, run-less work) do not require Session seal under `session/2.0`: promotion revalidates immutable candidate version/content hash, exact Session activity revision, evidence roots/hash, candidate snapshot, and a fresh session reconciliation receipt for the current corpus fingerprint. `maestro knowledge review <session-id> --refresh` repairs missing/stale receipts.');
   lines.push(`Inspect the reconciliation receipt created by this check. For every candidate that needs a disposition, present it to the user first — title, content summary, evidence anchors, evidence-backed matches (id + title), and your recommended disposition (unique|duplicate|related|conflict|supersede + target) with a one-line rationale — then collect the user's decision and only then run \`maestro knowledge promote <session-id> --resolve <candidate-id> --as <choice> [--target <knowledge-id>] --reason "<reason>"\` (inline TOCTOU fence + resolve + promote). Never hand the raw promote command to the user as the whole task. Unresolved items may be sealed but cannot be promoted.`);
   lines.push(`Record stronger knowledge relations during staging: \`maestro knowledge stage <target> "<title>" --content-file <path|-> --run ${run.run_id} --signal cited|validated|contradicted --signal-ids <knowledge-ids>\`. A search result or automatic injection is exposure only; it is not evidence of use.`);
   lines.push(`Attribute search hits before citing: \`maestro knowledge record <knowledge-ids...> --signal consumed|cited|validated|contradicted --source search --run ${run.run_id}\` records pure attribution without staging a candidate (use stage --signal only when a candidate is intended); record/load turn exposure into evidence.`);
@@ -3696,11 +3776,8 @@ export function completeRun(
           run_hash: existsSync(runPath) ? protocolSha256(readFileSync(runPath)) : null,
           artifact_registry_revision: draft.artifacts.revision,
         };
-        const existing = store.readExecutionTransition(
-          preparedInputs.sessionId,
-          execution.execution_id,
-          requestId,
-        );
+        const records = tx.listExecutionTransitions(execution.execution_id);
+        const existing = records.find(record => record.request_id === requestId) ?? null;
         if (existing) assertCompleteReplayInputs(preparedInputs.runDir, existing);
         const request = createTransitionRequestV11({
           request_id: requestId,
@@ -3740,7 +3817,7 @@ export function completeRun(
           },
         });
         const receipt = replayOrApplyTransitionV11(
-          existing ? [persistedTransitionRecordV11Schema.parse(existing)] : [],
+          records,
           request,
           before,
           () => {
@@ -3777,6 +3854,13 @@ export function completeRun(
               result: { value: applied.result },
             });
           },
+          (record, history, current) => assertRunTransitionReplayEvidence(
+            store,
+            preparedInputs.sessionId,
+            record,
+            history,
+            current,
+          ),
         );
         if (!receipt.replayed) tx.writeExecutionTransition(execution.execution_id, receipt.record);
         return {

@@ -460,6 +460,7 @@ gates:
       {
         args: ['execution', 'handoff', 'accept', '--handoff-token', 'handoff-secret-rv009', '--json'],
         schema: 'run-response/1.1',
+        operation: 'execution-handoff-accept',
         secrets: ['handoff-secret-rv009'],
       },
       {
@@ -480,6 +481,7 @@ gates:
       expect(result.stderr).toBe('');
       expect(result.body).toMatchObject({
         schema_version: item.schema,
+        ...(item.operation ? { operation: item.operation } : {}),
         ok: false,
         exit_code: 2,
         error: { code: 'COMMANDER_USAGE' },

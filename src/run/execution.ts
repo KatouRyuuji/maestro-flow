@@ -16,7 +16,7 @@ import {
 } from './lease.js';
 import {
   type ExecutionSealReceipt,
-  persistedTransitionRecordV11Schema,
+  type PersistedTransitionRecordV11,
   transitionOperationV11Schema,
   type TransitionFenceV11,
 } from './protocol-schemas.js';
@@ -52,6 +52,16 @@ const handoffClaimSchema = z.object({
   to_owner_id: z.string().min(1),
   token_hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
   prepared_at: z.string().min(1),
+}).strict();
+
+const acquisitionReceiptLeaseSchema = z.object({
+  owner_id: z.string().min(1),
+  owner_kind: z.enum(['pi', 'claude', 'codex', 'agy', 'manual']),
+  epoch: z.number().int().positive(),
+  lease_id_hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  acquired_at: z.string().min(1),
+  heartbeat_at: z.string().min(1),
+  handoff_to: z.string().min(1).nullable(),
 }).strict();
 
 type OwnerKind = ExecutionLease['owner_kind'];
@@ -133,6 +143,16 @@ export interface StartExecutionResult extends ExecutionResult {
   lease_claim: ExecutionLeaseAcquisition;
 }
 
+export interface UnavailableExecutionAcquisitionResult extends ExecutionResult {
+  lease_claim: null;
+  credential_status: 'superseded' | 'released' | 'different_current_claim';
+  recovery_instruction: string;
+}
+
+export type ReplayableExecutionAcquisitionResult =
+  | StartExecutionResult
+  | UnavailableExecutionAcquisitionResult;
+
 export interface AttachExecutionOptions extends ExecutionLocatorInput {
   requestId: string;
   expectedExecutionRevision: number;
@@ -208,8 +228,52 @@ export class ExecutionLeaseReleaseBlockedError extends Error {
   }
 }
 
-function required(value: string, label: string): string {
-  const normalized = value.trim();
+function executionStableIdleBlockers(
+  session: SessionState,
+  execution: ExecutionState,
+  tx: StoreTransaction,
+  options: { includeHandoff?: boolean } = {},
+): string[] {
+  const blockers: string[] = [];
+  const activeRunIds = [...new Set([execution.active_run_id, session.active_run_id].filter(Boolean))].sort();
+  if (activeRunIds.length > 0) blockers.push(`active_run_id=${activeRunIds.join(',')}`);
+  const claimedRequestIds = session.requests
+    .filter(request => request.status === 'claimed')
+    .map(request => request.request_id)
+    .sort();
+  if (claimedRequestIds.length > 0) blockers.push(`claimed requests=${claimedRequestIds.join(',')}`);
+  if (options.includeHandoff && execution.lease?.handoff_to) {
+    blockers.push(`in-flight handoff=${execution.lease.handoff_to}`);
+  }
+  const nonIdleRuns = tx.listBoundExecutionRuns(execution.execution_id, execution.generation)
+    .filter(run => run.status !== 'sealed')
+    .map(run => `${run.run_id}:${run.status}`)
+    .sort();
+  if (nonIdleRuns.length > 0) blockers.push(`non-stable-idle Runs=${nonIdleRuns.join(',')}`);
+  const runningSteps = session.orchestration.chain
+    .filter(step => step.status === 'running')
+    .map(step => step.step_id)
+    .sort();
+  if (runningSteps.length > 0) blockers.push(`in-flight chain transitions=${runningSteps.join(',')}`);
+  return blockers;
+}
+
+function assertExecutionStableIdle(
+  session: SessionState,
+  execution: ExecutionState,
+  tx: StoreTransaction,
+  operation: 'release' | 'handoff prepare' | 'handoff accept',
+): void {
+  const blockers = executionStableIdleBlockers(session, execution, tx, {
+    includeHandoff: operation === 'release',
+  });
+  if (blockers.length === 0) return;
+  if (operation === 'release') throw new ExecutionLeaseReleaseBlockedError(blockers);
+  throw new Error(`Execution ${operation} blocked before stable idle: ${blockers.join('; ')}`);
+}
+
+function required(value: string | null | undefined, label: string): string {
+  const normalized = value?.trim() ?? '';
   if (!normalized) throw new Error(`${label} is required`);
   return normalized;
 }
@@ -244,6 +308,72 @@ function claimResult(lease: ExecutionLease): ExecutionLeaseAcquisition {
     owner_kind: lease.owner_kind,
     epoch: lease.epoch,
     lease_id: lease.lease_id,
+  };
+}
+
+type ReplayAcquisitionCredential =
+  | { status: 'current'; lease: ExecutionLease }
+  | { status: 'superseded' | 'released' | 'different_current_claim' };
+
+function replayAcquisitionCredential(
+  execution: ExecutionState,
+  receipt: PersistedTransitionRecordV11,
+  operation: 'execution-attach' | 'execution-resume' | 'execution-handoff-accept' | 'execution-lease-recover',
+): ReplayAcquisitionCredential {
+  if (receipt.payload.operation !== operation || receipt.outcome.operation !== operation) {
+    throw new Error(`request_id ${receipt.request_id} is not an ${operation} acquisition receipt`);
+  }
+  const parsedLease = acquisitionReceiptLeaseSchema.safeParse(receipt.outcome.result.lease);
+  if (!parsedLease.success) {
+    throw new Error(`${operation} ${receipt.request_id} has an invalid acquisition lease result`);
+  }
+  const receiptLease = parsedLease.data;
+  const requestedOwnerId = operation === 'execution-handoff-accept'
+    ? receipt.payload.payload.to_owner_id
+    : receipt.payload.payload.owner_id;
+  if (receipt.outcome.postconditions.lease_epoch !== receiptLease.epoch
+    || requestedOwnerId !== receiptLease.owner_id
+    || receipt.payload.payload.owner_kind !== receiptLease.owner_kind) {
+    throw new Error(`${operation} ${receipt.request_id} has a divergent acquisition lease binding`);
+  }
+
+  const current = execution.lease;
+  if (!current) return { status: 'released' };
+  if (current.epoch === receiptLease.epoch
+    && hashExecutionLeaseId(current.lease_id) === receiptLease.lease_id_hash
+    && current.owner_id === receiptLease.owner_id
+    && current.owner_kind === receiptLease.owner_kind) {
+    return { status: 'current', lease: structuredClone(current) };
+  }
+  if (current.epoch < receiptLease.epoch) {
+    throw new Error(`${operation} ${receipt.request_id} cannot replay because current lease epoch regressed`);
+  }
+  return { status: current.epoch > receiptLease.epoch ? 'superseded' : 'different_current_claim' };
+}
+
+function replayableAcquisitionResult(
+  result: ExecutionResult,
+  acquired: ExecutionLease | null,
+  replayCredential: ReplayAcquisitionCredential | null,
+  requestId: string,
+): ReplayableExecutionAcquisitionResult {
+  const currentAcquisition = acquired
+    ?? (replayCredential?.status === 'current' ? replayCredential.lease : null);
+  if (currentAcquisition) return { ...result, lease_claim: claimResult(currentAcquisition) };
+  if (!result.replayed || !replayCredential) {
+    throw new Error(`execution acquisition ${requestId} completed without a recoverable lease claim`);
+  }
+  if (replayCredential.status === 'current') {
+    throw new Error(`execution acquisition ${requestId} lost its exact current lease claim`);
+  }
+  const credentialStatus = replayCredential.status;
+  return {
+    ...result,
+    lease_claim: null,
+    credential_status: credentialStatus,
+    recovery_instruction: credentialStatus === 'released'
+      ? 'This acquisition claim has been released. Perform a new authorized acquisition; historical replay cannot restore released credentials.'
+      : 'This acquisition claim is no longer current. Use the separately retained current claim or perform a new authorized acquisition; historical replay never returns a different claim.',
   };
 }
 
@@ -585,6 +715,11 @@ interface ExecutionMutationControls {
     now: Date,
     result: Record<string, unknown>,
   ) => void;
+  afterEvaluate?: (
+    execution: ExecutionState,
+    receipt: PersistedTransitionRecordV11,
+    replayed: boolean,
+  ) => void;
 }
 
 function mutateExecution(
@@ -611,7 +746,8 @@ function mutateExecution(
     options.expectedExecutionRevision,
     (draft, execution, tx) => {
       const before = fence(draft.session, execution, draft.artifacts.revision);
-      const existing = store.readExecutionTransition(options.sessionId, options.executionId, options.requestId);
+      const records = tx.listExecutionTransitions(options.executionId);
+      const existing = records.find(record => record.request_id === options.requestId) ?? null;
       const request = createTransitionRequestV11({
         request_id: required(options.requestId, 'request id'),
         operation,
@@ -629,7 +765,7 @@ function mutateExecution(
           : payload),
       });
       const evaluated = replayOrApplyTransitionV11(
-        existing ? [persistedTransitionRecordV11Schema.parse(existing)] : [],
+        records,
         request,
         before,
         () => {
@@ -666,6 +802,7 @@ function mutateExecution(
           });
         },
       );
+      controls.afterEvaluate?.(execution, evaluated.record, evaluated.replayed);
       if (!evaluated.replayed) tx.writeExecutionTransition(options.executionId, evaluated.record);
       return {
         execution: publicExecution(execution),
@@ -858,7 +995,8 @@ export function bootstrapExecutionChain(
       }
 
       const before = fence(draft.session, execution, draft.artifacts.revision);
-      const existing = tx.readExecutionTransition(options.executionId, requestId);
+      const records = tx.listExecutionTransitions(options.executionId);
+      const existing = records.find(record => record.request_id === requestId) ?? null;
       if (existing) {
         const original = existing.payload.preconditions;
         if (original.session_identity_revision !== options.expectedIdentityRevision
@@ -904,7 +1042,7 @@ export function bootstrapExecutionChain(
       let evaluated: ReturnType<typeof replayOrApplyTransitionV11>;
       try {
         evaluated = replayOrApplyTransitionV11(
-          existing ? [persistedTransitionRecordV11Schema.parse(existing)] : [],
+          records,
           request,
           before,
           () => {
@@ -1003,8 +1141,10 @@ export function executionStatus(
   };
 }
 
-export function attachExecution(projectRoot: string, options: AttachExecutionOptions): StartExecutionResult {
-  const store = new SessionStore(projectRoot);
+export function attachExecution(
+  projectRoot: string,
+  options: AttachExecutionOptions,
+): ReplayableExecutionAcquisitionResult {
   const provisional: ExecutionLeaseClaim = {
     ownerId: options.ownerId,
     ownerKind: options.ownerKind,
@@ -1012,6 +1152,7 @@ export function attachExecution(projectRoot: string, options: AttachExecutionOpt
     leaseId: 'attach-provisional',
   };
   let acquired: ExecutionLease | null = null;
+  let replayCredential: ReplayAcquisitionCredential | null = null;
   const result = mutateExecution(
     projectRoot,
     'execution-attach',
@@ -1035,16 +1176,14 @@ export function attachExecution(projectRoot: string, options: AttachExecutionOpt
       execution.lease = acquired;
       return { lease: publicLease(acquired) };
     },
-    { requireLease: false },
+    {
+      requireLease: false,
+      afterEvaluate: (execution, receipt, replayed) => {
+        if (replayed) replayCredential = replayAcquisitionCredential(execution, receipt, 'execution-attach');
+      },
+    },
   );
-  if (!acquired) {
-    const current = store.readExecution(options.sessionId, options.executionId);
-    if (!current.lease || current.lease.owner_id !== options.ownerId || current.lease.owner_kind !== options.ownerKind) {
-      throw new Error('execution attach was already applied; recover the current lease claim explicitly');
-    }
-    acquired = current.lease;
-  }
-  return { ...result, lease_claim: claimResult(acquired) };
+  return replayableAcquisitionResult(result, acquired, replayCredential, options.requestId);
 }
 
 export function pauseExecution(projectRoot: string, options: AuditedExecutionMutationOptions): ExecutionResult {
@@ -1081,9 +1220,12 @@ export function resolveExecution(projectRoot: string, options: ResolveExecutionO
   }, { requireLease: false, audited: true });
 }
 
-export function resumeExecution(projectRoot: string, options: ResumeExecutionOptions): StartExecutionResult {
-  const store = new SessionStore(projectRoot);
+export function resumeExecution(
+  projectRoot: string,
+  options: ResumeExecutionOptions,
+): ReplayableExecutionAcquisitionResult {
   let acquired: ExecutionLease | null = null;
+  let replayCredential: ReplayAcquisitionCredential | null = null;
   const result = mutateExecution(projectRoot, 'execution-resume', options, {
     owner_id: options.ownerId,
     owner_kind: options.ownerKind,
@@ -1115,15 +1257,11 @@ export function resumeExecution(projectRoot: string, options: ResumeExecutionOpt
     requireLease: false,
     audited: true,
     expectedActivityRevision: options.expectedActivityRevision,
+    afterEvaluate: (execution, receipt, replayed) => {
+      if (replayed) replayCredential = replayAcquisitionCredential(execution, receipt, 'execution-resume');
+    },
   });
-  if (!acquired) {
-    const current = store.readExecution(options.sessionId, options.executionId);
-    if (!current.lease || current.lease.owner_id !== options.ownerId || current.lease.owner_kind !== options.ownerKind) {
-      throw new Error('execution resume was already applied; recover the current lease claim explicitly');
-    }
-    acquired = current.lease;
-  }
-  return { ...result, lease_claim: claimResult(acquired) };
+  return replayableAcquisitionResult(result, acquired, replayCredential, options.requestId);
 }
 
 function replaySealExecution(
@@ -1280,26 +1418,7 @@ export function releaseExecutionLease(projectRoot: string, options: ExecutionMut
   return mutateExecution(projectRoot, 'execution-lease-release', options, {}, (session, execution, tx) => {
     assertActiveExecution(execution);
     assertExecutionLease(execution.lease, options.lease, { allowHandoff: true });
-    const blockers: string[] = [];
-    const activeRunIds = [...new Set([execution.active_run_id, session.active_run_id].filter(Boolean))].sort();
-    if (activeRunIds.length > 0) blockers.push(`active_run_id=${activeRunIds.join(',')}`);
-    const claimedRequestIds = session.requests
-      .filter(request => request.status === 'claimed')
-      .map(request => request.request_id)
-      .sort();
-    if (claimedRequestIds.length > 0) blockers.push(`claimed requests=${claimedRequestIds.join(',')}`);
-    if (execution.lease?.handoff_to) blockers.push(`in-flight handoff=${execution.lease.handoff_to}`);
-    const nonIdleRuns = tx.listBoundExecutionRuns(execution.execution_id, execution.generation)
-      .filter(run => run.status !== 'sealed')
-      .map(run => `${run.run_id}:${run.status}`)
-      .sort();
-    if (nonIdleRuns.length > 0) blockers.push(`non-stable-idle Runs=${nonIdleRuns.join(',')}`);
-    const runningSteps = session.orchestration.chain
-      .filter(step => step.status === 'running')
-      .map(step => step.step_id)
-      .sort();
-    if (runningSteps.length > 0) blockers.push(`in-flight chain transitions=${runningSteps.join(',')}`);
-    if (blockers.length > 0) throw new ExecutionLeaseReleaseBlockedError(blockers);
+    assertExecutionStableIdle(session, execution, tx, 'release');
     execution.lease = null;
     return { released: true };
   });
@@ -1308,15 +1427,18 @@ export function releaseExecutionLease(projectRoot: string, options: ExecutionMut
 export function recoverExecutionLease(
   projectRoot: string,
   options: RecoverExecutionLeaseOptions,
-): StartExecutionResult {
-  const store = new SessionStore(projectRoot);
+): ReplayableExecutionAcquisitionResult {
   let acquired: ExecutionLease | null = null;
+  let replayCredential: ReplayAcquisitionCredential | null = null;
   let recoveredFromEpoch: number | null = null;
   const result = mutateExecution(
     projectRoot,
     'execution-lease-recover',
     options,
-    { owner_id: options.ownerId, owner_kind: options.ownerKind },
+    {
+      owner_id: options.ownerId,
+      owner_kind: options.ownerKind,
+    },
     (_session, execution, _tx, now) => {
       assertActiveExecution(execution);
       if (!execution.lease || !isExecutionLeaseStale(execution.lease, now, options.staleAfterMs)) {
@@ -1334,16 +1456,17 @@ export function recoverExecutionLease(
       execution.lease = acquired;
       return { lease: publicLease(acquired), recovered_from_epoch: recoveredFromEpoch };
     },
-    { requireLease: false, audited: true },
+    {
+      requireLease: false,
+      audited: true,
+      afterEvaluate: (execution, receipt, replayed) => {
+        if (replayed) {
+          replayCredential = replayAcquisitionCredential(execution, receipt, 'execution-lease-recover');
+        }
+      },
+    },
   );
-  if (!acquired) {
-    const current = store.readExecution(options.sessionId, options.executionId);
-    if (!current.lease || current.lease.owner_id !== options.ownerId || current.lease.owner_kind !== options.ownerKind) {
-      throw new Error('execution recovery was already applied; recover the current lease claim explicitly');
-    }
-    acquired = current.lease;
-  }
-  return { ...result, lease_claim: claimResult(acquired) };
+  return replayableAcquisitionResult(result, acquired, replayCredential, options.requestId);
 }
 
 export function prepareExecutionHandoff(
@@ -1358,10 +1481,11 @@ export function prepareExecutionHandoff(
     'execution-handoff-prepare',
     options,
     { to_owner_id: toOwnerId },
-    (_session, execution, tx, now) => {
+    (session, execution, tx, now) => {
       assertActiveExecution(execution);
       const lease = assertExecutionLease(execution.lease, options.lease);
       if (lease.handoff_to) throw new Error(`execution lease handoff in progress to ${lease.handoff_to}`);
+      assertExecutionStableIdle(session, execution, tx, 'handoff prepare');
       lease.handoff_to = toOwnerId;
       tx.writeJson(handoffPath(store, options.sessionId, options.executionId), {
         schema_version: 'execution-handoff-claim/1.0',
@@ -1384,10 +1508,11 @@ export function prepareExecutionHandoff(
 export function acceptExecutionHandoff(
   projectRoot: string,
   options: AcceptExecutionHandoffOptions,
-): StartExecutionResult {
+): ReplayableExecutionAcquisitionResult {
   const store = new SessionStore(projectRoot);
   const claimPath = handoffPath(store, options.sessionId, options.executionId);
   let acquired: ExecutionLease | null = null;
+  let replayCredential: ReplayAcquisitionCredential | null = null;
   const result = mutateExecution(
     projectRoot,
     'execution-handoff-accept',
@@ -1397,7 +1522,7 @@ export function acceptExecutionHandoff(
       owner_kind: options.ownerKind,
       handoff_token_hash: hashExecutionLeaseId(options.handoffToken),
     },
-    (_session, execution, tx, now) => {
+    (session, execution, tx, now) => {
       assertActiveExecution(execution);
       const lease = execution.lease;
       if (!lease || !lease.handoff_to) throw new Error('execution handoff is not in progress');
@@ -1408,6 +1533,7 @@ export function acceptExecutionHandoff(
         || persisted.token_hash !== hashExecutionLeaseId(options.handoffToken)) {
         throw new Error('execution handoff token is invalid');
       }
+      assertExecutionStableIdle(session, execution, tx, 'handoff accept');
       acquired = leaseFor(
         options.sessionId,
         options.executionId,
@@ -1420,16 +1546,17 @@ export function acceptExecutionHandoff(
       tx.writeJson(claimPath, { ...persisted, token_hash: hashExecutionLeaseId(randomUUID()) }, handoffClaimSchema, 0o600);
       return { lease: publicLease(acquired), accepted_from: lease.owner_id };
     },
-    { requireLease: false, audited: true },
+    {
+      requireLease: false,
+      audited: true,
+      afterEvaluate: (execution, receipt, replayed) => {
+        if (replayed) {
+          replayCredential = replayAcquisitionCredential(execution, receipt, 'execution-handoff-accept');
+        }
+      },
+    },
   );
-  if (!acquired) {
-    const current = store.readExecution(options.sessionId, options.executionId);
-    if (!current.lease || current.lease.owner_id !== options.ownerId || current.lease.owner_kind !== options.ownerKind) {
-      throw new Error('execution handoff acceptance was already applied; recover the current lease claim explicitly');
-    }
-    acquired = current.lease;
-  }
-  return { ...result, lease_claim: claimResult(acquired) };
+  return replayableAcquisitionResult(result, acquired, replayCredential, options.requestId);
 }
 
 export function cancelExecutionHandoff(
