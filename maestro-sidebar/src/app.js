@@ -521,6 +521,14 @@ function bindEvents() {
     onDetailSearchInput();
     $('detailSearch').focus();
   });
+  // 全局搜索：Ctrl/⌘+K（卡片模式下任意视图可用）
+  document.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'k') return;
+    if (document.body.dataset.mode === 'capsule') return;
+    e.preventDefault();
+    openGlobalSearch();
+  });
+
   // 快捷键：列表视图下按 / 聚焦第一个区块搜索框
   document.addEventListener('keydown', (e) => {
     if (e.key !== '/' || view || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -813,8 +821,22 @@ function bindEvents() {
     }
   });
 
-  // 胶囊 → 卡片
-  $('capSessionPanel').title = '切回完整窗口';
+  // 胶囊 → 卡片：双击面板直达对应详情（单击 mousedown 仍走窗口拖拽，event.detail>1 不触发拖拽）
+  $('capSessionPanel').title = '双击打开会话详情';
+  $('capAgentPanel').title = '双击打开调用详情';
+  $('capSessionPanel').addEventListener('dblclick', async () => {
+    const sessions = snapshot?.sessions || [];
+    const active = sessions.find((s) => s.session_id === snapshot.active_session_id) || sessions[0];
+    await restoreCard();
+    if (active) openDetail('session', active.session_id);
+  });
+  $('capAgentPanel').addEventListener('dblclick', async () => {
+    const calls = snapshot?.calls || [];
+    const running = calls.filter((c) => callStatus(c) === 'running');
+    const target = running[0] || calls[0];
+    await restoreCard();
+    if (target) openDetail('call', target.execId);
+  });
 
   // Esc 关闭菜单或返回列表；菜单打开时 Tab 焦点陷阱
   document.addEventListener('keydown', (event) => {
@@ -3826,6 +3848,105 @@ document.addEventListener('keydown', (e) => {
     closeMdPreview();
   }
 }, true);
+
+// ---------------------------------------------------------------------------
+// 全局搜索（Ctrl/⌘+K）：跨 调用/会话/知识 的统一面板（业务需求 E5）
+// ---------------------------------------------------------------------------
+let gkEl = null;
+let gkOpener = null;
+
+function openGlobalSearch() {
+  if (gkEl) { gkEl.querySelector('input')?.focus(); return; }
+  gkOpener = document.activeElement === document.body ? null : document.activeElement;
+  const overlay = el('div', 'md-preview-overlay gk-overlay');
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-label', '全局搜索');
+  const box = el('div', 'gk-box');
+  const head = el('div', 'gk-head');
+  head.appendChild(svg('i-search', 13));
+  const input = document.createElement('input');
+  input.type = 'search';
+  input.placeholder = '搜索调用 / 会话 / 知识…';
+  input.setAttribute('aria-label', '全局搜索');
+  input.autocomplete = 'off';
+  input.spellcheck = false;
+  head.appendChild(input);
+  head.appendChild(el('span', 'gk-hint', '↑↓ 选择 · Enter 打开 · Esc 关闭'));
+  const body = el('div', 'gk-body');
+  box.appendChild(head);
+  box.appendChild(body);
+  overlay.appendChild(box);
+  overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) closeGlobalSearch(); });
+  overlay.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.stopPropagation(); closeGlobalSearch(); return; }
+    if (e.key === 'Tab') { trapTab(e, overlay); return; }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const items = Array.from(body.querySelectorAll('.gk-item'));
+      if (!items.length) return;
+      const cur = items.findIndex((n) => n.classList.contains('sel'));
+      const next = e.key === 'ArrowDown'
+        ? (cur >= items.length - 1 ? 0 : cur + 1)
+        : (cur <= 0 ? items.length - 1 : cur - 1);
+      if (cur >= 0) items[cur].classList.remove('sel');
+      items[next].classList.add('sel');
+      items[next].scrollIntoView({ block: 'nearest' });
+    } else if (e.key === 'Enter') {
+      body.querySelector('.gk-item.sel')?.click();
+    }
+  });
+  let gkTimer = null;
+  input.addEventListener('input', () => {
+    clearTimeout(gkTimer);
+    gkTimer = setTimeout(() => { void renderGlobalSearch(body, input.value.trim()); }, 120);
+  });
+  document.body.appendChild(overlay);
+  gkEl = overlay;
+  void renderGlobalSearch(body, '');
+  input.focus();
+}
+
+function closeGlobalSearch() {
+  if (!gkEl) return;
+  gkEl.remove();
+  gkEl = null;
+  if (gkOpener && gkOpener.isConnected && typeof gkOpener.focus === 'function') gkOpener.focus();
+  gkOpener = null;
+}
+
+async function renderGlobalSearch(body, rawQ) {
+  const q = rawQ.toLowerCase();
+  const mkItem = (title, meta, onOpen) => {
+    const b = el('button', 'gk-item');
+    b.type = 'button';
+    b.appendChild(el('span', 'gk-t', title));
+    if (meta) b.appendChild(el('span', 'gk-m', meta));
+    b.addEventListener('click', () => { closeGlobalSearch(); onOpen(); });
+    return b;
+  };
+  const groups = [];
+  const calls = (snapshot?.calls || []).filter((c) => matchCall(c, q)).slice(0, 6)
+    .map((c) => mkItem(oneLine(c.prompt || c.execId), `${TOOL_LABEL[c.tool] || c.tool || 'Agent'} · ${callStatusLabel(c)}`, () => openDetail('call', c.execId)));
+  if (calls.length) groups.push(['Agent 调用', calls]);
+  const sess = (snapshot?.sessions || []).filter((s) => matchSession(s, q)).slice(0, 6)
+    .map((s) => mkItem(oneLine(s.intent || s.session_id), `${s.session_id}${s.status ? ' · ' + s.status : ''}`, () => openDetail('session', s.session_id)));
+  if (sess.length) groups.push(['Session · Run', sess]);
+  if (q) {
+    const items = (await getKbItems() || []).filter((k) => matchKbItem(k, q)).slice(0, 6)
+      .map((k) => mkItem(k.title || k.id, k.kind || '', () => openDetail('knowledge-item', `${k.kind}::${k.id}`)));
+    if (items.length) groups.push(['知识', items]);
+  }
+  // 异步返回后面板可能已关闭
+  if (!body.isConnected) return;
+  body.innerHTML = '';
+  for (const [label, items] of groups) {
+    body.appendChild(el('div', 'gk-group', label));
+    for (const item of items) body.appendChild(item);
+  }
+  if (!groups.length) body.appendChild(el('div', 'gk-empty', q ? '无匹配结果' : '暂无数据'));
+  body.querySelector('.gk-item')?.classList.add('sel');
+}
 
 function svg(symbol, size) {
   const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
