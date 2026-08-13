@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { checkRun, completeRun, createRun, sealSession } from '../../../../../src/run/runtime.js';
+import { checkRun, completeRunWithVerdict, createRun, sealSession } from '../../../../../src/run/runtime.js';
 import { SessionStore } from '../../../../../src/run/store.js';
 
 export interface RuntimeSessionFixture {
@@ -47,6 +47,7 @@ export function createRuntimeSessionFixture(projectRoot: string): RuntimeSession
   writeFileSync(join(runDir, 'outputs', 'review-findings.json'), JSON.stringify({
     _meta: { kind, schema: 'review-findings/1.0', role: 'primary', alias: 'latest-review' },
     summary,
+    verdict: 'PASS',
     findings: [{ severity: 'low', title: 'Runtime writer remains searchable' }],
   }, null, 2), 'utf8');
   writeFileSync(join(runDir, 'report.md'), [
@@ -70,8 +71,12 @@ export function createRuntimeSessionFixture(projectRoot: string): RuntimeSession
   if (checked.errors.length > 0 || checked.gates.blocking.length > 0) {
     throw new Error(`Runtime fixture did not pass check: ${[...checked.errors, ...checked.gates.blocking].join(', ')}`);
   }
-  const completed = completeRun(projectRoot, created.run_id, created.session_id);
-  if (!completed.sealed) throw new Error(`Runtime fixture Run was not sealed: ${created.run_id}`);
+  const completed = completeRunWithVerdict(projectRoot, created.run_id, created.session_id, { verdict: 'done' });
+  if (!completed.run_sealed) {
+    throw new Error(
+      `Runtime fixture Run was not sealed: ${created.run_id}; errors=${completed.seal.errors.join(', ')}; blockers=${completed.seal.gates.blocking.join(', ')}`,
+    );
+  }
   sealSession(projectRoot, created.session_id, summary);
 
   const store = new SessionStore(projectRoot);

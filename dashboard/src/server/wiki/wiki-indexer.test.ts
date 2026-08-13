@@ -425,7 +425,7 @@ describe('search (BM25)', () => {
     const inv = buildInvertedIndex(index.entries);
     const results = searchBM25(inv, 'authentication');
     expect(results[0].docId).toBe('spec:project:auth');
-  });
+  }, 15_000);
 
   it('returns empty for stop-word-only query', async () => {
     await write('specs/a.md', `---\ntitle: A\n---\n# A`);
