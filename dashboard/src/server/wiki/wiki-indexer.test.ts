@@ -100,12 +100,12 @@ describe('WikiIndexer', () => {
     `);
     db.close();
 
-    const canonical = await new WikiIndexer({ workflowRoot: tmpRoot }).get();
+    const canonical = await new WikiIndexer({ workflowRoot: tmpRoot, persistence: 'memory-only' }).get();
     expect(canonical.entries.some(entry => entry.title === 'Canonical Node')).toBe(true);
     expect(canonical.entries.some(entry => entry.title === 'Legacy Only')).toBe(false);
 
     await rm(join(tmpRoot, 'kg', 'maestro.db'));
-    const fallback = await new WikiIndexer({ workflowRoot: tmpRoot }).get();
+    const fallback = await new WikiIndexer({ workflowRoot: tmpRoot, persistence: 'memory-only' }).get();
     expect(fallback.entries.some(entry => entry.title === 'Legacy Only')).toBe(true);
   });
 

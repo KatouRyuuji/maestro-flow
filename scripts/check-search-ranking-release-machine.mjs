@@ -325,6 +325,7 @@ export function runSourcePhase({ npmCliOverride, spawn = spawnSync, tempRoot } =
       '--',
       '--reporter=json',
       '--maxWorkers=1',
+      '--testTimeout=15000',
       '--outputFile',
       dashboardReport,
       ...DASHBOARD_TEST_PATHS,
@@ -1371,12 +1372,12 @@ function runBinChild(label, args, {
 function seedBuiltWorkspace(workspaceRoot) {
   const knowhowRoot = join(workspaceRoot, '.workflow', 'knowhow');
   mkdirSync(knowhowRoot, { recursive: true });
-  for (const name of [
-    'RCP-20260716-pi-maestro-flow-cli.md',
-    'RCP-20260723-pi-skills-canonical-generation.md',
+  for (const [fixture, name] of [
+    ['pi-knowledge-legacy-superseded.md', 'RCP-20260716-pi-maestro-flow-cli.md'],
+    ['pi-knowledge-canonical.md', 'RCP-20260723-pi-skills-canonical-generation.md'],
   ]) {
     copyFileSync(
-      join(repoRoot, '.workflow', 'knowhow', name),
+      join(repoRoot, 'src', 'search', 'evaluation', 'fixtures', fixture),
       join(knowhowRoot, name),
     );
   }
@@ -2408,8 +2409,9 @@ export async function runBuiltPhase({
     });
   }
   const protectedRepoArtifacts = [
-    readArtifact('.workflow/knowhow/RCP-20260716-pi-maestro-flow-cli.md'),
-    readArtifact('.workflow/knowhow/RCP-20260723-pi-skills-canonical-generation.md'),
+    readArtifact('src/search/evaluation/fixtures/pi-knowledge-legacy-before.md'),
+    readArtifact('src/search/evaluation/fixtures/pi-knowledge-legacy-superseded.md'),
+    readArtifact('src/search/evaluation/fixtures/pi-knowledge-canonical.md'),
   ];
   const certifiedAdapterPath = resolve(
     artifactRoot,

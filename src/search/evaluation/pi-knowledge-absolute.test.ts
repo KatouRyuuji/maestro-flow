@@ -75,13 +75,9 @@ const absolutePath = join(fixturesRoot, 'pi-knowledge-absolute.json');
 const holdoutsPath = join(fixturesRoot, 'search-ranking-holdouts.json');
 const qrelsPath = join(fixturesRoot, 'search-ranking-qrels.json');
 const baselinePath = join(fixturesRoot, 'search-ranking-baseline.json');
-const productionSnapshotPath = join(
-  projectRoot,
-  '.workflow',
-  'knowhow',
-  '.migration-snapshots',
-  'pi-skills-canonical-generation.before.json',
-);
+const legacyBeforePath = join(fixturesRoot, 'pi-knowledge-legacy-before.md');
+const legacySupersededPath = join(fixturesRoot, 'pi-knowledge-legacy-superseded.md');
+const canonicalFixturePath = join(fixturesRoot, 'pi-knowledge-canonical.md');
 
 const explicitId = 'rcp-20260723-pi-skills-canonical-generation';
 const canonicalFilename = 'RCP-20260723-pi-skills-canonical-generation.md';
@@ -117,9 +113,7 @@ const canonicalPayload = {
 
 const absolute = JSON.parse(readFileSync(absolutePath, 'utf8')) as PiAbsoluteFixture;
 const holdouts = JSON.parse(readFileSync(holdoutsPath, 'utf8')) as PiHoldoutFixture;
-const restoreCrashPoints = (
-  JSON.parse(readFileSync(productionSnapshotPath, 'utf8')) as KnowhowLifecycleSnapshot
-).targets.map((_target, index) => index + 1);
+const restoreCrashPoints = [1, 2, 3, 4];
 
 let root: string;
 let previousRoot: string | undefined;
@@ -135,14 +129,10 @@ function write(path: string, content: string | Buffer): void {
 }
 
 function snapshotBeforeBytes(relativePath: string): Buffer {
-  const snapshot = JSON.parse(
-    readFileSync(productionSnapshotPath, 'utf8'),
-  ) as KnowhowLifecycleSnapshot;
-  const target = snapshot.targets.find(item => item.path === relativePath);
-  if (!target?.beforeBase64) {
-    throw new Error(`Missing snapshot before bytes: ${relativePath}`);
+  if (relativePath !== legacyRelativePath) {
+    throw new Error(`Missing tracked before fixture: ${relativePath}`);
   }
-  return Buffer.from(target.beforeBase64, 'base64');
+  return readFileSync(legacyBeforePath);
 }
 
 function seedLegacy(workspaceRoot: string): void {
@@ -182,6 +172,9 @@ async function migrateWorkspace(workspaceRoot: string): Promise<string> {
     absolute.legacyId,
     absolute.canonicalId,
   ).success).toBe(true);
+  expect(readFileSync(join(workspaceRoot, legacyRelativePath))).toEqual(
+    readFileSync(legacySupersededPath),
+  );
   write(
     join(workspaceRoot, 'src/search/evaluation/fixtures/pi-knowledge-absolute.json'),
     readFileSync(absolutePath),
@@ -327,6 +320,9 @@ describe('Pi absolute and external holdout discovery', () => {
 
   it('keeps both history directions identical and exposes the CLI machine envelope', async () => {
     await migrateWorkspace(root);
+    expect(readFileSync(join(root, canonicalRelativePath))).toEqual(
+      readFileSync(canonicalFixturePath),
+    );
     const fromLegacy = getKnowhowEvolutionChain(root, absolute.legacyId);
     const fromCanonical = getKnowhowEvolutionChain(root, absolute.canonicalId);
     expect(fromLegacy).toEqual(fromCanonical);
@@ -441,8 +437,9 @@ describe('frozen relative judgments and anti-special-case guards', () => {
       qrelsSha256: string;
     };
     expect(await sha256File(qrelsPath)).toBe(baseline.qrelsSha256);
+    seedLegacy(root);
     const snapshot = JSON.parse(
-      readFileSync(productionSnapshotPath, 'utf8'),
+      readFileSync(createSnapshot(root), 'utf8'),
     ) as KnowhowLifecycleSnapshot;
     expect(snapshot.targets.map(target => target.path)).not.toContain(
       'src/search/evaluation/fixtures/search-ranking-qrels.json',
@@ -666,7 +663,7 @@ describe('temporary-copy restore crash matrix', () => {
 
   it('rejects stale terminal conflict evidence', async () => {
     const qrelsBefore = sha256(qrelsPath);
-    const snapshotBefore = sha256(productionSnapshotPath);
+    const fixtureBefore = sha256(legacyBeforePath);
     const snapshotPath = copyMigratedWorkspace();
     let completedPath = '';
     expect(restoreKnowhowLifecycleSnapshot(root, snapshotPath, {
@@ -698,6 +695,6 @@ describe('temporary-copy restore crash matrix', () => {
     });
     expect(readFileSync(completedAbsolute, 'utf8')).toBe('Pi post-receipt target drift');
     expect(sha256(qrelsPath)).toBe(qrelsBefore);
-    expect(sha256(productionSnapshotPath)).toBe(snapshotBefore);
+    expect(sha256(legacyBeforePath)).toBe(fixtureBefore);
   });
 });
