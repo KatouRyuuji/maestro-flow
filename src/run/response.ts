@@ -1,17 +1,22 @@
 import {
   runErrorCodeSchema,
   runErrorCodeV11Schema,
+  runErrorCodeV12Schema,
   runResponseSchema,
   runResponseV10Schema,
   runResponseV11Schema,
+  runResponseV12Schema,
   type RunOperationV11,
+  type RunOperationV12,
   type RunResponse,
   type RunResponseDisposition,
   type RunResponseErrorCode,
   type RunResponseErrorCodeV11,
+  type RunResponseErrorCodeV12,
   type RunResponseRead,
   type RunResponseV10,
   type RunResponseV11,
+  type RunResponseV12,
 } from './protocol-schemas.js';
 
 export interface RunResponseBaseInput {
@@ -33,6 +38,16 @@ export interface RunResponseV11BaseInput {
   continuation?: RunResponseV11['continuation'];
   replay?: RunResponseV11['replay'];
   warnings?: RunResponseV11['warnings'];
+}
+
+export interface RunResponseV12BaseInput {
+  schema_version: 'run-response/1.2';
+  operation: RunOperationV12;
+  request_id?: string | null;
+  locator?: RunResponseV12['locator'];
+  revision?: RunResponseV12['revision'];
+  replay?: RunResponseV12['replay'];
+  warnings?: RunResponseV12['warnings'];
 }
 
 /** Prefer typed domain codes, then map legacy message-only errors deterministically. */
@@ -86,6 +101,23 @@ export function stableRunResponseErrorCodeV11(error: unknown): RunResponseErrorC
   return stableRunResponseErrorCode(error);
 }
 
+/** V1.2 mapping recognizes entity-revision errors without importing Execution-era codes. */
+export function stableRunResponseErrorCodeV12(error: unknown): RunResponseErrorCodeV12 {
+  const typedCode = (error as { code?: unknown })?.code;
+  const parsedCode = runErrorCodeV12Schema.safeParse(typedCode);
+  if (parsedCode.success) return parsedCode.data;
+
+  const message = error instanceof Error ? error.message : String(error);
+  if (/run revision conflict|stale run revision/i.test(message)) return 'RUN_REVISION_CONFLICT';
+  if (/orchestration revision conflict|stale orchestration revision/i.test(message)) {
+    return 'ORCHESTRATION_REVISION_CONFLICT';
+  }
+  if (/session\/3\.0|session schema unsupported/i.test(message)) return 'SESSION_SCHEMA_UNSUPPORTED';
+  if (/store (?:is )?busy|sessionstore locked/i.test(message)) return 'STORE_BUSY';
+  if (/participant.*required/i.test(message)) return 'PARTICIPANT_REQUIRED';
+  return stableRunResponseErrorCode(error);
+}
+
 export function createRunResponseSuccess(
   input: RunResponseBaseInput & { result: unknown },
 ): RunResponseV10;
@@ -93,8 +125,27 @@ export function createRunResponseSuccess(
   input: RunResponseV11BaseInput & { result: unknown },
 ): RunResponseV11;
 export function createRunResponseSuccess(
-  input: (RunResponseBaseInput | RunResponseV11BaseInput) & { result: unknown },
+  input: RunResponseV12BaseInput & { result: unknown },
+): RunResponseV12;
+export function createRunResponseSuccess(
+  input: (RunResponseBaseInput | RunResponseV11BaseInput | RunResponseV12BaseInput) & { result: unknown },
 ): RunResponseRead {
+  if ('schema_version' in input && input.schema_version === 'run-response/1.2') {
+    return runResponseV12Schema.parse({
+      schema_version: 'run-response/1.2',
+      operation: input.operation,
+      ok: true,
+      exit_code: 0,
+      disposition: 'success',
+      request_id: input.request_id ?? null,
+      locator: input.locator ?? null,
+      revision: input.revision ?? null,
+      replay: input.replay ?? null,
+      warnings: input.warnings ?? [],
+      result: input.result,
+      error: null,
+    });
+  }
   if ('schema_version' in input && input.schema_version === 'run-response/1.1') {
     return runResponseV11Schema.parse({
       schema_version: 'run-response/1.1',
@@ -135,6 +186,15 @@ interface RunResponseErrorBaseInput {
   details?: Record<string, unknown>;
 }
 
+export interface RunResponseV12ConflictInput {
+  target_type: NonNullable<RunResponseV12['error']>['target_type'];
+  target_id: string;
+  expected_revision: number;
+  current_revision: number;
+  changed_by: string;
+  next_actions: string[];
+}
+
 export function createRunResponseError(
   input: RunResponseBaseInput & RunResponseErrorBaseInput & { code: RunResponseErrorCode },
 ): RunResponseV10;
@@ -147,13 +207,52 @@ export function createRunResponseError(
   },
 ): RunResponseV11;
 export function createRunResponseError(
-  input: (RunResponseBaseInput | RunResponseV11BaseInput) & RunResponseErrorBaseInput & {
-    code: RunResponseErrorCodeV11;
+  input: RunResponseV12BaseInput & RunResponseErrorBaseInput & {
+    code: RunResponseErrorCodeV12;
+    disposition: Exclude<RunResponseDisposition, 'success'>;
+    retryable?: boolean;
+    conflict?: RunResponseV12ConflictInput;
+    next_actions?: string[];
+  },
+): RunResponseV12;
+export function createRunResponseError(
+  input: (RunResponseBaseInput | RunResponseV11BaseInput | RunResponseV12BaseInput) & RunResponseErrorBaseInput & {
+    code: RunResponseErrorCodeV11 | RunResponseErrorCodeV12;
     disposition?: Exclude<RunResponseDisposition, 'success'>;
     retryable?: boolean;
     recovery_command?: string | null;
+    conflict?: RunResponseV12ConflictInput;
+    next_actions?: string[];
   },
 ): RunResponseRead {
+  if ('schema_version' in input && input.schema_version === 'run-response/1.2') {
+    const conflict = input.conflict;
+    return runResponseV12Schema.parse({
+      schema_version: 'run-response/1.2',
+      operation: input.operation,
+      ok: false,
+      exit_code: input.exit_code,
+      disposition: input.disposition,
+      request_id: input.request_id ?? null,
+      locator: input.locator ?? null,
+      revision: input.revision ?? null,
+      replay: input.replay ?? null,
+      warnings: input.warnings ?? [],
+      result: null,
+      error: {
+        code: input.code,
+        message: input.message,
+        retryable: input.retryable ?? false,
+        details: input.details ?? {},
+        target_type: conflict?.target_type ?? null,
+        target_id: conflict?.target_id ?? null,
+        expected_revision: conflict?.expected_revision ?? null,
+        current_revision: conflict?.current_revision ?? null,
+        changed_by: conflict?.changed_by ?? null,
+        next_actions: conflict?.next_actions ?? input.next_actions ?? [],
+      },
+    });
+  }
   if ('schema_version' in input && input.schema_version === 'run-response/1.1') {
     return runResponseV11Schema.parse({
       schema_version: 'run-response/1.1',
@@ -229,10 +328,12 @@ export {
   runResponseSchema,
   runResponseV10Schema,
   runResponseV11Schema,
+  runResponseV12Schema,
   type RunResponse,
   type RunResponseErrorCode,
   type RunResponseErrorCodeV11,
   type RunResponseRead,
   type RunResponseV10,
   type RunResponseV11,
+  type RunResponseV12,
 } from './protocol-schemas.js';

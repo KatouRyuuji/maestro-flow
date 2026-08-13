@@ -522,12 +522,7 @@ addCheck(
 );
 
 const sessionV20Contract = zodObjectContract(writerPath, 'sessionStateV20Schema');
-const sessionWriterSelection = zodPropertyCallArgument(
-  writerPath,
-  'sessionSchemaSelectionSchema',
-  'writer',
-  'enum',
-);
+const sessionWriterSelection = zodArray(writerPath, 'sessionSchemaWriterSchema');
 const defaultSessionSelection = literalValue(findVariable('src/run/defaults.ts', 'DEFAULT_SESSION_SCHEMA_SELECTION'));
 const expectedDefaultSessionSelection = {
   schema_version: 'session-schema-selection/1.0',
@@ -556,8 +551,8 @@ addCheck(
 addCheck(
   'writer.session.selection-default',
   { supported: sessionWriterSelection, default: defaultSessionSelection },
-  { supported: ['session/1.3', 'session/2.0'], default: expectedDefaultSessionSelection },
-  sameValues(sessionWriterSelection ?? [], ['session/1.3', 'session/2.0'])
+  { supported: ['session/1.3', 'session/2.0', 'session/3.0'], default: expectedDefaultSessionSelection },
+  sameValues(sessionWriterSelection ?? [], ['session/1.3', 'session/2.0', 'session/3.0'])
     && JSON.stringify(defaultSessionSelection) === JSON.stringify(expectedDefaultSessionSelection),
 );
 
@@ -664,8 +659,10 @@ const additiveOperations = allV11Operations.filter(operation => !legacyOperation
 const responseSchemaContract = {
   legacyVersion: zodLiteral(protocolPath, 'responseCommonSchema'),
   executionVersion: zodLiteral(protocolPath, 'responseCommonV11Schema'),
+  minimalV3Version: zodLiteral(protocolPath, 'responseCommonV12Schema'),
   v10Members: unionMembers(protocolPath, 'runResponseV10Schema'),
   v11Members: unionMembers(protocolPath, 'runResponseV11Schema'),
+  v12Members: unionMembers(protocolPath, 'runResponseV12Schema'),
   compatibilityMembers: unionMembers(protocolPath, 'runResponseSchema'),
 };
 addCheck('response.operations.legacy', legacyOperations, LEGACY_OPERATIONS, sameValues(legacyOperations, LEGACY_OPERATIONS));
@@ -681,42 +678,52 @@ addCheck(
   {
     legacyVersion: 'run-response/1.0',
     executionVersion: 'run-response/1.1',
+    minimalV3Version: 'run-response/1.2',
     v10Members: ['runResponseSuccessSchema', 'runResponseErrorSchema'],
     v11Members: ['runResponseSuccessV11Schema', 'runResponseErrorV11Schema'],
-    compatibilityMembers: ['runResponseV11Schema', 'runResponseV10Schema'],
+    v12Members: ['runResponseSuccessV12Schema', 'runResponseErrorV12Schema'],
+    compatibilityMembers: ['runResponseV12Schema', 'runResponseV11Schema', 'runResponseV10Schema'],
   },
   responseSchemaContract.legacyVersion === 'run-response/1.0'
     && responseSchemaContract.executionVersion === 'run-response/1.1'
+    && responseSchemaContract.minimalV3Version === 'run-response/1.2'
     && sameValues(responseSchemaContract.v10Members, ['runResponseSuccessSchema', 'runResponseErrorSchema'])
     && sameValues(responseSchemaContract.v11Members, ['runResponseSuccessV11Schema', 'runResponseErrorV11Schema'])
-    && sameValues(responseSchemaContract.compatibilityMembers, ['runResponseV11Schema', 'runResponseV10Schema']),
+    && sameValues(responseSchemaContract.v12Members, ['runResponseSuccessV12Schema', 'runResponseErrorV12Schema'])
+    && sameValues(responseSchemaContract.compatibilityMembers, ['runResponseV12Schema', 'runResponseV11Schema', 'runResponseV10Schema']),
 );
 
-const capabilities = parsedObjectArgument(
-  'src/commands/execution.ts',
-  'registerCapabilitiesCommand',
-  'maestroCapabilitiesSchema',
-);
-const expectedCapabilityFeatures = {
-  execution_generation: true,
-  core_execution_lease: true,
-  execution_handoff: true,
-  session_statusless: true,
-  legacy_session_aliases: true,
-};
-const capabilityContract = capabilities && {
-  schema_version: capabilities.schema_version,
-  session_schema_writes: capabilities.session_schema_writes,
-  execution_schema_writes: capabilities.execution_schema_writes,
-  run_response_writes: capabilities.run_response_writes,
-  features: capabilities.features,
+const capabilitiesCommands = read('src/commands/capabilities.ts');
+const capabilityFeatureKeys = [
+  'execution_generation', 'core_execution_lease', 'execution_handoff', 'session_statusless',
+  'legacy_session_aliases', 'session_run_minimal_v3', 'entity_revision_cas',
+  'participant_identity', 'request_receipts_v2', 'execution_lease', 'operation_registry',
+];
+const legacyCapabilityFeatures = new Set([
+  'execution_generation', 'core_execution_lease', 'execution_handoff', 'session_statusless',
+  'legacy_session_aliases', 'execution_lease',
+]);
+const capabilityContract = {
+  schema_version: zodLiteral(protocolPath, 'maestroCapabilitiesSchema'),
+  session_schema_writes: functionPropertyLiterals(
+    'src/commands/capabilities.ts', 'registerCapabilitiesCommand', 'session_schema_writes',
+  )[0] ?? null,
+  run_response_writes: functionPropertyLiterals(
+    'src/commands/capabilities.ts', 'registerCapabilitiesCommand', 'run_response_writes',
+  )[0] ?? null,
+  v3_writer_switch: capabilitiesCommands?.includes("const v3 = writer === 'session/3.0';") ?? false,
+  execution_writer_switch: capabilitiesCommands?.includes("execution_schema_writes: v3 ? [] : ['execution/1.0']") ?? false,
+  feature_switches: capabilityFeatureKeys.map(key => capabilitiesCommands?.includes(
+    `${key}: ${key === 'operation_registry' ? 'false' : legacyCapabilityFeatures.has(key) ? '!v3' : 'v3Ready'}`,
+  ) ?? false),
 };
 const expectedCapabilityContract = {
   schema_version: 'maestro-capabilities/1.0',
-  session_schema_writes: ['session/1.3', 'session/2.0'],
-  execution_schema_writes: ['execution/1.0'],
-  run_response_writes: ['run-response/1.0', 'run-response/1.1'],
-  features: expectedCapabilityFeatures,
+  session_schema_writes: ['session/1.3', 'session/2.0', 'session/3.0'],
+  run_response_writes: ['run-response/1.0', 'run-response/1.1', 'run-response/1.2'],
+  v3_writer_switch: true,
+  execution_writer_switch: true,
+  feature_switches: capabilityFeatureKeys.map(() => true),
 };
 addCheck(
   'capabilities.exact',
@@ -758,7 +765,7 @@ addCheck(
 const cli = read('src/cli.ts');
 const executionCliContract = {
   executionLoader: cli?.includes("execution:  async () => (await import('./commands/execution.js')).registerExecutionCommand") ?? false,
-  capabilitiesLoader: cli?.includes("capabilities: async () => (await import('./commands/execution.js')).registerCapabilitiesCommand") ?? false,
+  capabilitiesLoader: cli?.includes("capabilities: async () => (await import('./commands/capabilities.js')).registerCapabilitiesCommand") ?? false,
   executionCommand: executionCommands?.includes("program.command('execution')") ?? false,
   completeTree: [
     ".command('start')", ".command('attach')", ".command('status')", ".command('pause')",
@@ -908,6 +915,13 @@ addCheck(
 
 const expectedReleaseProofs = [
   'capabilities-exact',
+  'v3-capabilities-branch',
+  'v3-workflow-root-equals-routing',
+  'v3-participant-register-status-unregister-replay',
+  'v3-help-json-catalog',
+  'v2-help-run-compatibility',
+  'v3-retired-execution-structured-response',
+  'v3-run-complete-requires-advance',
   'statusless-create-migration-gate',
   'archive-unarchive-cas-receipt-chain',
   'lease-acquisition-handoff-stale-release-seal',
@@ -949,7 +963,7 @@ addCheck(
   releaseMachineCoverage,
   { declared: expectedReleaseProofs, recorded: expectedReleaseProofs },
   sameValues(declaredReleaseProofs, expectedReleaseProofs)
-    && sameValues(recordedReleaseProofs, expectedReleaseProofs),
+    && sameValues([...recordedReleaseProofs].sort(), [...expectedReleaseProofs].sort()),
 );
 
 const focusedReleaseTests = callStringArguments(

@@ -8,6 +8,7 @@ import {
   runResponseSchema,
   stableRunResponseErrorCode,
   stableRunResponseErrorCodeV11,
+  stableRunResponseErrorCodeV12,
 } from './response.js';
 
 afterEach(() => {
@@ -204,6 +205,64 @@ describe('run-response/1.0', () => {
     expect(() => runResponseSchema.parse({ ...current, exit_code: 2 })).toThrow();
     expect(stableRunResponseErrorCodeV11(new Error('execution revision conflict')))
       .toBe('EXECUTION_REVISION_CONFLICT');
+  });
+
+  it('writes strict 1.2 success and revision conflict envelopes with line/exit parity', () => {
+    const success = createRunResponseSuccess({
+      schema_version: 'run-response/1.2',
+      operation: 'session-status',
+      request_id: null,
+      locator: { session_id: 's-v3', run_id: null },
+      revision: { target_type: 'orchestration', target_id: 's-v3', revision: 2 },
+      result: { status: 'open' },
+    });
+    expect(runResponseSchema.parse(success)).toMatchObject({
+      schema_version: 'run-response/1.2', ok: true, exit_code: 0,
+      revision: { target_type: 'orchestration', revision: 2 },
+    });
+    expect(success).not.toHaveProperty('fence');
+    expect(success).not.toHaveProperty('continuation');
+
+    const conflict = createRunResponseError({
+      schema_version: 'run-response/1.2',
+      operation: 'complete',
+      exit_code: 1,
+      disposition: 'domain_error',
+      code: 'RUN_REVISION_CONFLICT',
+      message: 'run revision conflict: expected 3, current 4',
+      retryable: true,
+      request_id: 'req-conflict',
+      locator: { session_id: 's-v3', run_id: 'run-1' },
+      conflict: {
+        target_type: 'run', target_id: 'run-1',
+        expected_revision: 3, current_revision: 4, changed_by: 'pi-window-b',
+        next_actions: ['reload-run', 're-evaluate-intent', 'resubmit-with-new-request-id'],
+      },
+    });
+    expect(runResponseSchema.parse(conflict)).toMatchObject({
+      schema_version: 'run-response/1.2', ok: false, exit_code: 1,
+      error: {
+        code: 'RUN_REVISION_CONFLICT', target_type: 'run', target_id: 'run-1',
+        expected_revision: 3, current_revision: 4, changed_by: 'pi-window-b',
+      },
+    });
+    expect(() => createRunResponseError({
+      schema_version: 'run-response/1.2',
+      operation: 'complete',
+      exit_code: 1,
+      disposition: 'domain_error',
+      code: 'RUN_REVISION_CONFLICT',
+      message: 'missing conflict payload',
+    })).toThrow(/required for revision conflicts/);
+    expect(stableRunResponseErrorCodeV12(new Error('stale run revision: expected 3, current 4')))
+      .toBe('RUN_REVISION_CONFLICT');
+    expect(stableRunResponseErrorCodeV12({ code: 'SESSION_SCHEMA_UNSUPPORTED' }))
+      .toBe('SESSION_SCHEMA_UNSUPPORTED');
+
+    const write = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
+    emitRunResponse(conflict);
+    expect(String(write.mock.calls[0][0]).split('\n')).toHaveLength(2);
+    expect(process.exitCode).toBe(conflict.exit_code);
   });
 
   it('parses and emits a success envelope with exit 0', () => {

@@ -12,11 +12,14 @@ import {
   goalBindingSchema,
   normalizeCommandRunV14,
   projectSessionSchemaConfigSchema,
+  runReadSchema,
+  runV30Schema,
   sessionSchemaSelectionSchema,
   sessionStateReadSchema,
   sessionStateV12Schema,
   sessionStateV13Schema,
   sessionStateV20Schema,
+  sessionStateV30Schema,
   sessionStateSchema,
 } from './schemas.js';
 import {
@@ -260,6 +263,51 @@ describe('Session schema compatibility', () => {
     expect(() => sessionStateV20Schema.parse({ ...identity, archived_at: 'now', archived_by: null })).toThrow();
   });
 
+  it('strictly reads session/3.0 and run/3.0 without legacy normalization', () => {
+    const session = {
+      schema_version: 'session/3.0' as const,
+      session_id: 's-v3',
+      objective: 'ship minimal v3',
+      definition_of_done: 'contract tests pass',
+      status: 'open' as const,
+      identity_revision: 1,
+      orchestration_revision: 2,
+      activity_revision: 3,
+      chain: [{
+        step_id: 'step-1', command: 'implement', args: [], status: 'running' as const,
+        run_ids: ['run-1'], goal_ref: null, decision_refs: ['decision-1'],
+      }],
+      decisions: [{
+        decision_id: 'decision-1', after_step_id: 'step-1', status: 'open' as const, evidence_refs: [],
+      }],
+      active_run_ids: ['run-1'],
+      gates_ref: 'gates.json', artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
+      created_at: '2026-08-12T00:00:00.000Z', updated_at: '2026-08-12T00:01:00.000Z',
+      completed_at: null, archived_at: null,
+    };
+    const run = {
+      schema_version: 'run/3.0' as const,
+      run_id: 'run-1', session_id: 's-v3', step_id: 'step-1',
+      parent_run_id: null, retry_of_run_id: 'run-0', attempt: 2,
+      command: 'implement', args: ['--focused'], goal: 'contract foundation',
+      status: 'running' as const, revision: 4,
+      actor_id: 'codex', participant_id: 'pi-window-a',
+      gate_refs: ['gate-1'], input_refs: ['artifact-input'], output_refs: [], primary_artifact_id: null,
+      verdict: null, summary: null, legacy_execution_generation: 7,
+      created_at: '2026-08-12T00:00:00.000Z', started_at: '2026-08-12T00:00:01.000Z',
+      ended_at: null, sealed_at: null,
+    };
+
+    expect(sessionStateV30Schema.parse(session)).toEqual(session);
+    expect(sessionStateReadSchema.parse(session)).toEqual(session);
+    expect(() => sessionStateSchema.parse(session)).toThrow();
+    expect(runV30Schema.parse(run)).toEqual(run);
+    expect(runReadSchema.parse(run)).toEqual(run);
+    expect(() => commandRunReadSchema.parse(run)).toThrow();
+    expect(() => sessionStateV30Schema.parse({ ...session, current_execution_id: null })).toThrow();
+    expect(() => runV30Schema.parse({ ...run, execution_id: 'exec-1' })).toThrow();
+  });
+
   it('defaults to session/1.3 and requires a coherent explicit 2.0 feature selection', () => {
     expect(DEFAULT_SESSION_SCHEMA_SELECTION).toEqual({
       schema_version: 'session-schema-selection/1.0',
@@ -272,6 +320,12 @@ describe('Session schema compatibility', () => {
       features: { session_statusless: true },
     };
     expect(sessionSchemaSelectionSchema.parse(enabled)).toEqual(enabled);
+    const v3 = {
+      schema_version: 'session-schema-selection/1.0' as const,
+      writer: 'session/3.0' as const,
+      features: { session_statusless: false },
+    };
+    expect(sessionSchemaSelectionSchema.parse(v3)).toEqual(v3);
     expect(projectSessionSchemaConfigSchema.parse({ session_schema: enabled, workspaces: { linked: [] } }))
       .toMatchObject({ session_schema: enabled });
     expect(() => sessionSchemaSelectionSchema.parse({

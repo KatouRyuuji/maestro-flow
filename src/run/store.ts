@@ -17,7 +17,7 @@ import {
   chmodSync,
 } from 'node:fs';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
 import { safeRename } from '../utils/state-schema.js';
 import { hashDirectory } from './artifacts.js';
@@ -33,6 +33,8 @@ import {
   commandRunReadSchema,
   commandRunV13Schema,
   commandRunV14Schema,
+  runReadSchema,
+  runV30Schema,
   evidenceStoreSchema,
   executionLeaseSchema,
   executionStateSchema,
@@ -45,17 +47,21 @@ import {
   sessionStateSchema,
   sessionStateV13Schema,
   sessionStateV20Schema,
+  sessionStateV30Schema,
   targetPlatformSchema,
   type ArtifactRegistry,
   type CommandRun,
   type CommandRunInput,
   type CommandRunV14,
+  type RunRead,
+  type RunV30,
   type EvidenceStore,
   type ExecutionState,
   type GateRegistry,
   type SessionSchemaSelection,
   type SessionState,
   type SessionStateRead,
+  type SessionStateV30,
   type SessionIdentityV20,
 } from './schemas.js';
 import {
@@ -79,6 +85,8 @@ import {
   recallReservationReconciliationSchema,
   persistedTransitionRecordV11Schema,
   sessionArchiveReceiptSchema,
+  requestReceiptV20Schema,
+  transitionReceiptV20Schema,
   transitionFenceSchema,
   validatedRecallSourceReadSchema,
   type ExecutionSealReceipt,
@@ -94,6 +102,8 @@ import {
   type PersistedTransitionRecord,
   type PersistedTransitionRecordV11,
   type SessionArchiveReceipt,
+  type RequestReceiptV20,
+  type TransitionReceiptV20,
   type SessionProvenance,
   type SourceFenceRead,
   type SourceFenceV11,
@@ -283,6 +293,15 @@ export interface SessionStoreOptions {
 export interface ExecutionAtomicOptions {
   replayRequestId?: string;
   expectedActivityRevision?: number;
+}
+
+export class SessionSchemaUnsupportedError extends Error {
+  readonly code = 'SESSION_SCHEMA_UNSUPPORTED' as const;
+
+  constructor(readonly sessionId: string) {
+    super(`Session ${sessionId} uses session/3.0; legacy Session/Execution mutations are unsupported`);
+    this.name = 'SessionSchemaUnsupportedError';
+  }
 }
 
 export interface ExecutionRunSidecarAuthority {
@@ -625,6 +644,38 @@ export class SessionStore {
     return join(this.sessionDir(sessionId), 'runs', runId);
   }
 
+  receiptsDir(sessionId: string): string {
+    return join(this.sessionDir(sessionId), 'receipts');
+  }
+
+  requestReceiptsDir(sessionId: string): string {
+    return join(this.receiptsDir(sessionId), 'requests');
+  }
+
+  transitionReceiptsDir(sessionId: string): string {
+    return join(this.receiptsDir(sessionId), 'transitions');
+  }
+
+  requestReceiptV20Path(sessionId: string, requestId: string): string {
+    assertSafePathSegment(requestId, 'request ID');
+    return join(this.requestReceiptsDir(sessionId), `${requestId}.json`);
+  }
+
+  transitionReceiptV20Path(
+    sessionId: string,
+    activityRevision: number,
+    transitionId: string,
+  ): string {
+    if (!Number.isSafeInteger(activityRevision) || activityRevision <= 0) {
+      throw new Error(`invalid transition receipt activity revision: ${activityRevision}`);
+    }
+    assertSafePathSegment(transitionId, 'transition ID');
+    return join(
+      this.transitionReceiptsDir(sessionId),
+      `${String(activityRevision).padStart(12, '0')}-${transitionId}.json`,
+    );
+  }
+
   withLock<T>(fn: () => T): T {
     this.lock.acquire();
     try {
@@ -680,7 +731,7 @@ export class SessionStore {
       throw new Error(`SessionStore recovery required: invalid Session shell at ${dir}`);
     }
     const allowedDirectories = new Set([
-      'runs', 'specs', 'knowhow', 'executions', 'archive-receipts', '.compat',
+      'runs', 'specs', 'knowhow', 'executions', 'archive-receipts', 'receipts', '.compat',
     ]);
     for (const name of readdirSync(dir)) {
       const path = join(dir, name);
@@ -773,6 +824,55 @@ export class SessionStore {
     return this.readSessionRecordUnlocked(sessionId);
   }
 
+  readSessionV30(sessionId: string): SessionStateV30 {
+    const session = this.readSessionRecord(sessionId);
+    if (session.schema_version !== 'session/3.0') {
+      throw new Error(`Session ${sessionId} uses ${session.schema_version}; session/3.0 is required`);
+    }
+    return sessionStateV30Schema.parse(session);
+  }
+
+  writeSessionV30(sessionInput: SessionStateV30): SessionStateV30 {
+    return this.withLock(() => {
+      const session = sessionStateV30Schema.parse(sessionInput);
+      if (this.sessionSchemaSelection().writer !== 'session/3.0') {
+        throw new Error('session/3.0 writes require the explicit session/3.0 writer selection');
+      }
+      const path = join(this.sessionDir(session.session_id), 'session.json');
+      if (existsSync(path)) {
+        const current = this.readSessionRecordUnlocked(session.session_id);
+        if (current.schema_version !== 'session/3.0') {
+          throw new Error(
+            `Session ${session.session_id} uses ${current.schema_version}; v2-to-v3 replacement requires the migration engine`,
+          );
+        }
+      }
+      this.writeBatchUnlocked([{
+        path,
+        value: session,
+        schema: sessionStateV30Schema,
+      }]);
+      return clone(session);
+    });
+  }
+
+  /** Typed atomic storage batch for W2/W5. It deliberately performs no CAS or state-machine work. */
+  withV30Transaction<T>(
+    sessionId: string,
+    builder: (tx: SessionV30StoreTransaction) => T,
+  ): T {
+    return this.withLock(() => {
+      if (this.sessionSchemaSelection().writer !== 'session/3.0') {
+        throw new Error('v3 storage transactions require the explicit session/3.0 writer selection');
+      }
+      const tx = new SessionV30StoreTransaction(this, sessionId);
+      const result = builder(tx);
+      const writes = tx.pendingWrites();
+      if (writes.length > 0) this.writeBatchUnlocked(writes);
+      return result;
+    });
+  }
+
   private readSessionRecordUnlocked(sessionId: string): SessionStateRead {
     const session = this.readValidated(
       join(this.sessionDir(sessionId), 'session.json'),
@@ -787,6 +887,9 @@ export class SessionStore {
   private readBundleUnlocked(sessionId: string): SessionBundle {
     const dir = this.sessionDir(sessionId);
     const record = this.readSessionRecordUnlocked(sessionId);
+    if (record.schema_version === 'session/3.0') {
+      throw new SessionSchemaUnsupportedError(sessionId);
+    }
     const session = record.schema_version === 'session/2.0'
       ? this.readValidated(this.sessionCompatibilityPath(sessionId), sessionStateV13Schema)
       : normalizeSessionState(record);
@@ -846,6 +949,7 @@ export class SessionStore {
   writeExecutionSealReceipt(receiptInput: ExecutionSealReceipt): ExecutionSealReceipt {
     return this.withLock(() => {
       const receipt = executionSealReceiptSchema.parse(receiptInput);
+      this.assertSessionV30MutationUnsupported(receipt.session_id);
       const existing = this.readExecutionSealReceiptUnlocked(receipt.session_id, receipt.execution_id);
       if (existing) {
         if (stableJsonUtf8(existing) !== stableJsonUtf8(receipt)) {
@@ -968,6 +1072,7 @@ export class SessionStore {
 
   createExecution(execution: ExecutionState): ExecutionState {
     return this.withLock(() => {
+      this.assertSessionV30MutationUnsupported(execution.session_id);
       const sessionRecord = this.readSessionRecordUnlocked(execution.session_id);
       if (sessionRecord.schema_version === 'session/2.0'
         && sessionStateV20Schema.parse(sessionRecord).archived_at !== null) {
@@ -1003,6 +1108,7 @@ export class SessionStore {
     mutator: (draft: ExecutionState, tx: ExecutionStoreTransaction) => T,
   ): T {
     return this.withLock(() => {
+      this.assertSessionV30MutationUnsupported(sessionId);
       const current = this.readExecutionUnlocked(sessionId, executionId);
       if (expectedRevision !== undefined && current.revision !== expectedRevision) {
         throw new Error(`execution revision conflict: expected ${expectedRevision}, current ${current.revision}`);
@@ -1114,6 +1220,99 @@ export class SessionStore {
     return runs;
   }
 
+  readRunRecord(sessionId: string, runId: string): RunRead {
+    if (!this.lock.isHeld) return this.withLock(() => this.readRunRecordUnlocked(sessionId, runId));
+    return this.readRunRecordUnlocked(sessionId, runId);
+  }
+
+  /** Validate a canonical Run document without normalization or recovery writes. */
+  readRunRecordReadOnly(sessionId: string, runId: string): RunRead {
+    return this.readRunRecordUnlocked(sessionId, runId);
+  }
+
+  private readRunRecordUnlocked(sessionId: string, runId: string): RunRead {
+    const run = this.readValidated(join(this.runDir(sessionId, runId), 'run.json'), runReadSchema);
+    if ('session_id' in run && run.session_id !== sessionId) {
+      throw new Error(`Run Session identity does not match its canonical path: ${sessionId}/${runId}`);
+    }
+    if ('run_id' in run && run.run_id !== runId) {
+      throw new Error(`Run identity does not match its canonical path: ${sessionId}/${runId}`);
+    }
+    return run;
+  }
+
+  readRunV30(sessionId: string, runId: string): RunV30 {
+    const run = this.readRunRecord(sessionId, runId);
+    if (run.schema_version !== 'run/3.0') {
+      throw new Error(`Run ${runId} uses ${run.schema_version}; run/3.0 is required`);
+    }
+    return runV30Schema.parse(run);
+  }
+
+  writeRunV30(runInput: RunV30): RunV30 {
+    return this.withLock(() => {
+      const run = runV30Schema.parse(runInput);
+      if (this.sessionSchemaSelection().writer !== 'session/3.0') {
+        throw new Error('run/3.0 writes require the explicit session/3.0 writer selection');
+      }
+      const session = this.readSessionRecordUnlocked(run.session_id);
+      if (session.schema_version !== 'session/3.0') {
+        throw new Error(`Session ${run.session_id} uses ${session.schema_version}; session/3.0 is required`);
+      }
+      const path = join(this.runDir(run.session_id, run.run_id), 'run.json');
+      if (existsSync(path)) {
+        const current = this.readRunRecordUnlocked(run.session_id, run.run_id);
+        if (current.schema_version !== 'run/3.0') {
+          throw new Error(
+            `Run ${run.run_id} uses ${current.schema_version}; legacy-to-v3 replacement requires the migration engine`,
+          );
+        }
+      }
+      this.writeBatchUnlocked([{
+        path,
+        value: run,
+        schema: runV30Schema,
+      }]);
+      return clone(run);
+    });
+  }
+
+  readRequestReceiptV20(sessionId: string, requestId: string): RequestReceiptV20 | null {
+    if (!this.lock.isHeld) {
+      return this.withLock(() => this.readRequestReceiptV20Unlocked(sessionId, requestId));
+    }
+    return this.readRequestReceiptV20Unlocked(sessionId, requestId);
+  }
+
+  private readRequestReceiptV20Unlocked(sessionId: string, requestId: string): RequestReceiptV20 | null {
+    const path = this.requestReceiptV20Path(sessionId, requestId);
+    if (!existsSync(path)) return null;
+    const receipt = this.readValidated(path, requestReceiptV20Schema);
+    if (receipt.request_id !== requestId) {
+      throw new Error(`Request receipt identity does not match its canonical path: ${requestId}`);
+    }
+    return receipt;
+  }
+
+  readTransitionReceiptV20(
+    sessionId: string,
+    activityRevision: number,
+    transitionId: string,
+  ): TransitionReceiptV20 | null {
+    const read = (): TransitionReceiptV20 | null => {
+      const path = this.transitionReceiptV20Path(sessionId, activityRevision, transitionId);
+      if (!existsSync(path)) return null;
+      const receipt = this.readValidated(path, transitionReceiptV20Schema);
+      if (receipt.session_id !== sessionId
+        || receipt.activity_revision !== activityRevision
+        || receipt.transition_id !== transitionId) {
+        throw new Error(`Transition receipt identity does not match its canonical path: ${transitionId}`);
+      }
+      return receipt;
+    };
+    return this.lock.isHeld ? read() : this.withLock(read);
+  }
+
   readRun(sessionId: string, runId: string): CommandRun {
     if (!this.lock.isHeld) return this.withLock(() => this.readRunUnlocked(sessionId, runId));
     return this.readRunUnlocked(sessionId, runId);
@@ -1125,13 +1324,17 @@ export class SessionStore {
   }
 
   private readRunUnlocked(sessionId: string, runId: string): CommandRun {
-    const raw = this.readValidated(join(this.runDir(sessionId, runId), 'run.json'), commandRunReadSchema);
+    const raw = this.readRunRecordUnlocked(sessionId, runId);
+    if (raw.schema_version === 'run/3.0') {
+      throw new SessionSchemaUnsupportedError(sessionId);
+    }
+    const legacyRaw = commandRunReadSchema.parse(raw);
     const session = this.readBundleUnlocked(sessionId).session;
     const executorPlatform = targetPlatformSchema.safeParse(session.orchestration.executor?.platform);
     const fallbackPlatform = executorPlatform.success ? executorPlatform.data : 'claude';
-    const run = raw.schema_version === 'command-run/1.3'
-      ? raw as CommandRun
-      : normalizeCommandRun(raw, fallbackPlatform);
+    const run = legacyRaw.schema_version === 'command-run/1.3'
+      ? legacyRaw as CommandRun
+      : normalizeCommandRun(legacyRaw, fallbackPlatform);
     if (run.retry_fence && run.retry_fence.consumed_at === null) {
       const replacement = this.findRetryReplacementUnlocked(sessionId, run, fallbackPlatform);
       if (replacement) run.retry_fence.consumed_at = replacement.started_at;
@@ -1176,6 +1379,7 @@ export class SessionStore {
     options: Pick<ExecutionAtomicOptions, 'expectedActivityRevision'> = {},
   ): T {
     return this.withLock(() => {
+      this.assertSessionV30MutationUnsupported(sessionId);
       const currentRecord = this.readSessionRecordUnlocked(sessionId);
       if (currentRecord.schema_version === 'session/2.0'
         && sessionStateV20Schema.parse(currentRecord).archived_at !== null) {
@@ -1218,6 +1422,7 @@ export class SessionStore {
     options: ExecutionAtomicOptions = {},
   ): T {
     return this.withLock(() => {
+      this.assertSessionV30MutationUnsupported(sessionId);
       const currentRecord = this.readSessionRecordUnlocked(sessionId);
       const draft = clone(this.readBundleUnlocked(sessionId));
       this.prepareExecutionCompatibilityDraft(currentRecord, draft);
@@ -1265,6 +1470,7 @@ export class SessionStore {
     options: { allowOpenExecution?: boolean } = {},
   ): T {
     return this.withLock(() => {
+      this.assertLegacySessionMutationAllowed(sessionId);
       const current = this.readBundle(sessionId);
       const openExecution = this.readOpenExecutionUnlocked(sessionId);
       if (openExecution && !options.allowOpenExecution) {
@@ -1301,6 +1507,7 @@ export class SessionStore {
     mutator: (lifecycle: SessionState['lifecycle'], tx: StoreTransaction) => T,
   ): T {
     return this.withLock(() => {
+      this.assertLegacySessionMutationAllowed(sessionId);
       const draft = clone(this.readBundleUnlocked(sessionId));
       const tx = new StoreTransaction(this, sessionId);
       const result = mutator(draft.session.lifecycle, tx);
@@ -1321,6 +1528,7 @@ export class SessionStore {
     mutator: (tx: StoreTransaction) => T,
   ): T {
     return this.withLock(() => {
+      this.assertSessionV30MutationUnsupported(sessionId);
       this.readSessionRecordUnlocked(sessionId);
       const tx = new StoreTransaction(this, sessionId);
       const result = mutator(tx);
@@ -2058,6 +2266,7 @@ export class SessionStore {
     options: { allowOpenExecution?: boolean } = {},
   ): { outcome: TransitionOutcome; replayed: boolean } {
     return this.withLock(() => {
+      this.assertLegacySessionMutationAllowed(sessionId);
       const current = this.readBundleUnlocked(sessionId);
       const openExecution = this.readOpenExecutionUnlocked(sessionId);
       if (openExecution && !options.allowOpenExecution) {
@@ -2108,10 +2317,11 @@ export class SessionStore {
 
   applySessionArchiveReceipt(receiptInput: SessionArchiveReceipt): SessionIdentityV20 {
     return this.withLock<SessionIdentityV20>(() => {
+      const receipt = sessionArchiveReceiptSchema.parse(receiptInput);
+      this.assertSessionV30MutationUnsupported(receipt.session_id);
       if (this.sessionSchemaSelection().writer !== 'session/2.0') {
         throw new Error('session/2.0 archive writes require the explicit project Session schema feature');
       }
-      const receipt = sessionArchiveReceiptSchema.parse(receiptInput);
       if (sessionArchiveReceiptHash(receipt) !== receipt.receipt_hash) {
         throw new Error('Session archive receipt hash mismatch');
       }
@@ -2200,6 +2410,7 @@ export class SessionStore {
     sourceActivityRevision: number;
   }): void {
     this.withLock(() => {
+      this.assertSessionV30MutationUnsupported(input.identity.session_id);
       if (this.sessionSchemaSelection().writer !== 'session/2.0') {
         throw new Error('session/2.0 migration requires the explicit project Session schema feature');
       }
@@ -2493,8 +2704,18 @@ export class SessionStore {
     });
   }
 
+  private assertSessionV30MutationUnsupported(sessionId: string): void {
+    const current = this.readSessionRecordUnlocked(sessionId);
+    if (current.schema_version === 'session/3.0') {
+      throw new SessionSchemaUnsupportedError(sessionId);
+    }
+  }
+
   assertLegacySessionMutationAllowed(sessionId: string): void {
     const current = this.readSessionRecordUnlocked(sessionId);
+    if (current.schema_version === 'session/3.0') {
+      throw new SessionSchemaUnsupportedError(sessionId);
+    }
     if (current.schema_version === 'session/2.0') {
       throw new Error(
         `Session ${sessionId} uses session/2.0; use the statusless Session/Execution store primitives`,
@@ -3008,6 +3229,25 @@ export class SessionStore {
     return target;
   }
 
+  private assertSafeWriteTarget(path: string): string {
+    const target = this.assertWorkflowPath(path);
+    const root = resolve(this.workflowRoot);
+    const relativeParent = relative(root, dirname(target));
+    let cursor = root;
+    for (const segment of relativeParent.split(/[\\/]+/).filter(Boolean)) {
+      cursor = join(cursor, segment);
+      if (!existsSync(cursor)) continue;
+      const details = lstatSync(cursor);
+      if (details.isSymbolicLink() || !details.isDirectory()) {
+        throw new Error(`Unsafe transaction write parent: ${cursor}`);
+      }
+    }
+    if (existsSync(target) && lstatSync(target).isSymbolicLink()) {
+      throw new Error(`Unsafe transaction write target: ${target}`);
+    }
+    return target;
+  }
+
   private readValidated<T>(path: string, schema: z.ZodType<T>): T {
     if (!existsSync(path)) throw new Error(`Missing authoritative file: ${path}`);
     const stat = statSync(path);
@@ -3032,6 +3272,9 @@ export class SessionStore {
     selection: SessionSchemaSelection,
   ): void {
     const dir = this.sessionDir(sessionId);
+    if (selection.writer === 'session/3.0') {
+      throw new Error('session/3.0 creation is reserved for the v3 Session mutation engine');
+    }
     if (selection.writer === 'session/2.0') {
       const identity = createSessionIdentityV20(sessionId, bundle.session.intent, {
         topicIdentity: bundle.session.topic_identity,
@@ -3175,6 +3418,7 @@ export class SessionStore {
     const unique = new Map(writes.map(write => [write.path, write]));
     const entries = [...unique.values()];
     for (const entry of entries) {
+      entry.path = this.assertSafeWriteTarget(entry.path);
       if (entry.raw !== undefined && entry.value !== undefined) {
         throw new Error(`Transaction write cannot contain both JSON and raw content: ${entry.path}`);
       }
@@ -3249,6 +3493,12 @@ export class SessionStore {
 
   private backup(path: string): void {
     const backupDir = join(dirname(path), '.backups');
+    if (existsSync(backupDir)) {
+      const details = lstatSync(backupDir);
+      if (details.isSymbolicLink() || !details.isDirectory()) {
+        throw new Error(`Unsafe backup directory: ${backupDir}`);
+      }
+    }
     mkdirSync(backupDir, { recursive: true });
     const base = basename(path).replace(/\.json$/i, '');
     const backupPath = join(backupDir, `${base}-${timestamp()}-${process.pid}-${Date.now()}.json`);
@@ -3260,6 +3510,143 @@ export class SessionStore {
     for (const old of backups.slice(MAX_BACKUPS)) {
       try { unlinkSync(join(backupDir, old)); } catch { /* ignore */ }
     }
+  }
+}
+
+export class SessionV30StoreTransaction {
+  private readonly writes: JsonWrite[] = [];
+
+  constructor(private readonly store: SessionStore, private readonly sessionId: string) {}
+
+  pendingWrites(): JsonWrite[] {
+    return [...this.writes];
+  }
+
+  private assertNotReceiptPath(path: string): void {
+    const receiptRoot = resolve(this.store.receiptsDir(this.sessionId));
+    const target = resolve(path);
+    if (target === receiptRoot || target.startsWith(`${receiptRoot}${sep}`)) {
+      throw new Error('generic v3 transaction writes cannot target immutable receipt paths');
+    }
+  }
+
+  sessionExists(): boolean {
+    return this.store.sessionExists(this.sessionId);
+  }
+
+  runExists(runId: string): boolean {
+    return existsSync(join(this.store.runDir(this.sessionId, runId), 'run.json'));
+  }
+
+  readSession(): SessionStateV30 {
+    return this.store.readSessionV30(this.sessionId);
+  }
+
+  readRun(runId: string): RunV30 {
+    return this.store.readRunV30(this.sessionId, runId);
+  }
+
+  readRequestReceipt(requestId: string): RequestReceiptV20 | null {
+    return this.store.readRequestReceiptV20(this.sessionId, requestId);
+  }
+
+  readTransitionReceipt(activityRevision: number, transitionId: string): TransitionReceiptV20 | null {
+    return this.store.readTransitionReceiptV20(this.sessionId, activityRevision, transitionId);
+  }
+
+  readJson<T>(path: string, schema: z.ZodType<T>): T {
+    return this.store.readJsonFileReadOnly(path, schema);
+  }
+
+  writeSession(sessionInput: SessionStateV30): void {
+    const session = sessionStateV30Schema.parse(sessionInput);
+    if (session.session_id !== this.sessionId) throw new Error('v3 Session transaction identity mismatch');
+    this.writes.push({
+      path: join(this.store.sessionDir(this.sessionId), 'session.json'),
+      value: session,
+      schema: sessionStateV30Schema,
+    });
+  }
+
+  writeRun(runInput: RunV30): void {
+    const run = runV30Schema.parse(runInput);
+    if (run.session_id !== this.sessionId) throw new Error('v3 Run transaction Session identity mismatch');
+    this.writes.push({
+      path: join(this.store.runDir(this.sessionId, run.run_id), 'run.json'),
+      value: run,
+      schema: runV30Schema,
+    });
+  }
+
+  writeRequestReceipt(receiptInput: RequestReceiptV20): void {
+    const receipt = requestReceiptV20Schema.parse(receiptInput);
+    const path = this.store.requestReceiptV20Path(this.sessionId, receipt.request_id);
+    const pending = [...this.writes].reverse().find(write => write.path === path)?.value;
+    if (pending !== undefined) {
+      const existing = requestReceiptV20Schema.parse(pending);
+      if (stableJsonUtf8(existing) !== stableJsonUtf8(receipt)) {
+        throw new Error(`v3 request receipt is immutable: ${receipt.request_id}`);
+      }
+      return;
+    }
+    const existing = this.store.readRequestReceiptV20(this.sessionId, receipt.request_id);
+    if (existing) {
+      if (stableJsonUtf8(existing) !== stableJsonUtf8(receipt)) {
+        throw new Error(`v3 request receipt is immutable: ${receipt.request_id}`);
+      }
+      return;
+    }
+    this.writes.push({
+      path,
+      value: receipt,
+      schema: requestReceiptV20Schema,
+    });
+  }
+
+  writeTransitionReceipt(receiptInput: TransitionReceiptV20): void {
+    const receipt = transitionReceiptV20Schema.parse(receiptInput);
+    if (receipt.session_id !== this.sessionId) {
+      throw new Error('v3 transition receipt Session identity mismatch');
+    }
+    const path = this.store.transitionReceiptV20Path(
+      this.sessionId,
+      receipt.activity_revision,
+      receipt.transition_id,
+    );
+    const pending = [...this.writes].reverse().find(write => write.path === path)?.value;
+    if (pending !== undefined) {
+      const existing = transitionReceiptV20Schema.parse(pending);
+      if (stableJsonUtf8(existing) !== stableJsonUtf8(receipt)) {
+        throw new Error(`v3 transition receipt is immutable: ${receipt.transition_id}`);
+      }
+      return;
+    }
+    const existing = this.store.readTransitionReceiptV20(
+      this.sessionId,
+      receipt.activity_revision,
+      receipt.transition_id,
+    );
+    if (existing) {
+      if (stableJsonUtf8(existing) !== stableJsonUtf8(receipt)) {
+        throw new Error(`v3 transition receipt is immutable: ${receipt.transition_id}`);
+      }
+      return;
+    }
+    this.writes.push({
+      path,
+      value: receipt,
+      schema: transitionReceiptV20Schema,
+    });
+  }
+
+  writeJson(path: string, value: unknown, schema: z.ZodType, mode?: number): void {
+    this.assertNotReceiptPath(path);
+    this.writes.push({ path, value, schema, mode });
+  }
+
+  writeRaw(path: string, raw: string, mode?: number): void {
+    this.assertNotReceiptPath(path);
+    this.writes.push({ path, raw, mode });
   }
 }
 

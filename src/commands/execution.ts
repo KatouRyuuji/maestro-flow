@@ -16,9 +16,7 @@ import {
   sealExecution,
   startExecution,
 } from '../run/execution.js';
-import { maestroCapabilitiesSchema } from '../run/protocol-schemas.js';
 import { SessionStore } from '../run/store.js';
-import { getPackageVersion } from '../utils/get-version.js';
 import {
   addAuditedExecutionOptions,
   addExecutionAcquireOptions,
@@ -154,31 +152,6 @@ function handleError(
   } else {
     reportExecutionHuman(error);
   }
-}
-
-export function registerCapabilitiesCommand(program: Command): void {
-  program
-    .command('capabilities')
-    .description('Report strict CLI protocol capabilities')
-    .option('--json', 'emit maestro-capabilities/1.0 JSON')
-    .option('--workflow-root <path>', 'accepted for command invocation parity', process.cwd())
-    .action(() => {
-      const result = maestroCapabilitiesSchema.parse({
-        schema_version: 'maestro-capabilities/1.0',
-        cli_version: getPackageVersion(),
-        session_schema_writes: ['session/1.3', 'session/2.0'],
-        execution_schema_writes: ['execution/1.0'],
-        run_response_writes: ['run-response/1.0', 'run-response/1.1'],
-        features: {
-          execution_generation: true,
-          core_execution_lease: true,
-          execution_handoff: true,
-          session_statusless: true,
-          legacy_session_aliases: true,
-        },
-      });
-      process.stdout.write(`${JSON.stringify(result)}\n`);
-    });
 }
 
 export function registerExecutionCommand(program: Command): void {

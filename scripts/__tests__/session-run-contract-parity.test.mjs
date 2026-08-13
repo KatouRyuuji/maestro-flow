@@ -12,6 +12,7 @@ const fixtureFiles = [
   'src/run/defaults.ts',
   'src/run/protocol-schemas.ts',
   'src/run/runtime.ts',
+  'src/commands/capabilities.ts',
   'src/commands/execution.ts',
   'src/commands/execution-cli-shared.ts',
   'src/commands/run.ts',
@@ -282,6 +283,13 @@ describe('Session Run contract parity release gate', () => {
         },
       },
       {
+        dimension: 'response-v12',
+        id: 'response.schemas.compatibility',
+        mutate(root) {
+          replaceOnce(root, 'src/run/protocol-schemas.ts', "schema_version: z.literal('run-response/1.2')", "schema_version: z.literal('run-response/9.9')");
+        },
+      },
+      {
         dimension: 'brief-result-reader-membership',
         id: 'brief.knowledge-context.schema',
         mutate(root) {
@@ -304,7 +312,7 @@ describe('Session Run contract parity release gate', () => {
         dimension: 'capabilities-feature-inversion',
         id: 'capabilities.exact',
         mutate(root) {
-          replaceOnce(root, 'src/commands/execution.ts', 'session_statusless: true,', 'session_statusless: false,');
+          replaceOnce(root, 'src/commands/capabilities.ts', 'session_statusless: !v3,', 'session_statusless: v3Ready,');
         },
       },
       {
@@ -313,9 +321,9 @@ describe('Session Run contract parity release gate', () => {
         mutate(root) {
           replaceOnce(
             root,
-            'src/commands/execution.ts',
+            'src/commands/capabilities.ts',
+            "session_schema_writes: ['session/1.3', 'session/2.0', 'session/3.0'],",
             "session_schema_writes: ['session/1.3', 'session/2.0'],",
-            "session_schema_writes: ['session/1.3'],",
           );
         },
       },

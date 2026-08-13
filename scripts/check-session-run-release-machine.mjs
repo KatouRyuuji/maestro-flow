@@ -12,6 +12,13 @@ const binPath = join(repoRoot, 'bin', 'maestro.js');
 
 const REQUIRED_BEHAVIOR_PROOFS = Object.freeze([
   'capabilities-exact',
+  'v3-capabilities-branch',
+  'v3-workflow-root-equals-routing',
+  'v3-participant-register-status-unregister-replay',
+  'v3-help-json-catalog',
+  'v2-help-run-compatibility',
+  'v3-retired-execution-structured-response',
+  'v3-run-complete-requires-advance',
   'statusless-create-migration-gate',
   'archive-unarchive-cas-receipt-chain',
   'lease-acquisition-handoff-stale-release-seal',
@@ -65,6 +72,18 @@ function enableStatusless(projectRoot) {
       schema_version: 'session-schema-selection/1.0',
       writer: 'session/2.0',
       features: { session_statusless: true },
+    },
+  }, null, 2)}\n`, 'utf8');
+}
+
+function enableV3(projectRoot) {
+  const workflowRoot = join(projectRoot, '.workflow');
+  mkdirSync(workflowRoot, { recursive: true });
+  writeFileSync(join(workflowRoot, 'config.json'), `${JSON.stringify({
+    session_schema: {
+      schema_version: 'session-schema-selection/1.0',
+      writer: 'session/3.0',
+      features: { session_statusless: false },
     },
   }, null, 2)}\n`, 'utf8');
 }
@@ -392,19 +411,227 @@ async function main() {
       {
         schema_version: 'maestro-capabilities/1.0',
         cli_version: '<version>',
-        session_schema_writes: ['session/1.3', 'session/2.0'],
+        session_schema_writes: ['session/1.3', 'session/2.0', 'session/3.0'],
         execution_schema_writes: ['execution/1.0'],
-        run_response_writes: ['run-response/1.0', 'run-response/1.1'],
+        run_response_writes: ['run-response/1.0', 'run-response/1.1', 'run-response/1.2'],
         features: {
           execution_generation: true,
           core_execution_lease: true,
           execution_handoff: true,
           session_statusless: true,
           legacy_session_aliases: true,
+          session_run_minimal_v3: false,
+          entity_revision_cas: false,
+          participant_identity: false,
+          request_receipts_v2: false,
+          execution_lease: true,
+          operation_registry: false,
         },
       },
     );
     recordProof(proofs, 'capabilities-exact');
+
+    const v3Root = join(projectRoot, 'session-v3');
+    enableV3(v3Root);
+    const v3RootArg = `--workflow-root=${v3Root}`;
+    const v3CapabilityResult = invoke(['capabilities', '--json', v3RootArg]);
+    assert.equal(v3CapabilityResult.status, 0, 'v3 capabilities exit');
+    const v3Capabilities = JSON.parse(assertMachineStreams(v3CapabilityResult, 'v3 capabilities'));
+    assert.equal(typeof v3Capabilities.cli_version, 'string');
+    assert.deepEqual(
+      { ...v3Capabilities, cli_version: '<version>' },
+      {
+        schema_version: 'maestro-capabilities/1.0',
+        cli_version: '<version>',
+        session_schema_writes: ['session/1.3', 'session/2.0', 'session/3.0'],
+        execution_schema_writes: [],
+        run_response_writes: ['run-response/1.0', 'run-response/1.1', 'run-response/1.2'],
+        features: {
+          execution_generation: false,
+          core_execution_lease: false,
+          execution_handoff: false,
+          session_statusless: false,
+          legacy_session_aliases: false,
+          session_run_minimal_v3: true,
+          entity_revision_cas: true,
+          participant_identity: true,
+          request_receipts_v2: true,
+          execution_lease: false,
+          operation_registry: false,
+        },
+      },
+    );
+    recordProof(proofs, 'v3-capabilities-branch');
+
+    const v3OpenArgs = [
+      'session', 'open', 'release v3 workspace', '--id', 'release-v3',
+      '--participant', 'window-bootstrap', '--actor', 'release-actor',
+      '--request-id', 'req-v3-open', '--reason', 'open v3 release proof',
+      '--definition-of-done', 'release machine v3 proofs pass', '--json', v3RootArg,
+    ];
+    const v3Opened = parseEnvelope(invoke(v3OpenArgs), 'v3 Session open with equals root', 'run-response/1.2');
+    assert.equal(v3Opened.operation, 'session-open');
+    assert.equal(v3Opened.replay?.status, 'applied');
+    assert.equal(v3Opened.result.schema_version, 'session/3.0');
+    assert.equal(v3Opened.result.session_id, 'release-v3');
+    const v3Status = parseEnvelope(invoke([
+      'session', 'status', '--session', 'release-v3', '--json', v3RootArg,
+    ]), 'v3 Session status with equals root', 'run-response/1.2');
+    assert.equal(v3Status.operation, 'session-status');
+    assert.equal(v3Status.result.schema_version, 'session/3.0');
+    recordProof(proofs, 'v3-workflow-root-equals-routing');
+
+    const participantCommon = [
+      '--session', 'release-v3', '--participant', 'window-release',
+      '--actor', 'release-actor', '--json', v3RootArg,
+    ];
+    const participantRegisterArgs = [
+      'participant', 'register', ...participantCommon, '--request-id', 'req-participant-register',
+    ];
+    const participantRegistered = parseEnvelope(
+      invoke(participantRegisterArgs), 'v3 participant register', 'run-response/1.2',
+    );
+    assert.equal(participantRegistered.operation, 'participant-register');
+    assert.equal(participantRegistered.result.outcome, 'applied');
+    assert.equal(participantRegistered.result.participant.status, 'registered');
+    const participantRegisterReplay = parseEnvelope(
+      invoke(participantRegisterArgs), 'v3 participant register replay', 'run-response/1.2',
+    );
+    assert.equal(participantRegisterReplay.result.outcome, 'replayed');
+    assert.deepEqual(participantRegisterReplay.result.participant, participantRegistered.result.participant);
+    const participantRegisteredStatus = parseEnvelope(invoke([
+      'participant', 'status', '--session', 'release-v3', '--participant', 'window-release',
+      '--actor', 'release-actor', '--request-id', 'req-participant-status-registered', '--json', v3RootArg,
+    ]), 'v3 registered participant status', 'run-response/1.2');
+    assert.deepEqual(participantRegisteredStatus.result.participants, [participantRegistered.result.participant]);
+
+    const v3HelpResult = invoke(['help', '--json', v3RootArg]);
+    assert.equal(v3HelpResult.status, 0, 'v3 help --json exit');
+    const v3Help = JSON.parse(assertMachineStreams(v3HelpResult, 'v3 help --json'));
+    assert.equal(v3Help.schema_version, 'help-catalog/1.0');
+    const expectedV3Commands = [
+      'execution attach', 'execution handoff accept', 'execution handoff cancel', 'execution handoff prepare',
+      'execution lease heartbeat', 'execution lease recover', 'execution lease release', 'execution lease status',
+      'execution operation claim', 'execution operation heartbeat', 'execution operation release',
+      'execution operation status', 'execution pause', 'execution resolve', 'execution resume', 'execution seal',
+      'execution start', 'execution status', 'participant register', 'participant status', 'participant unregister',
+      'run brief', 'run cancel', 'run check', 'run complete', 'run create', 'run next', 'run seal', 'run transition',
+      'session archive', 'session chain audit', 'session chain insert', 'session chain replace', 'session chain skip',
+      'session complete', 'session migrate', 'session open', 'session pause', 'session resume', 'session resume-view',
+      'session status',
+    ].sort((left, right) => left.localeCompare(right));
+    assert.deepEqual(v3Help.commands.map(item => item.command), expectedV3Commands);
+    assert.equal(new Set(v3Help.commands.map(item => item.command)).size, expectedV3Commands.length);
+    const v3CompleteHelp = v3Help.commands.find(item => item.command === 'run complete');
+    assert.equal(v3CompleteHelp?.cas_target, 'run');
+    assert.equal(v3CompleteHelp?.options.includes('--advance'), true);
+    const retiredHelp = v3Help.commands.find(item => item.command === 'execution status');
+    assert.equal(retiredHelp?.deprecated, true);
+    assert.equal(typeof retiredHelp?.replacement, 'string');
+    recordProof(proofs, 'v3-help-json-catalog');
+
+    const v2RunHelp = invoke(['help', 'run']);
+    assert.equal(v2RunHelp.status, 0, `v2 help run exit: ${v2RunHelp.stderr}`);
+    assert.equal(v2RunHelp.stderr, '', 'v2 help run stderr');
+    assert.match(v2RunHelp.stdout, /Usage: maestro run/);
+    assert.equal(v2RunHelp.stdout.includes('help-catalog/1.0'), false);
+    recordProof(proofs, 'v2-help-run-compatibility');
+
+    const retiredExecutionResult = invoke([
+      'execution', 'status', '--session', 'release-v3', '--request-id', 'req-retired-execution',
+      '--json', v3RootArg,
+    ]);
+    assert.equal(retiredExecutionResult.status, 1, 'v3 retired Execution exit');
+    const retiredExecution = parseEnvelope(
+      retiredExecutionResult, 'v3 retired Execution structured response', 'run-response/1.2',
+    );
+    assert.equal(retiredExecution.operation, 'execution-status');
+    assert.equal(retiredExecution.disposition, 'domain_error');
+    assert.equal(retiredExecution.error?.code, 'SESSION_SCHEMA_UNSUPPORTED');
+    assert.deepEqual(retiredExecution.error?.details, {
+      deprecated_command: 'execution status', replacement_command: 'session status / run check',
+    });
+    assert.deepEqual(retiredExecution.error?.next_actions, [
+      'use-session-status', 'use-run-check', 'use-participant-status',
+    ]);
+    recordProof(proofs, 'v3-retired-execution-structured-response');
+
+    const v3Store = new SessionStore(v3Root);
+    const insertStep = parseEnvelope(invoke([
+      'session', 'chain', 'insert', '--session', 'release-v3', '--step-id', 'step-release',
+      '--command', 'release-execution', '--participant', 'window-release', '--actor', 'release-actor',
+      '--request-id', 'req-v3-chain-insert', '--reason', 'add release proof step',
+      '--expected-orchestration-revision', '0', '--json', v3RootArg,
+    ]), 'v3 chain insert', 'run-response/1.2');
+    assert.equal(insertStep.revision?.revision, 1);
+    const v3Next = parseEnvelope(invoke([
+      'run', 'next', '--session', 'release-v3', '--run', 'release-v3-run',
+      '--participant', 'window-release', '--actor', 'release-actor', '--request-id', 'req-v3-next',
+      '--reason', 'start release proof Run', '--expected-orchestration-revision', '1', '--json', v3RootArg,
+    ]), 'v3 run next', 'run-response/1.2');
+    assert.equal(v3Next.result.status, 'running');
+    assert.equal(v3Next.result.revision, 1);
+    const completeWithoutAdvanceArgs = [
+      'run', 'complete', 'release-v3-run', '--session', 'release-v3', '--summary', 'release proof done',
+      '--participant', 'window-release', '--actor', 'release-actor', '--request-id', 'req-v3-complete-no-advance',
+      '--reason', 'prove atomic advance requirement', '--expected-run-revision', '1',
+      '--expected-orchestration-revision', '2', '--json', v3RootArg,
+    ];
+    const completeWithoutAdvanceResult = invoke(completeWithoutAdvanceArgs);
+    assert.equal(completeWithoutAdvanceResult.status, 1, 'v3 complete without --advance exit');
+    const completeWithoutAdvance = parseEnvelope(
+      completeWithoutAdvanceResult, 'v3 complete without --advance', 'run-response/1.2',
+    );
+    assert.equal(completeWithoutAdvance.operation, 'complete');
+    assert.match(completeWithoutAdvance.error?.message ?? '', /requires --advance/);
+    assert.deepEqual(
+      {
+        run_status: v3Store.readRunV30('release-v3', 'release-v3-run').status,
+        run_revision: v3Store.readRunV30('release-v3', 'release-v3-run').revision,
+        orchestration_revision: v3Store.readSessionV30('release-v3').orchestration_revision,
+        step_status: v3Store.readSessionV30('release-v3').chain[0].status,
+      },
+      { run_status: 'running', run_revision: 1, orchestration_revision: 2, step_status: 'running' },
+      'v3 complete without --advance mutation guard',
+    );
+    const completeWithAdvance = parseEnvelope(invoke([
+      ...completeWithoutAdvanceArgs.slice(0, -2), '--advance', '--json', v3RootArg,
+    ]), 'v3 complete with --advance', 'run-response/1.2');
+    assert.equal(completeWithAdvance.result.run_revision, 2);
+    assert.equal(completeWithAdvance.result.orchestration_revision, 3);
+    assert.equal(v3Store.readRunV30('release-v3', 'release-v3-run').status, 'completed');
+    assert.equal(v3Store.readSessionV30('release-v3').chain[0].status, 'completed');
+    recordProof(proofs, 'v3-run-complete-requires-advance');
+
+    const participantSessionBeforeUnregister = v3Store.readSessionV30('release-v3');
+    const participantUnregisterArgs = [
+      'participant', 'unregister', ...participantCommon, '--request-id', 'req-participant-unregister',
+    ];
+    const participantUnregistered = parseEnvelope(
+      invoke(participantUnregisterArgs), 'v3 participant unregister', 'run-response/1.2',
+    );
+    assert.equal(participantUnregistered.result.outcome, 'applied');
+    assert.equal(participantUnregistered.result.participant.status, 'unregistered');
+    const participantUnregisterReplay = parseEnvelope(
+      invoke(participantUnregisterArgs), 'v3 participant unregister replay', 'run-response/1.2',
+    );
+    assert.equal(participantUnregisterReplay.result.outcome, 'replayed');
+    assert.deepEqual(participantUnregisterReplay.result.participant, participantUnregistered.result.participant);
+    const participantUnregisteredStatus = parseEnvelope(invoke([
+      'participant', 'status', '--session', 'release-v3', '--participant', 'window-release',
+      '--actor', 'release-actor', '--request-id', 'req-participant-status-unregistered', '--json', v3RootArg,
+    ]), 'v3 unregistered participant status', 'run-response/1.2');
+    assert.deepEqual(participantUnregisteredStatus.result.participants, [participantUnregistered.result.participant]);
+    const participantSessionAfterUnregister = v3Store.readSessionV30('release-v3');
+    assert.equal(
+      participantSessionAfterUnregister.identity_revision,
+      participantSessionBeforeUnregister.identity_revision + 1,
+    );
+    assert.equal(
+      participantSessionAfterUnregister.orchestration_revision,
+      participantSessionBeforeUnregister.orchestration_revision,
+    );
+    recordProof(proofs, 'v3-participant-register-status-unregister-replay');
 
     const statuslessRoot = join(projectRoot, 'statusless-create');
     enableStatusless(statuslessRoot);

@@ -7,8 +7,9 @@ import { join } from 'node:path';
 import { maestroCapabilitiesSchema, runResponseV11Schema } from '../run/protocol-schemas.js';
 import { SessionStore } from '../run/store.js';
 import { emitExecutionError, sanitizeCommanderError } from './execution-cli-shared.js';
+import { registerCapabilitiesCommand } from './capabilities.js';
 import { registerRunCommand } from './run.js';
-import { registerCapabilitiesCommand, registerExecutionCommand } from './execution.js';
+import { registerExecutionCommand } from './execution.js';
 
 let root: string;
 let stdout: string[];
@@ -57,25 +58,66 @@ async function invokeExecution(...args: string[]): Promise<ReturnType<typeof run
 }
 
 describe('maestro capabilities', () => {
-  it('advertises the actual Wave 1 writer and status compatibility', async () => {
+  async function capabilities(workflowRoot: string) {
+    stdout = [];
     const program = new Command();
     program.exitOverride();
     registerCapabilitiesCommand(program);
-    await program.parseAsync(['node', 'maestro', 'capabilities', '--json']);
-
+    await program.parseAsync(['node', 'maestro', 'capabilities', '--json', '--workflow-root', workflowRoot]);
     expect(stdout).toHaveLength(1);
-    expect(maestroCapabilitiesSchema.parse(JSON.parse(stdout[0]))).toEqual({
+    return maestroCapabilitiesSchema.parse(JSON.parse(stdout[0]));
+  }
+
+  it('advertises the existing v2 mutation protocol for non-v3 workspaces', async () => {
+    expect(await capabilities(root)).toEqual({
       schema_version: 'maestro-capabilities/1.0',
       cli_version: expect.any(String),
-      session_schema_writes: ['session/1.3', 'session/2.0'],
+      session_schema_writes: ['session/1.3', 'session/2.0', 'session/3.0'],
       execution_schema_writes: ['execution/1.0'],
-      run_response_writes: ['run-response/1.0', 'run-response/1.1'],
+      run_response_writes: ['run-response/1.0', 'run-response/1.1', 'run-response/1.2'],
       features: {
         execution_generation: true,
         core_execution_lease: true,
         execution_handoff: true,
         session_statusless: true,
         legacy_session_aliases: true,
+        session_run_minimal_v3: false,
+        entity_revision_cas: false,
+        participant_identity: false,
+        request_receipts_v2: false,
+        execution_lease: true,
+        operation_registry: false,
+      },
+    });
+  });
+
+  it('advertises the complete minimal v3 protocol only for session/3.0 workspaces', async () => {
+    mkdirSync(join(root, '.workflow'), { recursive: true });
+    writeFileSync(join(root, '.workflow', 'config.json'), JSON.stringify({
+      session_schema: {
+        schema_version: 'session-schema-selection/1.0',
+        writer: 'session/3.0',
+        features: { session_statusless: false },
+      },
+    }));
+    expect(await capabilities(root)).toEqual({
+      schema_version: 'maestro-capabilities/1.0',
+      cli_version: expect.any(String),
+      session_schema_writes: ['session/1.3', 'session/2.0', 'session/3.0'],
+      execution_schema_writes: [],
+      run_response_writes: ['run-response/1.0', 'run-response/1.1', 'run-response/1.2'],
+      features: {
+        execution_generation: false,
+        core_execution_lease: false,
+        execution_handoff: false,
+        session_statusless: false,
+        legacy_session_aliases: false,
+        session_run_minimal_v3: true,
+        entity_revision_cas: true,
+        participant_identity: true,
+        request_receipts_v2: true,
+        execution_lease: false,
+        operation_registry: false,
       },
     });
   });

@@ -31,7 +31,7 @@ const commandLoaders: Record<string, () => Promise<(p: Command) => void>> = {
   serve:      async () => (await import('./commands/serve.js')).registerServeCommand,
   run:        async () => (await import('./commands/run.js')).registerRunCommand,
   execution:  async () => (await import('./commands/execution.js')).registerExecutionCommand,
-  capabilities: async () => (await import('./commands/execution.js')).registerCapabilitiesCommand,
+  capabilities: async () => (await import('./commands/capabilities.js')).registerCapabilitiesCommand,
   plan:       async () => (await import('./commands/plan.js')).registerPlanCommand,
   session:    async () => (await import('./commands/session.js')).registerSessionCommand,
   skills:     async () => (await import('./commands/skills.js')).registerSkillsCommand,
@@ -83,6 +83,7 @@ const commandLoaders: Record<string, () => Promise<(p: Command) => void>> = {
   explore:    async () => (await import('./commands/explore.js')).registerExploreCommand,
   moa:        async () => (await import('./commands/moa.js')).registerMoaCommand,
   timeline:   async () => (await import('./commands/timeline.js')).registerTimelineCommand,
+  participant: async () => (await import('./commands/participant.js')).registerParticipantCommand,
 };
 
 // Determine which command is being invoked from argv (if any)
@@ -97,15 +98,56 @@ if (argv.length === 1 && (argv[0] === '-V' || argv[0] === '--version')) {
   process.exit(0);
 }
 
-const requestedCommand = argv.find(a => !a.startsWith('-'));
+function preDispatchArguments(args: string[]): { routingArgs: string[]; workflowRoot: string } {
+  const routingArgs: string[] = [];
+  let workflowRoot = process.cwd();
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index];
+    if (token === '--workflow-root') {
+      const value = args[index + 1];
+      if (value !== undefined && !value.startsWith('-')) {
+        workflowRoot = value;
+        index += 1;
+      }
+      continue;
+    }
+    if (token.startsWith('--workflow-root=')) {
+      const value = token.slice('--workflow-root='.length);
+      if (value) workflowRoot = value;
+      continue;
+    }
+    routingArgs.push(token);
+  }
+  return { routingArgs, workflowRoot };
+}
+
+const preDispatch = preDispatchArguments(argv);
+const requestedCommand = preDispatch.routingArgs.find(a => !a.startsWith('-'));
+const requestedCommandIndex = requestedCommand ? preDispatch.routingArgs.indexOf(requestedCommand) : -1;
+const requestedSubcommand = requestedCommandIndex >= 0 ? preDispatch.routingArgs[requestedCommandIndex + 1] : undefined;
+const requestedWorkflowRoot = preDispatch.workflowRoot;
+let v3WriterMode = false;
+if (requestedCommand === 'run' || requestedCommand === 'session'
+  || requestedCommand === 'participant' || requestedCommand === 'execution' || requestedCommand === 'help') {
+  const { SessionStore } = await import('./run/store.js');
+  v3WriterMode = new SessionStore(requestedWorkflowRoot).sessionSchemaSelection().writer === 'session/3.0';
+}
 const runMachineSubcommands = new Set([
   'create', 'new', 'next', 'complete', 'brief', 'recall', 'recall-confirm', 'fork', 'import',
   'check', 'decide', 'seal-session', 'accept-reuse',
 ]);
 const planMachineSubcommands = new Set(['publish']);
 const sessionMachineSubcommands = new Set(['create', 'resolve', 'resume', 'seal', 'chain', 'meta']);
-const requestedCommandIndex = requestedCommand ? argv.indexOf(requestedCommand) : -1;
-const requestedSubcommand = requestedCommandIndex >= 0 ? argv[requestedCommandIndex + 1] : undefined;
+const v3SessionMachineSubcommands = new Set([
+  'open', 'migrate', 'pause', 'resume', 'complete', 'archive', 'status', 'resume-view', 'chain',
+]);
+const v3RunMachineSubcommands = new Set(['next', 'create', 'complete', 'transition', 'cancel', 'seal', 'brief', 'check']);
+const v3MachineMode = argv.includes('--json') && v3WriterMode && (
+  (requestedCommand === 'session' && v3SessionMachineSubcommands.has(requestedSubcommand ?? ''))
+  || (requestedCommand === 'run' && v3RunMachineSubcommands.has(requestedSubcommand ?? ''))
+  || requestedCommand === 'participant'
+  || requestedCommand === 'execution'
+);
 const executionRunFlags = [
   '--execution', '--generation', '--expected-execution-revision', '--owner-id', '--owner-kind', '--lease-epoch',
   '--lease-id',
@@ -159,6 +201,44 @@ function inferMachineOperation(command: 'run' | 'session' | 'plan', args: string
   return 'resolve';
 }
 
+type V3MachineOperation =
+  | 'create' | 'next' | 'complete' | 'brief' | 'check'
+  | 'session-open' | 'session-migrate' | 'session-pause' | 'session-resume' | 'session-complete' | 'session-archive'
+  | 'session-status' | 'session-resume-view' | 'session-chain-audit'
+  | 'session-chain-insert' | 'session-chain-skip' | 'session-chain-replace'
+  | 'run-transition' | 'run-cancel' | 'run-seal'
+  | 'participant-register' | 'participant-status' | 'participant-unregister';
+
+function inferV3MachineOperation(command: string | undefined, subcommand: string | undefined): V3MachineOperation {
+  if (command === 'execution') return inferExecutionMachineOperation(command, argv) as V3MachineOperation;
+  if (command === 'participant') {
+    if (subcommand === 'status' || subcommand === 'unregister') return `participant-${subcommand}`;
+    return 'participant-register';
+  }
+  if (command === 'session') {
+    if (subcommand === 'chain') {
+      const chainIndex = argv.indexOf('chain');
+      const action = argv.slice(chainIndex + 1).find(token => !token.startsWith('-'));
+      if (action === 'insert' || action === 'skip' || action === 'replace' || action === 'audit') {
+        return `session-chain-${action}`;
+      }
+      return 'session-chain-audit';
+    }
+    if (subcommand === 'migrate') return 'session-migrate';
+    if (subcommand === 'pause' || subcommand === 'resume' || subcommand === 'complete'
+      || subcommand === 'archive' || subcommand === 'status' || subcommand === 'resume-view') {
+      return `session-${subcommand}`;
+    }
+    return 'session-open';
+  }
+  if (subcommand === 'next' || subcommand === 'create' || subcommand === 'complete'
+    || subcommand === 'brief' || subcommand === 'check') {
+    return subcommand;
+  }
+  if (subcommand === 'transition') return 'run-transition';
+  return subcommand === 'seal' ? 'run-seal' : 'run-cancel';
+}
+
 function inferExecutionMachineOperation(command: string | undefined, args: string[]): string {
   if (command === 'capabilities') return 'capabilities';
   if (command === 'run') {
@@ -179,12 +259,14 @@ function inferExecutionMachineOperation(command: string | undefined, args: strin
   const tail = args.slice(executionIndex + 1);
   const primaryIndex = tail.findIndex(token => !token.startsWith('-'));
   const primary = primaryIndex >= 0 ? tail[primaryIndex] : 'status';
-  if (primary === 'handoff' || primary === 'lease') {
+  if (primary === 'handoff' || primary === 'lease' || primary === 'operation') {
     const fallback = primary === 'handoff' ? 'prepare' : 'status';
     const candidate = tail.slice(primaryIndex + 1).find(token => !token.startsWith('-')) ?? fallback;
     const valid = primary === 'handoff'
       ? ['prepare', 'accept', 'cancel']
-      : ['status', 'heartbeat', 'release', 'recover'];
+      : primary === 'lease'
+        ? ['status', 'heartbeat', 'release', 'recover']
+        : ['claim', 'heartbeat', 'release', 'status'];
     return `execution-${primary}-${valid.includes(candidate) ? candidate : fallback}`;
   }
   return ['start', 'attach', 'status', 'pause', 'resolve', 'resume', 'seal'].includes(primary)
@@ -192,16 +274,54 @@ function inferExecutionMachineOperation(command: string | undefined, args: strin
     : 'execution-status';
 }
 
-if (runMachineMode || executionMachineMode) {
+if (runMachineMode || executionMachineMode || v3MachineMode) {
   program.exitOverride();
   program.configureOutput({ writeOut: () => undefined, writeErr: () => undefined });
 }
 
-if (requestedCommand && requestedCommand in commandLoaders) {
-  // Load only the requested command module
-  const register = await commandLoaders[requestedCommand]();
+async function requestedRegistration(name: string): Promise<(p: Command) => void> {
+  if (v3WriterMode && name === 'run') return (await import('./commands/run-v3.js')).registerRunV3Command;
+  if (v3WriterMode && name === 'session') return (await import('./commands/session-v3.js')).registerSessionV3Command;
+  if (v3WriterMode && name === 'execution') {
+    return (await import('./commands/execution-v3-retired.js')).registerExecutionV3RetiredCommand;
+  }
+  return commandLoaders[name]();
+}
+
+const jsonHelpMode = requestedCommand === 'help' && argv.includes('--json');
+const requestedCommandAvailable = requestedCommand !== undefined
+  && requestedCommand in commandLoaders
+  && (requestedCommand !== 'participant' || v3WriterMode);
+
+if (jsonHelpMode) {
+  const { registerHelpJsonCommand } = await import('./commands/help-json.js');
+  registerHelpJsonCommand(program);
+} else if (requestedCommand === 'help') {
+  // Do not shadow Commander's implicit `help [command]` command. Register the
+  // requested target (or the full tree for bare/unknown help) and let Commander
+  // render its normal help output.
+  const helpTargetAvailable = requestedSubcommand !== undefined
+    && requestedSubcommand in commandLoaders
+    && (requestedSubcommand !== 'participant' || v3WriterMode);
+  if (helpTargetAvailable) {
+    const register = await requestedRegistration(requestedSubcommand);
+    register(program);
+  } else {
+    const seen = new Set<(p: Command) => void>();
+    for (const [name, loader] of Object.entries(commandLoaders)) {
+      if (name === 'participant') continue;
+      const register = await loader();
+      if (seen.has(register)) continue;
+      seen.add(register);
+      register(program);
+    }
+  }
+} else if (requestedCommandAvailable) {
+  // session/3.0 workspaces use the formal minimal command surface. Other
+  // writers retain the existing v2/Execution command modules unchanged.
+  const register = await requestedRegistration(requestedCommand);
   register(program);
-} else if (requestedCommand && !(requestedCommand in commandLoaders)) {
+} else if (requestedCommand) {
   // Bare intent or unknown command — guide to correct skill invocation
   console.error(`[maestro] Unknown command: "${requestedCommand}"`);
   console.error();
@@ -222,7 +342,8 @@ if (requestedCommand && requestedCommand in commandLoaders) {
   // Multiple keys may point to the same register function (e.g. a command and
   // its alias share one module); deduplicate so we register each module once.
   const seen = new Set<(p: Command) => void>();
-  for (const loader of Object.values(commandLoaders)) {
+  for (const [name, loader] of Object.entries(commandLoaders)) {
+    if (name === 'participant') continue;
     const register = await loader();
     if (seen.has(register)) continue;
     seen.add(register);
@@ -233,10 +354,21 @@ if (requestedCommand && requestedCommand in commandLoaders) {
 try {
   await program.parseAsync();
 } catch (error) {
-  if (!(error instanceof CommanderError) || (!runMachineMode && !executionMachineMode)) throw error;
+  if (!(error instanceof CommanderError) || (!runMachineMode && !executionMachineMode && !v3MachineMode)) throw error;
   const { sanitizeCommanderError } = await import('./commands/execution-cli-shared.js');
   const commanderError = sanitizeCommanderError(error, argv);
-  if (executionMachineMode) {
+  if (v3MachineMode) {
+    const { createRunResponseError, emitRunResponse } = await import('./run/response.js');
+    emitRunResponse(createRunResponseError({
+      schema_version: 'run-response/1.2',
+      operation: inferV3MachineOperation(requestedCommand, requestedSubcommand),
+      exit_code: 2,
+      disposition: 'usage_error',
+      code: 'COMMANDER_USAGE',
+      message: commanderError.message,
+      details: commanderError.details,
+    }));
+  } else if (executionMachineMode) {
     const { emitExecutionError } = await import('./commands/execution-cli-shared.js');
     const executionIndex = argv.indexOf('--execution');
     const sessionIndex = argv.indexOf('--session');

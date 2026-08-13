@@ -4,6 +4,10 @@ import {
   executionLocatorSchema,
   executionSealReceiptSchema,
   maestroCapabilitiesSchema,
+  requestReceiptV20Schema,
+  resumeMapV1Schema,
+  runResponseV12Schema,
+  transitionReceiptV20Schema,
   recallConfirmationRecordReadSchema,
   recallConfirmationRecordSchema,
   recallConfirmationRecordV11Schema,
@@ -316,18 +320,109 @@ describe('execution-generation protocol schemas', () => {
     const capabilities = {
       schema_version: 'maestro-capabilities/1.0' as const,
       cli_version: '0.6.0',
-      session_schema_writes: ['session/1.3', 'session/2.0'] as const,
+      session_schema_writes: ['session/1.3', 'session/2.0', 'session/3.0'] as const,
       execution_schema_writes: ['execution/1.0'] as const,
-      run_response_writes: ['run-response/1.0', 'run-response/1.1'] as const,
+      run_response_writes: ['run-response/1.0', 'run-response/1.1', 'run-response/1.2'] as const,
       features: {
         execution_generation: true,
         core_execution_lease: true,
         execution_handoff: true,
         session_statusless: true,
         legacy_session_aliases: true,
+        session_run_minimal_v3: false,
       },
     };
     expect(maestroCapabilitiesSchema.parse(capabilities)).toEqual(capabilities);
+    expect(maestroCapabilitiesSchema.parse({ ...capabilities, execution_schema_writes: [] }))
+      .toMatchObject({ execution_schema_writes: [] });
+    expect(maestroCapabilitiesSchema.parse({
+      ...capabilities,
+      features: { ...capabilities.features, future_boolean: true },
+    }).features.future_boolean).toBe(true);
+    expect(() => maestroCapabilitiesSchema.parse({
+      ...capabilities,
+      features: { ...capabilities.features, future_boolean: 'yes' },
+    })).toThrow();
     expect(() => maestroCapabilitiesSchema.parse({ ...capabilities, unexpected: true })).toThrow();
+  });
+
+  it('validates strict v3 receipts, ResumeMapV1, and revision conflict fields', () => {
+    const request = {
+      schema_version: 'request-receipt/2.0' as const,
+      request_id: 'req-1',
+      participant_id: 'pi-window-a',
+      payload_hash: hash,
+      transition_receipt_ref: 'receipts/transitions/000000000001-tr-1.json',
+    };
+    expect(requestReceiptV20Schema.parse(request)).toEqual(request);
+    expect(() => requestReceiptV20Schema.parse({ ...request, payload: {} })).toThrow();
+
+    const transition = {
+      schema_version: 'transition-receipt/2.0' as const,
+      transition_id: 'tr-1',
+      request_id: 'req-1',
+      session_id: 's',
+      activity_revision: 1,
+      target_type: 'run' as const,
+      target_id: 'run-1',
+      revision_before: 2,
+      revision_after: 3,
+      actor_id: 'actor-a',
+      participant_id: 'pi-window-a',
+      reason: 'complete work',
+      evidence_refs: ['evidence-1'],
+      recorded_at: '2026-08-12T00:00:00.000Z',
+      result: { status: 'completed' },
+    };
+    expect(transitionReceiptV20Schema.parse(transition)).toEqual(transition);
+    expect(() => transitionReceiptV20Schema.parse({ ...transition, revision_after: 4 })).toThrow();
+    expect(() => transitionReceiptV20Schema.parse({ ...transition, unexpected: true })).toThrow();
+
+    const map = {
+      sessionId: 's', sessionStatus: 'open' as const,
+      identityRevision: 1, orchestrationRevision: 2, activityRevision: 3,
+      activeRuns: [{ runId: 'run-1', stepId: 'step-1', status: 'running' as const, revision: 4 }],
+      blockingGates: ['gate-1'], openDecisions: ['decision-1'],
+      pendingPublications: [{ publicationId: 'publication-1', resourceUri: 'artifact://publication-1' }],
+      nextActions: [{ action: 'run-complete', targetId: 'run-1', expectedRevision: 4 }],
+      fingerprint: hash,
+    };
+    expect(resumeMapV1Schema.parse(map)).toEqual(map);
+    expect(() => resumeMapV1Schema.parse({ ...map, executionId: 'exec-1' })).toThrow();
+    expect(() => resumeMapV1Schema.parse({
+      ...map,
+      activeRuns: [{ ...map.activeRuns[0], lease: 'private' }],
+    })).toThrow();
+
+    const conflict = {
+      schema_version: 'run-response/1.2' as const,
+      operation: 'complete' as const,
+      ok: false as const,
+      exit_code: 1 as const,
+      disposition: 'domain_error' as const,
+      request_id: 'req-1',
+      locator: { session_id: 's', run_id: 'run-1' },
+      revision: { target_type: 'run' as const, target_id: 'run-1', revision: 4 },
+      replay: null,
+      warnings: [],
+      result: null,
+      error: {
+        code: 'RUN_REVISION_CONFLICT' as const,
+        message: 'stale Run revision',
+        retryable: true,
+        details: {},
+        target_type: 'run' as const,
+        target_id: 'run-1',
+        expected_revision: 3,
+        current_revision: 4,
+        changed_by: 'pi-window-b',
+        next_actions: ['reload-run', 're-evaluate-intent'],
+      },
+    };
+    expect(runResponseV12Schema.parse(conflict)).toEqual(conflict);
+    expect(() => runResponseV12Schema.parse({
+      ...conflict,
+      error: { ...conflict.error, current_revision: null },
+    })).toThrow(/current_revision/);
   });
 });
