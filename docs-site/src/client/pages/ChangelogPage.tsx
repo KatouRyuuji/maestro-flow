@@ -17,6 +17,16 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    version: '0.5.70',
+    date: '2026-08',
+    changes: [
+      { type: 'feat', text_en: 'Session/Run v3 minimal protocol: session/3.0 and run/3.0 state machines with independent identity, orchestration, activity and per-Run revisions; atomic chain advancement; participant identities; immutable request/transition receipts; strict run-response/1.2 envelopes; deterministic context resolution; and compact ResumeMapV1 projections', text_zh: 'Session/Run v3 最小协议：新增 session/3.0 与 run/3.0 状态机，分离 identity、orchestration、activity 与每个 Run 的 revision；支持原子 chain 推进、participant 身份、不可变 request/transition receipts、严格 run-response/1.2、确定性上下文解析与紧凑 ResumeMapV1 投影' },
+      { type: 'feat', text_en: 'Add fail-closed v3 CLI routing by workspace writer with session/run/participant commands, structured retirement responses for legacy Execution commands, machine-readable help and capabilities catalogs, and both split/equal --workflow-root support', text_zh: '新增按 workspace writer fail-closed 分发的 v3 CLI，提供 session/run/participant 命令、旧 Execution 命令的结构化退役响应、可机读 help/capabilities catalog，并同时支持分离式与等号式 --workflow-root' },
+      { type: 'fix', text_en: 'Harden v3 recovery and migration: failed/cancelled Runs close or requeue their chain steps, retry lineage and attempts derive from authoritative Runs, chain rewrites are pending-only, participant replay returns the original receipt result, and legacy Execution transitions migrate with source hashing and secret redaction', text_zh: '加固 v3 恢复与迁移：failed/cancelled Run 会关闭或重新排队对应 chain step，retry lineage 与 attempt 从权威 Run 派生，chain 改写仅限 pending，participant replay 返回原始 receipt 结果，旧 Execution transitions 以源哈希与敏感字段清理方式迁移' },
+      { type: 'chore', text_en: 'Expand release gates to 41 contract-parity checks and 31 build-backed v2/v3 behavior proofs, including writer routing, participant receipts, help compatibility, retired commands and explicit complete --advance semantics', text_zh: '扩展发布门禁至 41 项 contract parity 检查与 31 项 build-backed v2/v3 行为证明，覆盖 writer 路由、participant receipts、help 兼容、命令退役与显式 complete --advance 语义' },
+    ],
+  },
+  {
     version: '0.5.69',
     date: '2026-08',
     changes: [

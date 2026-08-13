@@ -6,7 +6,6 @@ argument-hint: <target> [--dimensions <list>] [--skip-fix] [--skip-generalize] [
 contract:
   consumes:
   - kind: ui-audit
-    alias: prior-ui-audit
     required: false
     schema: ui-audit/1.0
     role: primary

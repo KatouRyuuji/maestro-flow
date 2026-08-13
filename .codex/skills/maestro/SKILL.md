@@ -24,7 +24,7 @@ contract:
   discovery: self-described
   consumes: []
   produces: []
-version: 0.5.69
+version: 0.5.70
 ---
 
 <required_reading>
@@ -157,7 +157,7 @@ Goals describe outcomes, not lifecycle stages.
 
 Assemble and create per `prepare/maestro.md` §1–§4 (specs precheck, Skill-name prevalidation, chain-file assembly, creation). Maestro-specific policy:
 
-- If the chain-file protocol (§3 template) is not in context, fetch it first via read-only `maestro run prepare maestro --json` (no Session required; `prepare.content` carries the full protocol).
+- If the chain-file protocol (§3 template) is not in context, fetch it first via read-only `maestro run prepare --platform codex maestro --json` (no Session required; `prepare.content` carries the full protocol).
 - Maestro does not emit formal decision nodes; new chains express quality/goal/scope checks as Skill steps that own a Run and may return a proposal. (The closed-loop policy that mandates decision nodes before seal belongs to `/maestro-ralph`; route there when the work needs it.)
 - For narrow/single-step chains, generate a minimal implicit boundary_contract: in_scope = [intent], out_of_scope = [], constraints = [], definition_of_done = 'step completed with passing gates'.
 - Do not inline unescaped JSON.

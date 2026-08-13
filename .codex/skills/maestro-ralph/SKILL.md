@@ -24,7 +24,7 @@ contract:
   discovery: self-described
   consumes: []
   produces: []
-version: 0.5.69
+version: 0.5.70
 ---
 
 <required_reading>
@@ -219,7 +219,7 @@ Confidence maps to low `<60`, medium `60–79`, high `≥80`. High risk always r
 
 Consume the outputs of A_INFER, A_DECOMPOSE and A_ASSESS; do not re-infer them while assembling the chain. Quality is quick/standard/full based on specs and observable risk, not a user flag. Quality criteria: quick = single-file + existing tests; standard = multi-file + new logic; full = cross-module + no existing coverage.
 
-Build the chain from `prepare/ralph.md` Stage Mapping. If the Stage Mapping or Build Rules are not in context, fetch them first via read-only `maestro run prepare ralph --json` (no Session required; `prepare.content` carries the full protocol). Propagate goal references, map the current host to the Skill scanner's `target_platform` (`claude|codex|agent|agy|pi`), and prevalidate every command with `maestro skills --steps --json --platform {target_platform}`. Never default a non-Claude host to `claude`; `pi` resolves Skills from the installed `pi-maestro-flow` npm package's `package.json#pi.skills` directories. Every chain includes at least one final quality/goal/scope decision node before seal; long chains also include periodic reground decision nodes. Step execution strategy is defined by each Skill, never by Ralph flags.
+Build the chain from `prepare/ralph.md` Stage Mapping. If the Stage Mapping or Build Rules are not in context, fetch them first via read-only `maestro run prepare --platform codex ralph --json` (no Session required; `prepare.content` carries the full protocol). Propagate goal references, map the current host to the Skill scanner's `target_platform` (`claude|codex|agent|agy|pi`), and prevalidate every command with `maestro skills --steps --json --platform {target_platform}`. Never default a non-Claude host to `claude`; `pi` resolves Skills from the installed `pi-maestro-flow` npm package's `package.json#pi.skills` directories. Every chain includes at least one final quality/goal/scope decision node before seal; long chains also include periodic reground decision nodes. Step execution strategy is defined by each Skill, never by Ralph flags.
 
 ### A_EXECUTE
 
