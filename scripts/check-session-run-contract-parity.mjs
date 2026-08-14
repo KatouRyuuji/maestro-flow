@@ -709,9 +709,12 @@ const universalCapabilityFeatures = new Set([
 ]);
 const capabilityContract = {
   schema_version: zodLiteral(protocolPath, 'maestroCapabilitiesSchema'),
-  session_schema_writes: functionPropertyLiterals(
-    'src/commands/capabilities.ts', 'registerCapabilitiesCommand', 'session_schema_writes',
-  )[0] ?? null,
+  session_schema_writes: {
+    writer_scoped: capabilitiesCommands?.includes("const sessionSchemaWrites = writer === 'session/3.0'") ?? false,
+    v3_branch: capabilitiesCommands?.includes("['session/3.0']") ?? false,
+    v2_branch: capabilitiesCommands?.includes("['session/1.3', 'session/2.0']") ?? false,
+    v13_branch: capabilitiesCommands?.includes("['session/1.3']") ?? false,
+  },
   run_response_writes: functionPropertyLiterals(
     'src/commands/capabilities.ts', 'registerCapabilitiesCommand', 'run_response_writes',
   )[0] ?? null,
@@ -729,7 +732,12 @@ const capabilityContract = {
 };
 const expectedCapabilityContract = {
   schema_version: 'maestro-capabilities/1.0',
-  session_schema_writes: ['session/1.3', 'session/2.0', 'session/3.0'],
+  session_schema_writes: {
+    writer_scoped: true,
+    v3_branch: true,
+    v2_branch: true,
+    v13_branch: true,
+  },
   run_response_writes: ['run-response/1.0', 'run-response/1.1', 'run-response/1.2'],
   v3_writer_switch: true,
   execution_writer_switch: true,
