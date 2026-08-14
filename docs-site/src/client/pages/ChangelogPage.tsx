@@ -17,6 +17,16 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    version: '0.5.71',
+    date: '2026-08',
+    changes: [
+      { type: 'feat', text_en: 'Add v3 decision gates: chain steps may declare a decision_ref; run next/create block on unresolved predecessor gates (DECISION_GATE_BLOCKED with run-decide next actions); session complete blocks on open gates while escalated gates pass with concerns; decide escalate no longer pauses the Session', text_zh: '新增 v3 决策门：chain step 可声明 decision_ref；未决前驱决策门阻断 run next/create（DECISION_GATE_BLOCKED + run-decide next actions）；session complete 阻断 open 门、escalated 门以 concerns 通过；decide escalate 不再暂停 Session' },
+      { type: 'refactor', text_en: 'Simplify v3 by the ralph-run anchor: remove chain-proposal application, TC-P0-3 extra completion inputs (--artifact/--note/--decision), 22 retired v2-only subcommand stubs, session fail/chain audit, resume-map truncation (oversize now throws), and per-check knowledge reconciliation (candidates generated once by run complete)', text_zh: '以 ralph 路径为锚简化 v3：移除 chain-proposal 应用、TC-P0-3 附加完成输入（--artifact/--note/--decision）、22 条退役 v2-only 子命令 stub、session fail/chain audit、resume-map 截断（超限改为抛错）与每次 check 的知识对账（候选改为 run complete 一次性生成）' },
+      { type: 'refactor', text_en: 'Batch B: drop the participant entity/commands (--participant option retained for injection compatibility), session identity_revision, status paused, and the gates system (gates_ref/blocking checks/run gate_refs); receipts now store participant_id = actorId; legacy v3 files read via strip-tolerant schemas with paused mapped to open', text_zh: '批次 B：移除 participant 实体与命令族（--participant option 保留兼容注入）、session identity_revision、paused 状态与 gates 系统（gates_ref/blocking 校验/run gate_refs）；receipt 改为存 participant_id = actorId；旧 v3 文件以 strip 宽容 schema 读取，paused 映射为 open' },
+      { type: 'chore', text_en: 'Add maestro config session-schema set/show for explicit writer switching; capabilities now declare writer-scoped session_schema_writes', text_zh: '新增 maestro config session-schema set/show 显式切换 writer；capabilities 改为声明 writer-scoped session_schema_writes' },
+    ],
+  },
+  {
     version: '0.5.70',
     date: '2026-08',
     changes: [
