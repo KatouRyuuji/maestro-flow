@@ -534,13 +534,13 @@ async function main() {
       'session', 'chain', 'insert', '--session', 'release-v3', '--step-id', 'step-release',
       '--command', 'release-execution', '--participant', 'window-release', '--actor', 'release-actor',
       '--request-id', 'req-v3-chain-insert', '--reason', 'add release proof step',
-      '--expected-orchestration-revision', '0', '--json', v3RootArg,
+      '--expected-orchestration-revision', '1', '--json', v3RootArg,
     ]), 'v3 chain insert', 'run-response/1.2');
-    assert.equal(insertStep.revision?.revision, 1);
+    assert.equal(insertStep.revision?.revision, 2);
     const v3Next = parseEnvelope(invoke([
       'run', 'next', '--session', 'release-v3', '--run', 'release-v3-run',
       '--participant', 'window-release', '--actor', 'release-actor', '--request-id', 'req-v3-next',
-      '--reason', 'start release proof Run', '--expected-orchestration-revision', '1', '--json', v3RootArg,
+      '--reason', 'start release proof Run', '--expected-orchestration-revision', '2', '--json', v3RootArg,
     ]), 'v3 run next', 'run-response/1.2');
     assert.equal(v3Next.result.status, 'running');
     assert.equal(v3Next.result.revision, 1);
@@ -548,7 +548,7 @@ async function main() {
       'run', 'complete', 'release-v3-run', '--session', 'release-v3', '--summary', 'release proof done',
       '--participant', 'window-release', '--actor', 'release-actor', '--request-id', 'req-v3-complete-no-advance',
       '--reason', 'prove atomic advance requirement', '--expected-run-revision', '1',
-      '--expected-orchestration-revision', '2', '--json', v3RootArg,
+      '--expected-orchestration-revision', '3', '--json', v3RootArg,
     ];
     const completeWithoutAdvanceResult = invoke(completeWithoutAdvanceArgs);
     assert.equal(completeWithoutAdvanceResult.status, 1, 'v3 complete without --advance exit');
@@ -564,14 +564,14 @@ async function main() {
         orchestration_revision: v3Store.readSessionV30('release-v3').orchestration_revision,
         step_status: v3Store.readSessionV30('release-v3').chain[0].status,
       },
-      { run_status: 'running', run_revision: 1, orchestration_revision: 2, step_status: 'running' },
+      { run_status: 'running', run_revision: 1, orchestration_revision: 3, step_status: 'running' },
       'v3 complete without --advance mutation guard',
     );
     const completeWithAdvance = parseEnvelope(invoke([
       ...completeWithoutAdvanceArgs.slice(0, -2), '--advance', '--json', v3RootArg,
     ]), 'v3 complete with --advance', 'run-response/1.2');
     assert.equal(completeWithAdvance.result.run_revision, 2);
-    assert.equal(completeWithAdvance.result.orchestration_revision, 3);
+    assert.equal(completeWithAdvance.result.orchestration_revision, 4);
     assert.equal(completeWithAdvance.result.status, 'sealed');
     assert.deepEqual(completeWithAdvance.result.artifact_publication, {
       authority: 'transition-receipt/2.0',
