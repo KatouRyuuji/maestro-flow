@@ -87,7 +87,7 @@ describe('v3 help catalog', () => {
     expect(recoverySeal?.description).toBe('Deprecated recovery seal for an already terminal pre-upgrade Run');
     expect(migration).toMatchObject({ mutation_scope: 'orchestration', cas_target: 'none' });
     expect(migration?.options).toEqual(expect.arrayContaining(['--participant', '--actor', '--to-v3']));
-    expect(migration?.options).not.toContain('--request-id');
+    expect(migration?.options).toContain('--request-id');
   });
 
   it('requires --json before emitting the catalog', async () => {

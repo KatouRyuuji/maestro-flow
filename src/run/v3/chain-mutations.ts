@@ -63,13 +63,23 @@ function mutateSteps(
     // it refers to, so run next and session complete see the gate as open until
     // `run decide` resolves it. An already-recorded decision keeps its status.
     let decisions = session.decisions;
-    if (decisionRef !== null && !decisions.some(decision => decision.decision_id === decisionRef)) {
-      decisions = [...decisions, {
-        decision_id: decisionRef,
-        after_step_id: stepId,
-        status: 'open' as const,
-        evidence_refs: [],
-      }];
+    if (decisionRef !== null) {
+      const existing = decisions.find(decision => decision.decision_id === decisionRef);
+      if (existing && existing.status !== 'open') {
+        throw new V3StructuredError(
+          'INVALID_STATE_TRANSITION',
+          `decision gate ${decisionRef} is already ${existing.status}; a resolved/escalated decision cannot be bound as a new gate`,
+          { target_type: 'orchestration', target_id: session.session_id, next_actions: ['choose-a-new-decision-point'] },
+        );
+      }
+      if (!existing) {
+        decisions = [...decisions, {
+          decision_id: decisionRef,
+          after_step_id: stepId,
+          status: 'open' as const,
+          evidence_refs: [],
+        }];
+      }
     }
     return {
       chain: [...session.chain.slice(0, insertionIndex), step, ...session.chain.slice(insertionIndex)],

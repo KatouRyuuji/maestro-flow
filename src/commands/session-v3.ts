@@ -103,7 +103,7 @@ export function registerSessionV3Command(program: Command): void {
         const state = sessionStateV30Schema.parse({
           schema_version: 'session/3.0', session_id: sessionId, objective,
           definition_of_done: options.definitionOfDone, status: 'open',
-          orchestration_revision: 0, activity_revision: 1,
+          orchestration_revision: 1, activity_revision: 1,
           chain: (options.chain ?? []).map((command, index) => ({
             step_id: `s-${index + 1}`, command, args: [], status: 'pending' as const,
             run_ids: [], goal_ref: null, decision_ref: null, decision_refs: [], stage: null,
@@ -114,18 +114,18 @@ export function registerSessionV3Command(program: Command): void {
         });
         const transition = createTransitionReceipt({
           transitionId: `open-${options.requestId}`, requestId: options.requestId, sessionId,
-          activityRevision: 1, targetType: 'session-identity', targetId: sessionId,
-          revisionBefore: 0, revisionAfter: 1, actorId: options.actor, participantId: options.participant,
+          activityRevision: 1, targetType: 'orchestration', targetId: sessionId,
+          revisionBefore: 0, revisionAfter: 1, actorId: options.actor, participantId: options.actor,
           reason: options.reason, evidenceRefs: options.evidence, recordedAt: now, result: state,
         });
         const request = createRequestReceipt({
-          requestId: options.requestId, participantId: options.participant, payloadHash,
+          requestId: options.requestId, participantId: options.actor, payloadHash,
           transitionReceiptRef: transitionReceiptRef(1, transition.transition_id),
         });
         const mutation = store.withV30Transaction(sessionId, tx => {
           if (tx.sessionExists()) {
             const replayed = replayRequestReceipt({
-              tx, sessionId, requestId: options.requestId, participantId: options.participant, payloadHash,
+              tx, sessionId, requestId: options.requestId, participantId: options.actor, payloadHash,
             });
             if (!replayed) throw new Error(`Session already exists: ${sessionId}`);
             return { status: 'replayed' as const, transition: replayed };
@@ -155,11 +155,15 @@ export function registerSessionV3Command(program: Command): void {
     .requiredOption('--to-v3', 'confirm migration to session/3.0')
     .requiredOption('--participant <id>', 'participant performing the migration')
     .requiredOption('--actor <id>', 'authorized actor')
+    .option('--request-id <id>', 'migration audit request ID (default: synthesized)')
+    .option('--reason <text>', 'migration audit reason (overrides the synthesized reason)')
+    .option('--evidence <ref>', 'migration evidence reference (repeatable)', (value: string, previous: string[] = []) => [...previous, value], [])
     .option('--definition-of-done <text>', 'override definition of done')
     .option('--json', 'emit run-response/1.2 JSON')
     .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
     .action((options: {
       session?: string; all?: boolean; toV3: boolean; participant: string; actor: string;
+      requestId?: string; reason?: string; evidence?: string[];
       definitionOfDone?: string; workflowRoot: string;
     }) => {
       try {
@@ -185,6 +189,9 @@ export function registerSessionV3Command(program: Command): void {
             try {
               applyV3Migration(store, loadLegacyV3MigrationInput(store, candidate.session_id), {
                 actor_id: options.actor,
+                request_id: options.requestId,
+                reason: options.reason,
+                evidence_refs: options.evidence,
                 definition_of_done: options.definitionOfDone,
               });
               return {
@@ -212,6 +219,9 @@ export function registerSessionV3Command(program: Command): void {
           ? readAppliedV3Migration(store, options.session)
           : applyV3Migration(store, loadLegacyV3MigrationInput(store, options.session), {
             actor_id: options.actor,
+            request_id: options.requestId,
+            reason: options.reason,
+            evidence_refs: options.evidence,
             definition_of_done: options.definitionOfDone,
           });
         emitV3Success({ operation: 'session-migrate', sessionId: options.session, result });

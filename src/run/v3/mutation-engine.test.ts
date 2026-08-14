@@ -326,15 +326,25 @@ describe('v3 mutation engine', () => {
 
   it('replays Run creation when only server-generated timestamps differ', () => {
     const store = setup();
+    // Chain-head fixture: no predecessor, so creation is not gated by
+    // publication authority (audit H1-① keeps chain ordering intact).
+    store.writeSessionV30({
+      ...session(),
+      chain: [{
+        step_id: 'step-1', command: 'implement', args: [], status: 'pending',
+        run_ids: [], goal_ref: null, decision_ref: null, decision_refs: [],
+      }],
+      active_run_ids: [],
+    });
     const first = createRunningRunV3(store, {
       ...identity('req-create-replay'), expectedOrchestrationRevision: 0,
       requestOperation: 'run-create',
-      run: { ...run('r-3', 'step-2', 'pending'), created_at: '2026-08-12T01:00:00.000Z' },
+      run: { ...run('r-3', 'step-1', 'pending'), created_at: '2026-08-12T01:00:00.000Z' },
     });
     const replayed = createRunningRunV3(store, {
       ...identity('req-create-replay'), expectedOrchestrationRevision: 0,
       requestOperation: 'run-create',
-      run: { ...run('r-3', 'step-2', 'pending'), created_at: '2026-08-12T02:00:00.000Z' },
+      run: { ...run('r-3', 'step-1', 'pending'), created_at: '2026-08-12T02:00:00.000Z' },
     });
     expect(replayed).toEqual({ status: 'replayed', transition: first.transition });
     expect(store.readRunV30('s-1', 'r-3').created_at).toBe('2026-08-12T01:00:00.000Z');

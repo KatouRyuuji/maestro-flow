@@ -163,7 +163,7 @@ describe('formal session/3.0 Commander modules', () => {
     expect(replayed).toMatchObject({ operation: 'session-open', ok: true, replay: { status: 'replayed' } });
     const dir = join(root, '.workflow', 'sessions', 's-open');
     expect(JSON.parse(readFileSync(join(dir, 'session.json'), 'utf8'))).toMatchObject({
-      schema_version: 'session/3.0', orchestration_revision: 0, activity_revision: 1,
+      schema_version: 'session/3.0', orchestration_revision: 1, activity_revision: 1,
     });
     expect(JSON.parse(readFileSync(join(dir, 'evidence.json'), 'utf8'))).toMatchObject({ records: {} });
     expect(existsSync(join(dir, 'gates.json'))).toBe(false);

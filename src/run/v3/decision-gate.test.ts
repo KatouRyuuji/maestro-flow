@@ -7,7 +7,7 @@ import { sessionStateV30Schema, type RunV30, type SessionStateV30 } from '../sch
 import { SessionStore } from '../store.js';
 import { decideV3 } from './decide-v3.js';
 import { V3StructuredError } from './errors.js';
-import { completeSessionV3, createRunningRunV3 } from './mutation-engine.js';
+import { completeRunAndAdvance, completeSessionV3, createRunningRunV3 } from './mutation-engine.js';
 
 const roots: string[] = [];
 
@@ -74,7 +74,7 @@ function setup(sessionInput: SessionStateV30): SessionStore {
 function pendingRun(runId: string, stepId: string): RunV30 {
   return {
     schema_version: 'run/3.0', run_id: runId, session_id: 's-1', step_id: stepId,
-    parent_run_id: null, retry_of_run_id: null, attempt: 1, command: 'verify', args: [], goal: null,
+    parent_run_id: null, retry_of_run_id: null, attempt: 1, command: 'work', args: [], goal: null,
     status: 'pending', revision: 0, actor_id: 'actor-a', input_refs: [], output_refs: [],
     primary_artifact_id: null, verdict: null, summary: null,
     created_at: '2026-08-12T00:00:00.000Z', started_at: null, ended_at: null, sealed_at: null,
@@ -94,13 +94,25 @@ afterEach(() => {
 
 describe('v3 decision gates', () => {
   it('blocks run next while the predecessor gate decision is open and releases it after decide proceed', () => {
-    const store = setup(gatedSession({ decisionStatus: 'open' }));
+    const store = setup(gatedSession({ step1Status: 'pending' }));
 
-    // The gate check runs before the run-next publication machinery, so a
-    // default run-next request surfaces the gate error even without a sealed
-    // predecessor Run.
+    // Real sealed predecessor (audit H1-①): complete step-1 so chain ordering
+    // / publication authority exist before the gate test.
+    expect(createRunningRunV3(store, {
+      ...identity('req-seed-run1'), expectedOrchestrationRevision: 0,
+      requestOperation: 'run-create',
+      run: pendingRun('run-1', 'step-1'),
+    }).status).toBe('applied');
+    expect(completeRunAndAdvance(store, {
+      ...identity('req-seed-complete'), runId: 'run-1',
+      expectedRunRevision: 1, expectedOrchestrationRevision: 1,
+      summary: 'seed step-1', verdict: 'done',
+    }).status).toBe('applied');
+
+    // The gate check runs before the run-next publication machinery, so the
+    // open gate surfaces before any publication error.
     expect(() => createRunningRunV3(store, {
-      ...identity('req-next-blocked'), expectedOrchestrationRevision: 0,
+      ...identity('req-next-blocked'), expectedOrchestrationRevision: 2,
       run: pendingRun('run-2', 'step-2'),
     })).toThrow(expect.objectContaining({
       code: 'INVALID_STATE_TRANSITION',
@@ -109,11 +121,11 @@ describe('v3 decision gates', () => {
         reason: 'DECISION_GATE_BLOCKED', decision_id: 'P-1', decision_status: 'open',
       }),
     }));
-    expect(store.readSessionV30('s-1')).toMatchObject({ orchestration_revision: 0, active_run_ids: [] });
+    expect(store.readSessionV30('s-1')).toMatchObject({ orchestration_revision: 2, active_run_ids: [] });
 
     const decided = decideV3(store, {
       ...identity('req-decide'), pointId: 'P-1', verdict: 'proceed', confidence: 'high',
-      summary: 'gate approved', expectedOrchestrationRevision: 0, evidenceRefs: ['EVD-1'],
+      summary: 'gate approved', expectedOrchestrationRevision: 2, evidenceRefs: ['EVD-1'],
     });
     expect(decided.status).toBe('applied');
     expect(store.readSessionV30('s-1').decisions).toEqual([
@@ -121,23 +133,33 @@ describe('v3 decision gates', () => {
     ]);
 
     const advanced = createRunningRunV3(store, {
-      ...identity('req-next-pass'), expectedOrchestrationRevision: 1,
+      ...identity('req-next-pass'), expectedOrchestrationRevision: 3,
       requestOperation: 'run-create',
       run: pendingRun('run-2', 'step-2'),
     });
     expect(advanced.status).toBe('applied');
     expect(store.readSessionV30('s-1')).toMatchObject({
-      orchestration_revision: 2, active_run_ids: ['run-2'],
-      chain: [{ status: 'completed' }, { status: 'running', run_ids: ['run-2'] }],
+      orchestration_revision: 4, active_run_ids: ['run-2'],
+      chain: [{ status: 'completed', run_ids: ['run-1'] }, { status: 'running', run_ids: ['run-2'] }],
     });
   });
 
   it('escalation keeps the Session open, stays blocking for run next, and a later proceed releases it', () => {
-    const store = setup(gatedSession({ decisionStatus: 'open' }));
+    const store = setup(gatedSession({ step1Status: 'pending' }));
+    expect(createRunningRunV3(store, {
+      ...identity('req-seed-run1'), expectedOrchestrationRevision: 0,
+      requestOperation: 'run-create',
+      run: pendingRun('run-1', 'step-1'),
+    }).status).toBe('applied');
+    expect(completeRunAndAdvance(store, {
+      ...identity('req-seed-complete'), runId: 'run-1',
+      expectedRunRevision: 1, expectedOrchestrationRevision: 1,
+      summary: 'seed step-1', verdict: 'done',
+    }).status).toBe('applied');
 
     const escalated = decideV3(store, {
       ...identity('req-escalate'), pointId: 'P-1', verdict: 'escalate', confidence: 'medium',
-      summary: 'needs human review', expectedOrchestrationRevision: 0, evidenceRefs: ['EVD-x'],
+      summary: 'needs human review', expectedOrchestrationRevision: 2, evidenceRefs: ['EVD-x'],
     });
     expect(escalated.status).toBe('applied');
     expect(store.readSessionV30('s-1')).toMatchObject({
@@ -149,7 +171,7 @@ describe('v3 decision gates', () => {
     let blocked: V3StructuredError | undefined;
     try {
       createRunningRunV3(store, {
-        ...identity('req-next-escalated'), expectedOrchestrationRevision: 1,
+        ...identity('req-next-escalated'), expectedOrchestrationRevision: 3,
         run: pendingRun('run-2', 'step-2'),
       });
     } catch (error) {
@@ -161,13 +183,13 @@ describe('v3 decision gates', () => {
 
     const redecided = decideV3(store, {
       ...identity('req-redecide'), pointId: 'P-1', verdict: 'proceed', confidence: 'high',
-      expectedOrchestrationRevision: 1,
+      expectedOrchestrationRevision: 3,
     });
     expect(redecided.status).toBe('applied');
     expect(store.readSessionV30('s-1').decisions[0].status).toBe('resolved');
 
     const advanced = createRunningRunV3(store, {
-      ...identity('req-next-pass'), expectedOrchestrationRevision: 2,
+      ...identity('req-next-pass'), expectedOrchestrationRevision: 4,
       requestOperation: 'run-create',
       run: pendingRun('run-2', 'step-2'),
     });

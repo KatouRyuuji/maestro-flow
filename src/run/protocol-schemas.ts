@@ -1192,8 +1192,7 @@ const resumeMapRunStatusSchema = z.enum([
 /** Strict, bounded resume projection. Execution/lease/operation fields are intentionally absent. */
 export const resumeMapV1Schema = z.object({
   sessionId: nonEmptyString,
-  sessionStatus: z.enum(['open', 'paused', 'completed', 'archived', 'failed']),
-  identityRevision: z.number().int().nonnegative(),
+  sessionStatus: z.enum(['open', 'completed', 'archived', 'failed']),
   orchestrationRevision: z.number().int().nonnegative(),
   activityRevision: z.number().int().nonnegative(),
   activeRuns: z.array(z.object({

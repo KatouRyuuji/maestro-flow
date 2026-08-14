@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { Command } from 'commander';
 
 import type { RunV30 } from '../run/schemas.js';
@@ -43,13 +44,14 @@ export function registerRunV3Command(program: Command): void {
   const run = program.command('run').description('Manage session/3.0 Runs');
 
   addV3MutationOptions(run.command('next').description('Create the next pending chain Run'), 'orchestration')
-    .requiredOption('--run <id>', 'new Run ID')
-    .action((options: V3CommonOptions & { run: string }) => {
+    .option('--run <id>', 'new Run ID (default: generated)')
+    .action((options: V3CommonOptions & { run?: string }) => {
       try {
         const { store, options: resolved } = resolveV3Options(options);
+        const runId = resolved.run?.trim() || `run-${randomUUID()}`;
         const state = store.readSessionV30(resolved.session);
         const existingRun = (() => {
-          try { return store.readRunV30(resolved.session, resolved.run); } catch { return null; }
+          try { return store.readRunV30(resolved.session, runId); } catch { return null; }
         })();
         const pendingStep = existingRun ? null : state.chain.find(item => item.status === 'pending');
         const step = existingRun
@@ -64,28 +66,35 @@ export function registerRunV3Command(program: Command): void {
           started_at: null,
           ended_at: null,
           sealed_at: null,
+          // Input refs are engine-injected inside the transaction; a replay
+          // candidate must not carry them or the canonical payload hash
+          // drifts from the original mutation (audit H1-⑤).
+          input_refs: [],
         } : {
-          schema_version: 'run/3.0', run_id: resolved.run, session_id: resolved.session,
+          schema_version: 'run/3.0', run_id: runId, session_id: resolved.session,
           step_id: step.step_id, parent_run_id: null, retry_of_run_id: null, attempt: 1,
           command: step.command, args: step.args, goal: step.goal_ref, status: 'pending', revision: 0,
           actor_id: resolved.actor,
           input_refs: [], output_refs: [], primary_artifact_id: null,
           verdict: null, summary: null, created_at: now, started_at: null, ended_at: null, sealed_at: null,
         };
+        // Run shell before the mutation commits (audit H1-⑥): a shell failure
+        // must not leave a committed Run without its working directory, and a
+        // failed mutation may leave an idempotent shell behind harmlessly.
+        ensureV3RunShell(store, resolved.session, runId);
         const mutation = createRunningRunV3(store, {
           ...mutationIdentity(resolved), expectedOrchestrationRevision: resolved.expectedOrchestrationRevision!, run: candidate,
         });
-        ensureV3RunShell(store, resolved.session, resolved.run);
         const result = {
           ...(runResult(mutation) as Record<string, unknown>),
           step_id: step.step_id,
           next: {
             suggest_only: true,
-            command: `maestro run complete ${resolved.run} --advance`,
+            command: `maestro run complete ${runId} --advance`,
             reason: 'Run created — execute and complete it with run complete --advance',
           },
         };
-        emitV3Success({ operation: 'next', sessionId: resolved.session, runId: resolved.run,
+        emitV3Success({ operation: 'next', sessionId: resolved.session, runId,
           requestId: resolved.requestId, result, mutation });
       } catch (error) {
         emitV3Error('next', error, { session: options.session, runId: options.run, requestId: options.requestId });
@@ -133,13 +142,14 @@ export function registerRunV3Command(program: Command): void {
           primary_artifact_id: null, verdict: null, summary: null,
           created_at: now, started_at: null, ended_at: null, sealed_at: null,
         };
+        // Run shell before the mutation commits (audit H1-⑥).
+        ensureV3RunShell(store, resolved.session, resolved.run);
         const mutation = createRunningRunV3(store, {
           ...mutationIdentity(resolved),
           expectedOrchestrationRevision: resolved.expectedOrchestrationRevision!,
           requestOperation: 'run-create',
           run: candidate,
         });
-        ensureV3RunShell(store, resolved.session, resolved.run);
         emitV3Success({ operation: 'create', sessionId: resolved.session, runId: resolved.run,
           requestId: resolved.requestId, result: runResult(mutation), mutation });
       } catch (error) {

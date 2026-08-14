@@ -15,7 +15,7 @@ function transition(): TransitionReceiptV20 {
   return createTransitionReceipt({
     transitionId: 'tr-1', requestId: 'req-1', sessionId: 's-1', activityRevision: 1,
     targetType: 'run', targetId: 'r-1', revisionBefore: 0, revisionAfter: 1,
-    actorId: 'actor', participantId: 'p-1', reason: 'test', recordedAt: '2026-08-12T00:00:00.000Z',
+    actorId: 'actor', participantId: 'actor', reason: 'test', recordedAt: '2026-08-12T00:00:00.000Z',
     result: { status: 'running' },
   });
 }
@@ -39,26 +39,35 @@ describe('v3 request and transition receipts', () => {
     expect(() => parseTransitionReceiptRef('receipts/transitions/12-tr-1.json')).toThrow(/invalid/);
   });
 
-  it('replays the original transition for the same participant and payload', () => {
+  it('replays the original transition for the same actor and payload', () => {
     const receipt = transition();
     const payloadHash = canonicalPayloadHash({ operation: 'run-transition' });
     const request = createRequestReceipt({
-      requestId: 'req-1', participantId: 'p-1', payloadHash,
+      requestId: 'req-1', participantId: 'actor', payloadHash,
       transitionReceiptRef: transitionReceiptRef(1, 'tr-1'),
     });
     expect(replayRequestReceipt({
-      tx: tx(request, receipt), sessionId: 's-1', requestId: 'req-1', participantId: 'p-1', payloadHash,
+      tx: tx(request, receipt), sessionId: 's-1', requestId: 'req-1', participantId: 'actor', payloadHash,
     })).toEqual(receipt);
   });
 
+  it('enforces the participant=actor write invariant', () => {
+    expect(() => createTransitionReceipt({
+      transitionId: 'tr-x', requestId: 'req-x', sessionId: 's-1', activityRevision: 2,
+      targetType: 'run', targetId: 'r-x', revisionBefore: 1, revisionAfter: 2,
+      actorId: 'actor', participantId: 'other', reason: 'test', recordedAt: '2026-08-12T00:00:00.000Z',
+      result: { status: 'running' },
+    })).toThrow(/participantId must equal actorId/);
+  });
+
   it.each([
-    ['different payload', 'p-1', canonicalPayloadHash({ operation: 'other' })],
-    ['different participant', 'p-2', canonicalPayloadHash({ operation: 'run-transition' })],
+    ['different payload', 'actor', canonicalPayloadHash({ operation: 'other' })],
+    ['different actor', 'other-actor', canonicalPayloadHash({ operation: 'run-transition' })],
   ])('rejects %s as REQUEST_CONFLICT', (_name, participantId, suppliedHash) => {
     const receipt = transition();
     const storedHash = canonicalPayloadHash({ operation: 'run-transition' });
     const request = createRequestReceipt({
-      requestId: 'req-1', participantId: 'p-1', payloadHash: storedHash,
+      requestId: 'req-1', participantId: 'actor', payloadHash: storedHash,
       transitionReceiptRef: transitionReceiptRef(1, 'tr-1'),
     });
     try {

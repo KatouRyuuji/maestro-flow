@@ -405,7 +405,7 @@ describe('execution-generation protocol schemas', () => {
 
     const map = {
       sessionId: 's', sessionStatus: 'open' as const,
-      identityRevision: 1, orchestrationRevision: 2, activityRevision: 3,
+      orchestrationRevision: 2, activityRevision: 3,
       activeRuns: [{ runId: 'run-1', stepId: 'step-1', status: 'running' as const, revision: 4 }],
       blockingGates: ['gate-1'], openDecisions: ['decision-1'],
       pendingPublications: [{ publicationId: 'publication-1', resourceUri: 'artifact://publication-1' }],

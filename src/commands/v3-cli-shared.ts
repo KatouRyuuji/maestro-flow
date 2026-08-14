@@ -193,7 +193,7 @@ export function mutateSessionStatusV3(
       tx,
       sessionId: options.session,
       requestId: options.requestId,
-      participantId: options.participant,
+      participantId: options.actor,
       payloadHash,
     });
     if (replayed) return { status: 'replayed', transition: replayed };
@@ -234,7 +234,7 @@ export function mutateSessionStatusV3(
       revisionBefore: session.orchestration_revision,
       revisionAfter: nextSession.orchestration_revision,
       actorId: options.actor,
-      participantId: options.participant,
+      participantId: options.actor,
       reason: options.reason,
       evidenceRefs: options.evidence,
       recordedAt,
@@ -244,7 +244,7 @@ export function mutateSessionStatusV3(
     tx.writeTransitionReceipt(transition);
     tx.writeRequestReceipt(createRequestReceipt({
       requestId: options.requestId,
-      participantId: options.participant,
+      participantId: options.actor,
       payloadHash,
       transitionReceiptRef: transitionReceiptRef(transition.activity_revision, transition.transition_id),
     }));

@@ -821,15 +821,16 @@ export function createRunningRunV3(store: SessionStore, input: CreateRunningRunV
     }
     assertRunCreationLineage(tx, candidate, session.chain[stepIndex].status);
     assertPredecessorDecisionGateResolved(session, stepIndex);
-    let republishedInputs: string[] = [];
-    if ((input.requestOperation ?? 'run-next') === 'run-next') {
-      const artifacts = tx.readJson(
-        resolve(store.sessionDir(identity.sessionId), session.artifacts_ref),
-        artifactRegistrySchema,
-      );
-      assertNextPredecessorPublished(tx, session, stepIndex, artifacts);
-      republishedInputs = republishedConsumerInputs(store, session, candidate.command, artifacts);
-    }
+    // Predecessor publication is enforced for BOTH run-next and run-create
+    // (audit H1-①): a manually created Run must not bypass chain ordering /
+    // artifact publication authority. stepIndex 0 (no predecessor) returns
+    // immediately inside assertNextPredecessorPublished.
+    const artifacts = tx.readJson(
+      resolve(store.sessionDir(identity.sessionId), session.artifacts_ref),
+      artifactRegistrySchema,
+    );
+    assertNextPredecessorPublished(tx, session, stepIndex, artifacts);
+    const republishedInputs = republishedConsumerInputs(store, session, candidate.command, artifacts);
     const nextRun: RunV30 = {
       ...candidate,
       input_refs: [...new Set([...candidate.input_refs, ...republishedInputs])].sort(),

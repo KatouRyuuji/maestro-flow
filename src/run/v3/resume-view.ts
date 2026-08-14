@@ -45,7 +45,7 @@ function uniqueSorted(values: readonly string[]): string[] {
 
 function forbiddenFieldName(key: string): boolean {
   const normalized = key.replaceAll('_', '').replaceAll('-', '').toLowerCase();
-  return normalized === 'executionid'
+  return normalized.includes('execution')
     || normalized.includes('generation')
     || normalized.includes('lease')
     || normalized.includes('operation');
@@ -211,9 +211,6 @@ export function projectResumeMapV1(input: ResumeMapProjectionInput): ResumeMapV1
   const fullBody: ResumeMapBody = {
     sessionId: session.session_id,
     sessionStatus: session.status,
-    // identity_revision was retired; the ResumeMapV1 identityRevision field
-    // now mirrors the Session orchestration revision (the remaining authority).
-    identityRevision: session.orchestration_revision,
     orchestrationRevision: session.orchestration_revision,
     activityRevision: session.activity_revision,
     activeRuns,

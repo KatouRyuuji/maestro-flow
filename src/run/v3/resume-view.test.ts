@@ -103,7 +103,6 @@ describe('ResumeMapV1 projection', () => {
     expect(map).toMatchObject({
       sessionId: 'session-1',
       sessionStatus: 'open',
-      identityRevision: 5,
       orchestrationRevision: 5,
       activityRevision: 8,
       activeRuns: [

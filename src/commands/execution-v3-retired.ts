@@ -19,7 +19,7 @@ function retiredAction(path: string) {
       `${path} is retired for session/3.0 workspaces`,
       {
         details: { deprecated_command: path, replacement_command: 'session status / run check' },
-        next_actions: ['use-session-status', 'use-run-check', 'use-participant-status'],
+        next_actions: ['use-session-status', 'use-run-check'],
       },
     ), { session: options.session, requestId: options.requestId });
   };

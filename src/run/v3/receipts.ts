@@ -121,6 +121,12 @@ export function createTransitionReceipt(input: {
   recordedAt: string;
   result: unknown;
 }): TransitionReceiptV20 {
+  // Write-path invariant (audit H2): participant identity is an actor alias in
+  // v3 — receipts must never carry a participant different from the actor.
+  // Reads stay tolerant for legacy receipts written before the invariant.
+  if (input.participantId !== input.actorId) {
+    throw new Error(`participantId must equal actorId for transition receipts (got ${input.participantId} != ${input.actorId})`);
+  }
   return transitionReceiptV20Schema.parse({
     schema_version: 'transition-receipt/2.0',
     transition_id: input.transitionId,

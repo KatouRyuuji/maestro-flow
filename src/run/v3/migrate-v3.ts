@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -32,6 +33,11 @@ import {
   type PersistedTransitionRecordV11,
   type TransitionReceiptV20,
 } from '../protocol-schemas.js';
+import {
+  canonicalPayloadHash,
+  createRequestReceipt,
+  transitionReceiptRef,
+} from './receipts.js';
 import { SessionStore } from '../store.js';
 import {
   sha256Digest,
@@ -167,6 +173,14 @@ export interface V3MigrationOptions {
   actor_id?: string;
   recorded_at?: string;
   definition_of_done?: string;
+  /** Migration audit identity (H3/⑨): a request receipt links the migration
+   * transition to the caller's request for replay/idempotency parity with
+   * regular v3 mutations. When omitted (e.g. programmatic callers) a
+   * synthesized request id is used so the request-receipt chain is always
+   * present. */
+  request_id?: string;
+  reason?: string;
+  evidence_refs?: string[];
 }
 
 export interface V3MigrationProjection {
@@ -1641,6 +1655,27 @@ export function applyV3Migration(
 ): V3MigrationApplyResult {
   const projection = projectLegacySessionToV30(input, options);
   const sessionId = projection.session.session_id;
+  // Audit identity (H3/⑨): caller reason/evidence override the synthesized
+  // migration reason; a request receipt always links the migration transition.
+  const transitionReceipt = options.reason
+    ? { ...projection.transition_receipt, reason: options.reason }
+    : projection.transition_receipt;
+  const transitionReceiptWithEvidence = options.evidence_refs?.length
+    ? {
+        ...transitionReceipt,
+        evidence_refs: [...transitionReceipt.evidence_refs, ...options.evidence_refs],
+      }
+    : transitionReceipt;
+  const migrationRequestId = options.request_id ?? `migrate-${randomUUID()}`;
+  const migrationRequestReceipt = createRequestReceipt({
+    requestId: migrationRequestId,
+    participantId: options.actor_id ?? 'migration',
+    payloadHash: canonicalPayloadHash({ operation: 'session-migrate', session_id: sessionId }),
+    transitionReceiptRef: transitionReceiptRef(
+      transitionReceiptWithEvidence.activity_revision,
+      transitionReceiptWithEvidence.transition_id,
+    ),
+  });
   const reportPath = v3MigrationReportPath(store, sessionId);
   const snapshotFiles = legacySnapshotFiles({
     session: parseLegacySession(input.session),
@@ -1670,7 +1705,7 @@ export function applyV3Migration(
     }
     const receiptPaths = [
       ...projection.legacy_transition_receipts,
-      projection.transition_receipt,
+      transitionReceiptWithEvidence,
     ].map(candidate => store.transitionReceiptV20Path(
       sessionId,
       candidate.activity_revision,
@@ -1690,7 +1725,8 @@ export function applyV3Migration(
     for (const legacyReceipt of projection.legacy_transition_receipts) {
       tx.writeTransitionReceipt(legacyReceipt);
     }
-    tx.writeTransitionReceipt(projection.transition_receipt);
+    tx.writeTransitionReceipt(transitionReceiptWithEvidence);
+    tx.writeRequestReceipt(migrationRequestReceipt);
     tx.writeJson(reportPath, projection.report, migrationReportV1Schema, 0o600);
     return 'applied' as const;
   });
