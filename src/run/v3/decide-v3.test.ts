@@ -29,12 +29,12 @@ function root(): string {
 function session(status: SessionStateV30['status'] = 'open'): SessionStateV30 {
   return {
     schema_version: 'session/3.0', session_id: 's-1', objective: 'v3 decide', definition_of_done: 'tests pass',
-    status, identity_revision: 1, orchestration_revision: 0, activity_revision: 0,
+    status, orchestration_revision: 0, activity_revision: 0,
     chain: [
       { step_id: 'step-1', command: 'implement', args: [], status: 'pending', run_ids: [], goal_ref: null, decision_refs: [] },
       { step_id: 'step-2', command: 'verify', args: [], status: 'pending', run_ids: [], goal_ref: null, decision_refs: [] },
     ],
-    decisions: [], active_run_ids: [], gates_ref: 'gates.json', artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
+    decisions: [], active_run_ids: [], artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
     created_at: '2026-08-12T00:00:00.000Z', updated_at: '2026-08-12T00:00:00.000Z', completed_at: null, archived_at: null,
   };
 }
@@ -42,10 +42,6 @@ function session(status: SessionStateV30['status'] = 'open'): SessionStateV30 {
 function setup(status: SessionStateV30['status'] = 'open'): SessionStore {
   const store = new SessionStore(root());
   store.writeSessionV30(session(status));
-  writeFileSync(join(store.sessionDir('s-1'), 'gates.json'), `${JSON.stringify({
-    schema_version: 'gates/1.0', revision: 0, gates: {},
-    summary: { total: 0, passed: 0, blocked: 0, failed: 0, active_gate_ids: [], blocking_run_id: null },
-  }, null, 2)}\n`);
   writeFileSync(join(store.sessionDir('s-1'), 'artifacts.json'), `${JSON.stringify({
     schema_version: 'artifacts/1.0', revision: 0, artifacts: {}, aliases: {},
   }, null, 2)}\n`);
@@ -54,7 +50,7 @@ function setup(status: SessionStateV30['status'] = 'open'): SessionStore {
 
 function identity(requestId: string): Omit<DecideV3Input, 'pointId' | 'verdict' | 'confidence' | 'expectedOrchestrationRevision'> {
   return {
-    sessionId: 's-1', requestId, participantId: 'p-a', actorId: 'actor-a', reason: 'test decide',
+    sessionId: 's-1', requestId, actorId: 'actor-a', reason: 'test decide',
     recordedAt: '2026-08-12T01:00:00.000Z',
   };
 }
@@ -174,7 +170,7 @@ describe('v3 run decide mutation', () => {
     expect(store.readRequestReceiptV20('s-1', 'req-conflict')).toBeNull();
   });
 
-  it.each(['paused', 'completed', 'archived'] as const)('rejects decide while the Session is %s', status => {
+  it.each(['completed', 'archived'] as const)('rejects decide while the Session is %s', status => {
     const store = setup(status);
     expect(() => decideV3(store, {
       ...identity(`req-${status}`), pointId: 'P-1', verdict: 'proceed', confidence: 'high',

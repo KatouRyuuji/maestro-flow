@@ -68,8 +68,8 @@ export function registerRunV3Command(program: Command): void {
           schema_version: 'run/3.0', run_id: resolved.run, session_id: resolved.session,
           step_id: step.step_id, parent_run_id: null, retry_of_run_id: null, attempt: 1,
           command: step.command, args: step.args, goal: step.goal_ref, status: 'pending', revision: 0,
-          actor_id: resolved.actor, participant_id: resolved.participant,
-          gate_refs: [], input_refs: [], output_refs: [], primary_artifact_id: null,
+          actor_id: resolved.actor,
+          input_refs: [], output_refs: [], primary_artifact_id: null,
           verdict: null, summary: null, created_at: now, started_at: null, ended_at: null, sealed_at: null,
         };
         const mutation = createRunningRunV3(store, {
@@ -98,11 +98,10 @@ export function registerRunV3Command(program: Command): void {
     .option('--parent-run <id>', 'parent Run ID')
     .option('--retry-of-run <id>', 'derive retry lineage from an existing failed Run')
     .option('--goal <text>', 'Run goal')
-    .option('--gate <ref>', 'gate reference (repeatable)', collectV3, [])
     .option('--input <ref>', 'input reference (repeatable)', collectV3, [])
     .action((command: string, args: string[], options: V3CommonOptions & {
       run: string; step: string; parentRun?: string; retryOfRun?: string;
-      goal?: string; gate: string[]; input: string[];
+      goal?: string; input: string[];
     }) => {
       try {
         const { store, options: resolved } = resolveV3Options(options);
@@ -129,8 +128,8 @@ export function registerRunV3Command(program: Command): void {
           step_id: resolved.step, parent_run_id: resolved.parentRun ?? null,
           retry_of_run_id: retry?.retryOfRunId ?? null, attempt: retry?.attempt ?? 1,
           command, args, goal: resolved.goal ?? null, status: 'pending', revision: 0,
-          actor_id: resolved.actor, participant_id: resolved.participant,
-          gate_refs: resolved.gate, input_refs: resolved.input, output_refs: [],
+          actor_id: resolved.actor,
+          input_refs: resolved.input, output_refs: [],
           primary_artifact_id: null, verdict: null, summary: null,
           created_at: now, started_at: null, ended_at: null, sealed_at: null,
         };

@@ -24,8 +24,7 @@ const cleanCompletion = {
 describe('v3 Session state machine', () => {
   it('exports the session/3.0 transition matrix, including unarchive', () => {
     expect(SESSION_TRANSITIONS).toEqual({
-      open: ['paused', 'completed', 'failed'],
-      paused: ['open', 'completed', 'failed'],
+      open: ['completed', 'failed'],
       completed: ['archived'],
       archived: ['open'],
       failed: ['archived'],
@@ -45,59 +44,36 @@ describe('v3 Session state machine', () => {
     },
   );
 
-  it('allows paused running/blocked Run transitions, terminal sealing, and evidence updates', () => {
-    expect(() => assertSessionOperationAllowed('paused', 'transition_run', { runStatus: 'running' }))
+  it('allows open Sessions to transition Runs and add evidence', () => {
+    expect(() => assertSessionOperationAllowed('open', 'transition_run', { runStatus: 'running' }))
       .not.toThrow();
-    expect(() => assertSessionOperationAllowed('paused', 'transition_run', { runStatus: 'blocked' }))
-      .not.toThrow();
-    for (const runStatus of ['completed', 'failed', 'cancelled'] as const) {
-      expect(() => assertSessionOperationAllowed('paused', 'transition_run', {
-        runStatus, nextRunStatus: 'sealed',
-      })).not.toThrow();
-    }
-    expect(() => assertSessionOperationAllowed('paused', 'add_evidence')).not.toThrow();
+    expect(() => assertSessionOperationAllowed('open', 'add_evidence')).not.toThrow();
   });
 
-  it.each(['create_run', 'advance_chain'] as const)('blocks %s while paused', operation => {
-    expect(() => assertSessionOperationAllowed('paused', operation))
+  it.each(['completed', 'archived', 'failed'] as const)('blocks transition_run while the Session is %s', status => {
+    expect(() => assertSessionOperationAllowed(status, 'transition_run', { runStatus: 'running' }))
       .toThrowError(expect.objectContaining({
         code: 'INVALID_STATE_TRANSITION',
         details: expect.objectContaining({ reason: 'SESSION_OPERATION_BLOCKED' }),
       }));
   });
 
-  it.each(['pending', 'completed', 'failed', 'cancelled', 'sealed'] as const)(
-    'does not treat a %s Run as an unfinished paused-session work item by default',
-    runStatus => expect(() => assertSessionOperationAllowed('paused', 'transition_run', { runStatus }))
-      .toThrowError(expect.objectContaining({
-        code: 'INVALID_STATE_TRANSITION',
-        details: expect.objectContaining({ reason: 'SESSION_OPERATION_BLOCKED' }),
-      })),
-  );
-
-  it('does not allow pending to running while paused', () => {
-    expect(() => assertSessionOperationAllowed('paused', 'transition_run', {
+  it('allows pending to running while open', () => {
+    expect(() => assertSessionOperationAllowed('open', 'transition_run', {
       runStatus: 'pending', nextRunStatus: 'running',
-    })).toThrowError(expect.objectContaining({
-      code: 'INVALID_STATE_TRANSITION',
-      details: expect.objectContaining({ reason: 'SESSION_OPERATION_BLOCKED' }),
-    }));
+    })).not.toThrow();
   });
 
-  it('combines paused Session permissions with Run transition and evidence guards', () => {
-    expect(() => assertSessionRunTransitionAllowed('paused', 'running', 'completed')).not.toThrow();
-    expect(() => assertSessionRunTransitionAllowed('paused', 'completed', 'sealed')).not.toThrow();
-    expect(() => assertSessionRunTransitionAllowed('paused', 'pending', 'running'))
-      .toThrowError(expect.objectContaining({
-        code: 'INVALID_STATE_TRANSITION',
-        details: expect.objectContaining({ reason: 'SESSION_OPERATION_BLOCKED' }),
-      }));
-    expect(() => assertSessionRunTransitionAllowed('paused', 'blocked', 'failed'))
+  it('combines open Session permissions with Run transition and evidence guards', () => {
+    expect(() => assertSessionRunTransitionAllowed('open', 'running', 'completed')).not.toThrow();
+    expect(() => assertSessionRunTransitionAllowed('open', 'completed', 'sealed')).not.toThrow();
+    expect(() => assertSessionRunTransitionAllowed('open', 'pending', 'running')).not.toThrow();
+    expect(() => assertSessionRunTransitionAllowed('open', 'blocked', 'failed'))
       .toThrowError(expect.objectContaining({
         code: 'INVALID_STATE_TRANSITION',
         details: expect.objectContaining({ reason: 'RUN_TRANSITION_EVIDENCE_REQUIRED' }),
       }));
-    expect(() => assertSessionRunTransitionAllowed('paused', 'blocked', 'failed', {
+    expect(() => assertSessionRunTransitionAllowed('open', 'blocked', 'failed', {
       reason: 'unrecoverable dependency', evidence: ['evidence/decision.json'],
     })).not.toThrow();
   });
@@ -105,7 +81,6 @@ describe('v3 Session state machine', () => {
   it('exports a stable permission table for mutation-engine dispatch', () => {
     expect(SESSION_OPERATION_PERMISSIONS).toEqual({
       open: ['create_run', 'advance_chain', 'transition_run', 'add_evidence', 'decide'],
-      paused: ['transition_run', 'add_evidence'],
       completed: [],
       archived: [],
       failed: [],
@@ -178,7 +153,7 @@ describe('v3 Session state machine', () => {
     })).not.toThrow();
   });
 
-  it.each(['open', 'paused'] as const)(
+  it.each(['open'] as const)(
     'applies identical completion guards while %s',
     status => {
       const blocked = { ...cleanCompletion, runs: [{ runId: 'run-live', status: 'running' as const }] };
@@ -190,11 +165,11 @@ describe('v3 Session state machine', () => {
     },
   );
 
-  it('completes a paused Session only after every guard passes and preserves the input', () => {
-    const session = { sessionId: 's-1', status: 'paused' as const, orchestrationRevision: 7 };
+  it('completes an open Session only after every guard passes and preserves the input', () => {
+    const session = { sessionId: 's-1', status: 'open' as const, orchestrationRevision: 7 };
     const completed = transitionSession(session, 'completed', cleanCompletion);
     expect(completed).toEqual({ sessionId: 's-1', status: 'completed', orchestrationRevision: 7 });
-    expect(session.status).toBe('paused');
+    expect(session.status).toBe('open');
     expect(() => assertSessionCanComplete(cleanCompletion)).not.toThrow();
   });
 });

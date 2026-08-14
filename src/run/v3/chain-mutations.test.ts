@@ -20,12 +20,12 @@ function setup(status: SessionStateV30['status'] = 'open'): SessionStore {
   const store = new SessionStore(root);
   store.writeSessionV30({
     schema_version: 'session/3.0', session_id: 's-1', objective: 'chain', definition_of_done: 'done', status,
-    identity_revision: 1, orchestration_revision: 0, activity_revision: 0,
+    orchestration_revision: 0, activity_revision: 0,
     chain: [
       { step_id: 'step-1', command: 'implement', args: [], status: 'completed', run_ids: [], goal_ref: null, decision_refs: [] },
       { step_id: 'step-2', command: 'verify', args: [], status: 'pending', run_ids: [], goal_ref: null, decision_refs: [] },
     ],
-    decisions: [], active_run_ids: [], gates_ref: 'gates.json', artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
+    decisions: [], active_run_ids: [], artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
     created_at: '2026-08-12T00:00:00.000Z', updated_at: '2026-08-12T00:00:00.000Z', completed_at: null, archived_at: null,
   });
   return store;
@@ -33,7 +33,7 @@ function setup(status: SessionStateV30['status'] = 'open'): SessionStore {
 
 function mutate(store: SessionStore, requestId: string, mutation: ChainMutation, revision = 0, evidenceRefs: string[] = []) {
   return mutateChainV3(store, {
-    sessionId: 's-1', participantId: 'p-1', actorId: 'actor', requestId,
+    sessionId: 's-1', actorId: 'actor', requestId,
     expectedOrchestrationRevision: revision, reason: 'chain change', evidenceRefs,
     recordedAt: '2026-08-12T01:00:00.000Z', mutation,
   });
@@ -66,16 +66,16 @@ describe('v3 chain mutations', () => {
     expect(store.readSessionV30('s-1')).toMatchObject({ orchestration_revision: 1, activity_revision: 1 });
   });
 
-  it('rejects stale CAS and paused mutations without writes', () => {
+  it('rejects stale CAS and non-open mutations without writes', () => {
     const store = setup();
     expect(() => mutate(store, 'req-stale', { kind: 'replace', stepId: 'step-2', command: 'audit' }, 4))
       .toThrow(expect.objectContaining({ code: 'ORCHESTRATION_REVISION_CONFLICT' }));
     expect(store.readSessionV30('s-1')).toMatchObject({ orchestration_revision: 0, activity_revision: 0 });
 
-    const paused = setup('paused');
-    expect(() => mutate(paused, 'req-paused', { kind: 'replace', stepId: 'step-2', command: 'audit' }))
+    const completed = setup('completed');
+    expect(() => mutate(completed, 'req-completed', { kind: 'replace', stepId: 'step-2', command: 'audit' }))
       .toThrow(expect.objectContaining({ code: 'INVALID_STATE_TRANSITION' }));
-    expect(paused.readRequestReceiptV20('s-1', 'req-paused')).toBeNull();
+    expect(completed.readRequestReceiptV20('s-1', 'req-completed')).toBeNull();
   });
 
   it.each(['completed', 'failed', 'skipped'] as const)(

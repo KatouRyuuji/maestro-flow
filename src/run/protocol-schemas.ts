@@ -1263,15 +1263,13 @@ export const runOperationV11Schema = z.enum([
 export const runOperationV12Schema = z.enum([
   ...runOperationSchema.options,
   'capabilities',
-  'session-open', 'session-migrate', 'session-pause', 'session-resume', 'session-complete', 'session-archive',
-  'session-unarchive',
+  'session-open', 'session-migrate', 'session-complete', 'session-archive', 'session-unarchive',
   'session-status', 'session-list', 'session-resume-view', 'session-chain-insert', 'session-chain-skip',
   'session-chain-replace',
   'run-cancel', 'run-seal', 'run-transition', 'run-decide',
   ...runOperationV11Schema.options.filter(operation => operation.startsWith('execution-')),
   'execution-operation-claim', 'execution-operation-heartbeat',
   'execution-operation-release', 'execution-operation-status',
-  'participant-register', 'participant-status', 'participant-unregister',
   'artifact-inspect', 'artifact-republish',
 ]);
 

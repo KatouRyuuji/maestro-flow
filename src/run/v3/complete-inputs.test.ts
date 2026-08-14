@@ -26,12 +26,12 @@ function root(): string {
 function session(status: SessionStateV30['status'] = 'open'): SessionStateV30 {
   return {
     schema_version: 'session/3.0', session_id: 's-1', objective: 'v3 complete inputs', definition_of_done: 'tests pass',
-    status, identity_revision: 1, orchestration_revision: 0, activity_revision: 0,
+    status, orchestration_revision: 0, activity_revision: 0,
     chain: [
       { step_id: 'step-1', command: 'implement', args: [], status: 'running', run_ids: ['r-1'], goal_ref: null, decision_refs: [] },
       { step_id: 'step-2', command: 'verify', args: [], status: 'pending', run_ids: ['r-2'], goal_ref: null, decision_refs: [] },
     ],
-    decisions: [], active_run_ids: ['r-1', 'r-2'], gates_ref: 'gates.json', artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
+    decisions: [], active_run_ids: ['r-1', 'r-2'], artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
     created_at: '2026-08-12T00:00:00.000Z', updated_at: '2026-08-12T00:00:00.000Z', completed_at: null, archived_at: null,
   };
 }
@@ -40,7 +40,7 @@ function run(runId: string, stepId: string, status: RunV30['status'] = 'running'
   return {
     schema_version: 'run/3.0', run_id: runId, session_id: 's-1', step_id: stepId,
     parent_run_id: null, retry_of_run_id: null, attempt: 1, command: 'work', args: [], goal: null,
-    status, revision: 0, actor_id: 'actor-a', participant_id: 'p-a', gate_refs: [], input_refs: [], output_refs: [],
+    status, revision: 0, actor_id: 'actor-a', input_refs: [], output_refs: [],
     primary_artifact_id: null, verdict: null, summary: null, legacy_execution_generation: null,
     created_at: '2026-08-12T00:00:00.000Z', started_at: status === 'running' ? '2026-08-12T00:00:00.000Z' : null,
     ended_at: null, sealed_at: null,
@@ -50,10 +50,6 @@ function run(runId: string, stepId: string, status: RunV30['status'] = 'running'
 function setup(status: SessionStateV30['status'] = 'open'): SessionStore {
   const store = new SessionStore(root());
   store.writeSessionV30(session(status));
-  writeFileSync(join(store.sessionDir('s-1'), 'gates.json'), `${JSON.stringify({
-    schema_version: 'gates/1.0', revision: 0, gates: {},
-    summary: { total: 0, passed: 0, blocked: 0, failed: 0, active_gate_ids: [], blocking_run_id: null },
-  }, null, 2)}\n`);
   writeFileSync(join(store.sessionDir('s-1'), 'artifacts.json'), `${JSON.stringify({
     schema_version: 'artifacts/1.0', revision: 0, artifacts: {}, aliases: {},
   }, null, 2)}\n`);
@@ -62,9 +58,9 @@ function setup(status: SessionStateV30['status'] = 'open'): SessionStore {
   return store;
 }
 
-function identity(requestId: string, participantId = 'p-a') {
+function identity(requestId: string) {
   return {
-    sessionId: 's-1', requestId, participantId, actorId: 'actor-a', reason: 'test complete inputs',
+    sessionId: 's-1', requestId, actorId: 'actor-a', reason: 'test complete inputs',
     recordedAt: '2026-08-12T01:00:00.000Z',
   };
 }

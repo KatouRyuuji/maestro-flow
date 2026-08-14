@@ -40,7 +40,7 @@ function gatedSession(overrides: {
   const gateId = overrides.gateId ?? 'P-1';
   return {
     schema_version: 'session/3.0', session_id: 's-1', objective: 'v3 decision gates', definition_of_done: 'tests pass',
-    status: 'open', identity_revision: 1, orchestration_revision: 0, activity_revision: 0,
+    status: 'open', orchestration_revision: 0, activity_revision: 0,
     chain: [
       {
         step_id: 'step-1', command: 'implement', args: [], status: overrides.step1Status ?? 'completed',
@@ -57,7 +57,7 @@ function gatedSession(overrides: {
       status: overrides.decisionStatus ?? 'open',
       evidence_refs: [],
     }],
-    active_run_ids: [], gates_ref: 'gates.json', artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
+    active_run_ids: [], artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
     created_at: '2026-08-12T00:00:00.000Z', updated_at: '2026-08-12T00:00:00.000Z', completed_at: null, archived_at: null,
   };
 }
@@ -65,10 +65,6 @@ function gatedSession(overrides: {
 function setup(sessionInput: SessionStateV30): SessionStore {
   const store = new SessionStore(root());
   store.writeSessionV30(sessionInput);
-  writeFileSync(join(store.sessionDir('s-1'), 'gates.json'), `${JSON.stringify({
-    schema_version: 'gates/1.0', revision: 0, gates: {},
-    summary: { total: 0, passed: 0, blocked: 0, failed: 0, active_gate_ids: [], blocking_run_id: null },
-  }, null, 2)}\n`);
   writeFileSync(join(store.sessionDir('s-1'), 'artifacts.json'), `${JSON.stringify({
     schema_version: 'artifacts/1.0', revision: 0, artifacts: {}, aliases: {},
   }, null, 2)}\n`);
@@ -79,7 +75,7 @@ function pendingRun(runId: string, stepId: string): RunV30 {
   return {
     schema_version: 'run/3.0', run_id: runId, session_id: 's-1', step_id: stepId,
     parent_run_id: null, retry_of_run_id: null, attempt: 1, command: 'verify', args: [], goal: null,
-    status: 'pending', revision: 0, actor_id: 'actor-a', participant_id: 'p-a', gate_refs: [], input_refs: [], output_refs: [],
+    status: 'pending', revision: 0, actor_id: 'actor-a', input_refs: [], output_refs: [],
     primary_artifact_id: null, verdict: null, summary: null,
     created_at: '2026-08-12T00:00:00.000Z', started_at: null, ended_at: null, sealed_at: null,
   };
@@ -87,7 +83,7 @@ function pendingRun(runId: string, stepId: string): RunV30 {
 
 function identity(requestId: string) {
   return {
-    sessionId: 's-1', requestId, participantId: 'p-a', actorId: 'actor-a', reason: 'decision gate test',
+    sessionId: 's-1', requestId, actorId: 'actor-a', reason: 'decision gate test',
     recordedAt: '2026-08-12T01:00:00.000Z',
   };
 }

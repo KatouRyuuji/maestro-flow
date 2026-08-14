@@ -509,7 +509,6 @@ describe('v2 to v3 pure migration projection', () => {
     const before = structuredClone(input);
     const result = projectLegacySessionToV30(input, {
       actor_id: 'migration-operator',
-      participant_id: 'pi-window-a',
       recorded_at: RECORDED_AT,
     });
 
@@ -518,7 +517,6 @@ describe('v2 to v3 pure migration projection', () => {
       schema_version: 'session/3.0',
       session_id: 's',
       status: 'completed',
-      identity_revision: 3,
       activity_revision: 6,
       definition_of_done: 'migration tests pass',
       completed_at: '2026-08-12T03:00:00.000Z',
@@ -546,7 +544,6 @@ describe('v2 to v3 pure migration projection', () => {
       step_id: 'step-1',
       attempt: 1,
       status: 'sealed',
-      gate_refs: ['gate-1'],
       input_refs: [],
       output_refs: ['artifact-1'],
       primary_artifact_id: 'artifact-1',
@@ -588,7 +585,6 @@ describe('v2 to v3 pure migration projection', () => {
 
     expect(result.session).toMatchObject({
       status: 'open',
-      identity_revision: 5,
       orchestration_revision: 9,
       activity_revision: 12,
       active_run_ids: [],
@@ -597,9 +593,7 @@ describe('v2 to v3 pure migration projection', () => {
       status: 'completed',
       legacy_execution_generation: 7,
       actor_id: 'legacy-migration',
-      participant_id: 'legacy-migration',
       args: ['--focused'],
-      gate_refs: ['gate-1'],
       output_refs: ['artifact-1'],
     });
     expect(result.report.source_status_signal).toBe('execution-active');
@@ -627,7 +621,9 @@ describe('v2 to v3 pure migration projection', () => {
 
   it.each([
     ['archived_at', v20Session({ archived_at: '2026-08-12T03:30:00.000Z', archived_by: 'operator' }), execution('active'), 'archived'],
-    ['paused execution', v20Session(), execution('paused'), 'paused'],
+    // The paused status was retired in the v3 simplification: a legacy paused
+    // execution migrates to open instead.
+    ['paused execution', v20Session(), execution('paused'), 'open'],
     ['sealed done', v20Session({ current_execution_id: null }), execution('sealed', 'done'), 'completed'],
     ['sealed concerns', v20Session({ current_execution_id: null }), execution('sealed', 'done_with_concerns'), 'completed'],
     ['sealed failed', v20Session({ current_execution_id: null }), execution('sealed', 'failed'), 'failed'],
@@ -654,7 +650,6 @@ describe('v2 to v3 pure migration projection', () => {
 
     const mutations: Array<(input: LegacyV3MigrationInput) => void> = [
       input => { (input.runs[0] as ReturnType<typeof runV14>).chain_step_id = 'missing-step'; },
-      input => { (input.runs[0] as ReturnType<typeof runV14>).gate_ids = ['missing-gate']; },
       input => { (input.runs[0] as ReturnType<typeof runV14>).output.produces = ['missing-artifact']; },
       input => { input.gates.gates['gate-1'].evidence_refs = ['missing-evidence']; },
       input => {

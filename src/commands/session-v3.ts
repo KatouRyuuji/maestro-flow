@@ -5,7 +5,6 @@ import type { Command } from 'commander';
 import {
   artifactRegistrySchema,
   evidenceStoreSchema,
-  gateRegistrySchema,
   sessionStateV30Schema,
   type RunV30,
   type SessionStateV30,
@@ -104,13 +103,13 @@ export function registerSessionV3Command(program: Command): void {
         const state = sessionStateV30Schema.parse({
           schema_version: 'session/3.0', session_id: sessionId, objective,
           definition_of_done: options.definitionOfDone, status: 'open',
-          identity_revision: 1, orchestration_revision: 0, activity_revision: 1,
+          orchestration_revision: 0, activity_revision: 1,
           chain: (options.chain ?? []).map((command, index) => ({
             step_id: `s-${index + 1}`, command, args: [], status: 'pending' as const,
             run_ids: [], goal_ref: null, decision_ref: null, decision_refs: [], stage: null,
           })),
           decisions: [], active_run_ids: [],
-          gates_ref: 'gates.json', artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
+          artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
           created_at: now, updated_at: now, completed_at: null, archived_at: null,
         });
         const transition = createTransitionReceipt({
@@ -132,10 +131,6 @@ export function registerSessionV3Command(program: Command): void {
             return { status: 'replayed' as const, transition: replayed };
           }
           tx.writeSession(state);
-          tx.writeJson(resolve(store.sessionDir(sessionId), state.gates_ref), {
-            schema_version: 'gates/1.0', revision: 0, gates: {},
-            summary: { total: 0, passed: 0, blocked: 0, failed: 0, active_gate_ids: [], blocking_run_id: null },
-          }, gateRegistrySchema);
           tx.writeJson(resolve(store.sessionDir(sessionId), state.artifacts_ref), {
             schema_version: 'artifacts/1.0', revision: 0, artifacts: {}, aliases: {},
           }, artifactRegistrySchema);
@@ -190,7 +185,6 @@ export function registerSessionV3Command(program: Command): void {
             try {
               applyV3Migration(store, loadLegacyV3MigrationInput(store, candidate.session_id), {
                 actor_id: options.actor,
-                participant_id: options.participant,
                 definition_of_done: options.definitionOfDone,
               });
               return {
@@ -218,7 +212,6 @@ export function registerSessionV3Command(program: Command): void {
           ? readAppliedV3Migration(store, options.session)
           : applyV3Migration(store, loadLegacyV3MigrationInput(store, options.session), {
             actor_id: options.actor,
-            participant_id: options.participant,
             definition_of_done: options.definitionOfDone,
           });
         emitV3Success({ operation: 'session-migrate', sessionId: options.session, result });
@@ -228,8 +221,6 @@ export function registerSessionV3Command(program: Command): void {
     });
 
   for (const [name, operation, target] of [
-    ['pause', 'session-pause', 'paused'],
-    ['resume', 'session-resume', 'open'],
     ['archive', 'session-archive', 'archived'],
     ['unarchive', 'session-unarchive', 'open'],
   ] as const) {
@@ -284,7 +275,6 @@ export function registerSessionV3Command(program: Command): void {
             status: item.status,
             objective: item.objective,
             orchestration_revision: item.orchestration_revision,
-            identity_revision: item.identity_revision,
             activity_revision: item.activity_revision,
             active_run_ids: [...item.active_run_ids].sort(),
             updated_at: item.updated_at,
@@ -301,26 +291,21 @@ export function registerSessionV3Command(program: Command): void {
         const { store, options: resolved } = resolveV3Options(options);
         const state = store.readSessionV30(resolved.session);
         const runs = readRuns(resolved, state);
-        const gates = store.readJsonFileReadOnly(resolve(store.sessionDir(resolved.session), state.gates_ref), gateRegistrySchema);
         const artifacts = store.readJsonFileReadOnly(
           resolve(store.sessionDir(resolved.session), state.artifacts_ref),
           artifactRegistrySchema,
         );
-        const blockingGates = Object.entries(gates.gates)
-          .filter(([, gate]) => gate.blocking && ['pending', 'running', 'failed', 'blocked'].includes(gate.status))
-          .map(([gateId]) => gateId);
         const pendingPublications = Object.entries(artifacts.artifacts)
           .filter(([, artifact]) => artifact.status === 'draft')
           .map(([artifactId, artifact]) => ({ publicationId: artifactId, resourceUri: artifact.relative_path }));
         const map = projectResumeMapV1({
           session: state,
           runs,
-          blockingGates,
+          blockingGates: [],
           openDecisions: state.decisions.filter(item => item.status !== 'resolved').map(item => item.decision_id),
           pendingPublications,
           nextActions: [
             ...runs.map(item => ({ action: 'run-check', targetId: item.run_id, expectedRevision: item.revision })),
-            ...blockingGates.map(gateId => ({ action: 'gate-check', targetId: gateId, expectedRevision: gates.revision })),
             ...pendingPublications.map(publication => ({
               action: 'publication-review', targetId: publication.publicationId, expectedRevision: artifacts.revision,
             })),

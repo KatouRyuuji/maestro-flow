@@ -44,14 +44,12 @@ function normalizedIdentity(input: V3MutationIdentity): Required<Omit<V3Mutation
 } {
   const sessionId = required(input.sessionId, 'session ID');
   const requestId = required(input.requestId, 'request ID');
-  const participantId = required(input.participantId, 'participant ID');
   const actorId = required(input.actorId, 'actor ID');
   assertSafePathSegment(sessionId, 'session ID');
   assertSafePathSegment(requestId, 'request ID');
   return {
     sessionId,
     requestId,
-    participantId,
     actorId,
     reason: required(input.reason, 'reason'),
     evidenceRefs: [...new Set((input.evidenceRefs ?? []).map(item => item.trim()).filter(Boolean))].sort(),
@@ -96,7 +94,8 @@ function replay(
     tx,
     sessionId: identity.sessionId,
     requestId: identity.requestId,
-    participantId: identity.participantId,
+    // participant_id = actor_id on receipts; the replay key is actor-based.
+    participantId: identity.actorId,
     payloadHash,
   });
   return transition ? { status: 'replayed', transition } : null;
@@ -124,7 +123,7 @@ function stageApplied(input: {
     revisionBefore: input.revisionBefore,
     revisionAfter: input.revisionAfter,
     actorId: input.identity.actorId,
-    participantId: input.identity.participantId,
+    participantId: input.identity.actorId,
     reason: input.identity.reason,
     evidenceRefs: input.identity.evidenceRefs,
     recordedAt: input.identity.recordedAt,
@@ -133,7 +132,7 @@ function stageApplied(input: {
   const reference = transitionReceiptRef(transition.activity_revision, transition.transition_id);
   const request = createRequestReceipt({
     requestId: input.identity.requestId,
-    participantId: input.identity.participantId,
+    participantId: input.identity.actorId,
     payloadHash: input.payloadHash,
     transitionReceiptRef: reference,
   });

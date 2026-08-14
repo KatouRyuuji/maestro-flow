@@ -53,7 +53,6 @@ const sha256Schema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const nonEmptyString = z.string().min(1);
 const LEGACY_FALLBACK_TIME = '1970-01-01T00:00:00.000Z';
 const FALLBACK_ACTOR = 'legacy-migration';
-const FALLBACK_PARTICIPANT = 'legacy-migration';
 
 const sourceSnapshotSchema = z.object({
   kind: z.enum([
@@ -102,7 +101,7 @@ export const migrationReportV1Schema = z.object({
   target_run_schema: z.literal('run/3.0'),
   recorded_at: nonEmptyString,
   source_status_signal: nonEmptyString,
-  target_status: z.enum(['open', 'paused', 'completed', 'archived', 'failed']),
+  target_status: z.enum(['open', 'completed', 'archived', 'failed']),
   hash_scope: z.literal(
     'sha256 of supplied source bytes; otherwise sha256 of stable canonical JSON UTF-8 input',
   ),
@@ -166,7 +165,6 @@ export interface LegacyV3MigrationInput {
 
 export interface V3MigrationOptions {
   actor_id?: string;
-  participant_id?: string;
   recorded_at?: string;
   definition_of_done?: string;
 }
@@ -201,12 +199,14 @@ export class V3MigrationError extends Error {
 /** Ordered mapping table. The first matching signal is authoritative. */
 export const V3_MIGRATION_STATUS_MAPPING = Object.freeze([
   { signal: 'session-archived', target: 'archived' },
-  { signal: 'execution-paused', target: 'paused' },
+  // The paused status was retired in the v3 simplification: legacy paused
+  // executions/sessions migrate to open (no paused state exists anymore).
+  { signal: 'execution-paused', target: 'open' },
   { signal: 'execution-sealed-done', target: 'completed' },
   { signal: 'execution-sealed-done_with_concerns', target: 'completed' },
   { signal: 'execution-sealed-failed', target: 'failed' },
   { signal: 'execution-active', target: 'open' },
-  { signal: 'legacy-session-paused', target: 'paused' },
+  { signal: 'legacy-session-paused', target: 'open' },
   { signal: 'legacy-session-sealed', target: 'completed' },
   { signal: 'legacy-session-failed', target: 'failed' },
   { signal: 'no-execution-or-legacy-running', target: 'open' },
@@ -563,7 +563,7 @@ function projectStatus(session: LegacySession, execution: ExecutionState | null)
   }
   if (execution?.status === 'paused') {
     return {
-      signal: 'execution-paused', status: 'paused', finalOutcome: null, sealSummary: null,
+      signal: 'execution-paused', status: 'open', finalOutcome: null, sealSummary: null,
       terminalAt: null, archivedAt: null,
     };
   }
@@ -586,7 +586,7 @@ function projectStatus(session: LegacySession, execution: ExecutionState | null)
   if (session.schema_version === 'session/1.3') {
     if (session.status === 'paused') {
       return {
-        signal: 'legacy-session-paused', status: 'paused', finalOutcome: null, sealSummary: null,
+        signal: 'legacy-session-paused', status: 'open', finalOutcome: null, sealSummary: null,
         terminalAt: null, archivedAt: null,
       };
     }
@@ -728,7 +728,6 @@ function validateReferences(
   const requireRef = (present: boolean, label: string): void => {
     if (!present) fail('MIGRATION_REFERENCE_INTEGRITY', `dangling migration reference: ${label}`);
   };
-  requireRef(session.gates_ref === 'gates.json', `Session gates registry ${session.gates_ref}`);
   requireRef(session.artifacts_ref === 'artifacts.json', `Session artifacts registry ${session.artifacts_ref}`);
   requireRef(session.evidence_ref === 'evidence.json', `Session evidence registry ${session.evidence_ref}`);
 
@@ -761,7 +760,6 @@ function validateReferences(
     if (run.retry_of_run_id) {
       requireRef(runIds.has(run.retry_of_run_id), `Run ${run.run_id} -> retry source ${run.retry_of_run_id}`);
     }
-    for (const gateRef of run.gate_refs) requireRef(gateIds.has(gateRef), `Run ${run.run_id} -> gate ${gateRef}`);
     for (const ref of [...run.input_refs, ...run.output_refs]) {
       requireRef(referenceExists(ref, artifacts), `Run ${run.run_id} -> artifact ${ref}`);
     }
@@ -958,7 +956,6 @@ export function projectLegacySessionToV30(
   };
 
   const actorId = options.actor_id?.trim() || FALLBACK_ACTOR;
-  const participantId = options.participant_id?.trim() || FALLBACK_PARTICIPANT;
   const projectedRuns = legacyRuns.map((run): RunV30 => {
     if (run.parent_run_id !== null && !runById.has(run.parent_run_id)) {
       fail('MIGRATION_REFERENCE_INTEGRITY', `Run ${run.run_id} references missing parent Run ${run.parent_run_id}`);
@@ -989,8 +986,6 @@ export function projectLegacySessionToV30(
       status: mapRunStatus(run.status),
       revision: 0,
       actor_id: actorId,
-      participant_id: participantId,
-      gate_refs: [...run.gate_ids],
       input_refs: [...run.input.consumes],
       output_refs: outputRefs,
       primary_artifact_id: run.output.primary_artifact_id,
@@ -1115,15 +1110,12 @@ export function projectLegacySessionToV30(
       ? session.boundary_contract.definition_of_done
       : options.definition_of_done ?? '',
     status: status.status,
-    identity_revision: sourceIdentityRevision + 1,
     orchestration_revision: execution?.revision
       ?? (session.schema_version === 'session/1.3' ? session.activity_revision : 0),
     activity_revision: sourceActivityRevision + 1,
     chain: projectedChain,
     decisions: projectedDecisions,
     active_run_ids: activeRunIds,
-    gates_ref: execution?.gates_ref
-      ?? (session.schema_version === 'session/1.3' ? session.refs.gates : 'gates.json'),
     artifacts_ref: execution?.artifacts_ref
       ?? (session.schema_version === 'session/1.3' ? session.refs.artifacts : 'artifacts.json'),
     evidence_ref: execution?.evidence_ref
@@ -1252,7 +1244,7 @@ export function projectLegacySessionToV30(
       revision_before: revisionBefore,
       revision_after: after,
       actor_id: actor,
-      participant_id: FALLBACK_PARTICIPANT,
+      participant_id: actor,
       reason: `Migrated legacy Execution ${transition.payload.operation} transition`,
       evidence_refs: [`migration-source:${sourceSnapshotHash}`],
       recorded_at: transition.outcome.applied_at,
@@ -1295,9 +1287,9 @@ export function projectLegacySessionToV30(
     target_type: 'session-identity',
     target_id: session.session_id,
     revision_before: sourceIdentityRevision,
-    revision_after: projectedSession.identity_revision,
+    revision_after: sourceIdentityRevision + 1,
     actor_id: actorId,
-    participant_id: participantId,
+    participant_id: actorId,
     reason: 'Legacy Session/Execution authority projected to session/3.0',
     evidence_refs: snapshots.map(snapshot => `migration-source:${snapshot.sha256}`),
     recorded_at: recordedAt,

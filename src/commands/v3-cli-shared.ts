@@ -92,7 +92,6 @@ export function resolveV3Options<T extends { session?: string; workflowRoot: str
 export function mutationIdentity(options: ResolvedV3CommonOptions) {
   return {
     sessionId: options.session,
-    participantId: options.participant,
     actorId: options.actor,
     requestId: options.requestId,
     reason: options.reason,
@@ -168,20 +167,16 @@ export function emitV3Error(
 }
 
 export type SessionStatusOperation =
-  | 'session-pause'
-  | 'session-resume'
   | 'session-archive'
   | 'session-unarchive';
 
 export function mutateSessionStatusV3(
   store: SessionStore,
   options: ResolvedV3CommonOptions,
-  toStatus: Extract<SessionStatus, 'paused' | 'open' | 'archived'>,
-  operation: SessionStatusOperation = toStatus === 'open'
-    ? 'session-resume'
-    : toStatus === 'paused'
-      ? 'session-pause'
-      : 'session-archive',
+  toStatus: Extract<SessionStatus, 'open' | 'archived'>,
+  operation: SessionStatusOperation = toStatus === 'archived'
+    ? 'session-archive'
+    : 'session-unarchive',
 ): V3MutationResult {
   const recordedAt = new Date().toISOString();
   const payload = {

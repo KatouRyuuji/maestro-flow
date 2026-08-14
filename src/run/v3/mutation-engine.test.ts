@@ -37,12 +37,12 @@ function root(): string {
 function session(status: SessionStateV30['status'] = 'open'): SessionStateV30 {
   return {
     schema_version: 'session/3.0', session_id: 's-1', objective: 'v3 mutation', definition_of_done: 'tests pass',
-    status, identity_revision: 1, orchestration_revision: 0, activity_revision: 0,
+    status, orchestration_revision: 0, activity_revision: 0,
     chain: [
       { step_id: 'step-1', command: 'implement', args: [], status: 'running', run_ids: ['r-1'], goal_ref: null, decision_refs: [] },
       { step_id: 'step-2', command: 'verify', args: [], status: 'pending', run_ids: ['r-2'], goal_ref: null, decision_refs: [] },
     ],
-    decisions: [], active_run_ids: ['r-1', 'r-2'], gates_ref: 'gates.json', artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
+    decisions: [], active_run_ids: ['r-1', 'r-2'], artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
     created_at: '2026-08-12T00:00:00.000Z', updated_at: '2026-08-12T00:00:00.000Z', completed_at: null, archived_at: null,
   };
 }
@@ -51,7 +51,7 @@ function run(runId: string, stepId: string, status: RunV30['status'] = 'running'
   return {
     schema_version: 'run/3.0', run_id: runId, session_id: 's-1', step_id: stepId,
     parent_run_id: null, retry_of_run_id: null, attempt: 1, command: 'work', args: [], goal: null,
-    status, revision: 0, actor_id: 'actor-a', participant_id: 'p-a', gate_refs: [], input_refs: [], output_refs: [],
+    status, revision: 0, actor_id: 'actor-a', input_refs: [], output_refs: [],
     primary_artifact_id: null, verdict: null, summary: null, legacy_execution_generation: null,
     created_at: '2026-08-12T00:00:00.000Z', started_at: status === 'running' ? '2026-08-12T00:00:00.000Z' : null,
     ended_at: null, sealed_at: null,
@@ -61,10 +61,6 @@ function run(runId: string, stepId: string, status: RunV30['status'] = 'running'
 function setup(status: SessionStateV30['status'] = 'open'): SessionStore {
   const store = new SessionStore(root());
   store.writeSessionV30(session(status));
-  writeFileSync(join(store.sessionDir('s-1'), 'gates.json'), `${JSON.stringify({
-    schema_version: 'gates/1.0', revision: 0, gates: {},
-    summary: { total: 0, passed: 0, blocked: 0, failed: 0, active_gate_ids: [], blocking_run_id: null },
-  }, null, 2)}\n`);
   writeFileSync(join(store.sessionDir('s-1'), 'artifacts.json'), `${JSON.stringify({
     schema_version: 'artifacts/1.0', revision: 0, artifacts: {}, aliases: {},
   }, null, 2)}\n`);
@@ -86,9 +82,9 @@ function configureRequiredOutput(store: SessionStore, produce = true): void {
   }, null, 2)}\n`);
 }
 
-function identity(requestId: string, participantId = 'p-a') {
+function identity(requestId: string) {
   return {
-    sessionId: 's-1', requestId, participantId, actorId: 'actor-a', reason: 'test mutation',
+    sessionId: 's-1', requestId, actorId: 'actor-a', reason: 'test mutation',
     recordedAt: '2026-08-12T01:00:00.000Z',
   };
 }
@@ -191,7 +187,7 @@ describe('v3 mutation engine', () => {
         ...identity('req-r1'), runId: 'r-1', expectedRunRevision: 0, toStatus: 'blocked',
       })),
       Promise.resolve().then(() => mutateRunV3(store, {
-        ...identity('req-r2', 'p-b'), actorId: 'actor-b', runId: 'r-2', expectedRunRevision: 0, toStatus: 'blocked',
+        ...identity('req-r2'), actorId: 'actor-b', runId: 'r-2', expectedRunRevision: 0, toStatus: 'blocked',
       })),
     ]);
     expect(first.status).toBe('applied');
@@ -208,7 +204,7 @@ describe('v3 mutation engine', () => {
         ...identity('req-a'), runId: 'r-1', expectedRunRevision: 0, toStatus: 'blocked',
       })),
       Promise.resolve().then(() => mutateRunV3(store, {
-        ...identity('req-b', 'p-b'), actorId: 'actor-b', runId: 'r-1', expectedRunRevision: 0, toStatus: 'cancelled',
+        ...identity('req-b'), actorId: 'actor-b', runId: 'r-1', expectedRunRevision: 0, toStatus: 'cancelled',
       })),
     ]);
     expect(results.filter(item => item.status === 'fulfilled')).toHaveLength(1);
@@ -244,11 +240,11 @@ describe('v3 mutation engine', () => {
     expect(store.readSessionV30('s-1').activity_revision).toBe(1);
   });
 
-  it('rejects the same request across participants and leaves state unchanged', () => {
+  it('rejects the same request across actors and leaves state unchanged', () => {
     const store = setup();
     const base = { ...identity('req-conflict'), runId: 'r-1', expectedRunRevision: 0, toStatus: 'blocked' as const };
     mutateRunV3(store, base);
-    expect(() => mutateRunV3(store, { ...base, participantId: 'p-b' }))
+    expect(() => mutateRunV3(store, { ...base, actorId: 'actor-b' }))
       .toThrow(expect.objectContaining({ code: 'REQUEST_CONFLICT' }));
     expect(store.readSessionV30('s-1').activity_revision).toBe(1);
   });
@@ -358,21 +354,20 @@ describe('v3 mutation engine', () => {
     expect(store.readSessionV30('s-1').activity_revision).toBe(0);
   });
 
-  it('rejects Run creation while paused but permits an existing Run to complete its current step', () => {
-    const store = setup('paused');
+  it('rejects Run creation while the Session is completed and blocks terminal work too', () => {
+    const store = setup('completed');
     const candidate = run('r-3', 'step-2', 'pending');
     expect(() => createRunV3(store, {
       ...identity('req-create'), expectedOrchestrationRevision: 0, run: candidate,
     })).toThrow(expect.objectContaining({ code: 'INVALID_STATE_TRANSITION' }));
-    const completed = completeRunAndAdvance(store, {
+    expect(() => completeRunAndAdvance(store, {
       ...identity('req-complete'), runId: 'r-1', expectedRunRevision: 0,
       expectedOrchestrationRevision: 0, summary: 'done', verdict: 'done',
-    });
-    expect(completed.status).toBe('applied');
-    expect(store.readRunV30('s-1', 'r-1').status).toBe('sealed');
+    })).toThrow(expect.objectContaining({ code: 'INVALID_STATE_TRANSITION' }));
+    expect(store.readRunV30('s-1', 'r-1').status).toBe('running');
     expect(store.readSessionV30('s-1')).toMatchObject({
-      status: 'paused', orchestration_revision: 1,
-      chain: [{ status: 'completed' }, { status: 'pending' }],
+      status: 'completed', orchestration_revision: 0,
+      chain: [{ status: 'running' }, { status: 'pending' }],
     });
   });
 

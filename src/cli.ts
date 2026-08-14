@@ -83,7 +83,6 @@ const commandLoaders: Record<string, () => Promise<(p: Command) => void>> = {
   explore:    async () => (await import('./commands/explore.js')).registerExploreCommand,
   moa:        async () => (await import('./commands/moa.js')).registerMoaCommand,
   timeline:   async () => (await import('./commands/timeline.js')).registerTimelineCommand,
-  participant: async () => (await import('./commands/participant.js')).registerParticipantCommand,
   artifact:   async () => (await import('./commands/artifact.js')).registerArtifactCommand,
 };
 
@@ -129,7 +128,7 @@ const requestedSubcommand = requestedCommandIndex >= 0 ? preDispatch.routingArgs
 const requestedWorkflowRoot = preDispatch.workflowRoot;
 let v3WriterMode = false;
 if (requestedCommand === 'run' || requestedCommand === 'session'
-  || requestedCommand === 'participant' || requestedCommand === 'execution' || requestedCommand === 'help') {
+  || requestedCommand === 'execution' || requestedCommand === 'help') {
   const { SessionStore } = await import('./run/store.js');
   v3WriterMode = new SessionStore(requestedWorkflowRoot).sessionSchemaSelection().writer === 'session/3.0';
 }
@@ -140,7 +139,7 @@ const runMachineSubcommands = new Set([
 const planMachineSubcommands = new Set(['publish']);
 const sessionMachineSubcommands = new Set(['create', 'resolve', 'resume', 'seal', 'chain', 'meta']);
 const v3SessionMachineSubcommands = new Set([
-  'open', 'migrate', 'pause', 'resume', 'complete', 'archive', 'status', 'resume-view', 'chain', 'list',
+  'open', 'migrate', 'complete', 'archive', 'unarchive', 'status', 'resume-view', 'chain', 'list',
 ]);
 const v3RunMachineSubcommands = new Set([
   'next', 'create', 'complete', 'transition', 'cancel', 'seal', 'brief', 'check', 'decide', 'recall',
@@ -149,7 +148,6 @@ const artifactMachineMode = requestedCommand === 'artifact' && argv.includes('--
 const v3MachineMode = argv.includes('--json') && v3WriterMode && (
   (requestedCommand === 'session' && v3SessionMachineSubcommands.has(requestedSubcommand ?? ''))
   || (requestedCommand === 'run' && v3RunMachineSubcommands.has(requestedSubcommand ?? ''))
-  || requestedCommand === 'participant'
   || requestedCommand === 'execution'
   || requestedCommand === 'artifact'
 );
@@ -208,19 +206,14 @@ function inferMachineOperation(command: 'run' | 'session' | 'plan', args: string
 
 type V3MachineOperation =
   | 'create' | 'next' | 'complete' | 'brief' | 'check' | 'recall'
-  | 'session-open' | 'session-migrate' | 'session-pause' | 'session-resume' | 'session-complete' | 'session-archive'
+  | 'session-open' | 'session-migrate' | 'session-complete' | 'session-archive' | 'session-unarchive'
   | 'session-status' | 'session-resume-view' | 'session-list'
   | 'session-chain-insert' | 'session-chain-skip' | 'session-chain-replace'
-  | 'run-transition' | 'run-cancel' | 'run-seal' | 'run-decide'
-  | 'participant-register' | 'participant-status' | 'participant-unregister';
+  | 'run-transition' | 'run-cancel' | 'run-seal' | 'run-decide';
 
 function inferV3MachineOperation(command: string | undefined, subcommand: string | undefined): V3MachineOperation | 'artifact-inspect' | 'artifact-republish' {
   if (command === 'artifact') return subcommand === 'republish' ? 'artifact-republish' : 'artifact-inspect';
   if (command === 'execution') return inferExecutionMachineOperation(command, argv) as V3MachineOperation;
-  if (command === 'participant') {
-    if (subcommand === 'status' || subcommand === 'unregister') return `participant-${subcommand}`;
-    return 'participant-register';
-  }
   if (command === 'session') {
     if (subcommand === 'chain') {
       const chainIndex = argv.indexOf('chain');
@@ -231,8 +224,8 @@ function inferV3MachineOperation(command: string | undefined, subcommand: string
       return 'session-chain-insert';
     }
     if (subcommand === 'migrate') return 'session-migrate';
-    if (subcommand === 'pause' || subcommand === 'resume' || subcommand === 'complete'
-      || subcommand === 'archive' || subcommand === 'status' || subcommand === 'resume-view'
+    if (subcommand === 'complete'
+      || subcommand === 'archive' || subcommand === 'unarchive' || subcommand === 'status' || subcommand === 'resume-view'
       || subcommand === 'list') {
       return `session-${subcommand}`;
     }
@@ -298,8 +291,7 @@ async function requestedRegistration(name: string): Promise<(p: Command) => void
 
 const jsonHelpMode = requestedCommand === 'help' && argv.includes('--json');
 const requestedCommandAvailable = requestedCommand !== undefined
-  && requestedCommand in commandLoaders
-  && (requestedCommand !== 'participant' || v3WriterMode);
+  && requestedCommand in commandLoaders;
 
 if (jsonHelpMode) {
   const { registerHelpJsonCommand } = await import('./commands/help-json.js');
@@ -309,15 +301,13 @@ if (jsonHelpMode) {
   // requested target (or the full tree for bare/unknown help) and let Commander
   // render its normal help output.
   const helpTargetAvailable = requestedSubcommand !== undefined
-    && requestedSubcommand in commandLoaders
-    && (requestedSubcommand !== 'participant' || v3WriterMode);
+    && requestedSubcommand in commandLoaders;
   if (helpTargetAvailable) {
     const register = await requestedRegistration(requestedSubcommand);
     register(program);
   } else {
     const seen = new Set<(p: Command) => void>();
     for (const [name, loader] of Object.entries(commandLoaders)) {
-      if (name === 'participant') continue;
       const register = await loader();
       if (seen.has(register)) continue;
       seen.add(register);
@@ -351,7 +341,6 @@ if (jsonHelpMode) {
   // its alias share one module); deduplicate so we register each module once.
   const seen = new Set<(p: Command) => void>();
   for (const [name, loader] of Object.entries(commandLoaders)) {
-    if (name === 'participant') continue;
     const register = await loader();
     if (seen.has(register)) continue;
     seen.add(register);

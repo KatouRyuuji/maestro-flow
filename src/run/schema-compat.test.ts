@@ -270,7 +270,6 @@ describe('Session schema compatibility', () => {
       objective: 'ship minimal v3',
       definition_of_done: 'contract tests pass',
       status: 'open' as const,
-      identity_revision: 1,
       orchestration_revision: 2,
       activity_revision: 3,
       chain: [{
@@ -281,7 +280,7 @@ describe('Session schema compatibility', () => {
         decision_id: 'decision-1', after_step_id: 'step-1', status: 'open' as const, evidence_refs: [],
       }],
       active_run_ids: ['run-1'],
-      gates_ref: 'gates.json', artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
+      artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
       created_at: '2026-08-12T00:00:00.000Z', updated_at: '2026-08-12T00:01:00.000Z',
       completed_at: null, archived_at: null,
     };
@@ -291,8 +290,7 @@ describe('Session schema compatibility', () => {
       parent_run_id: null, retry_of_run_id: 'run-0', attempt: 2,
       command: 'implement', args: ['--focused'], goal: 'contract foundation',
       status: 'running' as const, revision: 4,
-      actor_id: 'codex', participant_id: 'pi-window-a',
-      gate_refs: ['gate-1'], input_refs: ['artifact-input'], output_refs: [], primary_artifact_id: null,
+      actor_id: 'codex', input_refs: ['artifact-input'], output_refs: [], primary_artifact_id: null,
       verdict: null, summary: null, legacy_execution_generation: 7,
       created_at: '2026-08-12T00:00:00.000Z', started_at: '2026-08-12T00:00:01.000Z',
       ended_at: null, sealed_at: null,
@@ -306,6 +304,51 @@ describe('Session schema compatibility', () => {
     expect(() => commandRunReadSchema.parse(run)).toThrow();
     expect(() => sessionStateV30Schema.parse({ ...session, current_execution_id: null })).toThrow();
     expect(() => runV30Schema.parse({ ...run, execution_id: 'exec-1' })).toThrow();
+  });
+
+  it('reads pre-simplification session/3.0 and run/3.0 documents with retired fields and the retired paused status', () => {
+    const newSession = sessionStateV30Schema.parse({
+      schema_version: 'session/3.0', session_id: 's-old', objective: 'old', definition_of_done: 'done',
+      status: 'open', orchestration_revision: 1, activity_revision: 1,
+      chain: [], decisions: [], active_run_ids: [],
+      artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
+      created_at: '2026-08-12T00:00:00.000Z', updated_at: '2026-08-12T00:00:00.000Z',
+      completed_at: null, archived_at: null,
+    });
+    const legacySession = {
+      ...newSession,
+      // Retired fields and status written by pre-simplification engines.
+      identity_revision: 1,
+      gates_ref: 'gates.json',
+      status: 'paused',
+    };
+    // The strict writer schema rejects retired fields and the retired status...
+    expect(() => sessionStateV30Schema.parse(legacySession)).toThrow();
+    // ...while the read path tolerates them: retired keys are stripped and the
+    // paused status stays readable (callers map it to open on the engine read).
+    const parsed = sessionStateReadSchema.parse(legacySession);
+    expect(parsed).toMatchObject({ schema_version: 'session/3.0', status: 'paused' });
+    expect(parsed).not.toHaveProperty('identity_revision');
+    expect(parsed).not.toHaveProperty('gates_ref');
+
+    const legacyRun = {
+      schema_version: 'run/3.0' as const,
+      run_id: 'run-old', session_id: 's-old', step_id: 'step-1',
+      parent_run_id: null, retry_of_run_id: null, attempt: 1,
+      command: 'implement', args: [], goal: null,
+      status: 'running' as const, revision: 0,
+      actor_id: 'codex',
+      participant_id: 'pi-window-a',
+      gate_refs: ['gate-1'],
+      input_refs: [], output_refs: [], primary_artifact_id: null,
+      verdict: null, summary: null,
+      created_at: '2026-08-12T00:00:00.000Z', started_at: null, ended_at: null, sealed_at: null,
+    };
+    expect(() => runV30Schema.parse(legacyRun)).toThrow();
+    const parsedRun = runReadSchema.parse(legacyRun);
+    expect(parsedRun).toMatchObject({ schema_version: 'run/3.0', actor_id: 'codex' });
+    expect(parsedRun).not.toHaveProperty('participant_id');
+    expect(parsedRun).not.toHaveProperty('gate_refs');
   });
 
   it('defaults to session/1.3 and requires a coherent explicit 2.0 feature selection', () => {

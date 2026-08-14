@@ -4,7 +4,6 @@ import { resolve } from 'node:path';
 import { artifactRepublishReceiptSchema, type TransitionReceiptV20 } from '../protocol-schemas.js';
 import {
   artifactRegistrySchema,
-  gateRegistrySchema,
   type ArtifactRegistry,
   type RunV30,
   type SessionStateV30,
@@ -40,7 +39,6 @@ import { transitionRun, buildRetryMetadata, type RunStatus, type RunTransitionEv
 export interface V3MutationIdentity {
   sessionId: string;
   requestId: string;
-  participantId: string;
   actorId: string;
   reason: string;
   evidenceRefs?: readonly string[];
@@ -108,14 +106,12 @@ function normalizedIdentity(input: V3MutationIdentity): Required<Omit<V3Mutation
 } {
   const sessionId = required(input.sessionId, 'session ID');
   const requestId = required(input.requestId, 'request ID');
-  const participantId = required(input.participantId, 'participant ID');
   const actorId = required(input.actorId, 'actor ID');
   assertSafePathSegment(sessionId, 'session ID');
   assertSafePathSegment(requestId, 'request ID');
   return {
     sessionId,
     requestId,
-    participantId,
     actorId,
     reason: required(input.reason, 'reason'),
     evidenceRefs: [...new Set((input.evidenceRefs ?? []).map(item => item.trim()).filter(Boolean))].sort(),
@@ -143,7 +139,6 @@ function creationPayload(run: RunV30) {
     command: run.command,
     args: run.args,
     goal: run.goal,
-    gate_refs: run.gate_refs,
     input_refs: run.input_refs,
   };
 }
@@ -191,7 +186,9 @@ function replay(
     tx,
     sessionId: identity.sessionId,
     requestId: identity.requestId,
-    participantId: identity.participantId,
+    // The participant dimension was simplified away: receipts store
+    // participant_id = actor_id, so the replay identity key is actor-based.
+    participantId: identity.actorId,
     payloadHash,
   });
   return transition ? { status: 'replayed', transition } : null;
@@ -220,7 +217,7 @@ function stageApplied(input: {
     revisionBefore: input.revisionBefore,
     revisionAfter: input.revisionAfter,
     actorId: input.identity.actorId,
-    participantId: input.identity.participantId,
+    participantId: input.identity.actorId,
     reason: input.identity.reason,
     evidenceRefs: input.identity.evidenceRefs,
     recordedAt: input.identity.recordedAt,
@@ -229,7 +226,7 @@ function stageApplied(input: {
   const reference = transitionReceiptRef(transition.activity_revision, transition.transition_id);
   const request = createRequestReceipt({
     requestId: input.identity.requestId,
-    participantId: input.identity.participantId,
+    participantId: input.identity.actorId,
     payloadHash: input.payloadHash,
     transitionReceiptRef: reference,
   });
@@ -605,7 +602,6 @@ export function mutateRunV3(store: SessionStore, input: MutateRunV3Input): V3Mut
       ...transitioned,
       revision: run.revision + 1,
       actor_id: identity.actorId,
-      participant_id: identity.participantId,
       summary: input.summary === undefined ? run.summary : input.summary,
       verdict: input.verdict === undefined ? run.verdict : input.verdict,
       started_at: input.toStatus === 'running' ? (run.started_at ?? identity.recordedAt) : run.started_at,
@@ -666,7 +662,6 @@ export function recoverSealRunV3(store: SessionStore, input: RecoverSealRunV3Inp
       ...transitionRun(run, 'sealed'),
       revision: run.revision + 1,
       actor_id: identity.actorId,
-      participant_id: identity.participantId,
       output_refs: publication.authority.artifact_ids,
       primary_artifact_id: publication.authority.primary_artifact_id,
       sealed_at: identity.recordedAt,
@@ -736,7 +731,6 @@ export function createRunV3(store: SessionStore, input: CreateRunV3Input): V3Mut
     const nextRun: RunV30 = {
       ...candidate,
       actor_id: identity.actorId,
-      participant_id: identity.participantId,
     };
     return stageApplied({
       tx, identity, payloadHash, session: nextSession, run: nextRun,
@@ -820,7 +814,6 @@ export function createRunningRunV3(store: SessionStore, input: CreateRunningRunV
       status: 'running',
       revision: 1,
       actor_id: identity.actorId,
-      participant_id: identity.participantId,
       started_at: identity.recordedAt,
     };
     const chain = session.chain.map((step, index) => index === stepIndex
@@ -896,7 +889,6 @@ export function completeRunAndAdvance(
       ...transitionRun(completed, 'sealed'),
       revision: run.revision + 1,
       actor_id: identity.actorId,
-      participant_id: identity.participantId,
       output_refs: artifactIds,
       primary_artifact_id: primaryArtifactId,
       verdict: input.verdict,
@@ -979,7 +971,7 @@ export function republishArtifactV3(
       requestId: identity.requestId,
       expectedArtifactRevision: input.expectedArtifactRevision,
       expectedSessionRevision: input.expectedSessionRevision,
-      participantId: identity.participantId,
+      participantId: identity.actorId,
       actorId: identity.actorId,
       reason: identity.reason,
       evidenceRefs: identity.evidenceRefs,
@@ -1018,8 +1010,6 @@ export function republishArtifactV3(
       status: 'sealed',
       revision: 1,
       actor_id: identity.actorId,
-      participant_id: identity.participantId,
-      gate_refs: [],
       input_refs: [artifactIdInput],
       output_refs: [prepared.artifactId],
       primary_artifact_id: prepared.artifact.role === 'primary' ? prepared.artifactId : null,
@@ -1071,7 +1061,7 @@ export function republishArtifactV3(
       session_revision_before: input.expectedSessionRevision,
       session_revision_after: nextSession.orchestration_revision,
       actor_id: identity.actorId,
-      participant_id: identity.participantId,
+      participant_id: identity.actorId,
       reason: identity.reason,
       evidence_refs: identity.evidenceRefs,
       recorded_at: identity.recordedAt,
@@ -1121,10 +1111,11 @@ export function completeSessionV3(store: SessionStore, input: CompleteSessionV3I
       ...session.chain.flatMap(step => step.run_ids),
     ])].sort();
     const runs = referencedRunIds.map(runId => tx.readRun(runId));
-    const gates = tx.readJson(resolve(store.sessionDir(identity.sessionId), session.gates_ref), gateRegistrySchema);
     // Decision gates: every chain step that declares decision_ref. A missing
     // decision record counts as open (declared but never decided). Escalated
-    // gates pass completion but are surfaced in result.concerns.
+    // gates pass completion but are surfaced in result.concerns. The legacy
+    // gates.json registry is retired from v3 authority (snapshot-only);
+    // completion blockers no longer consult it.
     const decisionGates = session.chain
       .filter(step => step.decision_ref !== null)
       .map(step => ({
@@ -1133,9 +1124,7 @@ export function completeSessionV3(store: SessionStore, input: CompleteSessionV3I
       }));
     const completion: SessionCompletionSnapshot = {
       runs: runs.map(run => ({ runId: run.run_id, status: run.status })),
-      blockingGates: Object.entries(gates.gates)
-        .filter(([, gate]) => gate.blocking)
-        .map(([gateId, gate]) => ({ gateId, status: gate.status })),
+      blockingGates: [],
       requiredSteps: session.chain.map(step => ({
         stepId: step.step_id,
         status: step.status,

@@ -34,6 +34,7 @@ import {
   commandRunV13Schema,
   commandRunV14Schema,
   runReadSchema,
+  runV30ReadSchema,
   runV30Schema,
   evidenceStoreSchema,
   executionLeaseSchema,
@@ -47,6 +48,7 @@ import {
   sessionStateSchema,
   sessionStateV13Schema,
   sessionStateV20Schema,
+  sessionStateV30ReadSchema,
   sessionStateV30Schema,
   targetPlatformSchema,
   type ArtifactRegistry,
@@ -927,7 +929,10 @@ export class SessionStore {
     if (session.schema_version !== 'session/3.0') {
       throw new Error(`Session ${sessionId} uses ${session.schema_version}; session/3.0 is required`);
     }
-    return sessionStateV30Schema.parse(session);
+    const parsed = sessionStateV30ReadSchema.parse(session);
+    // Retired status: pre-simplification session/3.0 documents may still say
+    // `paused`; the engine no longer has that status, so reads map it to open.
+    return parsed.status === 'paused' ? { ...parsed, status: 'open' } : parsed as SessionStateV30;
   }
 
   writeSessionV30(sessionInput: SessionStateV30): SessionStateV30 {
@@ -1067,11 +1072,15 @@ export class SessionStore {
   private assertExecutionSealReceiptSnapshotUnlocked(receipt: ExecutionSealReceipt): void {
     this.assertPersistedExecutionSealReceiptUnlocked(receipt);
     const session = this.readSessionRecordUnlocked(receipt.session_id);
-    if (session.schema_version !== 'session/2.0' && !session.schema_version.startsWith('session/1.')) {
+    if (session.schema_version === 'session/3.0'
+      || (session.schema_version !== 'session/2.0' && !session.schema_version.startsWith('session/1.'))) {
       throw new Error(`Unsupported Session version for Execution seal receipt: ${session.schema_version}`);
     }
-    if (session.identity_revision !== receipt.session_identity_revision
-      || session.activity_revision !== receipt.session_activity_revision) {
+    // The known/unknown read union is not TS-discriminable; the guard above
+    // already rejected v3 and unknown versions, leaving legacy 1.x/2.0 only.
+    const legacySession = session as SessionState;
+    if (legacySession.identity_revision !== receipt.session_identity_revision
+      || legacySession.activity_revision !== receipt.session_activity_revision) {
       throw new Error('Execution seal receipt Session revisions changed');
     }
     const bundle = this.readBundleUnlocked(receipt.session_id);
@@ -1467,7 +1476,7 @@ export class SessionStore {
     if (run.schema_version !== 'run/3.0') {
       throw new Error(`Run ${runId} uses ${run.schema_version}; run/3.0 is required`);
     }
-    return runV30Schema.parse(run);
+    return runV30ReadSchema.parse(run);
   }
 
   writeRunV30(runInput: RunV30): RunV30 {

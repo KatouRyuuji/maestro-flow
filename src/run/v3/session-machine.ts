@@ -5,12 +5,11 @@ import {
   type RunTransitionEvidence,
 } from './run-machine.js';
 
-export const SESSION_STATUSES = ['open', 'paused', 'completed', 'archived', 'failed'] as const;
+export const SESSION_STATUSES = ['open', 'completed', 'archived', 'failed'] as const;
 export type SessionStatus = typeof SESSION_STATUSES[number];
 
 export const SESSION_TRANSITIONS: Readonly<Record<SessionStatus, readonly SessionStatus[]>> = {
-  open: ['paused', 'completed', 'failed'],
-  paused: ['open', 'completed', 'failed'],
+  open: ['completed', 'failed'],
   completed: ['archived'],
   // archived is not terminal: unarchive returns the Session to open.
   // The archived -> open edge is consumed by `session unarchive` only;
@@ -24,7 +23,6 @@ export type SessionOperation = 'create_run' | 'advance_chain' | 'transition_run'
 
 export const SESSION_OPERATION_PERMISSIONS: Readonly<Record<SessionStatus, readonly SessionOperation[]>> = {
   open: ['create_run', 'advance_chain', 'transition_run', 'add_evidence', 'decide'],
-  paused: ['transition_run', 'add_evidence'],
   completed: [],
   archived: [],
   failed: [],
@@ -78,31 +76,8 @@ export function assertSessionOperationAllowed(
     throw new V3StructuredError('INVALID_STATE_TRANSITION', `${operation} is not allowed while Session is ${status}`, {
       details: { reason: 'SESSION_OPERATION_BLOCKED', session_status: status, operation },
       target_type: 'orchestration',
-      next_actions: status === 'paused' ? ['resume-session'] : [],
+      next_actions: [],
     });
-  }
-  if (status === 'paused' && operation === 'transition_run') {
-    const activeRunTransition = context.runStatus === 'running' || context.runStatus === 'blocked';
-    const sealingFinishedRun = context.nextRunStatus === 'sealed'
-      && (context.runStatus === 'completed'
-        || context.runStatus === 'failed'
-        || context.runStatus === 'cancelled');
-    if (activeRunTransition || sealingFinishedRun) return;
-    throw new V3StructuredError(
-      'INVALID_STATE_TRANSITION',
-      'paused Session only permits existing active Runs to finish and terminal Runs to seal',
-      {
-        details: {
-          reason: 'SESSION_OPERATION_BLOCKED',
-          session_status: status,
-          operation,
-          run_status: context.runStatus,
-          next_run_status: context.nextRunStatus,
-        },
-        target_type: 'orchestration',
-        next_actions: ['resume-session'],
-      },
-    );
   }
 }
 

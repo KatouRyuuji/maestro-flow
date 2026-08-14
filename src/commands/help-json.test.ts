@@ -36,7 +36,7 @@ function invoke(args: string[]) {
 }
 
 const REQUIRED = [
-  'session open', 'session migrate', 'session pause', 'session resume', 'session complete', 'session archive',
+  'session open', 'session migrate', 'session complete', 'session archive', 'session unarchive',
   'session status', 'session resume-view',
   'session chain insert', 'session chain skip', 'session chain replace',
   'run next', 'run create', 'run transition', 'run complete', 'run cancel', 'run seal', 'run brief', 'run check',
@@ -44,7 +44,6 @@ const REQUIRED = [
   'session list',
   'execution operation claim', 'execution operation heartbeat',
   'execution operation release', 'execution operation status',
-  'participant register', 'participant status', 'participant unregister',
   'artifact inspect', 'artifact republish',
 ];
 

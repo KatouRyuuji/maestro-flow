@@ -28,9 +28,9 @@ function writeSession(
   const session: SessionStateV30 = {
     schema_version: 'session/3.0', session_id: sessionId, objective: `exercise ${sessionId}`,
     definition_of_done: 'context resolves deterministically', status,
-    identity_revision: 1, orchestration_revision: 0, activity_revision: 0,
+    orchestration_revision: 0, activity_revision: 0,
     chain: [], decisions: [], active_run_ids: activeRunIds,
-    gates_ref: 'gates.json', artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
+    artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
     created_at: '2026-08-12T00:00:00.000Z', updated_at: '2026-08-12T00:00:00.000Z',
     completed_at: null, archived_at: null,
   };
@@ -43,8 +43,8 @@ function writeSession(
     const run: RunV30 = {
       schema_version: 'run/3.0', run_id: runId, session_id: sessionId, step_id: 'step-1',
       parent_run_id: null, retry_of_run_id: null, attempt: 1, command: 'implement', args: [], goal: null,
-      status: runStatus, revision: 0, actor_id: 'actor', participant_id: 'participant',
-      gate_refs: [], input_refs: [], output_refs: [], primary_artifact_id: null, verdict: null, summary: null,
+      status: runStatus, revision: 0, actor_id: 'actor',
+      input_refs: [], output_refs: [], primary_artifact_id: null, verdict: null, summary: null,
       created_at: '2026-08-12T00:00:00.000Z', started_at: null, ended_at: null, sealed_at: null,
     };
     writeFileSync(join(runDir, 'run.json'), `${JSON.stringify(run, null, 2)}\n`);
@@ -63,10 +63,9 @@ afterEach(() => {
 });
 
 describe('resolveSessionContextFromStore', () => {
-  it('uses explicit ID before environment, state, open, and runnable tiers', () => {
+  it('uses explicit ID before environment, state, and open tiers', () => {
     const projectRoot = root();
     for (const id of ['explicit', 'env', 'state', 'open']) writeSession(projectRoot, id);
-    writeSession(projectRoot, 'runnable', 'paused', 'running');
     writeState(projectRoot, 'state');
 
     expect(resolveSessionContextFromStore(new SessionStore(projectRoot), {
@@ -96,22 +95,22 @@ describe('resolveSessionContextFromStore', () => {
       .toMatchObject({ ok: false, error: { code: 'SESSION_NOT_FOUND', source: 'current_binding', candidates: ['missing'] } });
   });
 
-  it('uses a unique open Session before a runnable paused Session', () => {
+  it('uses a unique open Session when multiple Sessions exist', () => {
     const projectRoot = root();
     writeSession(projectRoot, 'open');
-    writeSession(projectRoot, 'paused-active', 'paused', 'blocked');
+    writeSession(projectRoot, 'active', 'completed', 'blocked');
 
     expect(resolveSessionContextFromStore(new SessionStore(projectRoot), { env: {} }))
       .toEqual({ ok: true, session_id: 'open', source: 'open_sessions' });
   });
 
-  it('uses a unique runnable paused Session when no Session is open', () => {
+  it('never treats a non-open Session with active Runs as a context candidate (paused tier retired)', () => {
     const projectRoot = root();
-    writeSession(projectRoot, 'paused-pending', 'paused', 'pending');
-    writeSession(projectRoot, 'paused-active', 'paused', 'running');
+    writeSession(projectRoot, 'active-completed', 'completed', 'running');
+    writeSession(projectRoot, 'active-archived', 'archived', 'blocked');
 
     expect(resolveSessionContextFromStore(new SessionStore(projectRoot), { env: {} }))
-      .toEqual({ ok: true, session_id: 'paused-active', source: 'runnable_candidates' });
+      .toEqual({ ok: false, error: expect.objectContaining({ code: 'SESSION_CONTEXT_UNRESOLVED', candidates: [] }) });
   });
 
   it('reports multiple open candidates in canonical ID order regardless of mtime', () => {
@@ -131,19 +130,13 @@ describe('resolveSessionContextFromStore', () => {
       });
   });
 
-  it('reports multiple runnable candidates in canonical ID order', () => {
+  it('ignores non-open Sessions entirely (no runnable-candidate tier anymore)', () => {
     const projectRoot = root();
-    writeSession(projectRoot, 'session-z', 'paused', 'completed');
-    writeSession(projectRoot, 'session-a', 'paused', 'blocked');
+    writeSession(projectRoot, 'session-z', 'completed', 'completed');
+    writeSession(projectRoot, 'session-a', 'failed', 'blocked');
 
     expect(resolveSessionContextFromStore(new SessionStore(projectRoot), { env: {} }))
-      .toMatchObject({
-        ok: false,
-        error: {
-          code: 'SESSION_AMBIGUOUS', source: 'runnable_candidates',
-          candidates: ['session-a', 'session-z'],
-        },
-      });
+      .toEqual({ ok: false, error: expect.objectContaining({ code: 'SESSION_CONTEXT_UNRESOLVED', candidates: [] }) });
   });
 
   it('never scans a legacy Session into v3 authority and rejects an explicit legacy reference', () => {

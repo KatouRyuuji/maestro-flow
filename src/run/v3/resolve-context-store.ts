@@ -1,7 +1,7 @@
 import { existsSync, readdirSync } from 'node:fs';
 
 import { assertSafePathSegment } from '../ids.js';
-import { runV30Schema, sessionStateV30Schema, type RunV30, type SessionStateV30 } from '../schemas.js';
+import { sessionStateV30ReadSchema, type SessionStateV30 } from '../schemas.js';
 import { SessionStore } from '../store.js';
 import { readStateJson } from '../../utils/state-schema.js';
 import {
@@ -15,10 +15,6 @@ export interface ResolveSessionContextStoreOptions {
   explicit_session_id?: string;
   env?: Readonly<Record<string, string | undefined>>;
 }
-
-const PAUSED_RUNNABLE_STATUSES = new Set<RunV30['status']>([
-  'running', 'blocked', 'completed', 'failed', 'cancelled',
-]);
 
 function canonicalSessionId(sessionId: string): string {
   return sessionId.trim();
@@ -57,23 +53,10 @@ function currentBinding(
   return sessionReference(store, activeSessionId);
 }
 
-function isRunnablePausedSession(store: SessionStore, session: SessionStateV30): boolean {
-  if (session.status !== 'paused' || session.active_run_ids.length === 0) return false;
-
-  let runnable = false;
-  for (const runId of [...new Set(session.active_run_ids)].sort()) {
-    try {
-      const runRecord = store.readRunRecordReadOnly(session.session_id, runId);
-      const run = runV30Schema.safeParse(runRecord);
-      if (!run.success) return false;
-      if (PAUSED_RUNNABLE_STATUSES.has(run.data.status)) runnable = true;
-    } catch {
-      return false;
-    }
-  }
-  return runnable;
-}
-
+// The retired `paused` Session status had a dedicated runnable-candidate tier
+// (a paused Session with active Runs could be picked as the CLI context).
+// With paused gone, only open Sessions are v3 context candidates; the
+// runnable_candidates tier stays empty and the pure resolver API is unchanged.
 function scanV3Candidates(store: SessionStore): {
   open_sessions: SessionContextCandidateInput[];
   runnable_candidates: SessionContextCandidateInput[];
@@ -91,13 +74,10 @@ function scanV3Candidates(store: SessionStore): {
       assertSafePathSegment(entry.name, 'session ID');
       if (!store.sessionExists(entry.name)) continue;
       const record = store.readSessionRecordReadOnly(entry.name);
-      const parsed = sessionStateV30Schema.safeParse(record);
+      const parsed = sessionStateV30ReadSchema.safeParse(record);
       if (!parsed.success) continue;
-      const session = parsed.data;
+      const session = parsed.data as SessionStateV30;
       if (session.status === 'open') open_sessions.push({ session_id: session.session_id });
-      else if (isRunnablePausedSession(store, session)) {
-        runnable_candidates.push({ session_id: session.session_id });
-      }
     } catch {
       // Corrupt, inaccessible, and legacy projections cannot become v3 authority.
     }

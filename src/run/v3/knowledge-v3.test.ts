@@ -53,12 +53,12 @@ function root(): string {
 function session(): SessionStateV30 {
   return {
     schema_version: 'session/3.0', session_id: 's-1', objective: 'v3 knowledge', definition_of_done: 'tests pass',
-    status: 'open', identity_revision: 1, orchestration_revision: 0, activity_revision: 0,
+    status: 'open', orchestration_revision: 0, activity_revision: 0,
     chain: [
       { step_id: 'step-1', command: 'implement', args: [], status: 'running', run_ids: ['r-1'], goal_ref: null, decision_refs: [] },
       { step_id: 'step-2', command: 'verify', args: [], status: 'pending', run_ids: ['r-2'], goal_ref: null, decision_refs: [] },
     ],
-    decisions: [], active_run_ids: ['r-1', 'r-2'], gates_ref: 'gates.json', artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
+    decisions: [], active_run_ids: ['r-1', 'r-2'], artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
     created_at: '2026-08-12T00:00:00.000Z', updated_at: '2026-08-12T00:00:00.000Z', completed_at: null, archived_at: null,
   };
 }
@@ -67,7 +67,7 @@ function run(runId: string, stepId: string, status: RunV30['status'] = 'pending'
   return {
     schema_version: 'run/3.0', run_id: runId, session_id: 's-1', step_id: stepId,
     parent_run_id: null, retry_of_run_id: null, attempt: 1, command: 'implement', args: [], goal: null,
-    status, revision: 0, actor_id: 'actor-a', participant_id: 'p-a', gate_refs: [], input_refs: [], output_refs: [],
+    status, revision: 0, actor_id: 'actor-a', input_refs: [], output_refs: [],
     primary_artifact_id: null, verdict: null, summary: null, legacy_execution_generation: null,
     created_at: '2026-08-12T00:00:00.000Z', started_at: null, ended_at: null, sealed_at: null,
   };
@@ -76,10 +76,6 @@ function run(runId: string, stepId: string, status: RunV30['status'] = 'pending'
 function setup(): SessionStore {
   const store = new SessionStore(root());
   store.writeSessionV30(session());
-  writeFileSync(join(store.sessionDir('s-1'), 'gates.json'), `${JSON.stringify({
-    schema_version: 'gates/1.0', revision: 0, gates: {},
-    summary: { total: 0, passed: 0, blocked: 0, failed: 0, active_gate_ids: [], blocking_run_id: null },
-  }, null, 2)}\n`);
   writeFileSync(join(store.sessionDir('s-1'), 'artifacts.json'), `${JSON.stringify({
     schema_version: 'artifacts/1.0', revision: 0, artifacts: {}, aliases: {},
   }, null, 2)}\n`);
@@ -125,19 +121,15 @@ function cliFixture(input: {
   const sessionDir = join(value, '.workflow', 'sessions', 's-v3');
   const runDir = join(sessionDir, 'runs', 'run-1');
   mkdirSync(runDir, { recursive: true });
-  writeFileSync(join(sessionDir, 'gates.json'), `${JSON.stringify({
-    schema_version: 'gates/1.0', revision: 0, gates: {},
-    summary: { total: 0, passed: 0, blocked: 0, failed: 0, active_gate_ids: [], blocking_run_id: null },
-  }, null, 2)}\n`);
   writeFileSync(join(sessionDir, 'artifacts.json'), `${JSON.stringify({
     schema_version: 'artifacts/1.0', revision: 0, artifacts: {}, aliases: {},
   }, null, 2)}\n`);
   const session: SessionStateV30 = {
     schema_version: 'session/3.0', session_id: 's-v3', objective: 'exercise run check',
-    definition_of_done: 'reconciliation attached', status: 'open', identity_revision: 1,
+    definition_of_done: 'reconciliation attached', status: 'open',
     orchestration_revision: 0, activity_revision: 0,
     chain: [{ step_id: 'step-1', command: 'implement', args: [], status: 'pending', run_ids: ['run-1'], goal_ref: null, decision_refs: [] }],
-    decisions: [], active_run_ids: ['run-1'], gates_ref: 'gates.json', artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
+    decisions: [], active_run_ids: ['run-1'], artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
     created_at: '2026-08-12T00:00:00.000Z', updated_at: '2026-08-12T00:00:00.000Z', completed_at: null, archived_at: null,
   };
   writeFileSync(join(sessionDir, 'session.json'), `${JSON.stringify(session, null, 2)}\n`);
@@ -145,7 +137,7 @@ function cliFixture(input: {
     schema_version: 'run/3.0', run_id: 'run-1', session_id: 's-v3', step_id: 'step-1',
     parent_run_id: null, retry_of_run_id: null, attempt: 1, command: 'implement', args: [], goal: null,
     status: input.runStatus ?? 'pending', revision: input.runStatus === 'sealed' ? 2 : 0,
-    actor_id: 'actor', participant_id: 'participant', gate_refs: [], input_refs: [], output_refs: [],
+    actor_id: 'actor', input_refs: [], output_refs: [],
     primary_artifact_id: null, verdict: input.runStatus === 'sealed' ? 'done' : null,
     summary: input.runStatus === 'sealed' ? 'done' : null,
     created_at: '2026-08-12T00:00:00.000Z',

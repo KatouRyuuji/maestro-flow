@@ -25,15 +25,7 @@ function invoke(args: string[]) {
   };
 }
 
-describe('v3 CLI participant registration and downgrade guard', () => {
-  it('leaves participant unknown for v2 workspaces instead of installing a placeholder', () => {
-    const result = invoke(['participant', 'register', '--json']);
-    expect(result.status).toBe(1);
-    expect(result.lines).toHaveLength(0);
-    expect(result.response).toBeNull();
-    expect(result.stderr).toContain('Unknown command: "participant"');
-  });
-
+describe('v3 CLI downgrade guard', () => {
   it('returns SESSION_SCHEMA_UNSUPPORTED before a legacy mutation can rewrite v3 state', () => {
     const root = mkdtempSync(join(tmpdir(), 'maestro-v3-placeholder-'));
     roots.push(root);

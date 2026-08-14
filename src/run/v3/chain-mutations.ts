@@ -20,7 +20,6 @@ export type ChainMutation =
 
 export interface MutateChainV3Input {
   sessionId: string;
-  participantId: string;
   actorId: string;
   requestId: string;
   expectedOrchestrationRevision: number;
@@ -101,7 +100,6 @@ function mutateSteps(
 export function mutateChainV3(store: SessionStore, input: MutateChainV3Input): ChainMutationResult {
   const sessionId = text(input.sessionId, 'session ID');
   const requestId = text(input.requestId, 'request ID');
-  const participantId = text(input.participantId, 'participant ID');
   const actorId = text(input.actorId, 'actor ID');
   const reason = text(input.reason, 'reason');
   const evidenceRefs = [...new Set((input.evidenceRefs ?? []).map(item => item.trim()).filter(Boolean))].sort();
@@ -116,7 +114,7 @@ export function mutateChainV3(store: SessionStore, input: MutateChainV3Input): C
   };
   const payloadHash = canonicalPayloadHash(payload);
   return store.withV30Transaction(sessionId, tx => {
-    const replayed = replayRequestReceipt({ tx, sessionId, requestId, participantId, payloadHash });
+    const replayed = replayRequestReceipt({ tx, sessionId, requestId, participantId: actorId, payloadHash });
     if (replayed) return { status: 'replayed', transition: replayed };
     const session = tx.readSession();
     if (session.orchestration_revision !== input.expectedOrchestrationRevision) {
@@ -141,11 +139,11 @@ export function mutateChainV3(store: SessionStore, input: MutateChainV3Input): C
       requestId, sessionId, activityRevision: nextSession.activity_revision,
       targetType: 'orchestration', targetId: sessionId,
       revisionBefore: session.orchestration_revision, revisionAfter: nextSession.orchestration_revision,
-      actorId, participantId, reason, evidenceRefs, recordedAt,
+      actorId, participantId: actorId, reason, evidenceRefs, recordedAt,
       result: { kind: input.mutation.kind, chain },
     });
     const request = createRequestReceipt({
-      requestId, participantId, payloadHash,
+      requestId, participantId: actorId, payloadHash,
       transitionReceiptRef: transitionReceiptRef(transition.activity_revision, transition.transition_id),
     });
     tx.writeSession(nextSession);

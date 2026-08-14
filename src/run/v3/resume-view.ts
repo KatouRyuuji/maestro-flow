@@ -3,8 +3,8 @@ import {
   type ResumeMapV1,
 } from '../protocol-schemas.js';
 import {
-  runV30Schema,
-  sessionStateV30Schema,
+  runV30ReadSchema,
+  sessionStateV30ReadSchema,
   type RunV30,
   type SessionStateV30,
 } from '../schemas.js';
@@ -104,7 +104,7 @@ function canonicalRuns(session: SessionStateV30, runs: readonly RunV30[]): Resum
   const activeIds = new Set(session.active_run_ids);
   const selected = new Map<string, RunV30>();
 
-  for (const candidate of runs.map(run => runV30Schema.parse(run))) {
+  for (const candidate of runs.map(run => runV30ReadSchema.parse(run))) {
     if (!activeIds.has(candidate.run_id) || candidate.session_id !== session.session_id) continue;
     const current = selected.get(candidate.run_id);
     if (!current
@@ -157,8 +157,9 @@ function actionMatchesAuthority(
   runs: readonly ResumeMapRun[],
 ): boolean {
   if (action.targetId === session.session_id) {
-    return action.expectedRevision === session.identity_revision
-      || action.expectedRevision === session.orchestration_revision;
+    // The retired identity_revision merged into orchestration_revision: the
+    // Session authority revision is the single CAS target now.
+    return action.expectedRevision === session.orchestration_revision;
   }
   const run = runs.find(candidate => candidate.runId === action.targetId);
   return run !== undefined && action.expectedRevision === run.revision;
@@ -203,12 +204,16 @@ function tryFinalize(body: ResumeMapBody): ResumeMapV1 | null {
  * duplicates select the highest authority-valid revision.
  */
 export function projectResumeMapV1(input: ResumeMapProjectionInput): ResumeMapV1 {
-  const session = sessionStateV30Schema.parse(input.session);
+  // Read-tolerant parse: the typed input is already canonical, but old
+  // documents may still carry retired keys (identity_revision, gates_ref).
+  const session = sessionStateV30ReadSchema.parse(input.session) as SessionStateV30;
   const activeRuns = canonicalRuns(session, input.runs);
   const fullBody: ResumeMapBody = {
     sessionId: session.session_id,
     sessionStatus: session.status,
-    identityRevision: session.identity_revision,
+    // identity_revision was retired; the ResumeMapV1 identityRevision field
+    // now mirrors the Session orchestration revision (the remaining authority).
+    identityRevision: session.orchestration_revision,
     orchestrationRevision: session.orchestration_revision,
     activityRevision: session.activity_revision,
     activeRuns,

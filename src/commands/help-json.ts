@@ -5,14 +5,13 @@ import { SessionStore } from '../run/store.js';
 
 import { registerArtifactCommand } from './artifact.js';
 import { registerExecutionV3RetiredCommand } from './execution-v3-retired.js';
-import { registerParticipantCommand } from './participant.js';
 import { registerRunV3Command } from './run-v3.js';
 import { registerSessionV3Command } from './session-v3.js';
 
 export interface HelpCatalogCommand {
   command: string;
   description: string;
-  mutation_scope: 'read' | 'run' | 'orchestration' | 'artifact' | 'participant' | 'retired';
+  mutation_scope: 'read' | 'run' | 'orchestration' | 'artifact' | 'retired';
   cas_target: 'none' | 'run' | 'orchestration' | 'artifact';
   options: string[];
   examples: string[];
@@ -27,9 +26,6 @@ function optionName(option: Option): string {
 function classify(path: string, options: string[]): Pick<HelpCatalogCommand, 'mutation_scope' | 'cas_target'> {
   if (path === 'artifact republish') return { mutation_scope: 'artifact', cas_target: 'artifact' };
   if (path.startsWith('execution ')) return { mutation_scope: 'retired', cas_target: 'none' };
-  if (path.startsWith('participant ')) {
-    return { mutation_scope: path === 'participant status' ? 'read' : 'participant', cas_target: 'none' };
-  }
   if (path === 'session open') return { mutation_scope: 'orchestration', cas_target: 'none' };
   if (path === 'session migrate') return { mutation_scope: 'orchestration', cas_target: 'none' };
   if (!options.includes('--request-id')) return { mutation_scope: 'read', cas_target: 'none' };
@@ -55,7 +51,7 @@ function walk(command: Command, prefix: string[] = []): HelpCatalogCommand[] {
     options,
     examples: [`maestro ${commandPath} --help`],
     deprecated,
-    replacement: deprecated ? 'session status / run check / participant status' : null,
+    replacement: deprecated ? 'session status / run check' : null,
   }];
 }
 
@@ -66,7 +62,6 @@ export function buildV3HelpCatalog(): HelpCatalogCommand[] {
   registerArtifactCommand(root);
   registerRunV3Command(root);
   registerSessionV3Command(root);
-  registerParticipantCommand(root);
   registerExecutionV3RetiredCommand(root);
   return root.commands.flatMap(command => walk(command, [])).sort((left, right) => left.command.localeCompare(right.command));
 }

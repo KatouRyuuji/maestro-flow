@@ -209,7 +209,7 @@ gates:
     }, null, 2)}\n`);
     const store = new SessionStore(projectRoot);
     const migrated = applyV3Migration(store, migrationInput, {
-      actor_id: 'migration-actor', participant_id: 'migration-window',
+      actor_id: 'migration-actor',
       recorded_at: '2026-08-14T10:00:00.000Z',
     });
     expect(migrated.status).toBe('applied');
@@ -261,12 +261,12 @@ gates:
       schema_version: 'run/3.0', run_id: 'review-after-migration', session_id: sessionId,
       step_id: pending!.step_id, parent_run_id: null, retry_of_run_id: null, attempt: 1,
       command: 'legacy-review', args: [], goal: null, status: 'pending', revision: 0,
-      actor_id: 'actor-a', participant_id: 'window-a', gate_refs: [], input_refs: [], output_refs: [],
+      actor_id: 'actor-a', input_refs: [], output_refs: [],
       primary_artifact_id: null, verdict: null, summary: null, legacy_execution_generation: null,
       created_at: now, started_at: null, ended_at: null, sealed_at: null,
     };
     createRunningRunV3(store, {
-      sessionId, requestId: 'req-migrated-next', participantId: 'window-a', actorId: 'actor-a',
+      sessionId, requestId: 'req-migrated-next', actorId: 'actor-a',
       reason: 'explicit consumer next', evidenceRefs: ['EVD-migrated'], recordedAt: now,
       expectedOrchestrationRevision: state.orchestration_revision, run: consumerRun,
     });

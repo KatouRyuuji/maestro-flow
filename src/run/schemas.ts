@@ -280,6 +280,15 @@ export const sessionStateV20Schema = z.object({
 });
 
 export const sessionStatusV30Schema = z.enum([
+  'open', 'completed', 'archived', 'failed',
+]);
+
+/**
+ * Read-only status vocabulary for pre-simplification session/3.0 documents.
+ * The retired `paused` status no longer exists in the engine; readers that
+ * accept it must map it to `open` (see SessionStore.readSessionV30).
+ */
+const sessionStatusV30ReadSchema = z.enum([
   'open', 'paused', 'completed', 'archived', 'failed',
 ]);
 
@@ -314,13 +323,11 @@ export const sessionStateV30Schema = z.object({
   objective: nonEmptyString,
   definition_of_done: z.string(),
   status: sessionStatusV30Schema,
-  identity_revision: z.number().int().nonnegative(),
   orchestration_revision: z.number().int().nonnegative(),
   activity_revision: z.number().int().nonnegative(),
   chain: z.array(sessionChainStepV30Schema),
   decisions: z.array(sessionDecisionRefV30Schema),
   active_run_ids: z.array(nonEmptyString),
-  gates_ref: nonEmptyString,
   artifacts_ref: nonEmptyString,
   evidence_ref: nonEmptyString,
   created_at: nonEmptyString,
@@ -328,6 +335,17 @@ export const sessionStateV30Schema = z.object({
   completed_at: z.string().min(1).nullable(),
   archived_at: z.string().min(1).nullable(),
 }).strict();
+
+/**
+ * Read-tolerant session/3.0 variant. Pre-simplification documents may still
+ * carry the retired `identity_revision`/`gates_ref` fields and the retired
+ * `paused` status. Retired keys are stripped on read (the write path stays
+ * strict and never re-emits them); callers map `paused` to `open` (the
+ * engine no longer has a paused Session status — see SessionStore.readSessionV30).
+ */
+export const sessionStateV30ReadSchema = sessionStateV30Schema
+  .extend({ status: sessionStatusV30ReadSchema })
+  .strip();
 
 export const sessionSchemaWriterSchema = z.enum([
   'session/1.3', 'session/2.0', 'session/3.0',
@@ -404,7 +422,7 @@ export function normalizeSessionState(session: SessionStateInput): z.infer<typeo
 
 /** Strict known-version reader with schema_version as the type discriminator. */
 export const knownSessionStateReadSchema = z.discriminatedUnion('schema_version', [
-  sessionStateV30Schema,
+  sessionStateV30ReadSchema,
   sessionStateV20Schema,
   sessionStateV13Schema,
   sessionStateV12Schema,
@@ -675,8 +693,6 @@ export const runV30Schema = z.object({
   status: runStatusV30Schema,
   revision: z.number().int().nonnegative(),
   actor_id: nonEmptyString,
-  participant_id: nonEmptyString,
-  gate_refs: z.array(nonEmptyString),
   input_refs: z.array(nonEmptyString),
   output_refs: z.array(nonEmptyString),
   primary_artifact_id: z.string().min(1).nullable(),
@@ -688,6 +704,13 @@ export const runV30Schema = z.object({
   ended_at: z.string().min(1).nullable(),
   sealed_at: z.string().min(1).nullable(),
 }).strict();
+
+/**
+ * Read-tolerant run/3.0 variant. Pre-simplification documents may still carry
+ * the retired `participant_id`/`gate_refs` fields; they are stripped on read
+ * so the write path stays strict and never re-emits them.
+ */
+export const runV30ReadSchema = runV30Schema.strip();
 
 /**
  * Passthrough fallback for unknown future command-run/run schema versions.
@@ -714,7 +737,7 @@ export const commandRunReadSchema = z.union([
 
 /** Canonical Run reader for legacy command-run documents, v3, and unknown future versions. */
 export const runReadSchema = z.union([
-  runV30Schema,
+  runV30ReadSchema,
   commandRunV14Schema,
   commandRunV13Schema,
   commandRunV12Schema,

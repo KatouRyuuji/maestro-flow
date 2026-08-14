@@ -52,9 +52,9 @@ function sessionV30(sessionId = 's-v3'): SessionStateV30 {
   return {
     schema_version: 'session/3.0', session_id: sessionId,
     objective: 'W1 storage contract', definition_of_done: 'focused tests pass', status: 'open',
-    identity_revision: 1, orchestration_revision: 0, activity_revision: 0,
+    orchestration_revision: 0, activity_revision: 0,
     chain: [], decisions: [], active_run_ids: [],
-    gates_ref: 'gates.json', artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
+    artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
     created_at: '2026-08-12T00:00:00.000Z', updated_at: '2026-08-12T00:00:00.000Z',
     completed_at: null, archived_at: null,
   };
@@ -65,7 +65,7 @@ function runV30(sessionId = 's-v3', runId = 'run-v3'): RunV30 {
     schema_version: 'run/3.0', run_id: runId, session_id: sessionId, step_id: 'step-1',
     parent_run_id: null, retry_of_run_id: null, attempt: 1,
     command: 'implement', args: [], goal: null, status: 'pending', revision: 0,
-    actor_id: 'codex', participant_id: 'pi-window-a', gate_refs: [], input_refs: [], output_refs: [],
+    actor_id: 'codex', input_refs: [], output_refs: [],
     primary_artifact_id: null, verdict: null, summary: null,
     legacy_execution_generation: null,
     created_at: '2026-08-12T00:00:00.000Z', started_at: null, ended_at: null, sealed_at: null,

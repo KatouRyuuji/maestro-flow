@@ -31,10 +31,6 @@ function fixture(input: {
       features: { session_statusless: false },
     },
   }, null, 2)}\n`);
-  writeFileSync(join(sessionDir, 'gates.json'), `${JSON.stringify({
-    schema_version: 'gates/1.0', revision: 0, gates: {},
-    summary: { total: 0, passed: 0, blocked: 0, failed: 0, active_gate_ids: [], blocking_run_id: null },
-  }, null, 2)}\n`);
   writeFileSync(join(sessionDir, 'artifacts.json'), `${JSON.stringify({
     schema_version: 'artifacts/1.0', revision: 0, artifacts: {}, aliases: {},
   }, null, 2)}\n`);
@@ -42,13 +38,13 @@ function fixture(input: {
   const session: SessionStateV30 = {
     schema_version: 'session/3.0', session_id: 's-v3', objective: 'exercise CLI',
     definition_of_done: 'commands persist atomically', status: input.status ?? 'open',
-    identity_revision: 1, orchestration_revision: 0, activity_revision: 0,
+    orchestration_revision: 0, activity_revision: 0,
     chain: [{
       step_id: 'step-1', command: 'implement', args: [], status: input.stepStatus ?? 'pending',
       run_ids: hasRun ? ['run-1'] : [], goal_ref: null, decision_refs: [],
     }],
     decisions: [], active_run_ids: hasRun ? ['run-1'] : [],
-    gates_ref: 'gates.json', artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
+    artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
     created_at: '2026-08-12T00:00:00.000Z', updated_at: '2026-08-12T00:00:00.000Z',
     completed_at: null, archived_at: null,
   };
@@ -59,8 +55,8 @@ function fixture(input: {
     const run: RunV30 = {
       schema_version: 'run/3.0', run_id: 'run-1', session_id: 's-v3', step_id: 'step-1',
       parent_run_id: null, retry_of_run_id: null, attempt: 1, command: 'implement', args: [], goal: null,
-      status: 'pending', revision: 0, actor_id: 'actor', participant_id: 'participant',
-      gate_refs: [], input_refs: [], output_refs: [], primary_artifact_id: null, verdict: null, summary: null,
+      status: 'pending', revision: 0, actor_id: 'actor',
+      input_refs: [], output_refs: [], primary_artifact_id: null, verdict: null, summary: null,
       created_at: '2026-08-12T00:00:00.000Z', started_at: null, ended_at: null, sealed_at: null,
       ...input.run,
     };
@@ -167,9 +163,10 @@ describe('formal session/3.0 Commander modules', () => {
     expect(replayed).toMatchObject({ operation: 'session-open', ok: true, replay: { status: 'replayed' } });
     const dir = join(root, '.workflow', 'sessions', 's-open');
     expect(JSON.parse(readFileSync(join(dir, 'session.json'), 'utf8'))).toMatchObject({
-      schema_version: 'session/3.0', identity_revision: 1, orchestration_revision: 0, activity_revision: 1,
+      schema_version: 'session/3.0', orchestration_revision: 0, activity_revision: 1,
     });
     expect(JSON.parse(readFileSync(join(dir, 'evidence.json'), 'utf8'))).toMatchObject({ records: {} });
+    expect(existsSync(join(dir, 'gates.json'))).toBe(false);
   });
 
   it('inserts a chain step and creates its next Run', async () => {
@@ -380,30 +377,9 @@ describe('formal session/3.0 Commander modules', () => {
       .toMatchObject({ status: 'cancelled', revision: 1 });
   });
 
-  it('pauses a Session in one receipt-backed transaction', async () => {
-    const root = fixture();
-    const response = await invoke(registerSessionV3Command, [
-      'session', 'pause', ...mutationFlags(root, '--expected-orchestration-revision'),
-    ]);
-    expect(response).toMatchObject({ operation: 'session-pause', ok: true });
-    expect(JSON.parse(readFileSync(join(root, '.workflow', 'sessions', 's-v3', 'session.json'), 'utf8')))
-      .toMatchObject({ status: 'paused', orchestration_revision: 1, activity_revision: 1 });
-  });
-
-  it('projects blocking gates and draft publications from authoritative registries', async () => {
+  it('projects an empty blocking gate set and draft publications from authoritative registries', async () => {
     const root = fixture();
     const sessionDir = join(root, '.workflow', 'sessions', 's-v3');
-    writeFileSync(join(sessionDir, 'gates.json'), `${JSON.stringify({
-      schema_version: 'gates/1.0', revision: 3,
-      gates: {
-        'gate-blocked': {
-          key: 'gate-blocked', title: 'Blocking verification', scope: 'session', run_id: null,
-          required: true, blocking: true, applicable_modes: ['standard'], status: 'failed',
-          check: { type: 'manual', prompt: 'review' }, evidence_refs: [], waiver: null,
-        },
-      },
-      summary: { total: 1, passed: 0, blocked: 0, failed: 1, active_gate_ids: ['gate-blocked'], blocking_run_id: null },
-    }, null, 2)}\n`);
     writeFileSync(join(sessionDir, 'artifacts.json'), `${JSON.stringify({
       schema_version: 'artifacts/1.0', revision: 4,
       artifacts: {
@@ -421,7 +397,7 @@ describe('formal session/3.0 Commander modules', () => {
     expect(response).toMatchObject({
       operation: 'session-resume-view', ok: true,
       result: {
-        blockingGates: ['gate-blocked'],
+        blockingGates: [],
         pendingPublications: [{ publicationId: 'publication-draft', resourceUri: 'outputs/draft.md' }],
       },
     });
@@ -439,7 +415,7 @@ describe('formal session/3.0 Commander modules', () => {
     registerSessionV3Command(program);
     registerRunV3Command(program);
     expect(program.commands.find(command => command.name() === 'session')?.commands.map(command => command.name()))
-      .toEqual(expect.arrayContaining(['open', 'migrate', 'complete', 'status', 'resume-view', 'pause', 'resume', 'archive', 'chain']));
+      .toEqual(expect.arrayContaining(['open', 'migrate', 'complete', 'status', 'resume-view', 'archive', 'unarchive', 'chain']));
     expect(program.commands.find(command => command.name() === 'run')?.commands.map(command => command.name()))
       .toEqual(expect.arrayContaining(['next', 'create', 'transition', 'complete', 'cancel', 'seal', 'brief', 'check']));
   });
@@ -492,8 +468,8 @@ describe('formal session/3.0 Commander modules', () => {
     ]);
     expect(response).toMatchObject({ operation: 'session-list', ok: true, locator: { session_id: null } });
     expect(response.result).toEqual([
-      { session_id: 's-v3-b', status: 'open', objective: 'second Session', orchestration_revision: 0, identity_revision: 1, activity_revision: 0, active_run_ids: ['run-b'], updated_at: '2026-08-12T03:00:00.000Z' },
-      { session_id: 's-v3', status: 'open', objective: 'exercise CLI', orchestration_revision: 0, identity_revision: 1, activity_revision: 0, active_run_ids: [], updated_at: '2026-08-12T00:00:00.000Z' },
+      { session_id: 's-v3-b', status: 'open', objective: 'second Session', orchestration_revision: 0, activity_revision: 0, active_run_ids: ['run-b'], updated_at: '2026-08-12T03:00:00.000Z' },
+      { session_id: 's-v3', status: 'open', objective: 'exercise CLI', orchestration_revision: 0, activity_revision: 0, active_run_ids: [], updated_at: '2026-08-12T00:00:00.000Z' },
     ]);
   });
 

@@ -16,6 +16,7 @@ import { SessionStore } from './store.js';
 import { sha256Digest, stableJsonUtf8 } from './transition-receipts.js';
 import { createTopicIdentity, normalizeTopic, sameTopicIdentity } from './topic-identity.js';
 import { assessSessionReuse } from './runtime.js';
+import type { SessionState } from './schemas.js';
 
 export interface RecallRequest {
   command: string;
@@ -51,6 +52,15 @@ export function buildSourceFence(projectRoot: string, sessionId: string, runId: 
   const run = store.readRun(sessionId, runId);
   const receipt = receiptForRun(store, sessionId, runId);
   if (run.status !== 'sealed') throw new Error('source Run must be sealed');
+  // session/3.0 has no legacy identity_revision and no source fence; the
+  // recall/source-fence flow is legacy-only (readBundle already rejects v3).
+  if (session.schema_version === 'session/3.0') {
+    throw new Error('session/3.0 authority is not a legacy source-fence source');
+  }
+  // The known/unknown read union is not TS-discriminable; the guards above
+  // already rejected v3, so the remaining members all carry the legacy
+  // identity_revision/activity_revision fields.
+  const legacySession = session as SessionState;
   if (session.schema_version === 'session/2.0' && !receipt) {
     throw new Error('session/2.0 source requires an immutable sealed Execution receipt');
   }
@@ -112,8 +122,8 @@ export function buildSourceFence(projectRoot: string, sessionId: string, runId: 
   const base = {
     workspace_id: canonicalWorkspaceId(projectRoot), workspace_link_name: workspaceLinkName,
     session_id: sessionId, session_schema_version: session.schema_version,
-    session_identity_revision: session.identity_revision,
-    session_activity_revision: session.activity_revision,
+    session_identity_revision: legacySession.identity_revision,
+    session_activity_revision: legacySession.activity_revision,
     session_hash: fileHash(join(store.sessionDir(sessionId), 'session.json')),
     run_id: runId,
     run_schema_version: receipt?.runs.find(snapshot => snapshot.run_id === runId)?.schema_version ?? run.schema_version,
