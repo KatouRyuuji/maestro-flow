@@ -31,10 +31,6 @@ export function buildReuseExecutionAnchor(
   authorityStore?: SessionStore,
 ): ExecutionSealReceiptAnchor | null {
   const store = authorityStore ?? new SessionStore(projectRoot);
-  const artifact = store.readBundle(sessionId).artifacts.artifacts[artifactId];
-  if (!artifact || artifact.producer_run_id !== producerRunId) {
-    throw new Error('reuse artifact does not belong to the producer Run');
-  }
   const session = store.readSessionRecord(sessionId);
   let executionId: string | null = null;
   try {
@@ -54,7 +50,15 @@ export function buildReuseExecutionAnchor(
   if (!receipt.runs.some(item => item.run_id === producerRunId)) {
     throw new Error('reuse producer Run is not present in the sealed Execution receipt');
   }
-  if (receipt.artifacts.content_hashes[artifactId] !== `sha256:${artifact.content_hash}`) {
+  const currentArtifact = store.readBundle(sessionId).artifacts.artifacts[artifactId];
+  if (receipt.schema_version === 'execution-seal-receipt/1.1') {
+    const snapshot = receipt.artifacts.snapshots.find(item => item.artifact_id === artifactId);
+    if (!snapshot || snapshot.producer_run_id !== producerRunId) {
+      throw new Error('reuse artifact does not belong to the producer Run');
+    }
+  } else if (!currentArtifact
+    || currentArtifact.producer_run_id !== producerRunId
+    || receipt.artifacts.content_hashes[artifactId] !== `sha256:${currentArtifact.content_hash}`) {
     throw new Error('reuse artifact is not present in the sealed Execution receipt');
   }
   return {
@@ -155,11 +159,22 @@ function validateReceiptBackedReuseFence(
   } catch (error) {
     if (runSnapshot.schema_version === 'command-run/1.4') throw error;
   }
-  const artifact = store.readBundle(fence.session_id).artifacts.artifacts[fence.artifact_id];
+  const bundleArtifact = store.readBundle(fence.session_id).artifacts.artifacts[fence.artifact_id];
+  const receiptArtifact = receipt.schema_version === 'execution-seal-receipt/1.1'
+    ? receipt.artifacts.snapshots.find(item => item.artifact_id === fence.artifact_id)
+    : null;
+  const artifact = receiptArtifact ?? bundleArtifact;
+  const artifactHash = artifact
+    ? ('content_hash' in artifact && artifact.content_hash.startsWith('sha256:')
+        ? artifact.content_hash
+        : `sha256:${artifact.content_hash}`)
+    : null;
   if (!artifact
     || artifact.producer_run_id !== fence.producer_run_id
-    || artifact.status !== 'sealed'
-    || `sha256:${artifact.content_hash}` !== fence.artifact_hash
+    || artifact.role !== fence.artifact_role
+    || artifact.schema_version !== fence.artifact_schema
+    || (receiptArtifact ? receiptArtifact.status !== 'sealed' : bundleArtifact?.status !== 'sealed')
+    || artifactHash !== fence.artifact_hash
     || receipt.artifacts.content_hashes[fence.artifact_id] !== fence.artifact_hash) {
     throw new Error('reuse source artifact receipt binding changed');
   }

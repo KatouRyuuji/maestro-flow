@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -9,6 +10,30 @@ import {
 const HASH_A = `sha256:${'a'.repeat(64)}`;
 const HASH_B = `sha256:${'b'.repeat(64)}`;
 const HASH_C = `sha256:${'c'.repeat(64)}`;
+
+interface LegacyAttachmentFixture {
+  review: { required_role: 'primary' };
+  authority: {
+    output: { _meta: { kind: string; schema: string; role: 'attachment'; alias: string } };
+    contract_snapshot: {
+      snapshot_hash: string;
+      normalized: { produces: Array<{ kind: string; schema: string; role: 'attachment' }> };
+    };
+    registry: {
+      kind: string;
+      schema_version: string;
+      role: 'attachment';
+      status: 'sealed';
+    };
+  };
+  current_contract_hash: string;
+  expected_reason_codes: string[];
+}
+
+const legacyAttachmentFixture = JSON.parse(readFileSync(
+  new URL('./__fixtures__/sealed-legacy-attachment-execution.json', import.meta.url),
+  'utf8',
+)) as LegacyAttachmentFixture;
 
 function compatibleInput(): ReuseAssessmentInput {
   return {
@@ -140,6 +165,39 @@ describe('reuse-assessment/1.0', () => {
       decision: 'REJECT',
       reason_codes: ['CONTRACT_BREAKING_DRIFT', 'CONTRACT_HASH_MISMATCH'],
     });
+  });
+
+  it('rejects sealed legacy attachment authority when the current review requires primary', () => {
+    const fixture = legacyAttachmentFixture;
+    const storedProduce = fixture.authority.contract_snapshot.normalized.produces[0];
+    expect([
+      fixture.authority.output._meta.role,
+      storedProduce.role,
+      fixture.authority.registry.role,
+    ]).toEqual(['attachment', 'attachment', 'attachment']);
+
+    const input = compatibleInput();
+    input.candidate.artifactRole = fixture.authority.registry.role;
+    input.candidate.artifactStatus = fixture.authority.registry.status;
+    input.candidate.artifactSchema = fixture.authority.registry.schema_version;
+    input.consumer = {
+      kind: fixture.authority.registry.kind,
+      alias: fixture.authority.output._meta.alias,
+      schema: fixture.authority.registry.schema_version,
+      role: fixture.review.required_role,
+    };
+    input.acceptedArtifactSchemas = [fixture.authority.registry.schema_version];
+    input.acceptedArtifactRoles = [fixture.review.required_role];
+    input.contract = {
+      producerHash: fixture.authority.contract_snapshot.snapshot_hash,
+      currentHash: fixture.current_contract_hash,
+      drift: 'breaking',
+    };
+
+    const result = assessArtifactReuse(input);
+    expect(result.decision).toBe('REJECT');
+    expect(result.reason_codes).toEqual(fixture.expected_reason_codes);
+    expect(result.source_fence.artifact_role).toBe('attachment');
   });
 
   it('accepts an explicitly compatible output contract despite a producer hash change', () => {

@@ -1,8 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { inspectArtifactCompatibility } from '../artifact-compatibility.js';
 import type { RunV30, SessionStateV30 } from '../schemas.js';
 import { SessionStore } from '../store.js';
 import { V3StructuredError } from './errors.js';
@@ -12,6 +14,8 @@ import {
   createRunV3,
   createRunningRunV3,
   mutateRunV3,
+  recoverSealRunV3,
+  republishArtifactV3,
 } from './mutation-engine.js';
 
 const roots: string[] = [];
@@ -61,9 +65,25 @@ function setup(status: SessionStateV30['status'] = 'open'): SessionStore {
     schema_version: 'gates/1.0', revision: 0, gates: {},
     summary: { total: 0, passed: 0, blocked: 0, failed: 0, active_gate_ids: [], blocking_run_id: null },
   }, null, 2)}\n`);
+  writeFileSync(join(store.sessionDir('s-1'), 'artifacts.json'), `${JSON.stringify({
+    schema_version: 'artifacts/1.0', revision: 0, artifacts: {}, aliases: {},
+  }, null, 2)}\n`);
   store.writeRunV30(run('r-1', 'step-1'));
   store.writeRunV30(run('r-2', 'step-2'));
   return store;
+}
+
+function configureRequiredOutput(store: SessionStore, produce = true): void {
+  const commandDir = join(store.projectRoot, '.claude', 'commands');
+  mkdirSync(commandDir, { recursive: true });
+  writeFileSync(join(commandDir, 'work.md'), `<contract>\ncontract_version: 2\nconsumes: []\nproduces:\n  - kind: result\n    path: outputs/result.json\n    alias: current-result\n    role: primary\n    required: true\n    schema: result/1.0\ngates:\n  entry: []\n  exit: []\n</contract>\n`);
+  if (!produce) return;
+  const outputs = join(store.runDir('s-1', 'r-1'), 'outputs');
+  mkdirSync(outputs, { recursive: true });
+  writeFileSync(join(outputs, 'result.json'), `${JSON.stringify({
+    _meta: { kind: 'result', schema: 'result/1.0', role: 'primary', alias: 'current-result' },
+    ok: true,
+  }, null, 2)}\n`);
 }
 
 function identity(requestId: string, participantId = 'p-a') {
@@ -74,10 +94,96 @@ function identity(requestId: string, participantId = 'p-a') {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const path of roots.splice(0)) rmSync(path, { recursive: true, force: true });
 });
 
 describe('v3 mutation engine', () => {
+  it('republishes compatibility authority without allocating the pending consumer Run', () => {
+    const store = setup();
+    const commandDir = join(store.projectRoot, '.claude', 'commands');
+    mkdirSync(commandDir, { recursive: true });
+    writeFileSync(join(commandDir, 'producer.md'), `<contract>\ncontract_version: 2.1\narguments: []\nconsumes: []\nproduces:\n  - kind: execution\n    path: outputs/execution.json\n    alias: latest-execution\n    role: attachment\n    required: true\n    schema: execution/1.0\ngates:\n  entry: []\n  exit: []\n</contract>\n`);
+    writeFileSync(join(commandDir, 'review.md'), `<contract>\ncontract_version: 2.1\narguments: []\nconsumes:\n  - kind: execution\n    alias: latest-execution\n    required: true\n    require_status: sealed\n    schema: execution/1.0\n    role: primary\nproduces: []\ngates:\n  entry: []\n  exit: []\n</contract>\n`);
+    const sourceDir = join(store.runDir('s-1', 'r-1'), 'outputs');
+    mkdirSync(sourceDir, { recursive: true });
+    const sourceBytes = `${JSON.stringify({
+      _meta: { kind: 'execution', schema: 'execution/1.0', role: 'attachment', alias: 'latest-execution' },
+      changes: [],
+    }, null, 2)}\n`;
+    writeFileSync(join(sourceDir, 'execution.json'), sourceBytes);
+    const sourceHash = createHash('sha256').update(sourceBytes).digest('hex');
+    store.writeRunV30({
+      ...store.readRunV30('s-1', 'r-1'), command: 'producer', status: 'sealed', revision: 2,
+      output_refs: ['ART-source'], sealed_at: '2026-08-12T00:30:00.000Z',
+      ended_at: '2026-08-12T00:30:00.000Z', verdict: 'done', summary: 'source',
+    });
+    const state = store.readSessionV30('s-1');
+    store.writeSessionV30({
+      ...state, active_run_ids: [], orchestration_revision: 4, activity_revision: 4,
+      chain: [
+        { ...state.chain[0], command: 'producer', status: 'completed', run_ids: ['r-1'] },
+        { ...state.chain[1], command: 'review', status: 'pending', run_ids: [] },
+      ],
+    });
+    writeFileSync(join(store.sessionDir('s-1'), 'artifacts.json'), `${JSON.stringify({
+      schema_version: 'artifacts/1.0', revision: 1,
+      artifacts: {
+        'ART-source': {
+          kind: 'execution', role: 'attachment', producer_run_id: 'r-1',
+          relative_path: 'runs/r-1/outputs/execution.json', media_type: 'application/json',
+          schema_version: 'execution/1.0', content_hash: sourceHash, size: Buffer.byteLength(sourceBytes),
+          status: 'sealed', derived_from: [], replaces: null,
+        },
+      },
+      aliases: { 'latest-execution': 'ART-source' },
+    }, null, 2)}\n`);
+    const assessment = inspectArtifactCompatibility(store.projectRoot, {
+      sessionId: 's-1', artifactId: 'ART-source', consumerCommand: 'review', alias: 'latest-execution',
+    });
+    expect(assessment.classification).toBe('semantic_republish_required');
+    const applied = republishArtifactV3(store, {
+      ...identity('req-artifact-v3'), artifactId: 'ART-source', consumerCommand: 'review',
+      alias: 'latest-execution', assessmentHash: assessment.assessment_hash,
+      expectedArtifactRevision: 1, expectedSessionRevision: 4, evidenceRefs: ['EVD-v3'],
+    });
+    expect(applied).toMatchObject({
+      status: 'applied', transition: {
+        target_type: 'artifact', revision_before: 1, revision_after: 2,
+        result: { operation: 'artifact-republish', receipt: { schema_version: 'artifact-republish/1.0' } },
+      },
+    });
+    const result = applied.transition.result as { artifact_id: string; compatibility_run_id: string };
+    const after = store.readSessionV30('s-1');
+    expect(after).toMatchObject({
+      orchestration_revision: 5, activity_revision: 5, active_run_ids: [],
+      chain: [
+        { command: 'producer', status: 'completed' },
+        { command: 'artifact-compatibility-republish', status: 'completed' },
+        { command: 'review', status: 'pending', run_ids: [] },
+      ],
+    });
+    expect(store.readRunV30('s-1', result.compatibility_run_id)).toMatchObject({ status: 'sealed' });
+    const registry = JSON.parse(readFileSync(join(store.sessionDir('s-1'), 'artifacts.json'), 'utf8'));
+    expect(registry.artifacts['ART-source']).toMatchObject({ role: 'attachment', status: 'sealed' });
+    expect(registry.artifacts[result.artifact_id]).toMatchObject({ role: 'primary', derived_from: ['ART-source'] });
+    expect(registry.aliases['latest-execution']).toBe(result.artifact_id);
+    expect(readFileSync(join(sourceDir, 'execution.json'), 'utf8')).toBe(sourceBytes);
+    expect(republishArtifactV3(store, {
+      ...identity('req-artifact-v3'), artifactId: 'ART-source', consumerCommand: 'review',
+      alias: 'latest-execution', assessmentHash: assessment.assessment_hash,
+      expectedArtifactRevision: 1, expectedSessionRevision: 4, evidenceRefs: ['EVD-v3'],
+    })).toEqual({ status: 'replayed', transition: applied.transition });
+    const next = createRunningRunV3(store, {
+      ...identity('req-review-next'), expectedOrchestrationRevision: 5,
+      run: { ...run('r-3', 'step-2', 'pending'), command: 'review' },
+    });
+    expect(next.status).toBe('applied');
+    expect(store.readRunV30('s-1', 'r-3')).toMatchObject({
+      status: 'running', input_refs: [result.artifact_id],
+    });
+  });
+
   it('mutates different Runs without CAS interference and blindly increments activity', async () => {
     const store = setup();
     const [first, second] = await Promise.all([
@@ -226,10 +332,12 @@ describe('v3 mutation engine', () => {
     const store = setup();
     const first = createRunningRunV3(store, {
       ...identity('req-create-replay'), expectedOrchestrationRevision: 0,
+      requestOperation: 'run-create',
       run: { ...run('r-3', 'step-2', 'pending'), created_at: '2026-08-12T01:00:00.000Z' },
     });
     const replayed = createRunningRunV3(store, {
       ...identity('req-create-replay'), expectedOrchestrationRevision: 0,
+      requestOperation: 'run-create',
       run: { ...run('r-3', 'step-2', 'pending'), created_at: '2026-08-12T02:00:00.000Z' },
     });
     expect(replayed).toEqual({ status: 'replayed', transition: first.transition });
@@ -261,25 +369,183 @@ describe('v3 mutation engine', () => {
       expectedOrchestrationRevision: 0, summary: 'done', verdict: 'done',
     });
     expect(completed.status).toBe('applied');
-    expect(store.readRunV30('s-1', 'r-1').status).toBe('completed');
+    expect(store.readRunV30('s-1', 'r-1').status).toBe('sealed');
     expect(store.readSessionV30('s-1')).toMatchObject({
       status: 'paused', orchestration_revision: 1,
       chain: [{ status: 'completed' }, { status: 'pending' }],
     });
   });
 
-  it('completes a Run and advances the chain in one transaction', () => {
+  it('completes and seals a Run without allocating the next Run', () => {
     const store = setup();
     const result = completeRunAndAdvance(store, {
       ...identity('req-complete-advance'), runId: 'r-1', expectedRunRevision: 0,
       expectedOrchestrationRevision: 0, summary: 'implemented', verdict: 'done',
     });
     expect(result.status).toBe('applied');
-    expect(store.readRunV30('s-1', 'r-1')).toMatchObject({ status: 'completed', revision: 1 });
+    expect(result.transition.result).toMatchObject({
+      operation: 'run-complete-and-seal', status: 'sealed',
+      next: { suggest_only: true, command: 'maestro run next --session s-1' },
+    });
+    expect(store.readRunV30('s-1', 'r-1')).toMatchObject({
+      status: 'sealed', revision: 1, ended_at: '2026-08-12T01:00:00.000Z', sealed_at: '2026-08-12T01:00:00.000Z',
+    });
     expect(store.readSessionV30('s-1')).toMatchObject({
       orchestration_revision: 1, activity_revision: 1, active_run_ids: ['r-2'],
       chain: [{ status: 'completed' }, { status: 'pending' }],
     });
+    expect(() => store.readRunV30('s-1', 'r-next')).toThrow();
+  });
+
+  it('publishes outputs, aliases, sealed authority, and receipts in one fault-atomic batch', () => {
+    const store = setup();
+    configureRequiredOutput(store);
+    const paths = [
+      join(store.sessionDir('s-1'), 'session.json'),
+      join(store.runDir('s-1', 'r-1'), 'run.json'),
+      join(store.sessionDir('s-1'), 'artifacts.json'),
+    ];
+    const before = new Map(paths.map(path => [path, readFileSync(path, 'utf8')]));
+    const original = (SessionStore.prototype as any).writeBatchUnlocked;
+    const fault = vi.spyOn(SessionStore.prototype as any, 'writeBatchUnlocked')
+      .mockImplementationOnce(() => { throw new Error('injected v3 completion batch fault'); });
+    const input = {
+      ...identity('req-atomic-publication'), runId: 'r-1', expectedRunRevision: 0,
+      expectedOrchestrationRevision: 0, summary: 'published', verdict: 'done' as const,
+    };
+    expect(() => completeRunAndAdvance(store, input)).toThrow(/injected v3 completion batch fault/);
+    fault.mockRestore();
+    for (const [path, bytes] of before) expect(readFileSync(path, 'utf8')).toBe(bytes);
+    expect(store.readRequestReceiptV20('s-1', input.requestId)).toBeNull();
+    expect(store.listTransitionReceiptsV20('s-1')).toEqual([]);
+
+    const batches: string[][] = [];
+    const capture = vi.spyOn(SessionStore.prototype as any, 'writeBatchUnlocked')
+      .mockImplementation(function (this: SessionStore, writes: Array<{ path: string }>) {
+        batches.push(writes.map(write => write.path));
+        return original.call(this, writes);
+      });
+    const completed = completeRunAndAdvance(store, input);
+    capture.mockRestore();
+    expect(batches).toHaveLength(1);
+    for (const path of paths) expect(batches[0]).toContain(path);
+    expect(batches[0].some(path => path.includes(join('receipts', 'requests')))).toBe(true);
+    expect(batches[0].some(path => path.includes(join('receipts', 'transitions')))).toBe(true);
+
+    const runAfter = store.readRunV30('s-1', 'r-1');
+    const registry = JSON.parse(readFileSync(join(store.sessionDir('s-1'), 'artifacts.json'), 'utf8'));
+    expect(runAfter).toMatchObject({
+      status: 'sealed', output_refs: [expect.stringMatching(/^ART-/)],
+      primary_artifact_id: expect.stringMatching(/^ART-/),
+    });
+    expect(registry).toMatchObject({
+      revision: 1,
+      aliases: { 'current-result': runAfter.primary_artifact_id },
+      artifacts: { [runAfter.primary_artifact_id!]: { producer_run_id: 'r-1', status: 'sealed' } },
+    });
+    expect(completed.transition.result).toMatchObject({
+      artifact_publication: {
+        authority: 'transition-receipt/2.0', artifact_registry_revision: 1,
+        artifact_ids: runAfter.output_refs, primary_artifact_id: runAfter.primary_artifact_id,
+      },
+    });
+  });
+
+  it('replays atomic completion without republishing or changing canonical bytes', () => {
+    const store = setup();
+    configureRequiredOutput(store);
+    const input = {
+      ...identity('req-completion-replay'), runId: 'r-1', expectedRunRevision: 0,
+      expectedOrchestrationRevision: 0, summary: 'published once', verdict: 'done' as const,
+    };
+    const applied = completeRunAndAdvance(store, input);
+    const canonicalPaths = [
+      join(store.sessionDir('s-1'), 'session.json'),
+      join(store.runDir('s-1', 'r-1'), 'run.json'),
+      join(store.sessionDir('s-1'), 'artifacts.json'),
+    ];
+    const committed = canonicalPaths.map(path => readFileSync(path, 'utf8'));
+    const replayed = completeRunAndAdvance(store, input);
+    expect(replayed).toEqual({ status: 'replayed', transition: applied.transition });
+    expect(canonicalPaths.map(path => readFileSync(path, 'utf8'))).toEqual(committed);
+    expect(store.listTransitionReceiptsV20('s-1')).toHaveLength(1);
+    expect(JSON.parse(committed[2])).toMatchObject({ revision: 1 });
+  });
+
+  it('fences run next on sealed predecessor publication authority', () => {
+    const missingAuthority = setup();
+    const missingSession = missingAuthority.readSessionV30('s-1');
+    missingAuthority.writeSessionV30({
+      ...missingSession,
+      chain: missingSession.chain.map((step, index) => ({ ...step, status: index === 0 ? 'completed' : 'pending' })),
+      active_run_ids: ['r-2'],
+    });
+    missingAuthority.writeRunV30({
+      ...run('r-1', 'step-1', 'sealed'), revision: 1, verdict: 'done', summary: 'legacy completion',
+      ended_at: '2026-08-12T00:30:00.000Z', sealed_at: '2026-08-12T00:30:00.000Z',
+    });
+    expect(() => createRunningRunV3(missingAuthority, {
+      ...identity('req-next-without-authority'), expectedOrchestrationRevision: 0,
+      run: run('r-3', 'step-2', 'pending'),
+    })).toThrow(/lacks unique artifact publication authority/);
+    expect(() => missingAuthority.readRunV30('s-1', 'r-3')).toThrow();
+
+    const store = setup();
+    completeRunAndAdvance(store, {
+      ...identity('req-predecessor-complete'), runId: 'r-1', expectedRunRevision: 0,
+      expectedOrchestrationRevision: 0, summary: 'sealed predecessor', verdict: 'done',
+    });
+    const created = createRunningRunV3(store, {
+      ...identity('req-next-with-authority'), expectedOrchestrationRevision: 1,
+      run: run('r-3', 'step-2', 'pending'),
+    });
+    expect(created.status).toBe('applied');
+    expect(store.readRunV30('s-1', 'r-3')).toMatchObject({ status: 'running', revision: 1 });
+  });
+
+  it('recovers a pre-upgrade completed Run by publishing and sealing terminal authority only', () => {
+    const store = setup();
+    configureRequiredOutput(store);
+    const current = store.readSessionV30('s-1');
+    store.writeSessionV30({
+      ...current,
+      orchestration_revision: 1,
+      chain: current.chain.map((step, index) => ({ ...step, status: index === 0 ? 'completed' : 'pending' })),
+      active_run_ids: ['r-2'],
+    });
+    store.writeRunV30({
+      ...run('r-1', 'step-1', 'completed'), revision: 1, verdict: 'done', summary: 'old completion',
+      ended_at: '2026-08-12T00:30:00.000Z',
+    });
+    const recovered = recoverSealRunV3(store, {
+      ...identity('req-recovery-seal'), runId: 'r-1', expectedRunRevision: 1,
+    });
+    expect(recovered.transition.result).toMatchObject({
+      operation: 'run-recovery-seal', status: 'sealed',
+      artifact_publication: { authority: 'transition-receipt/2.0', artifact_ids: [expect.stringMatching(/^ART-/)] },
+    });
+    expect(store.readRunV30('s-1', 'r-1')).toMatchObject({ status: 'sealed', revision: 2 });
+    const next = createRunningRunV3(store, {
+      ...identity('req-next-after-recovery'), expectedOrchestrationRevision: 1,
+      run: run('r-3', 'step-2', 'pending'),
+    });
+    expect(next.status).toBe('applied');
+  });
+
+  it('rejects missing required outputs before staging any completion authority', () => {
+    const store = setup();
+    configureRequiredOutput(store, false);
+    const sessionBefore = readFileSync(join(store.sessionDir('s-1'), 'session.json'), 'utf8');
+    const runBefore = readFileSync(join(store.runDir('s-1', 'r-1'), 'run.json'), 'utf8');
+    const artifactsBefore = readFileSync(join(store.sessionDir('s-1'), 'artifacts.json'), 'utf8');
+    expect(() => completeRunAndAdvance(store, {
+      ...identity('req-missing-output'), runId: 'r-1', expectedRunRevision: 0,
+      expectedOrchestrationRevision: 0, summary: 'invalid', verdict: 'done',
+    })).toThrow(/Missing required contract v2 output/);
+    expect(readFileSync(join(store.sessionDir('s-1'), 'session.json'), 'utf8')).toBe(sessionBefore);
+    expect(readFileSync(join(store.runDir('s-1', 'r-1'), 'run.json'), 'utf8')).toBe(runBefore);
+    expect(readFileSync(join(store.sessionDir('s-1'), 'artifacts.json'), 'utf8')).toBe(artifactsBefore);
+    expect(store.readRequestReceiptV20('s-1', 'req-missing-output')).toBeNull();
   });
 
   it('does not half-commit when complete-and-advance validation fails', () => {

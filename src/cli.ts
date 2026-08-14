@@ -84,6 +84,7 @@ const commandLoaders: Record<string, () => Promise<(p: Command) => void>> = {
   moa:        async () => (await import('./commands/moa.js')).registerMoaCommand,
   timeline:   async () => (await import('./commands/timeline.js')).registerTimelineCommand,
   participant: async () => (await import('./commands/participant.js')).registerParticipantCommand,
+  artifact:   async () => (await import('./commands/artifact.js')).registerArtifactCommand,
 };
 
 // Determine which command is being invoked from argv (if any)
@@ -142,11 +143,13 @@ const v3SessionMachineSubcommands = new Set([
   'open', 'migrate', 'pause', 'resume', 'complete', 'archive', 'status', 'resume-view', 'chain',
 ]);
 const v3RunMachineSubcommands = new Set(['next', 'create', 'complete', 'transition', 'cancel', 'seal', 'brief', 'check']);
+const artifactMachineMode = requestedCommand === 'artifact' && argv.includes('--json');
 const v3MachineMode = argv.includes('--json') && v3WriterMode && (
   (requestedCommand === 'session' && v3SessionMachineSubcommands.has(requestedSubcommand ?? ''))
   || (requestedCommand === 'run' && v3RunMachineSubcommands.has(requestedSubcommand ?? ''))
   || requestedCommand === 'participant'
   || requestedCommand === 'execution'
+  || requestedCommand === 'artifact'
 );
 const executionRunFlags = [
   '--execution', '--generation', '--expected-execution-revision', '--owner-id', '--owner-kind', '--lease-epoch',
@@ -209,7 +212,8 @@ type V3MachineOperation =
   | 'run-transition' | 'run-cancel' | 'run-seal'
   | 'participant-register' | 'participant-status' | 'participant-unregister';
 
-function inferV3MachineOperation(command: string | undefined, subcommand: string | undefined): V3MachineOperation {
+function inferV3MachineOperation(command: string | undefined, subcommand: string | undefined): V3MachineOperation | 'artifact-inspect' | 'artifact-republish' {
+  if (command === 'artifact') return subcommand === 'republish' ? 'artifact-republish' : 'artifact-inspect';
   if (command === 'execution') return inferExecutionMachineOperation(command, argv) as V3MachineOperation;
   if (command === 'participant') {
     if (subcommand === 'status' || subcommand === 'unregister') return `participant-${subcommand}`;
@@ -274,7 +278,7 @@ function inferExecutionMachineOperation(command: string | undefined, args: strin
     : 'execution-status';
 }
 
-if (runMachineMode || executionMachineMode || v3MachineMode) {
+if (runMachineMode || executionMachineMode || v3MachineMode || artifactMachineMode) {
   program.exitOverride();
   program.configureOutput({ writeOut: () => undefined, writeErr: () => undefined });
 }
@@ -354,10 +358,10 @@ if (jsonHelpMode) {
 try {
   await program.parseAsync();
 } catch (error) {
-  if (!(error instanceof CommanderError) || (!runMachineMode && !executionMachineMode && !v3MachineMode)) throw error;
+  if (!(error instanceof CommanderError) || (!runMachineMode && !executionMachineMode && !v3MachineMode && !artifactMachineMode)) throw error;
   const { sanitizeCommanderError } = await import('./commands/execution-cli-shared.js');
   const commanderError = sanitizeCommanderError(error, argv);
-  if (v3MachineMode) {
+  if (v3MachineMode || artifactMachineMode) {
     const { createRunResponseError, emitRunResponse } = await import('./run/response.js');
     emitRunResponse(createRunResponseError({
       schema_version: 'run-response/1.2',

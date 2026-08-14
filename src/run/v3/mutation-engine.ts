@@ -1,10 +1,30 @@
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 
-import type { TransitionReceiptV20 } from '../protocol-schemas.js';
-import { gateRegistrySchema, type RunV30, type SessionStateV30 } from '../schemas.js';
+import { artifactRepublishReceiptSchema, type TransitionReceiptV20 } from '../protocol-schemas.js';
+import {
+  artifactRegistrySchema,
+  gateRegistrySchema,
+  type ArtifactRegistry,
+  type RunV30,
+  type SessionStateV30,
+} from '../schemas.js';
+import {
+  artifactRepublishReceiptHash,
+  createArtifactRepublishReceipt,
+  exactArtifactRepublishReceipt,
+  prepareArtifactRepublish,
+  type PrepareArtifactRepublishOptions,
+} from '../artifact-compatibility.js';
 import { SessionStore, type SessionV30StoreTransaction } from '../store.js';
 import { assertSafePathSegment } from '../ids.js';
+import {
+  defaultArtifactAlias,
+  scanOutputs,
+  validateStrictArtifactContract,
+  type DiscoveredArtifact,
+} from '../artifacts.js';
+import { hashCommandContract, resolveCommandSource } from '../contract.js';
 import { createRevisionConflictError, V3StructuredError } from './errors.js';
 import {
   canonicalPayloadHash,
@@ -55,6 +75,20 @@ export interface CompleteRunAndAdvanceInput extends V3MutationIdentity {
   expectedOrchestrationRevision: number;
   summary: string;
   verdict: Extract<NonNullable<RunV30['verdict']>, 'done' | 'done_with_concerns'>;
+}
+
+export interface RecoverSealRunV3Input extends V3MutationIdentity {
+  runId: string;
+  expectedRunRevision: number;
+}
+
+export interface RepublishArtifactV3Input extends V3MutationIdentity {
+  artifactId: string;
+  consumerCommand: string;
+  alias: string;
+  assessmentHash: string;
+  expectedArtifactRevision: number;
+  expectedSessionRevision: number;
 }
 
 export interface CompleteSessionV3Input extends V3MutationIdentity {
@@ -262,6 +296,262 @@ function updatedSessionActivity(
   };
 }
 
+function artifactId(runId: string, relativePath: string): string {
+  const digest = canonicalPayloadHash({ run_id: runId, relative_path: relativePath })
+    .slice('sha256:'.length, 'sha256:'.length + 20);
+  return `ART-${digest}`;
+}
+
+function registerRunArtifacts(
+  registry: ArtifactRegistry,
+  run: RunV30,
+  discovered: readonly DiscoveredArtifact[],
+): string[] {
+  const ids: string[] = [];
+  for (const item of [...discovered].sort((left, right) => left.relativePath.localeCompare(right.relativePath))) {
+    const existing = Object.entries(registry.artifacts).find(([, artifact]) => (
+      artifact.producer_run_id === run.run_id && artifact.relative_path === item.relativePath
+    ));
+    const id = existing?.[0] ?? artifactId(run.run_id, item.relativePath);
+    const previous = existing?.[1];
+    const collision = registry.artifacts[id];
+    if (collision && !previous) {
+      throw new V3StructuredError('INVALID_STATE_TRANSITION', `Artifact ID collision for ${item.relativePath}`);
+    }
+    if (previous?.status === 'sealed' && previous.content_hash !== item.contentHash) {
+      throw new V3StructuredError('INVALID_STATE_TRANSITION', `sealed Artifact is immutable: ${item.relativePath}`);
+    }
+    const alias = item.alias
+      ?? (item.role === 'primary' ? defaultArtifactAlias(item.kind, run.command) : undefined);
+    const priorAliasId = alias ? registry.aliases[alias] : undefined;
+    if (priorAliasId && priorAliasId !== id) {
+      const prior = registry.artifacts[priorAliasId];
+      if (prior?.status === 'sealed') prior.status = 'superseded';
+    }
+    registry.artifacts[id] = {
+      kind: item.kind,
+      role: item.role,
+      producer_run_id: run.run_id,
+      relative_path: item.relativePath,
+      media_type: item.mediaType,
+      schema_version: item.schemaVersion,
+      content_hash: item.contentHash,
+      size: item.size,
+      status: 'sealed',
+      derived_from: [...run.input_refs],
+      replaces: priorAliasId && priorAliasId !== id ? priorAliasId : previous?.replaces ?? null,
+    };
+    if (alias) registry.aliases[alias] = id;
+    ids.push(id);
+  }
+  registry.revision++;
+  return ids;
+}
+
+interface ArtifactPublicationAuthority {
+  authority: 'transition-receipt/2.0';
+  artifact_registry_revision: number;
+  artifact_ids: string[];
+  primary_artifact_id: string | null;
+  artifacts: ArtifactRegistry['artifacts'];
+  aliases: Record<string, string>;
+}
+
+function prepareArtifactPublication(input: {
+  store: SessionStore;
+  tx: SessionV30StoreTransaction;
+  session: SessionStateV30;
+  run: RunV30;
+  strict: boolean;
+}): { authority: ArtifactPublicationAuthority; warnings: string[] } {
+  const runDir = input.store.runDir(input.session.session_id, input.run.run_id);
+  const sessionDir = input.store.sessionDir(input.session.session_id);
+  const contract = resolveCommandSource(input.store.projectRoot, input.run.command).contract;
+  const scan = scanOutputs(runDir, sessionDir, contract);
+  if (input.strict) validateStrictArtifactContract(runDir, contract, scan);
+  if (scan.errors.length > 0) {
+    throw new V3StructuredError('INVALID_STATE_TRANSITION', `Run output validation failed: ${scan.errors.join('; ')}`, {
+      details: { reason: 'RUN_OUTPUT_VALIDATION_FAILED', errors: scan.errors, warnings: scan.warnings },
+      target_type: 'run', target_id: input.run.run_id,
+      next_actions: [`repair-run-outputs:${input.run.run_id}`, `check-run:${input.run.run_id}`],
+    });
+  }
+  const artifactsPath = resolve(sessionDir, input.session.artifacts_ref);
+  const artifacts = input.tx.readJson(artifactsPath, artifactRegistrySchema);
+  const artifactIds = registerRunArtifacts(artifacts, input.run, scan.artifacts);
+  const primaryArtifactId = artifactIds.find(id => artifacts.artifacts[id]?.role === 'primary') ?? null;
+  const publishedArtifactSet = new Set(artifactIds);
+  const authority: ArtifactPublicationAuthority = {
+    authority: 'transition-receipt/2.0',
+    artifact_registry_revision: artifacts.revision,
+    artifact_ids: artifactIds,
+    primary_artifact_id: primaryArtifactId,
+    artifacts: Object.fromEntries(artifactIds.map(id => [id, structuredClone(artifacts.artifacts[id])])),
+    aliases: Object.fromEntries(Object.entries(artifacts.aliases).filter(([, id]) => publishedArtifactSet.has(id))),
+  };
+  input.tx.writeJson(artifactsPath, artifacts, artifactRegistrySchema);
+  return { authority, warnings: scan.warnings };
+}
+
+function publicationAuthority(result: unknown, run: RunV30): ArtifactPublicationAuthority | null {
+  if (typeof result !== 'object' || result === null) return null;
+  const value = result as Record<string, unknown>;
+  const raw = value.artifact_publication;
+  if ((value.operation !== 'run-complete-and-seal' && value.operation !== 'run-recovery-seal')
+    || value.run_id !== run.run_id
+    || value.status !== 'sealed'
+    || value.run_revision !== run.revision
+    || typeof raw !== 'object'
+    || raw === null) return null;
+  const publication = raw as Record<string, unknown>;
+  if (publication.authority !== 'transition-receipt/2.0'
+    || !Number.isSafeInteger(publication.artifact_registry_revision)
+    || (publication.artifact_registry_revision as number) < 0
+    || !Array.isArray(publication.artifact_ids)
+    || !publication.artifact_ids.every(id => typeof id === 'string')
+    || new Set(publication.artifact_ids).size !== publication.artifact_ids.length
+    || !(publication.primary_artifact_id === null || typeof publication.primary_artifact_id === 'string')
+    || typeof publication.artifacts !== 'object'
+    || publication.artifacts === null
+    || Array.isArray(publication.artifacts)
+    || typeof publication.aliases !== 'object'
+    || publication.aliases === null
+    || Array.isArray(publication.aliases)) {
+    return null;
+  }
+  return publication as unknown as ArtifactPublicationAuthority;
+}
+
+function republishPublicationReceipt(
+  tx: SessionV30StoreTransaction,
+  result: unknown,
+  run: RunV30,
+  artifacts: ArtifactRegistry,
+): boolean {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return false;
+  const value = result as Record<string, unknown>;
+  if (value.operation !== 'artifact-republish') return false;
+  const parsed = artifactRepublishReceiptSchema.safeParse(value.receipt);
+  if (!parsed.success) return false;
+  const receipt = parsed.data;
+  const stored = tx.readArtifactRepublishReceipt(receipt.receipt_id);
+  const artifact = artifacts.artifacts[receipt.artifact_id];
+  return stored !== null
+    && canonicalPayloadHash(stored) === canonicalPayloadHash(receipt)
+    && artifactRepublishReceiptHash(receipt) === receipt.receipt_hash
+    && receipt.compatibility_run_id === run.run_id
+    && run.status === 'sealed'
+    && run.output_refs.length === 1
+    && run.output_refs[0] === receipt.artifact_id
+    && artifact?.status === 'sealed'
+    && artifact.producer_run_id === run.run_id
+    && `sha256:${artifact.content_hash}` === receipt.artifact_hash
+    && JSON.stringify(artifact.derived_from) === JSON.stringify([receipt.source_artifact_id]);
+}
+
+function assertNextPredecessorPublished(
+  tx: SessionV30StoreTransaction,
+  session: SessionStateV30,
+  stepIndex: number,
+  artifacts: ArtifactRegistry,
+): void {
+  if (stepIndex === 0) return;
+  const previousStep = session.chain[stepIndex - 1];
+  if (previousStep.status === 'skipped') return;
+  if (previousStep.status !== 'completed') {
+    throw new V3StructuredError(
+      'INVALID_STATE_TRANSITION',
+      `predecessor chain step ${previousStep.step_id} is ${previousStep.status}, expected completed`,
+      { target_type: 'orchestration', target_id: session.session_id, next_actions: ['finish-predecessor-run'] },
+    );
+  }
+  const predecessor = previousStep.run_ids
+    .map(runId => tx.readRun(runId))
+    .sort((left, right) => right.attempt - left.attempt || right.run_id.localeCompare(left.run_id))[0];
+  if (!predecessor) {
+    throw new V3StructuredError('INVALID_STATE_TRANSITION', `completed predecessor step ${previousStep.step_id} has no Run`);
+  }
+  if (predecessor.status !== 'sealed') {
+    throw new V3StructuredError(
+      'INVALID_STATE_TRANSITION',
+      `predecessor Run ${predecessor.run_id} is ${predecessor.status}, expected sealed`,
+      { target_type: 'run', target_id: predecessor.run_id, next_actions: [`recover-run-seal:${predecessor.run_id}`] },
+    );
+  }
+  const republishAuthorities = tx.listTransitionReceipts()
+    .filter(receipt => republishPublicationReceipt(tx, receipt.result, predecessor, artifacts));
+  if (republishAuthorities.length === 1) {
+    const authority = republishAuthorities[0];
+    const request = tx.readRequestReceipt(authority.request_id);
+    if (request
+      && request.participant_id === authority.participant_id
+      && request.transition_receipt_ref === transitionReceiptRef(authority.activity_revision, authority.transition_id)) {
+      return;
+    }
+    throw new V3StructuredError(
+      'INVALID_STATE_TRANSITION',
+      `predecessor Run ${predecessor.run_id} Artifact republish request receipt is missing or inconsistent`,
+    );
+  }
+  if (republishAuthorities.length > 1) {
+    throw new V3StructuredError(
+      'INVALID_STATE_TRANSITION',
+      `predecessor Run ${predecessor.run_id} has ambiguous Artifact republish authority`,
+    );
+  }
+  const authorities = tx.listTransitionReceipts()
+    .map(receipt => ({ receipt, publication: publicationAuthority(receipt.result, predecessor) }))
+    .filter((value): value is { receipt: TransitionReceiptV20; publication: ArtifactPublicationAuthority } => (
+      value.publication !== null
+    ));
+  if (authorities.length !== 1) {
+    throw new V3StructuredError(
+      'INVALID_STATE_TRANSITION',
+      `predecessor Run ${predecessor.run_id} lacks unique artifact publication authority`,
+      { target_type: 'run', target_id: predecessor.run_id, next_actions: ['inspect-completion-receipt'] },
+    );
+  }
+  const { receipt, publication } = authorities[0];
+  const request = tx.readRequestReceipt(receipt.request_id);
+  if (!request
+    || request.participant_id !== receipt.participant_id
+    || request.transition_receipt_ref !== transitionReceiptRef(receipt.activity_revision, receipt.transition_id)) {
+    throw new V3StructuredError(
+      'INVALID_STATE_TRANSITION',
+      `predecessor Run ${predecessor.run_id} publication request receipt is missing or inconsistent`,
+      { target_type: 'run', target_id: predecessor.run_id, next_actions: ['inspect-completion-receipt'] },
+    );
+  }
+  const artifactIds = [...publication.artifact_ids].sort();
+  if (publication.artifact_registry_revision > artifacts.revision
+    || JSON.stringify(artifactIds) !== JSON.stringify([...predecessor.output_refs].sort())
+    || JSON.stringify(artifactIds) !== JSON.stringify(Object.keys(publication.artifacts).sort())
+    || publication.primary_artifact_id !== predecessor.primary_artifact_id) {
+    throw new V3StructuredError('INVALID_STATE_TRANSITION', `predecessor Run ${predecessor.run_id} publication binding changed`);
+  }
+  for (const artifactId of artifactIds) {
+    const artifact = artifacts.artifacts[artifactId];
+    const committed = publication.artifacts[artifactId];
+    if (!artifact
+      || artifact.producer_run_id !== predecessor.run_id
+      || artifact.status !== 'sealed'
+      || canonicalPayloadHash(artifact) !== canonicalPayloadHash(committed)) {
+      throw new V3StructuredError(
+        'INVALID_STATE_TRANSITION',
+        `predecessor Run ${predecessor.run_id} Artifact ${artifactId} is not sealed publication authority`,
+      );
+    }
+  }
+  for (const [alias, artifactId] of Object.entries(publication.aliases)) {
+    if (!artifactIds.includes(artifactId) || artifacts.aliases[alias] !== artifactId) {
+      throw new V3StructuredError(
+        'INVALID_STATE_TRANSITION',
+        `predecessor Run ${predecessor.run_id} Artifact alias ${alias} changed`,
+      );
+    }
+  }
+}
+
 export function mutateRunV3(store: SessionStore, input: MutateRunV3Input): V3MutationResult {
   const identity = normalizedIdentity(input);
   const runId = required(input.runId, 'run ID');
@@ -322,6 +612,59 @@ export function mutateRunV3(store: SessionStore, input: MutateRunV3Input): V3Mut
   });
 }
 
+export function recoverSealRunV3(store: SessionStore, input: RecoverSealRunV3Input): V3MutationResult {
+  const identity = normalizedIdentity(input);
+  const runId = required(input.runId, 'run ID');
+  const payload = {
+    operation: 'run-recovery-seal', run_id: runId,
+    expected_run_revision: input.expectedRunRevision,
+    ...auditPayload(identity),
+  };
+  const payloadHash = canonicalPayloadHash(payload);
+  return store.withV30Transaction(identity.sessionId, tx => {
+    const replayed = replay(tx, identity, payloadHash);
+    if (replayed) return replayed;
+    const session = tx.readSession();
+    const run = tx.readRun(runId);
+    assertRunRevision(run, input.expectedRunRevision);
+    assertSessionRunTransitionAllowed(session.status, run.status, 'sealed');
+    const publication = prepareArtifactPublication({
+      store, tx, session, run, strict: run.status === 'completed',
+    });
+    const nextRun: RunV30 = {
+      ...transitionRun(run, 'sealed'),
+      revision: run.revision + 1,
+      actor_id: identity.actorId,
+      participant_id: identity.participantId,
+      output_refs: publication.authority.artifact_ids,
+      primary_artifact_id: publication.authority.primary_artifact_id,
+      sealed_at: identity.recordedAt,
+    };
+    const nextSession = updatedSessionActivity({
+      ...session,
+      active_run_ids: session.active_run_ids.filter(id => id !== runId),
+    }, identity.recordedAt);
+    return stageApplied({
+      tx, identity, payloadHash, session: nextSession, run: nextRun,
+      targetType: 'run', targetId: runId,
+      revisionBefore: run.revision, revisionAfter: nextRun.revision,
+      result: {
+        operation: 'run-recovery-seal', run_id: runId,
+        run_revision: nextRun.revision, status: nextRun.status,
+        artifact_publication: publication.authority,
+        output_warnings: publication.warnings,
+        next: {
+          suggest_only: true,
+          command: run.status === 'completed'
+            ? `maestro run next --session ${identity.sessionId}`
+            : `maestro run check ${runId} --session ${identity.sessionId}`,
+          reason: 'Deprecated recovery seal completed; re-read canonical Session authority before continuing',
+        },
+      },
+    });
+  });
+}
+
 export function createRunV3(store: SessionStore, input: CreateRunV3Input): V3MutationResult {
   const identity = normalizedIdentity(input);
   const candidate = structuredClone(input.run);
@@ -374,6 +717,33 @@ export function createRunV3(store: SessionStore, input: CreateRunV3Input): V3Mut
   });
 }
 
+function republishedConsumerInputs(
+  store: SessionStore,
+  session: SessionStateV30,
+  command: string,
+  artifacts: ArtifactRegistry,
+): string[] {
+  const source = resolveCommandSource(store.projectRoot, command);
+  const contractHash = `sha256:${hashCommandContract(source.contract)}`;
+  return source.contract.consumes.flatMap((consume, slotIndex) => {
+    if (!consume.alias || !consume.role || (!consume.schema && !consume.schema_range)) return [];
+    const artifactId = artifacts.aliases[consume.alias];
+    if (!artifactId) return [];
+    const receipt = exactArtifactRepublishReceipt(store, session.session_id, artifactId, {
+      command,
+      command_contract_hash: contractHash,
+      slot_index: slotIndex,
+      slot: {
+        kind: consume.kind,
+        schema: consume.schema ?? consume.schema_range!,
+        role: consume.role,
+        alias: consume.alias,
+      },
+    });
+    return receipt ? [artifactId] : [];
+  });
+}
+
 export function createRunningRunV3(store: SessionStore, input: CreateRunningRunV3Input): V3MutationResult {
   const identity = normalizedIdentity(input);
   const candidate = structuredClone(input.run);
@@ -403,8 +773,18 @@ export function createRunningRunV3(store: SessionStore, input: CreateRunningRunV
       throw new V3StructuredError('INVALID_ARGUMENT', `unknown chain step ${candidate.step_id}`);
     }
     assertRunCreationLineage(tx, candidate, session.chain[stepIndex].status);
+    let republishedInputs: string[] = [];
+    if ((input.requestOperation ?? 'run-next') === 'run-next') {
+      const artifacts = tx.readJson(
+        resolve(store.sessionDir(identity.sessionId), session.artifacts_ref),
+        artifactRegistrySchema,
+      );
+      assertNextPredecessorPublished(tx, session, stepIndex, artifacts);
+      republishedInputs = republishedConsumerInputs(store, session, candidate.command, artifacts);
+    }
     const nextRun: RunV30 = {
       ...candidate,
+      input_refs: [...new Set([...candidate.input_refs, ...republishedInputs])].sort(),
       status: 'running',
       revision: 1,
       actor_id: identity.actorId,
@@ -436,7 +816,7 @@ export function completeRunAndAdvance(
   const identity = normalizedIdentity(input);
   const runId = required(input.runId, 'run ID');
   const payload = {
-    operation: 'run-complete-and-advance', run_id: runId,
+    operation: 'run-complete-and-seal', run_id: runId,
     expected_run_revision: input.expectedRunRevision,
     expected_orchestration_revision: input.expectedOrchestrationRevision,
     summary: input.summary, verdict: input.verdict,
@@ -453,18 +833,26 @@ export function completeRunAndAdvance(
     assertSessionRunTransitionAllowed(session.status, run.status, 'completed');
     const stepIndex = session.chain.findIndex(step => step.step_id === run.step_id);
     if (stepIndex < 0) throw new V3StructuredError('INVALID_ARGUMENT', `Run ${runId} references unknown step ${run.step_id}`);
+
+    const publication = prepareArtifactPublication({ store, tx, session, run, strict: true });
+    const artifactIds = publication.authority.artifact_ids;
+    const primaryArtifactId = publication.authority.primary_artifact_id;
     const nextPendingIndex = session.chain.findIndex((step, index) => index > stepIndex && step.status === 'pending');
     const chain = session.chain.map((step, index) => (
       index === stepIndex ? { ...step, status: 'completed' as const } : step
     ));
+    const completed = transitionRun(run, 'completed');
     const nextRun: RunV30 = {
-      ...transitionRun(run, 'completed'),
+      ...transitionRun(completed, 'sealed'),
       revision: run.revision + 1,
       actor_id: identity.actorId,
       participant_id: identity.participantId,
+      output_refs: artifactIds,
+      primary_artifact_id: primaryArtifactId,
       verdict: input.verdict,
       summary: required(input.summary, 'summary'),
       ended_at: identity.recordedAt,
+      sealed_at: identity.recordedAt,
     };
     const nextSession = updatedSessionActivity({
       ...session,
@@ -477,9 +865,189 @@ export function completeRunAndAdvance(
       revisionBefore: session.orchestration_revision,
       revisionAfter: nextSession.orchestration_revision,
       result: {
-        run_id: runId, run_revision: nextRun.revision,
+        operation: 'run-complete-and-seal',
+        run_id: runId,
+        run_revision: nextRun.revision,
+        status: nextRun.status,
         orchestration_revision: nextSession.orchestration_revision,
-        advanced_step_id: nextPendingIndex >= 0 ? chain[nextPendingIndex].step_id : null,
+        artifact_publication: publication.authority,
+        output_warnings: publication.warnings,
+        next_step_id: nextPendingIndex >= 0 ? chain[nextPendingIndex].step_id : null,
+        next: {
+          suggest_only: true,
+          command: `maestro run next --session ${identity.sessionId}`,
+          reason: nextPendingIndex >= 0
+            ? 'Run sealed; explicit run next may allocate the next chain Run'
+            : 'Run sealed; no pending chain step remains',
+        },
+      },
+    });
+  });
+}
+
+export function republishArtifactV3(
+  store: SessionStore,
+  input: RepublishArtifactV3Input,
+): V3MutationResult {
+  const identity = normalizedIdentity(input);
+  const artifactIdInput = required(input.artifactId, 'Artifact ID');
+  const payload = {
+    operation: 'artifact-republish',
+    artifact_id: artifactIdInput,
+    consumer_command: required(input.consumerCommand, 'consumer command'),
+    alias: required(input.alias, 'consumer alias'),
+    assessment_hash: required(input.assessmentHash, 'assessment hash'),
+    expected_artifact_revision: input.expectedArtifactRevision,
+    expected_session_revision: input.expectedSessionRevision,
+    ...auditPayload(identity),
+  };
+  const payloadHash = canonicalPayloadHash(payload);
+  return store.withV30Transaction(identity.sessionId, tx => {
+    const replayed = replay(tx, identity, payloadHash);
+    if (replayed) return replayed;
+    const session = tx.readSession();
+    assertOrchestrationRevision(session, input.expectedSessionRevision);
+    if (session.status !== 'open') {
+      throw new V3StructuredError('INVALID_STATE_TRANSITION', `Session ${session.session_id} is ${session.status}; artifact republish requires open`);
+    }
+    const artifactsPath = resolve(store.sessionDir(identity.sessionId), session.artifacts_ref);
+    const artifacts = tx.readJson(artifactsPath, artifactRegistrySchema);
+    assertRevision(input.expectedArtifactRevision, 'expected Artifact registry revision');
+    if (artifacts.revision !== input.expectedArtifactRevision) {
+      throw new V3StructuredError('INVALID_STATE_TRANSITION', 'Artifact registry revision conflict', {
+        details: { expected_revision: input.expectedArtifactRevision, current_revision: artifacts.revision },
+        target_type: 'artifact', target_id: artifactIdInput,
+        next_actions: ['inspect-artifact-compatibility', 'resubmit-with-new-request-id'],
+      });
+    }
+    const preparedOptions: PrepareArtifactRepublishOptions = {
+      sessionId: identity.sessionId,
+      artifactId: artifactIdInput,
+      consumerCommand: input.consumerCommand,
+      alias: input.alias,
+      assessmentHash: input.assessmentHash,
+      requestId: identity.requestId,
+      expectedArtifactRevision: input.expectedArtifactRevision,
+      expectedSessionRevision: input.expectedSessionRevision,
+      participantId: identity.participantId,
+      actorId: identity.actorId,
+      reason: identity.reason,
+      evidenceRefs: identity.evidenceRefs,
+      recordedAt: identity.recordedAt,
+    };
+    const prepared = prepareArtifactRepublish(store.projectRoot, preparedOptions, store);
+    const consumerIndexes = session.chain
+      .map((step, index) => ({ step, index }))
+      .filter(item => item.step.command === input.consumerCommand && item.step.status === 'pending');
+    if (consumerIndexes.length !== 1 || consumerIndexes[0].step.run_ids.length !== 0) {
+      throw new V3StructuredError(
+        'INVALID_STATE_TRANSITION',
+        'artifact republish requires one pending consumer step with no allocated Run',
+      );
+    }
+    if (consumerIndexes[0].step.run_ids.some(runId => session.active_run_ids.includes(runId))) {
+      throw new V3StructuredError('INVALID_STATE_TRANSITION', 'artifact republish cannot target an active consumer Run');
+    }
+    if (artifacts.artifacts[prepared.artifactId]) {
+      throw new V3StructuredError('INVALID_STATE_TRANSITION', `derived Artifact already exists: ${prepared.artifactId}`);
+    }
+    artifacts.artifacts[prepared.artifactId] = prepared.artifact;
+    artifacts.aliases[input.alias] = prepared.artifactId;
+    artifacts.revision++;
+    const compatibilityRun: RunV30 = {
+      schema_version: 'run/3.0',
+      run_id: prepared.compatibilityRunId,
+      session_id: identity.sessionId,
+      step_id: prepared.compatibilityStepId,
+      parent_run_id: prepared.sourceArtifact.producer_run_id,
+      retry_of_run_id: null,
+      attempt: 1,
+      command: 'artifact-compatibility-republish',
+      args: [prepared.assessment.assessment_hash],
+      goal: null,
+      status: 'sealed',
+      revision: 1,
+      actor_id: identity.actorId,
+      participant_id: identity.participantId,
+      gate_refs: [],
+      input_refs: [artifactIdInput],
+      output_refs: [prepared.artifactId],
+      primary_artifact_id: prepared.artifact.role === 'primary' ? prepared.artifactId : null,
+      verdict: 'done',
+      summary: `Republished ${artifactIdInput} for ${input.consumerCommand}:${input.alias}`,
+      legacy_execution_generation: null,
+      created_at: identity.recordedAt,
+      started_at: identity.recordedAt,
+      ended_at: identity.recordedAt,
+      sealed_at: identity.recordedAt,
+    };
+    if (tx.runExists(compatibilityRun.run_id)) {
+      throw new V3StructuredError('INVALID_STATE_TRANSITION', `compatibility Run already exists: ${compatibilityRun.run_id}`);
+    }
+    const chain = [...session.chain];
+    chain.splice(consumerIndexes[0].index, 0, {
+      step_id: prepared.compatibilityStepId,
+      command: 'artifact-compatibility-republish',
+      args: [prepared.assessment.assessment_hash],
+      status: 'completed',
+      run_ids: [prepared.compatibilityRunId],
+      goal_ref: null,
+      decision_refs: [prepared.compatibilityRunId],
+    });
+    const nextSession = updatedSessionActivity(
+      { ...session, chain }, identity.recordedAt, session.orchestration_revision + 1,
+    );
+    const receipt = createArtifactRepublishReceipt({
+      receipt_id: prepared.compatibilityRunId,
+      request_id: identity.requestId,
+      session_id: identity.sessionId,
+      assessment_hash: prepared.assessment.assessment_hash,
+      source_artifact_id: artifactIdInput,
+      source_artifact_hash: prepared.assessment.source.artifact_hash,
+      artifact_id: prepared.artifactId,
+      artifact_hash: `sha256:${prepared.artifact.content_hash}`,
+      artifact_path: prepared.artifactPath,
+      derived_from: [artifactIdInput],
+      consumer: prepared.assessment.consumer,
+      transformed_metadata: {
+        role: { from: prepared.assessment.source.raw_slot.role, to: prepared.assessment.consumer.slot.role },
+        alias: { from: prepared.assessment.source.raw_slot.alias, to: prepared.assessment.consumer.slot.alias },
+      },
+      compatibility_run_id: prepared.compatibilityRunId,
+      compatibility_step_id: prepared.compatibilityStepId,
+      artifact_registry_revision_before: input.expectedArtifactRevision,
+      artifact_registry_revision_after: artifacts.revision,
+      session_revision_before: input.expectedSessionRevision,
+      session_revision_after: nextSession.orchestration_revision,
+      actor_id: identity.actorId,
+      participant_id: identity.participantId,
+      reason: identity.reason,
+      evidence_refs: identity.evidenceRefs,
+      recorded_at: identity.recordedAt,
+    });
+    tx.writeRaw(resolve(store.sessionDir(identity.sessionId), prepared.artifactPath), prepared.content, 0o600);
+    tx.writeJson(artifactsPath, artifacts, artifactRegistrySchema);
+    tx.writeArtifactRepublishReceipt(receipt);
+    return stageApplied({
+      tx,
+      identity,
+      payloadHash,
+      session: nextSession,
+      run: compatibilityRun,
+      targetType: 'artifact',
+      targetId: prepared.artifactId,
+      revisionBefore: input.expectedArtifactRevision,
+      revisionAfter: artifacts.revision,
+      result: {
+        operation: 'artifact-republish',
+        source_artifact_id: artifactIdInput,
+        artifact_id: prepared.artifactId,
+        compatibility_run_id: prepared.compatibilityRunId,
+        compatibility_step_id: prepared.compatibilityStepId,
+        assessment_hash: prepared.assessment.assessment_hash,
+        artifact_registry_revision: artifacts.revision,
+        session_revision: nextSession.orchestration_revision,
+        receipt,
       },
     });
   });

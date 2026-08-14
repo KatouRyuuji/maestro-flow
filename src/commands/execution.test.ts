@@ -87,6 +87,9 @@ describe('maestro capabilities', () => {
         request_receipts_v2: false,
         execution_lease: true,
         operation_registry: false,
+        artifact_compatibility_v1: true,
+        atomic_run_complete_seal: true,
+        generation_scoped_seal_receipts: true,
       },
     });
   });
@@ -118,6 +121,9 @@ describe('maestro capabilities', () => {
         request_receipts_v2: true,
         execution_lease: false,
         operation_registry: false,
+        artifact_compatibility_v1: true,
+        atomic_run_complete_seal: true,
+        generation_scoped_seal_receipts: true,
       },
     });
   });

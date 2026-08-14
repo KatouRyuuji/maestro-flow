@@ -252,12 +252,36 @@ else {
     'maestro knowledge promote',
     'maestro execution seal',
     'run-response/1.1',
+    'artifact_compatibility_v1',
+    'atomic_run_complete_seal',
+    'generation_scoped_seal_receipts',
+    'blocked consumer attempt -> needs-retry/cancel -> artifact inspect -> semantic republish -> explicit retry/next',
+    'Migration preserves sealed source bytes',
+    'MUST NOT use chain skip, Run rebind, a direct Artifact Registry edit/rewrite',
   ]) {
     if (!text.includes(token)) errors.push(`workflows/run-mode.md: missing ${token}`);
   }
   errors.push(...validateRunCreateArgumentChannels(text, 'workflows/run-mode.md'));
   if (text.includes('same normalized intent')) errors.push('workflows/run-mode.md: obsolete intent-only Session routing remains');
   if (/maestro ralph\s|\bralph next\b/.test(text)) errors.push('workflows/run-mode.md: normal lifecycle must use only maestro run');
+}
+
+for (const relativePath of ['prepare/execute.md', 'prepare/review.md']) {
+  const path = join(root, relativePath);
+  if (!existsSync(path)) {
+    errors.push(`${relativePath}: missing prepare contract`);
+    continue;
+  }
+  const text = readFileSync(path, 'utf8');
+  for (const token of [
+    'blocked consumer attempt -> needs-retry/cancel -> artifact inspect -> semantic republish -> explicit retry/next',
+    'classification=semantic_republish_required',
+    'atomic complete-and-seal',
+    'Migration must preserve the sealed source bytes and raw registry role/alias semantics',
+    'chain skip, Run rebind, direct Artifact Registry edits/rewrites, or source Artifact mutation',
+  ]) {
+    if (!text.includes(token)) errors.push(`${relativePath}: missing Artifact recovery token: ${token}`);
+  }
 }
 
 const canonicalRunModeLite = join(root, 'workflows', 'run-mode-lite.md');

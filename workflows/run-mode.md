@@ -20,6 +20,7 @@ New-runtime mutation uses the Execution-aware `maestro execution ...` and `maest
 
 1. Before the first lifecycle mutation, run `maestro capabilities --json` and parse the exact `maestro-capabilities/1.0` response.
 2. The canonical branch requires `session_schema_writes` containing `session/2.0`, `execution_schema_writes` containing `execution/1.0`, `run_response_writes` containing `run-response/1.1`, and `features.session_statusless=true`, `features.execution_generation=true`, and `features.core_execution_lease=true`.
+   The additive artifact recovery contract requires `run-response/1.2` plus `features.artifact_compatibility_v1=true`; callers must separately retain `features.atomic_run_complete_seal=true` and `features.generation_scoped_seal_receipts=true` before relying on atomic completion/seal or generation-scoped receipt authority. Missing additive flags disable only those mutations; structured capability, status, brief, check, and artifact-inspect reads remain available.
 3. If any required capability is absent or malformed, fail closed for new-runtime mutation. Do not silently fall back to a host-only lock or Session lifecycle alias. Enter the labeled legacy branch only when the caller explicitly selected an old CLI/schema compatibility workflow.
 4. Every successful new-runtime mutation emits exactly one `run-response/1.1` envelope. Retain its exact `locator.session_id`, `locator.execution_id`, `locator.generation`, and `locator.run_id`, plus `fence.session_identity_revision`, `fence.session_activity_revision`, `fence.execution_revision`, and `fence.lease_epoch`.
 5. Acquisition also returns the private core Execution lease claim: owner ID, owner kind, epoch, and `lease_id`. Keep it in coordinator-private memory or a mode-0600 claim file; never write the raw token to `report.md`, team state, logs, prompts, receipts, or artifacts. Status/read responses expose only the redacted claim/hash.
@@ -104,6 +105,18 @@ details: {}
 - Protocol files (`sessions/<sid>/session.json`, Execution records, `run.json`, `artifacts.json`) are Runtime-owned and MUST NOT be edited directly. Do not confuse protocol `session.json` with a workflow artifact named `outputs/session.json`; the latter is a workflow-owned formal artifact registered by Run completion.
 - Consume upstream only from the canonical `upstream` map returned by `maestro run create`, `maestro run next`, or `maestro run brief`.
 
+### Artifact Compatibility Recovery
+
+The exact recovery order is **blocked consumer attempt -> needs-retry/cancel -> artifact inspect -> semantic republish -> explicit retry/next**.
+
+1. Stop after the consumer attempt reports an incompatible sealed Artifact. Do not allocate another consumer Run while the blocked attempt remains active.
+2. Return the consumer step to pending: on the Execution writer, complete the attempt with the fully fenced `maestro run complete ... --verdict needs-retry --json`; on `session/3.0`, use the fully fenced `maestro run cancel {consumer_run_id} ... --json`. Re-read authority and confirm there is exactly one pending consumer step with no allocated or active Run.
+3. Run `maestro artifact inspect {artifact_id} --session {session_id} --consumer {consumer_command} --alias {consumer_alias} --json`. This is read-only. Continue only when its exact assessment reports `classification=semantic_republish_required`.
+4. Run `maestro artifact republish {artifact_id} --session {session_id} --consumer {consumer_command} --alias {consumer_alias} --assessment-hash {assessment_hash} --request-id {request_id} --expected-artifact-revision {artifact_revision} --expected-session-revision {session_revision} --participant {participant_id} --actor {actor_id} --reason "{reason}" --evidence {evidence_ref} --json`. Use the inspect result unchanged; a conflict requires a fresh inspect and a new request ID. Republish creates a sealed compatibility Run, a derived Artifact, and an immutable receipt without mutating the source Artifact.
+5. Re-read the republish receipt, then explicitly allocate the retry through the mode's fenced `maestro run next ... --json` (or the explicit retry form returned by Runtime). Completion and republish never allocate the consumer retry implicitly.
+
+Migration preserves sealed source bytes and their raw registry role/alias semantics. Recovery MUST NOT use chain skip, Run rebind, a direct Artifact Registry edit/rewrite, or any source Artifact mutation; those actions destroy the compatibility evidence instead of repairing it.
+
 ## Knowledge Reconciliation
 
 - Search results and automatic prompt injection are **exposure only**. They may increase global impression statistics, but they never prove that a Run read, cited, validated, or contradicted an entry.
@@ -128,6 +141,7 @@ details: {}
 - The orchestrator owns proposal disposition after a clean `run check`: accept, reject, or request revision. Accept adds `--apply-proposal` to the fenced `maestro run complete ... --json` call, which applies the single discovered valid proposal atomically with completion inside the current Execution; reject omits it; revision re-attaches the same Run and asks the Skill to replace its proposal, then checks again. The path-based `--chain-proposal` option is legacy compatibility only.
 - Interactive mode asks before accepting. Under an explicit user-provided `-y`, an orchestrator may auto-accept only validated `insert`/`replace`/`skip` operations that stay in the current Execution's pending tail, remain within its declared budget, and align with the Session intent. Decision escalation, ambiguous intent/boundary changes, or low-confidence proposals are rejected or pause the Execution for review; `-y` never invents authority.
 - `maestro run complete` seals the immutable Run, applies the selected proposal, records the receipt, and advances the current Execution step in one transition. Its next action remains `suggest_only`; only an explicit fenced `maestro run next` allocates the following chain-bound Run.
+- Under `session/3.0`, `maestro run complete ... --advance` validates and publishes artifacts, completes the chain step, and seals the Run in one atomic mutation. `maestro run seal` is recovery-only for terminal pre-upgrade records; it is never the normal second half of completion. The returned next command remains suggest-only and requires an explicit `maestro run next` mutation.
 
 ## Completion
 

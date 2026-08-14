@@ -1,0 +1,47 @@
+{
+  "producer": {
+    "command": "legacy-execution-producer",
+    "sealed_contract": "contract_version: 2.1\narguments: []\nconsumes: []\nproduces:\n  - kind: execution\n    path: outputs/execution.json\n    alias: latest-execution\n    role: attachment\n    required: true\n    schema: execution/1.0\ngates:\n  entry: []\n  exit: []",
+    "current_contract": "contract_version: 2.1\narguments: []\nconsumes: []\nproduces:\n  - kind: execution\n    path: outputs/execution.json\n    alias: latest-execution\n    role: primary\n    required: true\n    schema: execution/1.0\ngates:\n  entry: []\n  exit: []"
+  },
+  "review": {
+    "command": "legacy-execution-review",
+    "contract": "contract_version: 2.1\narguments: []\nconsumes:\n  - kind: execution\n    alias: latest-execution\n    required: true\n    require_status: sealed\n    schema: execution/1.0\n    role: primary\nproduces: []\ngates:\n  entry: []\n  exit: []",
+    "required_role": "primary"
+  },
+  "authority": {
+    "output": {
+      "_meta": {
+        "kind": "execution",
+        "schema": "execution/1.0",
+        "role": "attachment",
+        "alias": "latest-execution"
+      },
+      "changes": []
+    },
+    "contract_snapshot": {
+      "snapshot_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "normalized": {
+        "produces": [
+          {
+            "kind": "execution",
+            "schema": "execution/1.0",
+            "role": "attachment"
+          }
+        ]
+      }
+    },
+    "registry": {
+      "kind": "execution",
+      "schema_version": "execution/1.0",
+      "role": "attachment",
+      "status": "sealed"
+    }
+  },
+  "current_contract_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "expected_reason_codes": [
+    "ARTIFACT_ROLE_MISMATCH",
+    "CONTRACT_BREAKING_DRIFT",
+    "CONTRACT_HASH_MISMATCH"
+  ]
+}

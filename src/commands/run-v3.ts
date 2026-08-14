@@ -2,7 +2,12 @@ import type { Command } from 'commander';
 
 import type { RunV30 } from '../run/schemas.js';
 import { buildRetryMetadata } from '../run/v3/run-machine.js';
-import { completeRunAndAdvance, createRunningRunV3, mutateRunV3 } from '../run/v3/mutation-engine.js';
+import {
+  completeRunAndAdvance,
+  createRunningRunV3,
+  mutateRunV3,
+  recoverSealRunV3,
+} from '../run/v3/mutation-engine.js';
 import {
   addV3MutationOptions,
   addV3ReadOptions,
@@ -119,7 +124,7 @@ export function registerRunV3Command(program: Command): void {
       }
     });
 
-  addV3MutationOptions(run.command('complete <run-id>').description('Complete a Run'), 'run')
+  addV3MutationOptions(run.command('complete <run-id>').description('Complete and seal a Run atomically'), 'run')
     .requiredOption('--summary <text>', 'completion summary')
     .option('--verdict <verdict>', 'done or done_with_concerns', 'done')
     .option('--advance', 'complete the Run and its chain step atomically')
@@ -185,13 +190,13 @@ export function registerRunV3Command(program: Command): void {
       }
     });
 
-  addV3MutationOptions(run.command('seal <run-id>').description('Seal a completed, failed, or cancelled Run'), 'run')
+  addV3MutationOptions(run.command('seal <run-id>').description('Deprecated recovery seal for an already terminal pre-upgrade Run'), 'run')
     .action((runId: string, options: RunMutationOptions) => {
       try {
         const { store, options: resolved } = resolveV3Options(options);
-        const mutation = mutateRunV3(store, {
+        const mutation = recoverSealRunV3(store, {
           ...mutationIdentity(resolved), runId,
-          expectedRunRevision: resolved.expectedRunRevision!, toStatus: 'sealed',
+          expectedRunRevision: resolved.expectedRunRevision!,
         });
         emitV3Success({ operation: 'run-seal', sessionId: resolved.session, runId,
           requestId: resolved.requestId, result: runResult(mutation), mutation });

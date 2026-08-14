@@ -424,7 +424,7 @@ describe('session/2.0 historical migration', () => {
     expect(migrateSession(tmpRoot, sessionId).status).toBe('already-migrated');
   });
 
-  it('builds a missing receipt for an existing sealed Wave1 Execution during migration', () => {
+  it('does not synthesize a missing receipt for an existing sealed Wave1 Execution during migration', () => {
     const sessionId = 'migrate-v2-wave1-missing-receipt';
     const store = new SessionStore(tmpRoot);
     store.createSession(sessionId, 'Wave1 missing receipt');
@@ -452,12 +452,7 @@ describe('session/2.0 historical migration', () => {
     enableSessionV20();
     migrateSession(tmpRoot, sessionId);
     expect(readFileSync(executionPath)).toEqual(executionBytes);
-    expect(store.readExecutionSealReceipt(sessionId, started.execution.execution_id)).toMatchObject({
-      schema_version: 'execution-seal-receipt/1.0',
-      execution_id: started.execution.execution_id,
-      generation: 1,
-      runs: [],
-    });
+    expect(store.readExecutionSealReceipt(sessionId, started.execution.execution_id)).toBeNull();
   });
 
   it('migrates a sealed legacy Run into an immediately recallable receipt-backed source', () => {

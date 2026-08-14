@@ -17,6 +17,7 @@ import { sessionStateSchema } from './schemas.js';
 import { briefResultV11Schema, commandRebindAuditSchema, executionContractSchema } from './protocol-schemas.js';
 import { SessionStore } from './store.js';
 import {
+  acceptRunReuse,
   briefRun,
   checkRun,
   completeRun,
@@ -31,6 +32,22 @@ import { invalidateResolutionCache, resolveCommandSource } from './contract.js';
 import { migrateV1toV2, readStateJson, writeStateJson } from '../utils/state-schema.js';
 
 const roots: string[] = [];
+
+interface LegacyAttachmentFixture {
+  producer: { command: string; sealed_contract: string; current_contract: string };
+  review: { command: string; contract: string; required_role: 'primary' };
+  authority: {
+    output: { _meta: { kind: string; schema: string; role: 'attachment'; alias: string }; changes: unknown[] };
+    contract_snapshot: { normalized: { produces: Array<{ role: 'attachment' }> } };
+    registry: { kind: string; schema_version: string; role: 'attachment'; status: 'sealed' };
+  };
+  expected_reason_codes: string[];
+}
+
+const legacyAttachmentFixture = JSON.parse(readFileSync(
+  new URL('./__fixtures__/sealed-legacy-attachment-execution.json', import.meta.url),
+  'utf8',
+)) as LegacyAttachmentFixture;
 
 const migratedStepAssociations = {
   'maestro-analyze': 'analyze',
@@ -1037,22 +1054,27 @@ gates:
     const created = createRun({ projectRoot, command: 'strict-output', intent: 'strict output' });
     const runDir = join(projectRoot, '.workflow', 'sessions', created.session_id, 'runs', created.run_id);
     writeFileSync(join(runDir, 'outputs', 'result.json'), JSON.stringify({
-      _meta: { kind: 'result', schema: 'result/1.0', role: 'attachment', alias: 'strict-result' },
+      _meta: { kind: 'result', schema: 'result/1.0', role: 'attachment', alias: 'wrong-result' },
       ok: true,
     }, null, 2));
     const rejected = checkRun(projectRoot, created.run_id, created.session_id);
     expect(rejected.errors).toEqual(expect.arrayContaining([
       expect.stringContaining('_meta.schema result/1.0 does not match contract result/2.0'),
       expect.stringContaining('_meta.role attachment does not match contract primary'),
+      expect.stringContaining('_meta.alias wrong-result does not match contract strict-result'),
     ]));
 
     const bypassed = checkRun(projectRoot, created.run_id, created.session_id, {
       skipArtifactMetadataValidation: true,
     });
     expect(bypassed.errors).toEqual([]);
+    expect(bypassed.artifacts).toEqual([
+      expect.objectContaining({ kind: 'result', role: 'attachment', alias: 'wrong-result' }),
+    ]);
     expect(bypassed.warnings).toEqual(expect.arrayContaining([
       expect.stringContaining('artifact metadata validation skipped: outputs/result.json: _meta.schema'),
       expect.stringContaining('artifact metadata validation skipped: outputs/result.json: _meta.role'),
+      expect.stringContaining('artifact metadata validation skipped: outputs/result.json: _meta.alias'),
     ]));
 
     rmSync(join(runDir, 'outputs', 'result.json'));
@@ -1068,7 +1090,7 @@ gates:
     expect(checkRun(projectRoot, created.run_id, created.session_id).errors).toEqual([]);
   });
 
-  it('applies the artifact metadata bypass during completion', () => {
+  it('keeps artifact metadata skip diagnostic-only during completion', () => {
     const projectRoot = root();
     commandFile(projectRoot, 'strict-complete', `contract_version: 2
 consumes: []
@@ -1083,24 +1105,103 @@ gates:
   entry: []
   exit: []`);
     const created = createRun({ projectRoot, command: 'strict-complete', intent: 'strict completion' });
+    const store = new SessionStore(projectRoot);
     const runDir = join(projectRoot, '.workflow', 'sessions', created.session_id, 'runs', created.run_id);
-    writeFileSync(join(runDir, 'outputs', 'result.json'), JSON.stringify({
-      _meta: { kind: 'result', schema: 'result/1.0', role: 'attachment', alias: 'wrong-result' },
+    const outputPath = join(runDir, 'outputs', 'result.json');
+    writeFileSync(outputPath, JSON.stringify({
+      _meta: { kind: 'legacy-result', schema: 'result/1.0', role: 'attachment', alias: 'wrong-result' },
     }));
 
     const strict = completeRun(projectRoot, created.run_id, created.session_id);
     expect(strict.sealed).toBe(false);
     expect(strict.errors).not.toEqual([]);
+    const registryBeforeDiagnosticCompletion = structuredClone(store.readBundle(created.session_id).artifacts);
 
-    const bypassed = completeRun(projectRoot, created.run_id, created.session_id, {
+    const diagnosticOption = completeRun(projectRoot, created.run_id, created.session_id, {
       skipArtifactMetadataValidation: true,
     });
-    expect(bypassed.errors).toEqual([]);
-    expect(bypassed.sealed, JSON.stringify(bypassed, null, 2)).toBe(true);
-    expect(bypassed.warnings).toEqual(expect.arrayContaining([
-      expect.stringContaining('artifact metadata validation skipped'),
+    expect(diagnosticOption.sealed).toBe(false);
+    expect(diagnosticOption.primary_artifact_id).toBeNull();
+    expect(diagnosticOption.artifact_ids).toEqual([]);
+    expect(diagnosticOption.artifacts).toEqual([
+      expect.objectContaining({ kind: 'legacy-result', role: 'attachment', alias: 'wrong-result' }),
+    ]);
+    expect(diagnosticOption.errors).toEqual(expect.arrayContaining([
+      expect.stringContaining('_meta.kind legacy-result does not match contract result'),
+      expect.stringContaining('_meta.schema result/1.0 does not match contract result/2.0'),
+      expect.stringContaining('_meta.role attachment does not match contract primary'),
       expect.stringContaining('_meta.alias wrong-result does not match contract strict-result'),
     ]));
+    expect(diagnosticOption.warnings).not.toEqual(expect.arrayContaining([
+      expect.stringContaining('artifact metadata validation skipped'),
+    ]));
+    expect(store.readBundle(created.session_id).artifacts).toEqual(registryBeforeDiagnosticCompletion);
+    expect(JSON.parse(readFileSync(outputPath, 'utf8'))._meta).toEqual({
+      kind: 'legacy-result', schema: 'result/1.0', role: 'attachment', alias: 'wrong-result',
+    });
+  });
+
+  it('keeps sealed legacy attachment authority rejected when current review requires primary', () => {
+    const fixture = legacyAttachmentFixture;
+    const projectRoot = root();
+    commandFile(projectRoot, fixture.producer.command, fixture.producer.sealed_contract);
+    commandFile(projectRoot, fixture.review.command, fixture.review.contract);
+
+    const producer = createRun({
+      projectRoot,
+      command: fixture.producer.command,
+      sessionId: 'legacy-role',
+      intent: 'legacy execution role regression',
+    });
+    const store = new SessionStore(projectRoot);
+    const producerDir = store.runDir(producer.session_id, producer.run_id);
+    writeFileSync(
+      join(producerDir, 'outputs', 'execution.json'),
+      JSON.stringify(fixture.authority.output, null, 2),
+      'utf8',
+    );
+    writeFileSync(join(producerDir, 'report.md'), [
+      '---', 'verdict: ready', 'summary: sealed legacy execution', 'constraints: []',
+      'decisions: []', 'concerns: []', 'next: []', '---', '',
+    ].join('\n'), 'utf8');
+
+    const sealed = completeRun(projectRoot, producer.run_id, producer.session_id);
+    expect(sealed.sealed).toBe(true);
+    const producerRun = store.readRun(producer.session_id, producer.run_id);
+    const registered = store.readBundle(producer.session_id).artifacts.artifacts[sealed.artifact_ids[0]];
+    expect(fixture.authority.output._meta.role).toBe('attachment');
+    expect(producerRun.contract_snapshot?.normalized.produces[0]).toMatchObject({ role: 'attachment' });
+    expect(registered).toMatchObject(fixture.authority.registry);
+
+    commandFile(projectRoot, fixture.producer.command, fixture.producer.current_contract);
+    invalidateResolutionCache();
+    const review = createRun({
+      projectRoot,
+      command: fixture.review.command,
+      sessionId: producer.session_id,
+      intent: 'legacy execution role regression',
+    });
+    const assessment = review.reuse_assessments[0];
+    expect(assessment).toMatchObject({
+      decision: 'REJECT',
+      reason_codes: fixture.expected_reason_codes,
+      source_fence: { artifact_role: 'attachment' },
+      consumer: { role: fixture.review.required_role },
+    });
+    expect(review.upstream).toEqual({});
+
+    expect(() => acceptRunReuse(
+      projectRoot,
+      review.run_id,
+      assessment.assessment_hash,
+      review.session_id,
+      {
+        actor: 'reviewer',
+        reason: 'attempted force acceptance',
+        evidence: ['outputs/review.json'],
+      },
+    )).toThrow(/is REJECT, expected REVIEW/);
+    expect(store.readRun(review.session_id, review.run_id).input.consumes).toEqual([]);
   });
 
   it('matches required contract path templates against produced artifacts', () => {

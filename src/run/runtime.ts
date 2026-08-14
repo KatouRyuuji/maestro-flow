@@ -10,7 +10,15 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { basename, extname, isAbsolute, join, relative, resolve as resolvePath, sep } from 'node:path';
-import { declaredPathMatches, hashDirectory, hashFile, scanOutputs, type ArtifactScanResult, type DiscoveredArtifact } from './artifacts.js';
+import {
+  defaultArtifactAlias,
+  hashDirectory,
+  hashFile,
+  scanOutputs,
+  validateStrictArtifactContract,
+  type ArtifactScanResult,
+  type DiscoveredArtifact,
+} from './artifacts.js';
 import { parseArgumentHint, type SkillParamDef } from '../config/argument-hint-parser.js';
 import {
   hashCommandContract,
@@ -26,6 +34,15 @@ import {
   type TargetPlatform,
 } from '../core/skill-converter.js';
 import { deriveHandoff, readReportFrontmatter } from './report.js';
+import {
+  artifactRepublishReceiptPath,
+  createArtifactRepublishReceipt,
+  exactArtifactRepublishReceipt,
+  inspectArtifactCompatibility,
+  prepareArtifactRepublish,
+  type InspectArtifactCompatibilityOptions,
+  type PrepareArtifactRepublishOptions,
+} from './artifact-compatibility.js';
 import {
   buildKnowledgeReconciliationCard,
   knowledgeCandidateReceipt,
@@ -63,6 +80,7 @@ import {
   type SessionStateRead,
 } from './schemas.js';
 import {
+  artifactRepublishReceiptSchema,
   briefResultV11Schema,
   briefResultV12Schema,
   commandRebindAuditSchema,
@@ -71,6 +89,8 @@ import {
   executionContractV12Schema,
   guidanceSnapshotSchema,
   sessionProvenanceSchema,
+  type ArtifactCompatibilityAssessment,
+  type ArtifactRepublishReceipt,
   type BriefResult,
   type CompleteInputSnapshot,
   type CreationProvenance,
@@ -94,6 +114,7 @@ import {
 } from './chain-proposal.js';
 import { createTopicIdentity, normalizeTopic, sameTopicIdentity, type TopicIdentity } from './topic-identity.js';
 import {
+  assessArtifactReuse,
   schemaMatch,
   type ReuseAssessment,
   type ReuseAssessmentInput,
@@ -263,6 +284,21 @@ export interface RebindRunResult {
   snapshot_hash: string;
   audit_path: string;
 }
+
+export interface ArtifactRepublishResult {
+  session_id: string;
+  source_artifact_id: string;
+  artifact_id: string;
+  compatibility_run_id: string;
+  compatibility_step_id: string;
+  assessment_hash: string;
+  artifact_registry_revision: number;
+  session_revision: number;
+  receipt: ArtifactRepublishReceipt;
+  replay: { status: 'applied' | 'replayed'; transition_id: string };
+}
+
+export interface ArtifactRepublishOptions extends PrepareArtifactRepublishOptions {}
 
 export interface AcceptReuseResult {
   session_id: string;
@@ -463,8 +499,8 @@ export interface CompleteRunOptions {
    */
   checkClean?: boolean;
   /**
-   * Downgrade contract kind/schema/role/alias mismatches to warnings. Required outputs,
-   * artifact syntax, safe-path checks, and gates remain blocking.
+   * Compatibility-only caller input. Completion always validates artifact metadata
+   * strictly; the warnings-only mode is diagnostic and belongs to `run check`.
    */
   skipArtifactMetadataValidation?: boolean;
   /** Extra concerns merged (append + dedupe) into the derived handoff. */
@@ -855,18 +891,6 @@ function nextSequence(store: SessionStore, sessionId: string): number {
   return max + 1;
 }
 
-function defaultAlias(kind: string, command: string): string | undefined {
-  const value = `${kind} ${command}`.toLowerCase();
-  if (value.includes('analy') || value.includes('finding')) return 'current-analysis';
-  if (value.includes('plan')) return 'current-plan';
-  if (value.includes('execut') || value.includes('change-manifest')) return 'latest-execution';
-  if (value.includes('verif')) return 'latest-verification';
-  if (value.includes('review')) return 'latest-review';
-  if (value.includes('test') || value.includes('acceptance')) return 'latest-test';
-  if (value.includes('debug') || value.includes('diagnos')) return 'latest-debug';
-  return undefined;
-}
-
 interface CollectedReuse {
   upstream: Record<string, RunUpstream>;
   assessments: ReuseAssessmentRead[];
@@ -917,6 +941,7 @@ function collectReusableUpstream(
   registry: ArtifactRegistry,
   gates: GateRegistry,
   contract: CommandContract,
+  consumerCommand: string,
 ): CollectedReuse {
   if (contract.consumes.length === 0) return { upstream: {}, assessments: [] };
   const consumedKinds = new Set(contract.consumes.map(c => c.kind));
@@ -941,7 +966,7 @@ function collectReusableUpstream(
 
   const assessments: ReuseAssessmentRead[] = [];
   const upstream: Record<string, RunUpstream> = {};
-  for (const consume of contract.consumes) {
+  for (const [consumeIndex, consume] of contract.consumes.entries()) {
     const aliasTargetId = consume.alias ? registry.aliases[consume.alias] : undefined;
     const matchingKind = candidates.filter(item => item.artifact.kind === consume.kind);
     const scopedCandidates = consume.alias
@@ -955,6 +980,22 @@ function collectReusableUpstream(
         : (contract.contract_version ?? 1) === 1 ? [item.artifact.schema_version] : [];
       const acceptedSchemaRanges: string[] = consume.schema_range ? [consume.schema_range] : [];
       const acceptedRoles: string[] = consume.role ? [consume.role] : [];
+      const republishConsumer = consume.alias && consume.role && (consume.schema || consume.schema_range)
+        ? {
+            command: consumerCommand,
+            command_contract_hash: `sha256:${hashCommandContract(contract)}`,
+            slot_index: consumeIndex,
+            slot: {
+              kind: consume.kind,
+              schema: consume.schema ?? consume.schema_range!,
+              role: consume.role,
+              alias: consume.alias,
+            },
+          }
+        : null;
+      const republishAuthority = republishConsumer
+        ? exactArtifactRepublishReceipt(store, session.session_id, item.artifactId, republishConsumer)
+        : null;
       const currentSameRoleCandidates = matchingKind
         .filter(peer => peer.artifact.role === item.artifact.role)
         .filter(peer => peer.artifact.status === 'sealed')
@@ -1010,7 +1051,13 @@ function collectReusableUpstream(
         acceptedArtifactSchemas: acceptedSchemas,
         acceptedSchemaRanges: acceptedSchemaRanges,
         acceptedArtifactRoles: acceptedRoles,
-        contract: producerContractDrift(projectRoot, producer, item.artifact),
+        contract: republishAuthority
+          ? {
+              producerHash: republishAuthority.receipt_hash,
+              currentHash: republishAuthority.receipt_hash,
+              drift: 'compatible_output' as const,
+            }
+          : producerContractDrift(projectRoot, producer, item.artifact),
         freshness: item.artifact.status === 'superseded' || supersededBy.length > 0
           ? 'stale'
           : consume.alias
@@ -1045,20 +1092,31 @@ function collectReusableUpstream(
         },
         conflicts: { sameRoleCandidates },
       } satisfies ReuseAssessmentInput;
-      let assessment = assessReceiptBackedArtifactReuse(projectRoot, assessmentInput, store);
+      let assessment = republishAuthority
+        ? assessArtifactReuse(assessmentInput)
+        : assessReceiptBackedArtifactReuse(projectRoot, assessmentInput, store);
       const finalArtifactHash = observedArtifactHash(join(store.sessionDir(session.session_id), item.artifact.relative_path));
       const finalRunHash = observedArtifactHash(join(store.runDir(session.session_id, producer.run_id), 'run.json'));
       if (finalArtifactHash !== assessment.source_fence.observed_artifact_hash
         || finalRunHash !== assessment.source_fence.producer_run_hash) {
         const producerFenceStable = finalRunHash === assessment.source_fence.producer_run_hash;
-        assessment = assessReceiptBackedArtifactReuse(projectRoot, {
-          ...assessmentInput,
-          candidate: {
-            ...assessmentInput.candidate,
-            observedArtifactHash: finalArtifactHash,
-            producerRunHash: producerFenceStable ? finalRunHash : null,
-          },
-        }, store);
+        assessment = republishAuthority
+          ? assessArtifactReuse({
+              ...assessmentInput,
+              candidate: {
+                ...assessmentInput.candidate,
+                observedArtifactHash: finalArtifactHash,
+                producerRunHash: producerFenceStable ? finalRunHash : null,
+              },
+            })
+          : assessReceiptBackedArtifactReuse(projectRoot, {
+              ...assessmentInput,
+              candidate: {
+                ...assessmentInput.candidate,
+                observedArtifactHash: finalArtifactHash,
+                producerRunHash: producerFenceStable ? finalRunHash : null,
+              },
+            }, store);
       }
       assessments.push(assessment);
       return { item, assessment };
@@ -1093,6 +1151,7 @@ export function assessSessionReuse(
       bundle.artifacts,
       bundle.gates,
       resolveCommandSource(projectRoot, command).contract,
+      command,
     );
   });
 }
@@ -1142,6 +1201,7 @@ function revalidateRunReuse(
       bundle.artifacts,
       bundle.gates,
       contract ?? contractForRun(projectRoot, run).contract,
+      run.command.name,
     );
   } catch (error) {
     collectionError = (error as Error).message;
@@ -1277,6 +1337,7 @@ export function acceptRunReuse(
       .find(item => item.assessment_hash === assessment.assessment_hash);
     const current = collectReusableUpstream(
       projectRoot, store, draft.session, draft.artifacts, draft.gates, resolvedContract,
+      run.command.name,
     ).assessments.find(item => (
       item.source_fence.artifact_id === assessment.source_fence.artifact_id
       && item.consumer.kind === assessment.consumer.kind
@@ -1366,6 +1427,224 @@ export function acceptRunReuse(
   return {
     ...(structuredClone(evaluated.outcome.result.value) as Omit<AcceptReuseResult, 'transition'>),
     transition: transitionMutationReceipt(prepared.request, evaluated.outcome, evaluated.replayed),
+  };
+}
+
+export function inspectArtifactForConsumer(
+  projectRoot: string,
+  options: InspectArtifactCompatibilityOptions,
+): ArtifactCompatibilityAssessment {
+  return inspectArtifactCompatibility(projectRoot, options);
+}
+
+/** Session/1.x and statusless session/2.0 compatibility writer adapter. */
+export function republishArtifactLegacy(
+  projectRoot: string,
+  options: ArtifactRepublishOptions,
+): ArtifactRepublishResult {
+  const store = new SessionStore(projectRoot);
+  const initial = store.readSessionRecord(options.sessionId);
+  if (initial.schema_version === 'session/3.0') {
+    throw new Error('artifact republish for session/3.0 requires the v3 mutation adapter');
+  }
+  const bundle = store.readBundle(options.sessionId);
+  const preparedRequest = prepareTransitionMutation({
+    session: bundle.session,
+    currentFence: store.readSessionFence(options.sessionId),
+    operation: 'artifact-republish',
+    subject: { session_id: options.sessionId, run_id: null, chain_step_id: null },
+    payload: {
+      artifact_id: options.artifactId,
+      consumer_command: options.consumerCommand,
+      alias: options.alias,
+      assessment_hash: options.assessmentHash,
+      expected_artifact_revision: options.expectedArtifactRevision,
+      expected_session_revision: options.expectedSessionRevision,
+      participant_id: options.participantId,
+      actor_id: options.actorId,
+      reason: options.reason,
+      evidence_refs: [...options.evidenceRefs],
+    },
+    options: {
+      requestId: options.requestId,
+      expectedIdentityRevision: bundle.session.identity_revision,
+      expectedActivityRevision: options.expectedSessionRevision,
+    },
+  });
+  const evaluated = store.replayOrApplyArtifactRepublishTransition(options.sessionId, preparedRequest.request, (draft, tx) => {
+    assertTransitionMutationRevisions(draft.session, preparedRequest.options);
+    if (draft.session.status !== 'running') {
+      throw new Error(`Session ${options.sessionId} is ${draft.session.status}; artifact republish requires running`);
+    }
+    if (draft.artifacts.revision !== options.expectedArtifactRevision) {
+      throw new TransitionReceiptError(
+        'FENCE_CONFLICT',
+        `artifact registry revision conflict: expected ${options.expectedArtifactRevision}, current ${draft.artifacts.revision}`,
+      );
+    }
+    const prepared = prepareArtifactRepublish(projectRoot, options, store);
+    const consumerSteps = draft.session.orchestration.chain.filter(step => (
+      step.command === options.consumerCommand && step.status === 'pending'
+    ));
+    if (consumerSteps.length !== 1 || consumerSteps[0].run_id !== null) {
+      throw new Error('artifact republish requires one pending consumer step with no allocated Run');
+    }
+    if (draft.session.active_run_id && consumerSteps[0].run_id === draft.session.active_run_id) {
+      throw new Error('artifact republish cannot target an active consumer Run');
+    }
+    if (draft.artifacts.artifacts[prepared.artifactId]) {
+      throw new Error(`derived Artifact already exists: ${prepared.artifactId}`);
+    }
+    const sequence = readdirSync(join(store.sessionDir(options.sessionId), 'runs'), { withFileTypes: true })
+      .filter(item => item.isDirectory())
+      .map(item => {
+        try { return store.readRun(options.sessionId, item.name).sequence; } catch { return 0; }
+      })
+      .reduce((max, value) => Math.max(max, value), 0) + 1;
+    const compatibilityRun: CommandRun = {
+      schema_version: 'command-run/1.3',
+      session_id: options.sessionId,
+      run_id: prepared.compatibilityRunId,
+      sequence,
+      parent_run_id: prepared.sourceArtifact.producer_run_id,
+      command: {
+        name: 'artifact-compatibility-republish',
+        version: '1.0',
+        source_path: '',
+        content_hash: sha256('artifact-compatibility-republish/1.0'),
+        resolved_prompt_hash: sha256('artifact-compatibility-republish/1.0'),
+        contract_hash: sha256('artifact-compatibility-republish/1.0'),
+      },
+      status: 'sealed',
+      input: {
+        args: [prepared.assessment.assessment_hash],
+        consumes: [options.artifactId],
+        context_identity_revision: draft.session.identity_revision,
+        reuse_assessments: [],
+      },
+      gate_ids: [],
+      output: {
+        produces: [prepared.artifactId],
+        primary_artifact_id: prepared.artifact.role === 'primary' ? prepared.artifactId : null,
+        verdict: 'ready',
+      },
+      handoff: {
+        schema_version: 'command-handoff/1.0',
+        producer_run_id: prepared.compatibilityRunId,
+        command: 'artifact-compatibility-republish',
+        verdict: 'ready',
+        summary: `Republished ${options.artifactId} for ${options.consumerCommand}:${options.alias}`,
+        constraints: [], decisions: [], concerns: [], artifact_refs: [prepared.artifactId], next: [],
+        details: { assessment_hash: prepared.assessment.assessment_hash },
+      },
+      started_at: prepared.recordedAt,
+      completed_at: prepared.recordedAt,
+      sealed_at: prepared.recordedAt,
+      chain_step_id: prepared.compatibilityStepId,
+      resolved_platform: 'claude',
+      goal_binding: null,
+      checkpoint_expectation: null,
+      checkpoint: null,
+      retry_fence: null,
+      contract_snapshot: null,
+      guidance_snapshot: null,
+      creation_decision: null,
+      creation_provenance: {
+        schema_version: 'creation-provenance/1.0',
+        provenance: 'verified-v1',
+        source_workspace_id: null,
+        source_session_id: options.sessionId,
+        source_run_id: prepared.sourceArtifact.producer_run_id,
+        imported_artifact_hashes: [prepared.assessment.source.artifact_hash],
+      },
+      transition: null,
+    };
+    const consumerIndex = draft.session.orchestration.chain.findIndex(step => step === consumerSteps[0]);
+    draft.session.orchestration.chain.splice(consumerIndex, 0, {
+      step_id: prepared.compatibilityStepId,
+      command: 'artifact-compatibility-republish',
+      status: 'sealed',
+      run_id: prepared.compatibilityRunId,
+      inserted_by: options.actorId,
+      decision_ref: `receipts/artifact-republish/${prepared.compatibilityRunId}.json`,
+    });
+    draft.artifacts.artifacts[prepared.artifactId] = prepared.artifact;
+    draft.artifacts.aliases[options.alias] = prepared.artifactId;
+    draft.artifacts.revision++;
+    draft.session.activity_revision++;
+    tx.writeText(join(store.sessionDir(options.sessionId), prepared.artifactPath), prepared.content, 0o600);
+    tx.writeRun(compatibilityRun);
+    const receipt = createArtifactRepublishReceipt({
+      receipt_id: prepared.compatibilityRunId,
+      request_id: options.requestId,
+      session_id: options.sessionId,
+      assessment_hash: prepared.assessment.assessment_hash,
+      source_artifact_id: options.artifactId,
+      source_artifact_hash: prepared.assessment.source.artifact_hash,
+      artifact_id: prepared.artifactId,
+      artifact_hash: `sha256:${prepared.artifact.content_hash}`,
+      artifact_path: prepared.artifactPath,
+      derived_from: [options.artifactId],
+      consumer: prepared.assessment.consumer,
+      transformed_metadata: {
+        role: { from: prepared.assessment.source.raw_slot.role, to: prepared.assessment.consumer.slot.role },
+        alias: { from: prepared.assessment.source.raw_slot.alias, to: prepared.assessment.consumer.slot.alias },
+      },
+      compatibility_run_id: prepared.compatibilityRunId,
+      compatibility_step_id: prepared.compatibilityStepId,
+      artifact_registry_revision_before: options.expectedArtifactRevision,
+      artifact_registry_revision_after: draft.artifacts.revision,
+      session_revision_before: options.expectedSessionRevision,
+      session_revision_after: draft.session.activity_revision,
+      actor_id: options.actorId,
+      participant_id: options.participantId,
+      reason: options.reason,
+      evidence_refs: [...new Set(options.evidenceRefs)].sort(),
+      recorded_at: prepared.recordedAt,
+    });
+    tx.writeJson(
+      artifactRepublishReceiptPath(store, options.sessionId, receipt.receipt_id),
+      receipt,
+      artifactRepublishReceiptSchema,
+      0o600,
+    );
+    const value: Omit<ArtifactRepublishResult, 'replay'> = {
+      session_id: options.sessionId,
+      source_artifact_id: options.artifactId,
+      artifact_id: prepared.artifactId,
+      compatibility_run_id: prepared.compatibilityRunId,
+      compatibility_step_id: prepared.compatibilityStepId,
+      assessment_hash: prepared.assessment.assessment_hash,
+      artifact_registry_revision: draft.artifacts.revision,
+      session_revision: draft.session.activity_revision,
+      receipt,
+    };
+    return createTransitionOutcome({
+      request_id: preparedRequest.request.request_id,
+      request_hash: preparedRequest.request.normalized_request_hash,
+      operation: 'artifact-republish',
+      status: 'applied',
+      applied_at: prepared.recordedAt,
+      subject: preparedRequest.request.subject,
+      postconditions: {
+        session_identity_revision: draft.session.identity_revision,
+        session_activity_revision: draft.session.activity_revision,
+        active_run_id: draft.session.active_run_id,
+        run_hash: null,
+        artifact_registry_revision: draft.artifacts.revision,
+      },
+      exit_code: 0,
+      error_code: null,
+      result: { receipt, value },
+    });
+  });
+  const value = structuredClone(evaluated.outcome.result.value) as Omit<ArtifactRepublishResult, 'replay'>;
+  return {
+    ...value,
+    replay: {
+      status: evaluated.replayed ? 'replayed' : 'applied',
+      transition_id: evaluated.outcome.transition_id,
+    },
   };
 }
 
@@ -2274,6 +2553,7 @@ export function createRun(options: CreateRunOptions): CreateRunResult {
       bundle.artifacts,
       bundle.gates,
       source.contract,
+      options.command,
     );
     const upstream = reuse.upstream;
     const reuseWarnings: string[] = [];
@@ -2609,55 +2889,6 @@ function checkNext(
   };
 }
 
-function validateStrictArtifactContract(
-  runDir: string,
-  contract: CommandContract,
-  scan: ArtifactScanResult,
-  options: CheckRunOptions = {},
-): void {
-  if (contract.contract_version !== 2 && contract.contract_version !== 2.1) return;
-  const reportMismatch = (message: string): void => {
-    if (options.skipArtifactMetadataValidation) {
-      scan.warnings.push(`artifact metadata validation skipped: ${message}`);
-    } else {
-      scan.errors.push(message);
-    }
-  };
-  for (const expected of contract.produces) {
-    const expectedPath = expected.path?.replaceAll('\\', '/').replace(/^\.\//, '');
-    const actuals = expectedPath
-      ? scan.artifacts.filter(item => declaredPathMatches(
-          expectedPath,
-          relative(runDir, item.absolutePath).replaceAll('\\', '/'),
-        ))
-      : [];
-    if (actuals.length === 0) {
-      if (expected.required) scan.errors.push(`Missing required contract v2 output: ${expectedPath ?? expected.kind}`);
-      continue;
-    }
-    for (const actual of actuals) {
-      const actualPath = relative(runDir, actual.absolutePath).replaceAll('\\', '/');
-      if (actual.kind !== expected.kind) {
-        reportMismatch(`${actualPath}: _meta.kind ${actual.kind} does not match contract ${expected.kind}`);
-        if (options.skipArtifactMetadataValidation) actual.kind = expected.kind;
-      }
-      if (expected.schema && actual.schemaVersion !== expected.schema) {
-        reportMismatch(`${actualPath}: _meta.schema ${actual.schemaVersion} does not match contract ${expected.schema}`);
-        if (options.skipArtifactMetadataValidation) actual.schemaVersion = expected.schema;
-      }
-      const expectedRole = expected.role ?? (expected.primary ? 'primary' : 'attachment');
-      if (actual.role !== expectedRole) {
-        reportMismatch(`${actualPath}: _meta.role ${actual.role} does not match contract ${expectedRole}`);
-        if (options.skipArtifactMetadataValidation) actual.role = expectedRole;
-      }
-      if (expected.alias && actual.alias !== expected.alias) {
-        reportMismatch(`${actualPath}: _meta.alias ${actual.alias ?? '(missing)'} does not match contract ${expected.alias}`);
-        if (options.skipArtifactMetadataValidation) actual.alias = expected.alias;
-      }
-    }
-  }
-}
-
 export function checkRun(
   projectRoot: string,
   runId: string,
@@ -2967,7 +3198,7 @@ function registerArtifacts(
     if (previous?.status === 'sealed' && previous.content_hash !== item.contentHash) {
       throw new Error(`Sealed artifact is immutable: ${item.relativePath}`);
     }
-    const alias = item.alias ?? (item.role === 'primary' ? defaultAlias(item.kind, run.command.name) : undefined);
+    const alias = item.alias ?? (item.role === 'primary' ? defaultArtifactAlias(item.kind, run.command.name) : undefined);
     const priorAliasId = alias ? registry.aliases[alias] : undefined;
     if (priorAliasId && priorAliasId !== id) {
       const prior = registry.artifacts[priorAliasId];
@@ -3403,7 +3634,9 @@ export function prepareCompleteInputs(
   const scan = scanOutputs(runDir, sessionDir, resolved.contract);
   let chainProposal: ValidatedChainProposal | null = null;
   if (!isFailureVerdict(options.chainVerdict)) {
-    validateStrictArtifactContract(runDir, resolved.contract, scan, options);
+    // The skip option is diagnostic-only on `run check`; completion must never
+    // use it to weaken the authority that is about to be sealed and published.
+    validateStrictArtifactContract(runDir, resolved.contract, scan);
     const proposals = validateChainProposalArtifacts(
       runDir,
       bundle,

@@ -75,7 +75,10 @@ import {
 import { assertSafePathSegment } from './ids.js';
 import { canonicalWorkspaceId, createIntentIdentity, sameIntentIdentity } from './intent-identity.js';
 import {
+  artifactRepublishReceiptSchema,
+  executionSealReceiptReadSchema,
   executionSealReceiptSchema,
+  executionSealReceiptV11Schema,
   recallConfirmationFinalTargetSchema,
   recallConfirmationRecordReadSchema,
   recallConfirmationRegistryReadSchema as recallConfirmationRegistrySchema,
@@ -89,7 +92,10 @@ import {
   transitionReceiptV20Schema,
   transitionFenceSchema,
   validatedRecallSourceReadSchema,
+  type ArtifactRepublishReceipt,
   type ExecutionSealReceipt,
+  type ExecutionSealReceiptV10,
+  type ExecutionSealReceiptV11,
   type IntentIdentity,
   type RecallConfirmationFinalTarget,
   type RecallConfirmationOutcome,
@@ -482,18 +488,23 @@ function sha256Prefixed(value: string | Buffer): string {
 }
 
 export type ExecutionSealReceiptInput = Omit<
-  ExecutionSealReceipt,
+  ExecutionSealReceiptV10,
+  'schema_version' | 'overall_hash'
+>;
+
+export type ExecutionSealReceiptV11Input = Omit<
+  ExecutionSealReceiptV11,
   'schema_version' | 'overall_hash'
 >;
 
 export function executionSealReceiptHash(
-  receipt: ExecutionSealReceipt | ExecutionSealReceiptInput,
+  receipt: ExecutionSealReceipt | ExecutionSealReceiptInput | ExecutionSealReceiptV11Input,
 ): string {
   const { overall_hash: _overallHash, ...content } = receipt as ExecutionSealReceipt;
   return sha256Prefixed(stableJsonUtf8(content));
 }
 
-export function createExecutionSealReceipt(input: ExecutionSealReceiptInput): ExecutionSealReceipt {
+export function createExecutionSealReceipt(input: ExecutionSealReceiptInput): ExecutionSealReceiptV10 {
   const receipt = {
     schema_version: 'execution-seal-receipt/1.0' as const,
     ...input,
@@ -501,6 +512,93 @@ export function createExecutionSealReceipt(input: ExecutionSealReceiptInput): Ex
   };
   receipt.overall_hash = executionSealReceiptHash(receipt);
   return executionSealReceiptSchema.parse(receipt);
+}
+
+export function createExecutionSealReceiptV11(input: ExecutionSealReceiptV11Input): ExecutionSealReceiptV11 {
+  const receipt = {
+    schema_version: 'execution-seal-receipt/1.1' as const,
+    ...input,
+    overall_hash: '',
+  };
+  receipt.overall_hash = executionSealReceiptHash(receipt);
+  return executionSealReceiptV11Schema.parse(receipt);
+}
+
+export function executionSealReceiptScopeSnapshots(
+  runs: readonly CommandRunV14[],
+  bundle: Pick<SessionBundle, 'gates' | 'artifacts' | 'evidence'>,
+): Pick<ExecutionSealReceiptV11, 'gates' | 'artifacts' | 'evidence'> {
+  const runIds = new Set(runs.map(run => run.run_id));
+  const gateIds = new Set(runs.flatMap(run => run.gate_ids));
+  for (const [gateId, gate] of Object.entries(bundle.gates.gates)) {
+    if (gate.run_id && runIds.has(gate.run_id)) gateIds.add(gateId);
+  }
+  const gateSnapshots = [...gateIds]
+    .sort()
+    .map(gateId => {
+      const gate = bundle.gates.gates[gateId];
+      if (!gate) throw new Error(`Execution seal receipt references missing Gate: ${gateId}`);
+      return { gate_id: gateId, record: clone(gate) };
+    });
+  const blockingGateIds = gateSnapshots
+    .filter(({ record }) => record.blocking
+      && ['pending', 'running', 'failed', 'blocked'].includes(String(record.status)))
+    .map(({ gate_id: gateId }) => gateId);
+
+  const artifactSnapshots = Object.entries(bundle.artifacts.artifacts)
+    .filter(([, artifact]) => runIds.has(artifact.producer_run_id) && artifact.status === 'sealed')
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([artifactId, artifact]) => ({
+      artifact_id: artifactId,
+      ...clone(artifact),
+      content_hash: `sha256:${artifact.content_hash}`,
+      status: 'sealed' as const,
+    }));
+  const contentHashes = Object.fromEntries(
+    artifactSnapshots.map(snapshot => [snapshot.artifact_id, snapshot.content_hash]),
+  );
+
+  const evidenceIds = new Set<string>();
+  for (const { record } of gateSnapshots) {
+    if (Array.isArray(record.evidence_refs)) {
+      for (const evidenceId of record.evidence_refs) evidenceIds.add(String(evidenceId));
+    }
+  }
+  for (const [recordId, record] of Object.entries(bundle.evidence.records)) {
+    if (runIds.has(record.run_id)) evidenceIds.add(recordId);
+  }
+  const evidenceSnapshots = [...evidenceIds]
+    .sort()
+    .map(recordId => {
+      const record = bundle.evidence.records[recordId];
+      if (!record) throw new Error(`Execution seal receipt references missing Evidence: ${recordId}`);
+      return { record_id: recordId, record: clone(record) };
+    });
+
+  return {
+    gates: {
+      clean: blockingGateIds.length === 0,
+      blocking_gate_ids: blockingGateIds,
+      registry_revision: bundle.gates.revision,
+      registry_hash: sha256Prefixed(`${JSON.stringify(bundle.gates, null, 2)}\n`),
+      snapshots: gateSnapshots,
+      snapshot_hash: sha256Prefixed(stableJsonUtf8(gateSnapshots)),
+    },
+    artifacts: {
+      registry_revision: bundle.artifacts.revision,
+      registry_hash: sha256Prefixed(`${JSON.stringify(bundle.artifacts, null, 2)}\n`),
+      content_hashes: contentHashes,
+      snapshots: artifactSnapshots,
+      snapshot_hash: sha256Prefixed(stableJsonUtf8(artifactSnapshots)),
+    },
+    evidence: {
+      store_revision: bundle.evidence.revision,
+      store_hash: sha256Prefixed(`${JSON.stringify(bundle.evidence, null, 2)}\n`),
+      record_refs: evidenceSnapshots.map(snapshot => snapshot.record_id),
+      snapshots: evidenceSnapshots,
+      snapshot_hash: sha256Prefixed(stableJsonUtf8(evidenceSnapshots)),
+    },
+  };
 }
 
 export type SessionArchiveReceiptInput = Omit<
@@ -936,19 +1034,17 @@ export class SessionStore {
   ): ExecutionSealReceipt | null {
     const path = this.executionSealReceiptPath(sessionId, executionId);
     if (!existsSync(path)) return null;
-    const receipt = this.readValidated(path, executionSealReceiptSchema);
+    const receipt = this.readValidated(path, executionSealReceiptReadSchema);
     if (receipt.session_id !== sessionId || receipt.execution_id !== executionId) {
       throw new Error(`Execution seal receipt identity does not match its canonical path: ${sessionId}/${executionId}`);
     }
-    if (executionSealReceiptHash(receipt) !== receipt.overall_hash) {
-      throw new Error(`Execution seal receipt overall hash mismatch: ${sessionId}/${executionId}`);
-    }
+    this.assertPersistedExecutionSealReceiptUnlocked(receipt);
     return receipt;
   }
 
   writeExecutionSealReceipt(receiptInput: ExecutionSealReceipt): ExecutionSealReceipt {
     return this.withLock(() => {
-      const receipt = executionSealReceiptSchema.parse(receiptInput);
+      const receipt = executionSealReceiptReadSchema.parse(receiptInput);
       this.assertSessionV30MutationUnsupported(receipt.session_id);
       const existing = this.readExecutionSealReceiptUnlocked(receipt.session_id, receipt.execution_id);
       if (existing) {
@@ -961,7 +1057,7 @@ export class SessionStore {
       this.writeBatchUnlocked([{
         path: this.executionSealReceiptPath(receipt.session_id, receipt.execution_id),
         value: receipt,
-        schema: executionSealReceiptSchema,
+        schema: executionSealReceiptReadSchema,
         mode: 0o600,
       }]);
       return clone(receipt);
@@ -969,12 +1065,73 @@ export class SessionStore {
   }
 
   private assertExecutionSealReceiptSnapshotUnlocked(receipt: ExecutionSealReceipt): void {
+    this.assertPersistedExecutionSealReceiptUnlocked(receipt);
+    const session = this.readSessionRecordUnlocked(receipt.session_id);
+    if (session.schema_version !== 'session/2.0' && !session.schema_version.startsWith('session/1.')) {
+      throw new Error(`Unsupported Session version for Execution seal receipt: ${session.schema_version}`);
+    }
+    if (session.identity_revision !== receipt.session_identity_revision
+      || session.activity_revision !== receipt.session_activity_revision) {
+      throw new Error('Execution seal receipt Session revisions changed');
+    }
+    const bundle = this.readBundleUnlocked(receipt.session_id);
+    if (receipt.schema_version === 'execution-seal-receipt/1.1') {
+      const runs = this.listBoundExecutionRunsUnlocked(
+        receipt.session_id,
+        receipt.execution_id,
+        receipt.generation,
+      );
+      const expected = executionSealReceiptScopeSnapshots(runs, bundle);
+      if (stableJsonUtf8(receipt.gates) !== stableJsonUtf8(expected.gates)) {
+        throw new Error('Execution seal receipt gate snapshot changed');
+      }
+      if (stableJsonUtf8(receipt.artifacts) !== stableJsonUtf8(expected.artifacts)) {
+        throw new Error('Execution seal receipt Artifact snapshot changed');
+      }
+      if (stableJsonUtf8(receipt.evidence) !== stableJsonUtf8(expected.evidence)) {
+        throw new Error('Execution seal receipt Evidence snapshot changed');
+      }
+      return;
+    }
+    const dir = this.sessionDir(receipt.session_id);
+    const gatesPath = join(dir, 'gates.json');
+    const artifactsPath = join(dir, 'artifacts.json');
+    const evidencePath = join(dir, 'evidence.json');
+    const blockingGateIds = Object.entries(bundle.gates.gates)
+      .filter(([, gate]) => gate.blocking && ['pending', 'running', 'failed', 'blocked'].includes(gate.status))
+      .map(([gateId]) => gateId)
+      .sort();
+    const artifactHashes = Object.fromEntries(
+      Object.entries(bundle.artifacts.artifacts)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([artifactId, artifact]) => [artifactId, `sha256:${artifact.content_hash}`]),
+    );
+    if (receipt.gates.registry_revision !== bundle.gates.revision
+      || receipt.gates.registry_hash !== sha256Prefixed(readFileSync(gatesPath))
+      || receipt.gates.clean !== (blockingGateIds.length === 0)
+      || stableJsonUtf8(receipt.gates.blocking_gate_ids) !== stableJsonUtf8(blockingGateIds)) {
+      throw new Error('Execution seal receipt gate snapshot changed');
+    }
+    if (receipt.artifacts.registry_revision !== bundle.artifacts.revision
+      || receipt.artifacts.registry_hash !== sha256Prefixed(readFileSync(artifactsPath))
+      || stableJsonUtf8(receipt.artifacts.content_hashes) !== stableJsonUtf8(artifactHashes)) {
+      throw new Error('Execution seal receipt Artifact snapshot changed');
+    }
+    if (receipt.evidence.store_revision !== bundle.evidence.revision
+      || receipt.evidence.store_hash !== sha256Prefixed(readFileSync(evidencePath))
+      || stableJsonUtf8(receipt.evidence.record_refs) !== stableJsonUtf8(Object.keys(bundle.evidence.records).sort())) {
+      throw new Error('Execution seal receipt Evidence snapshot changed');
+    }
+  }
+
+  private assertPersistedExecutionSealReceiptUnlocked(receipt: ExecutionSealReceipt): void {
     if (executionSealReceiptHash(receipt) !== receipt.overall_hash) {
       throw new Error('Execution seal receipt overall hash mismatch');
     }
     if (sha256Prefixed(stableJsonUtf8(receipt.chain_snapshot)) !== receipt.chain_hash) {
       throw new Error('Execution seal receipt chain hash mismatch');
     }
+    const executionPath = this.executionPath(receipt.session_id, receipt.execution_id);
     const execution = this.readExecutionUnlocked(receipt.session_id, receipt.execution_id);
     if (execution.status !== 'sealed'
       || execution.generation !== receipt.generation
@@ -985,55 +1142,119 @@ export class SessionStore {
     if (stableJsonUtf8(execution.chain) !== stableJsonUtf8(receipt.chain_snapshot)) {
       throw new Error('Execution seal receipt chain snapshot changed');
     }
-    const session = this.readSessionRecordUnlocked(receipt.session_id);
-    if (session.schema_version !== 'session/2.0' && !session.schema_version.startsWith('session/1.')) {
-      throw new Error(`Unsupported Session version for Execution seal receipt: ${session.schema_version}`);
+    if (receipt.schema_version === 'execution-seal-receipt/1.1'
+      && sha256Prefixed(readFileSync(executionPath)) !== receipt.execution_hash) {
+      throw new Error('Execution seal receipt Execution bytes changed');
     }
-    if (session.identity_revision !== receipt.session_identity_revision
-      || session.activity_revision !== receipt.session_activity_revision) {
-      throw new Error('Execution seal receipt Session revisions changed');
-    }
+
+    const runIds = new Set<string>();
     for (const runSnapshot of receipt.runs) {
+      if (runIds.has(runSnapshot.run_id)) throw new Error(`Duplicate Execution seal receipt Run: ${runSnapshot.run_id}`);
+      runIds.add(runSnapshot.run_id);
       const path = join(this.runDir(receipt.session_id, runSnapshot.run_id), 'run.json');
       const run = this.readValidated(path, commandRunReadSchema);
       if (run.schema_version !== runSnapshot.schema_version || run.status !== 'sealed'
         || sha256Prefixed(readFileSync(path)) !== runSnapshot.content_hash) {
         throw new Error(`Execution seal receipt Run snapshot changed: ${runSnapshot.run_id}`);
       }
+      if (run.schema_version === 'command-run/1.4'
+        && (run.execution_id !== receipt.execution_id || run.generation !== receipt.generation)) {
+        throw new Error(`Execution seal receipt Run ownership changed: ${runSnapshot.run_id}`);
+      }
     }
-    const dir = this.sessionDir(receipt.session_id);
-    const gatesPath = join(dir, 'gates.json');
-    const artifactsPath = join(dir, 'artifacts.json');
-    const evidencePath = join(dir, 'evidence.json');
-    const gates = this.readValidated(gatesPath, gateRegistrySchema);
-    const artifacts = this.readValidated(artifactsPath, artifactRegistrySchema);
-    const evidence = this.readValidated(evidencePath, evidenceStoreSchema);
-    const blockingGateIds = Object.entries(gates.gates)
-      .filter(([, gate]) => gate.blocking && ['pending', 'running', 'failed', 'blocked'].includes(gate.status))
-      .map(([gateId]) => gateId)
-      .sort();
-    if (receipt.gates.registry_revision !== gates.revision
-      || receipt.gates.registry_hash !== sha256Prefixed(readFileSync(gatesPath))
-      || receipt.gates.clean !== (blockingGateIds.length === 0)
-      || stableJsonUtf8(receipt.gates.blocking_gate_ids) !== stableJsonUtf8(blockingGateIds)) {
-      throw new Error('Execution seal receipt gate snapshot changed');
+    if (receipt.schema_version === 'execution-seal-receipt/1.1') {
+      const ownedRunIds = this.listBoundExecutionRunsUnlocked(
+        receipt.session_id,
+        receipt.execution_id,
+        receipt.generation,
+      ).map(run => run.run_id).sort();
+      if (stableJsonUtf8([...runIds].sort()) !== stableJsonUtf8(ownedRunIds)) {
+        throw new Error('Execution seal receipt Run ownership changed');
+      }
+      this.assertExecutionSealReceiptV11CommitmentsUnlocked(receipt, runIds);
+      return;
     }
+    const artifacts = this.readBundleUnlocked(receipt.session_id).artifacts.artifacts;
+    for (const [artifactId, contentHash] of Object.entries(receipt.artifacts.content_hashes)) {
+      const artifact = artifacts[artifactId];
+      if (!artifact || `sha256:${artifact.content_hash}` !== contentHash
+        || this.observedArtifactHashUnlocked(receipt.session_id, artifact.relative_path) !== contentHash) {
+        throw new Error(`Execution seal receipt Artifact snapshot changed: ${artifactId}`);
+      }
+    }
+  }
+
+  private assertExecutionSealReceiptV11CommitmentsUnlocked(
+    receipt: ExecutionSealReceiptV11,
+    runIds: ReadonlySet<string>,
+  ): void {
+    if (sha256Prefixed(stableJsonUtf8(receipt.gates.snapshots)) !== receipt.gates.snapshot_hash) {
+      throw new Error('Execution seal receipt Gate commitment changed');
+    }
+    if (sha256Prefixed(stableJsonUtf8(receipt.artifacts.snapshots)) !== receipt.artifacts.snapshot_hash) {
+      throw new Error('Execution seal receipt Artifact commitment changed');
+    }
+    if (sha256Prefixed(stableJsonUtf8(receipt.evidence.snapshots)) !== receipt.evidence.snapshot_hash) {
+      throw new Error('Execution seal receipt Evidence commitment changed');
+    }
+    const artifactIds = receipt.artifacts.snapshots.map(snapshot => snapshot.artifact_id);
     const artifactHashes = Object.fromEntries(
-      Object.entries(artifacts.artifacts)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([artifactId, artifact]) => [artifactId, `sha256:${artifact.content_hash}`]),
+      receipt.artifacts.snapshots.map(snapshot => [snapshot.artifact_id, snapshot.content_hash]),
     );
-    if (receipt.artifacts.registry_revision !== artifacts.revision
-      || receipt.artifacts.registry_hash !== sha256Prefixed(readFileSync(artifactsPath))
-      || stableJsonUtf8(receipt.artifacts.content_hashes) !== stableJsonUtf8(artifactHashes)) {
-      throw new Error('Execution seal receipt Artifact snapshot changed');
+    if (stableJsonUtf8(artifactIds) !== stableJsonUtf8([...new Set(artifactIds)].sort())
+      || stableJsonUtf8(artifactHashes) !== stableJsonUtf8(receipt.artifacts.content_hashes)) {
+      throw new Error('Execution seal receipt Artifact index commitment changed');
     }
-    const evidenceRefs = Object.keys(evidence.records).sort();
-    if (receipt.evidence.store_revision !== evidence.revision
-      || receipt.evidence.store_hash !== sha256Prefixed(readFileSync(evidencePath))
-      || stableJsonUtf8(receipt.evidence.record_refs) !== stableJsonUtf8(evidenceRefs)) {
-      throw new Error('Execution seal receipt Evidence snapshot changed');
+    const artifacts = this.readBundleUnlocked(receipt.session_id).artifacts.artifacts;
+    for (const snapshot of receipt.artifacts.snapshots) {
+      if (!runIds.has(snapshot.producer_run_id)) {
+        throw new Error(`Execution seal receipt Artifact producer changed: ${snapshot.artifact_id}`);
+      }
+      const current = artifacts[snapshot.artifact_id];
+      if (!current
+        || current.kind !== snapshot.kind
+        || current.role !== snapshot.role
+        || current.producer_run_id !== snapshot.producer_run_id
+        || current.relative_path !== snapshot.relative_path
+        || current.media_type !== snapshot.media_type
+        || current.schema_version !== snapshot.schema_version
+        || `sha256:${current.content_hash}` !== snapshot.content_hash
+        || current.size !== snapshot.size
+        || stableJsonUtf8(current.derived_from) !== stableJsonUtf8(snapshot.derived_from)
+        || current.replaces !== snapshot.replaces) {
+        throw new Error(`Execution seal receipt Artifact metadata changed: ${snapshot.artifact_id}`);
+      }
+      if (this.observedArtifactHashUnlocked(receipt.session_id, snapshot.relative_path) !== snapshot.content_hash) {
+        throw new Error(`Execution seal receipt Artifact bytes changed: ${snapshot.artifact_id}`);
+      }
     }
+    const gateIds = receipt.gates.snapshots.map(snapshot => snapshot.gate_id);
+    if (stableJsonUtf8(gateIds) !== stableJsonUtf8([...new Set(gateIds)].sort())) {
+      throw new Error('Execution seal receipt Gate index commitment changed');
+    }
+    const blockingGateIds = receipt.gates.snapshots
+      .filter(({ record }) => record.blocking
+        && ['pending', 'running', 'failed', 'blocked'].includes(String(record.status)))
+      .map(snapshot => snapshot.gate_id);
+    if (receipt.gates.clean !== (blockingGateIds.length === 0)
+      || stableJsonUtf8(receipt.gates.blocking_gate_ids) !== stableJsonUtf8(blockingGateIds)) {
+      throw new Error('Execution seal receipt Gate outcome commitment changed');
+    }
+    const evidenceIds = receipt.evidence.snapshots.map(snapshot => snapshot.record_id);
+    if (stableJsonUtf8(evidenceIds) !== stableJsonUtf8([...new Set(evidenceIds)].sort())
+      || stableJsonUtf8(evidenceIds) !== stableJsonUtf8(receipt.evidence.record_refs)) {
+      throw new Error('Execution seal receipt Evidence index commitment changed');
+    }
+  }
+
+  private observedArtifactHashUnlocked(sessionId: string, relativePath: string): string {
+    const path = this.assertWorkflowPath(join(this.sessionDir(sessionId), relativePath));
+    if (!existsSync(path)) throw new Error(`Execution seal receipt Artifact is missing: ${relativePath}`);
+    const stat = lstatSync(path);
+    if (stat.isSymbolicLink()) throw new Error(`Execution seal receipt Artifact cannot be a symbolic link: ${relativePath}`);
+    return stat.isDirectory()
+      ? `sha256:${hashDirectory(path).hash}`
+      : sha256Prefixed(readFileSync(path));
   }
 
   listExecutions(sessionId: string): ExecutionState[] {
@@ -1309,6 +1530,41 @@ export class SessionStore {
         throw new Error(`Transition receipt identity does not match its canonical path: ${transitionId}`);
       }
       return receipt;
+    };
+    return this.lock.isHeld ? read() : this.withLock(read);
+  }
+
+  listTransitionReceiptsV20(sessionId: string): TransitionReceiptV20[] {
+    const read = (): TransitionReceiptV20[] => {
+      const root = this.transitionReceiptsDir(sessionId);
+      if (!existsSync(root)) return [];
+      const rootStat = lstatSync(root);
+      if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+        throw new Error(`Invalid transition receipt directory: ${root}`);
+      }
+      const receipts: TransitionReceiptV20[] = [];
+      for (const name of readdirSync(root).sort()) {
+        if (name === '.backups') {
+          const backupPath = join(root, name);
+          const backupStats = lstatSync(backupPath);
+          if (backupStats.isSymbolicLink() || !backupStats.isDirectory()) {
+            throw new Error(`Invalid transition receipt backup directory: ${backupPath}`);
+          }
+          continue;
+        }
+        const match = /^(\d{12})-(.+)\.json$/.exec(name);
+        if (!match) throw new Error(`Invalid transition receipt entry: ${join(root, name)}`);
+        const path = join(root, name);
+        const stats = lstatSync(path);
+        if (stats.isSymbolicLink() || !stats.isFile()) {
+          throw new Error(`Invalid transition receipt entry: ${path}`);
+        }
+        const receipt = this.readTransitionReceiptV20(sessionId, Number(match[1]), match[2]);
+        if (!receipt) throw new Error(`Missing transition receipt: ${path}`);
+        receipts.push(receipt);
+      }
+      return receipts.sort((left, right) => left.activity_revision - right.activity_revision
+        || left.transition_id.localeCompare(right.transition_id));
     };
     return this.lock.isHeld ? read() : this.withLock(read);
   }
@@ -2258,6 +2514,63 @@ export class SessionStore {
     });
   }
 
+  replayOrApplyArtifactRepublishTransition(
+    sessionId: string,
+    request: TransitionRequest,
+    apply: (draft: SessionBundle, tx: StoreTransaction) => TransitionOutcome,
+  ): { outcome: TransitionOutcome; replayed: boolean } {
+    return this.withLock(() => {
+      this.assertSessionV30MutationUnsupported(sessionId);
+      const currentRecord = this.readSessionRecordUnlocked(sessionId);
+      const current = this.readBundleUnlocked(sessionId);
+      const openExecution = this.readOpenExecutionUnlocked(sessionId);
+      if (openExecution) {
+        throw new Error(
+          `Session ${sessionId} has open Execution ${openExecution.execution_id}; Artifact republish requires no open Execution`,
+        );
+      }
+      if (currentRecord.schema_version === 'session/2.0' && currentRecord.archived_at !== null) {
+        throw new Error(`Session ${sessionId} is archived and immutable`);
+      }
+      const currentFence = this.sessionFenceForBundle(current, request.subject.run_id);
+      const records = current.session.requests
+        .filter(item => item.type === 'transition' && 'outcome' in item)
+        .map(item => item as Extract<SessionState['requests'][number], { type: 'transition' }>);
+      const draft = clone(current);
+      this.prepareExecutionCompatibilityDraft(currentRecord, draft);
+      const tx = new StoreTransaction(this, sessionId);
+      const evaluated = replayOrApplyTransition(
+        records,
+        request,
+        currentFence,
+        () => apply(draft, tx),
+      );
+      if (evaluated.replayed) return { outcome: clone(evaluated.outcome), replayed: true };
+      const actualPost = this.sessionFenceForBundle(draft, request.subject.run_id, tx);
+      if (JSON.stringify(actualPost) !== JSON.stringify(evaluated.outcome.postconditions)) {
+        throw new Error(`transition ${evaluated.outcome.transition_id} postcondition fence does not match the draft`);
+      }
+      draft.session.requests.push(evaluated.record);
+      draft.session.schema_version = 'session/1.3';
+      sessionStateV13Schema.parse(draft.session);
+      gateRegistrySchema.parse(draft.gates);
+      artifactRegistrySchema.parse(draft.artifacts);
+      evidenceStoreSchema.parse(draft.evidence);
+      if (currentRecord.schema_version === 'session/2.0') {
+        const nextIdentity = sessionStateV20Schema.parse({
+          ...currentRecord,
+          activity_revision: draft.session.activity_revision,
+          latest_completed_run_id: draft.session.latest_completed_run_id,
+        });
+        tx.addStatuslessBundle(draft, nextIdentity);
+      } else {
+        tx.addBundle(draft);
+      }
+      this.writeBatchUnlocked(tx.writes);
+      return { outcome: clone(evaluated.outcome), replayed: false };
+    });
+  }
+
   replayOrApplyTransition(
     sessionId: string,
     request: TransitionRequest,
@@ -2556,7 +2869,11 @@ export class SessionStore {
           }
           continue;
         }
-        const boundRuns = legacyExecution ? runRecords : executionRuns;
+        // A receipt is historical authority only if it was written at seal time. Migration
+        // may establish authority for the synthesized legacy Execution, but must not infer a
+        // missing receipt for an already-persisted Execution from later Session state.
+        if (!legacyExecution) continue;
+        const boundRuns = runRecords;
         const unsealedRuns = boundRuns
           .filter(({ run }) => !('status' in run) || run.status !== 'sealed')
           .map(({ run }) => 'run_id' in run ? String(run.run_id) : '<unknown>');
@@ -3071,19 +3388,32 @@ export class SessionStore {
     }
     const bundle = this.readBundleUnlocked(source.session_id);
     for (const expected of source.selected_artifacts) {
-      const matches = Object.entries(bundle.artifacts.artifacts).filter(([, artifact]) => (
-        artifact.producer_run_id === source.run_id
-        && artifact.kind === expected.kind
-        && artifact.relative_path === expected.relative_path
-        && artifact.status === 'sealed'
-        && `sha256:${artifact.content_hash}` === expected.content_hash
-      ));
-      if (matches.length !== 1) {
-        throw new RecallConfirmationError('FENCE_CONFLICT', 'sealed source artifact registry binding changed');
-      }
-      const [artifactId] = matches[0];
-      if (receipt.artifacts.content_hashes[artifactId] !== expected.content_hash) {
-        throw new RecallConfirmationError('FENCE_CONFLICT', 'source artifact is not sealed by the Execution receipt');
+      if (receipt.schema_version === 'execution-seal-receipt/1.1') {
+        const matches = receipt.artifacts.snapshots.filter(artifact => (
+          artifact.producer_run_id === source.run_id
+          && artifact.kind === expected.kind
+          && artifact.relative_path === expected.relative_path
+          && artifact.status === 'sealed'
+          && artifact.content_hash === expected.content_hash
+        ));
+        if (matches.length !== 1) {
+          throw new RecallConfirmationError('FENCE_CONFLICT', 'sealed source artifact receipt binding changed');
+        }
+      } else {
+        const matches = Object.entries(bundle.artifacts.artifacts).filter(([, artifact]) => (
+          artifact.producer_run_id === source.run_id
+          && artifact.kind === expected.kind
+          && artifact.relative_path === expected.relative_path
+          && artifact.status === 'sealed'
+          && `sha256:${artifact.content_hash}` === expected.content_hash
+        ));
+        if (matches.length !== 1) {
+          throw new RecallConfirmationError('FENCE_CONFLICT', 'sealed source artifact registry binding changed');
+        }
+        const [artifactId] = matches[0];
+        if (receipt.artifacts.content_hashes[artifactId] !== expected.content_hash) {
+          throw new RecallConfirmationError('FENCE_CONFLICT', 'source artifact is not sealed by the Execution receipt');
+        }
       }
       const artifactPath = this.assertWorkflowPath(join(this.sessionDir(source.session_id), expected.relative_path));
       if (!existsSync(artifactPath)) {
@@ -3377,6 +3707,10 @@ export class SessionStore {
       || stableJsonUtf8(receipt.chain_snapshot) !== stableJsonUtf8(execution.chain)) {
       throw new Error('Execution seal receipt chain snapshot changed');
     }
+    if (receipt.schema_version === 'execution-seal-receipt/1.1'
+      && receipt.execution_hash !== sha256Prefixed(`${JSON.stringify(execution, null, 2)}\n`)) {
+      throw new Error('Execution seal receipt Execution bytes changed');
+    }
     for (const runSnapshot of receipt.runs) {
       const path = join(this.runDir(receipt.session_id, runSnapshot.run_id), 'run.json');
       const run = this.readValidated(path, commandRunReadSchema);
@@ -3384,6 +3718,25 @@ export class SessionStore {
         || sha256Prefixed(readFileSync(path)) !== runSnapshot.content_hash) {
         throw new Error(`Execution seal receipt Run snapshot changed: ${runSnapshot.run_id}`);
       }
+    }
+    if (receipt.schema_version === 'execution-seal-receipt/1.1') {
+      const runs = tx.listBoundExecutionRuns(execution.execution_id, execution.generation)
+        .sort((left, right) => left.run_id.localeCompare(right.run_id));
+      if (stableJsonUtf8(receipt.runs.map(run => run.run_id))
+        !== stableJsonUtf8(runs.map(run => run.run_id))) {
+        throw new Error('Execution seal receipt Run ownership changed');
+      }
+      const expected = executionSealReceiptScopeSnapshots(runs, bundle);
+      if (stableJsonUtf8(receipt.gates) !== stableJsonUtf8(expected.gates)) {
+        throw new Error('Execution seal receipt gate snapshot changed');
+      }
+      if (stableJsonUtf8(receipt.artifacts) !== stableJsonUtf8(expected.artifacts)) {
+        throw new Error('Execution seal receipt Artifact snapshot changed');
+      }
+      if (stableJsonUtf8(receipt.evidence) !== stableJsonUtf8(expected.evidence)) {
+        throw new Error('Execution seal receipt Evidence snapshot changed');
+      }
+      return;
     }
     const blockingGateIds = Object.entries(bundle.gates.gates)
       .filter(([, gate]) => gate.blocking && ['pending', 'running', 'failed', 'blocked'].includes(gate.status))
@@ -3546,12 +3899,24 @@ export class SessionV30StoreTransaction {
     return this.store.readRunV30(this.sessionId, runId);
   }
 
+  readArtifactRepublishReceipt(receiptId: string): ArtifactRepublishReceipt | null {
+    assertSafePathSegment(receiptId, 'Artifact republish receipt ID');
+    const path = join(this.store.receiptsDir(this.sessionId), 'artifact-republish', `${receiptId}.json`);
+    return existsSync(path)
+      ? this.store.readJsonFileReadOnly(path, artifactRepublishReceiptSchema)
+      : null;
+  }
+
   readRequestReceipt(requestId: string): RequestReceiptV20 | null {
     return this.store.readRequestReceiptV20(this.sessionId, requestId);
   }
 
   readTransitionReceipt(activityRevision: number, transitionId: string): TransitionReceiptV20 | null {
     return this.store.readTransitionReceiptV20(this.sessionId, activityRevision, transitionId);
+  }
+
+  listTransitionReceipts(): TransitionReceiptV20[] {
+    return this.store.listTransitionReceiptsV20(this.sessionId);
   }
 
   readJson<T>(path: string, schema: z.ZodType<T>): T {
@@ -3639,6 +4004,33 @@ export class SessionV30StoreTransaction {
     });
   }
 
+  writeArtifactRepublishReceipt(receiptInput: ArtifactRepublishReceipt): void {
+    const receipt = artifactRepublishReceiptSchema.parse(receiptInput);
+    if (receipt.session_id !== this.sessionId) {
+      throw new Error('Artifact republish receipt Session identity mismatch');
+    }
+    assertSafePathSegment(receipt.receipt_id, 'Artifact republish receipt ID');
+    const path = join(this.store.receiptsDir(this.sessionId), 'artifact-republish', `${receipt.receipt_id}.json`);
+    const pending = [...this.writes].reverse().find(write => write.path === path)?.value;
+    if (pending !== undefined) {
+      const existing = artifactRepublishReceiptSchema.parse(pending);
+      if (stableJsonUtf8(existing) !== stableJsonUtf8(receipt)) {
+        throw new Error(`Artifact republish receipt is immutable: ${receipt.receipt_id}`);
+      }
+      return;
+    }
+    const existing = existsSync(path)
+      ? this.store.readJsonFileReadOnly(path, artifactRepublishReceiptSchema)
+      : null;
+    if (existing) {
+      if (stableJsonUtf8(existing) !== stableJsonUtf8(receipt)) {
+        throw new Error(`Artifact republish receipt is immutable: ${receipt.receipt_id}`);
+      }
+      return;
+    }
+    this.writes.push({ path, value: receipt, schema: artifactRepublishReceiptSchema, mode: 0o600 });
+  }
+
   writeJson(path: string, value: unknown, schema: z.ZodType, mode?: number): void {
     this.assertNotReceiptPath(path);
     this.writes.push({ path, value, schema, mode });
@@ -3690,7 +4082,7 @@ export class ExecutionStoreTransaction {
     this.writes.push({
       path: this.store.executionSealReceiptPath(this.sessionId, this.executionId),
       value: receipt,
-      schema: executionSealReceiptSchema,
+      schema: executionSealReceiptReadSchema,
       mode: 0o600,
     });
   }
@@ -3781,7 +4173,7 @@ export class StoreTransaction {
     this.writes.push({
       path: this.store.executionSealReceiptPath(this.sessionId, executionId),
       value: receipt,
-      schema: executionSealReceiptSchema,
+      schema: executionSealReceiptReadSchema,
       mode: 0o600,
     });
   }
@@ -3802,7 +4194,7 @@ export class StoreTransaction {
   pendingExecutionSealReceipt(executionId: string): ExecutionSealReceipt | null {
     const path = this.store.executionSealReceiptPath(this.sessionId, executionId);
     const pending = this.writes.find(write => write.path === path);
-    return pending ? executionSealReceiptSchema.parse(pending.value) : null;
+    return pending ? executionSealReceiptReadSchema.parse(pending.value) : null;
   }
 
   addStatuslessBundle(bundle: SessionBundle, identity: SessionIdentityV20): void {

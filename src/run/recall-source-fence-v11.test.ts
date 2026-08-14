@@ -155,6 +155,45 @@ describe('receipt-backed source-fence/1.1', () => {
       requestId: 'req-start-source-2', ownerId: 'worker-2', ownerKind: 'codex',
     });
     expect(second.execution.generation).toBe(2);
+    const laterCommandDir = join(projectRoot, '.claude', 'commands');
+    writeFileSync(join(laterCommandDir, 'produce-later.md'), [
+      '<contract>', 'contract_version: 2.1', 'arguments: []', 'consumes: []', 'produces:',
+      '  - kind: report', '    alias: current-report', '    role: primary', '    required: true',
+      '    schema: report/1.0', '    path: outputs/later.json',
+      'gates: { entry: [], exit: [] }', '</contract>',
+    ].join('\n'));
+    const laterRun = createExecutionRun({
+      projectRoot,
+      sessionId: 'source',
+      command: 'produce-later',
+      intent: 'later generation addition',
+      executionId: second.execution.execution_id,
+      generation: second.execution.generation,
+      expectedExecutionRevision: 1,
+      executionLease: claim(second.lease_claim),
+      requestId: 'req-create-source-2',
+    });
+    const laterRunDir = source.store.runDir('source', laterRun.run_id);
+    mkdirSync(join(laterRunDir, 'outputs'), { recursive: true });
+    writeFileSync(join(laterRunDir, 'outputs', 'later.json'), JSON.stringify({
+      _meta: { kind: 'report', schema: 'report/1.0', role: 'primary', alias: 'current-report' },
+      result: 'generation-2',
+    }));
+    writeFileSync(join(laterRunDir, 'report.md'), [
+      '---', 'verdict: ready', 'summary: later report', 'constraints: []',
+      'decisions: []', 'concerns: []', 'next: []', '---', '',
+    ].join('\n'));
+    expect(completeExecutionRun(projectRoot, laterRun.run_id, {
+      sessionId: 'source',
+      executionId: second.execution.execution_id,
+      generation: second.execution.generation,
+      expectedExecutionRevision: 2,
+      executionLease: claim(second.lease_claim),
+      requestId: 'req-complete-source-2',
+    }).sealed).toBe(true);
+    expect(source.store.readExecutionSealReceipt(
+      'source', source.fence.execution_seal_receipt.execution_id,
+    )?.generation).toBe(1);
     const reserved = source.store.reserveRecallConfirmation(issued.token, {
       action: 'fork',
       request_hash: `sha256:${'a'.repeat(64)}`,
@@ -248,12 +287,22 @@ describe('receipt-backed source-fence/1.1', () => {
     expect(assessed.schema_version).toBe('reuse-assessment/1.1');
     const reuseFence = assessed.source_fence as ReuseSourceFenceV11;
     validateReuseSourceFence(projectRoot, reuseFence);
+    expect(() => validateReuseSourceFence(projectRoot, { ...reuseFence, artifact_role: 'attachment' }))
+      .toThrow(/artifact|role|binding/i);
+    expect(() => validateReuseSourceFence(projectRoot, { ...reuseFence, producer_run_id: 'run-tampered' }))
+      .toThrow(/Run|producer|artifact|binding/i);
+    expect(() => validateReuseSourceFence(projectRoot, {
+      ...reuseFence,
+      artifact_hash: `sha256:${'f'.repeat(64)}`,
+    })).toThrow(/artifact|hash|binding/i);
     const artifactsPath = join(source.store.sessionDir('source'), 'artifacts.json');
     const registry = JSON.parse(readFileSync(artifactsPath, 'utf8')) as {
       revision: number;
       aliases: Record<string, string>;
+      artifacts: Record<string, { status: string }>;
     };
     registry.aliases['session-global-alias'] = source.artifactId;
+    registry.artifacts[source.artifactId].status = 'superseded';
     registry.revision++;
     writeFileSync(artifactsPath, JSON.stringify(registry, null, 2));
     startExecution(projectRoot, 'source', {
@@ -264,7 +313,15 @@ describe('receipt-backed source-fence/1.1', () => {
     expect(() => validateReuseSourceFence(projectRoot, reuseFence)).toThrow(/artifact|content|hash/i);
   });
 
-  it.each(['receipt', 'run', 'artifact'] as const)('fails closed on %s drift', drift => {
+  it.each([
+    'receipt',
+    'execution',
+    'run',
+    'artifact',
+    'artifact-role',
+    'artifact-producer',
+    'artifact-hash',
+  ] as const)('fails closed on %s drift', drift => {
     const projectRoot = root();
     const source = sealedSource(projectRoot);
     if (drift === 'receipt') {
@@ -274,14 +331,29 @@ describe('receipt-backed source-fence/1.1', () => {
       const receipt = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
       receipt.overall_hash = `sha256:${'f'.repeat(64)}`;
       writeFileSync(path, JSON.stringify(receipt, null, 2));
+    } else if (drift === 'execution') {
+      const path = source.store.executionPath('source', source.fence.execution_seal_receipt.execution_id);
+      const execution = JSON.parse(readFileSync(path, 'utf8')) as { seal_summary: string };
+      execution.seal_summary = 'tampered summary';
+      writeFileSync(path, JSON.stringify(execution, null, 2));
     } else if (drift === 'run') {
       const path = join(source.store.runDir('source', source.runId), 'run.json');
       writeFileSync(path, `${readFileSync(path, 'utf8')}\n`);
-    } else {
+    } else if (drift === 'artifact') {
       writeFileSync(join(source.store.sessionDir('source'), source.artifact.relative_path), 'drifted');
+    } else {
+      const path = join(source.store.sessionDir('source'), 'artifacts.json');
+      const registry = JSON.parse(readFileSync(path, 'utf8')) as {
+        artifacts: Record<string, { role: string; producer_run_id: string; content_hash: string }>;
+      };
+      const artifact = registry.artifacts[source.artifactId];
+      if (drift === 'artifact-role') artifact.role = 'attachment';
+      if (drift === 'artifact-producer') artifact.producer_run_id = 'run-tampered';
+      if (drift === 'artifact-hash') artifact.content_hash = 'f'.repeat(64);
+      writeFileSync(path, JSON.stringify(registry, null, 2));
     }
     expect(() => source.store.validateRecallConfirmationSource('fork', source.fence))
-      .toThrow(/receipt|Run|artifact|source|hash|content/i);
+      .toThrow(/receipt|Execution|Run|Artifact|source|hash|content|metadata|producer/i);
   });
 
   it('rejects wrong Execution generation and cross-Session receipt replay', () => {

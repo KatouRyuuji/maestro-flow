@@ -57,10 +57,22 @@ export function buildSourceFence(projectRoot: string, sessionId: string, runId: 
   if (!receipt && !['sealed', 'archived'].includes(bundle.session.status)) {
     throw new Error('legacy source must be a sealed or archived Session with a sealed Run');
   }
-  const selected = Object.values(bundle.artifacts.artifacts)
-    .filter(item => item.producer_run_id === runId && item.status === 'sealed')
-    .sort((a, b) => a.relative_path.localeCompare(b.relative_path))
-    .map(item => ({ kind: item.kind, relative_path: item.relative_path, content_hash: `sha256:${item.content_hash}` }));
+  const selected = (receipt?.schema_version === 'execution-seal-receipt/1.1'
+    ? receipt.artifacts.snapshots
+        .filter(item => item.producer_run_id === runId)
+        .map(item => ({
+          kind: item.kind,
+          relative_path: item.relative_path,
+          content_hash: item.content_hash,
+        }))
+    : Object.values(bundle.artifacts.artifacts)
+        .filter(item => item.producer_run_id === runId && item.status === 'sealed')
+        .map(item => ({
+          kind: item.kind,
+          relative_path: item.relative_path,
+          content_hash: `sha256:${item.content_hash}`,
+        })))
+    .sort((a, b) => a.relative_path.localeCompare(b.relative_path));
   const runHash = fileHash(join(store.runDir(sessionId, runId), 'run.json'));
   if (receipt) {
     const execution = store.readExecution(sessionId, receipt.execution_id);
@@ -74,6 +86,18 @@ export function buildSourceFence(projectRoot: string, sessionId: string, runId: 
       throw new Error('source Run does not match its immutable sealed Execution receipt');
     }
     for (const expected of selected) {
+      if (receipt.schema_version === 'execution-seal-receipt/1.1') {
+        const matching = receipt.artifacts.snapshots.filter(artifact => (
+          artifact.producer_run_id === runId
+          && artifact.kind === expected.kind
+          && artifact.relative_path === expected.relative_path
+          && artifact.content_hash === expected.content_hash
+        ));
+        if (matching.length !== 1) {
+          throw new Error(`source artifact is not sealed by the Execution receipt: ${expected.relative_path}`);
+        }
+        continue;
+      }
       const matchingArtifact = Object.entries(bundle.artifacts.artifacts).find(([, artifact]) => (
         artifact.producer_run_id === runId
         && artifact.kind === expected.kind

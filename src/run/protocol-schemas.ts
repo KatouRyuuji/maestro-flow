@@ -178,8 +178,7 @@ const sealedRunSnapshotSchema = z.object({
   content_hash: sha256Schema,
 }).strict();
 
-export const executionSealReceiptSchema = z.object({
-  schema_version: z.literal('execution-seal-receipt/1.0'),
+const executionSealReceiptBaseSchema = z.object({
   session_id: nonEmptyString,
   execution_id: nonEmptyString,
   generation: z.number().int().positive(),
@@ -190,6 +189,16 @@ export const executionSealReceiptSchema = z.object({
   runs: z.array(sealedRunSnapshotSchema),
   chain_snapshot: z.array(z.unknown()),
   chain_hash: sha256Schema,
+  corpus_refs: z.array(z.object({
+    kind: nonEmptyString,
+    id: nonEmptyString,
+    content_hash: sha256Schema,
+  }).strict()),
+  overall_hash: sha256Schema,
+});
+
+export const executionSealReceiptSchema = executionSealReceiptBaseSchema.extend({
+  schema_version: z.literal('execution-seal-receipt/1.0'),
   gates: z.object({
     clean: z.boolean(),
     blocking_gate_ids: z.array(nonEmptyString),
@@ -206,13 +215,65 @@ export const executionSealReceiptSchema = z.object({
     store_hash: sha256Schema,
     record_refs: z.array(nonEmptyString),
   }).strict(),
-  corpus_refs: z.array(z.object({
-    kind: nonEmptyString,
-    id: nonEmptyString,
-    content_hash: sha256Schema,
-  }).strict()),
-  overall_hash: sha256Schema,
 }).strict();
+
+const sealedArtifactSnapshotSchema = z.object({
+  artifact_id: nonEmptyString,
+  kind: nonEmptyString,
+  role: z.enum(['primary', 'evidence', 'report', 'attachment', 'checkpoint']),
+  producer_run_id: nonEmptyString,
+  relative_path: nonEmptyString,
+  media_type: nonEmptyString,
+  schema_version: nonEmptyString,
+  content_hash: sha256Schema,
+  size: z.number().int().nonnegative(),
+  status: z.literal('sealed'),
+  derived_from: z.array(z.string()),
+  replaces: z.string().nullable(),
+}).strict();
+
+const gateSnapshotSchema = z.object({
+  gate_id: nonEmptyString,
+  record: z.record(z.string(), z.unknown()),
+}).strict();
+
+const evidenceSnapshotSchema = z.object({
+  record_id: nonEmptyString,
+  record: z.record(z.string(), z.unknown()),
+}).strict();
+
+export const executionSealReceiptV11Schema = executionSealReceiptBaseSchema.extend({
+  schema_version: z.literal('execution-seal-receipt/1.1'),
+  execution_hash: sha256Schema,
+  gates: z.object({
+    clean: z.boolean(),
+    blocking_gate_ids: z.array(nonEmptyString),
+    registry_revision: z.number().int().nonnegative(),
+    registry_hash: sha256Schema,
+    snapshots: z.array(gateSnapshotSchema),
+    snapshot_hash: sha256Schema,
+  }).strict(),
+  artifacts: z.object({
+    registry_revision: z.number().int().nonnegative(),
+    registry_hash: sha256Schema,
+    content_hashes: z.record(z.string(), sha256Schema),
+    snapshots: z.array(sealedArtifactSnapshotSchema),
+    snapshot_hash: sha256Schema,
+  }).strict(),
+  evidence: z.object({
+    store_revision: z.number().int().nonnegative(),
+    store_hash: sha256Schema,
+    record_refs: z.array(nonEmptyString),
+    snapshots: z.array(evidenceSnapshotSchema),
+    snapshot_hash: sha256Schema,
+  }).strict(),
+}).strict();
+
+/** Additive compatibility reader; executionSealReceiptSchema remains the strict 1.0 shape. */
+export const executionSealReceiptReadSchema = z.union([
+  executionSealReceiptV11Schema,
+  executionSealReceiptSchema,
+]);
 
 export const targetFenceSchema = z.object({
   workspace_id: sha256Schema,
@@ -316,6 +377,7 @@ export const transitionRequestSchema = z.object({
   operation: z.enum([
     'create', 'next', 'complete', 'resolve', 'resume', 'fork', 'import', 'ralph-retry',
     'chain-insert', 'chain-replace', 'chain-skip', 'meta-update', 'decide', 'accept-reuse',
+    'artifact-republish',
   ]),
   subject: z.object({
     session_id: nonEmptyString,
@@ -356,6 +418,7 @@ export const persistedTransitionRecordSchema = z.object({
 export const transitionOperationV11Schema = z.enum([
   'create', 'next', 'complete', 'resolve', 'resume', 'fork', 'import', 'ralph-retry',
   'chain-insert', 'chain-replace', 'chain-skip', 'meta-update', 'decide', 'accept-reuse',
+  'artifact-republish',
   'session-create', 'session-archive', 'session-unarchive',
   'execution-start', 'execution-chain-bootstrap', 'execution-attach', 'execution-pause', 'execution-resolve',
   'execution-resume', 'execution-seal', 'execution-handoff-prepare',
@@ -1003,6 +1066,95 @@ export const requestReceiptV20Schema = z.object({
   transition_receipt_ref: nonEmptyString,
 }).strict();
 
+export const artifactCompatibilityClassificationSchema = z.enum([
+  'compatible', 'representation_repairable', 'semantic_republish_required', 'invalid',
+]);
+
+const artifactCompatibilitySlotSchema = z.object({
+  kind: nonEmptyString,
+  schema: nonEmptyString,
+  role: z.enum(['primary', 'attachment', 'evidence', 'report', 'checkpoint']),
+  alias: nonEmptyString,
+}).strict();
+
+export const artifactCompatibilityAssessmentSchema = z.object({
+  schema_version: z.literal('artifact-compatibility/1.0'),
+  classification: artifactCompatibilityClassificationSchema,
+  reason_codes: z.array(nonEmptyString),
+  source: z.object({
+    session_id: nonEmptyString,
+    session_schema_version: z.enum([
+      'session/1.0', 'session/1.1', 'session/1.2', 'session/1.3', 'session/2.0', 'session/3.0',
+    ]),
+    session_revision: z.number().int().nonnegative(),
+    artifact_id: nonEmptyString,
+    artifact_registry_revision: z.number().int().nonnegative(),
+    artifact_path: nonEmptyString,
+    artifact_hash: sha256Schema,
+    artifact_size: z.number().int().nonnegative(),
+    producer_run_id: nonEmptyString,
+    producer_run_hash: sha256Schema,
+    producer_contract_hash: sha256Schema,
+    producer_contract_source: z.enum(['captured_snapshot', 'sealed_raw_registry', 'unavailable']),
+    raw_slot: artifactCompatibilitySlotSchema,
+    registry_slot: artifactCompatibilitySlotSchema,
+    producer_slot: artifactCompatibilitySlotSchema,
+  }).strict(),
+  consumer: z.object({
+    command: nonEmptyString,
+    command_contract_hash: sha256Schema,
+    slot_index: z.number().int().nonnegative(),
+    slot: artifactCompatibilitySlotSchema,
+  }).strict(),
+  assessment_hash: sha256Schema,
+}).strict();
+
+export const artifactRepublishReceiptSchema = z.object({
+  schema_version: z.literal('artifact-republish/1.0'),
+  receipt_id: nonEmptyString,
+  request_id: nonEmptyString,
+  session_id: nonEmptyString,
+  assessment_hash: sha256Schema,
+  source_artifact_id: nonEmptyString,
+  source_artifact_hash: sha256Schema,
+  artifact_id: nonEmptyString,
+  artifact_hash: sha256Schema,
+  artifact_path: nonEmptyString,
+  derived_from: z.array(nonEmptyString).length(1),
+  consumer: z.object({
+    command: nonEmptyString,
+    command_contract_hash: sha256Schema,
+    slot_index: z.number().int().nonnegative(),
+    slot: artifactCompatibilitySlotSchema,
+  }).strict(),
+  transformed_metadata: z.object({
+    role: z.object({ from: artifactCompatibilitySlotSchema.shape.role, to: artifactCompatibilitySlotSchema.shape.role }).strict(),
+    alias: z.object({ from: nonEmptyString, to: nonEmptyString }).strict(),
+  }).strict(),
+  compatibility_run_id: nonEmptyString,
+  compatibility_step_id: nonEmptyString,
+  artifact_registry_revision_before: z.number().int().nonnegative(),
+  artifact_registry_revision_after: z.number().int().positive(),
+  session_revision_before: z.number().int().nonnegative(),
+  session_revision_after: z.number().int().positive(),
+  actor_id: nonEmptyString,
+  participant_id: nonEmptyString,
+  reason: nonEmptyString,
+  evidence_refs: z.array(nonEmptyString).min(1),
+  recorded_at: nonEmptyString,
+  receipt_hash: sha256Schema,
+}).strict().superRefine((receipt, ctx) => {
+  if (receipt.artifact_registry_revision_after !== receipt.artifact_registry_revision_before + 1) {
+    ctx.addIssue({ code: 'custom', path: ['artifact_registry_revision_after'], message: 'registry revision must advance exactly once' });
+  }
+  if (receipt.session_revision_after !== receipt.session_revision_before + 1) {
+    ctx.addIssue({ code: 'custom', path: ['session_revision_after'], message: 'session revision must advance exactly once' });
+  }
+  if (receipt.derived_from[0] !== receipt.source_artifact_id) {
+    ctx.addIssue({ code: 'custom', path: ['derived_from'], message: 'derived_from must contain only source_artifact_id' });
+  }
+});
+
 export const transitionTargetTypeV20Schema = z.enum([
   'session-identity', 'orchestration', 'run', 'artifact', 'evidence',
 ]);
@@ -1119,6 +1271,7 @@ export const runOperationV12Schema = z.enum([
   'execution-operation-claim', 'execution-operation-heartbeat',
   'execution-operation-release', 'execution-operation-status',
   'participant-register', 'participant-status', 'participant-unregister',
+  'artifact-inspect', 'artifact-republish',
 ]);
 
 const responseCommonSchema = z.object({
@@ -1450,7 +1603,12 @@ export type SourceFence = z.infer<typeof sourceFenceSchema>;
 export type SourceFenceV11 = z.infer<typeof sourceFenceV11Schema>;
 export type SourceFenceRead = z.infer<typeof sourceFenceReadSchema>;
 export type SessionArchiveReceipt = z.infer<typeof sessionArchiveReceiptSchema>;
-export type ExecutionSealReceipt = z.infer<typeof executionSealReceiptSchema>;
+export type ExecutionSealReceiptV10 = z.infer<typeof executionSealReceiptSchema>;
+export type ExecutionSealReceiptV11 = z.infer<typeof executionSealReceiptV11Schema>;
+export type ExecutionSealReceipt = z.infer<typeof executionSealReceiptReadSchema>;
+export type ArtifactCompatibilityAssessment = z.infer<typeof artifactCompatibilityAssessmentSchema>;
+export type ArtifactCompatibilityClassification = z.infer<typeof artifactCompatibilityClassificationSchema>;
+export type ArtifactRepublishReceipt = z.infer<typeof artifactRepublishReceiptSchema>;
 export type RequestReceiptV20 = z.infer<typeof requestReceiptV20Schema>;
 export type TransitionReceiptV20 = z.infer<typeof transitionReceiptV20Schema>;
 export type ResumeMapV1 = z.infer<typeof resumeMapV1Schema>;

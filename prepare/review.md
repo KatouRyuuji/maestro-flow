@@ -88,6 +88,12 @@ Context injection (optional, may continue if missing):
 
 ## Boundaries and Invariants
 
+### Artifact Compatibility Recovery
+
+For an incompatible sealed `current-execution`, the exact order is **blocked consumer attempt -> needs-retry/cancel -> artifact inspect -> semantic republish -> explicit retry/next**. Close the attempted review Run with the current mode's fenced `needs-retry` completion or `run cancel`, confirm the review step is pending with no allocated/active Run, run read-only `maestro artifact inspect` for the exact Artifact/consumer/alias, and use `maestro artifact republish` only for `classification=semantic_republish_required` with the unchanged assessment hash and returned Artifact/Session revisions. Re-read the immutable republish receipt, then explicitly allocate the retry with fenced `maestro run next`; neither atomic complete-and-seal nor republish advances implicitly.
+
+Migration must preserve the sealed source bytes and raw registry role/alias semantics. Never repair this boundary with chain skip, Run rebind, direct Artifact Registry edits/rewrites, or source Artifact mutation; semantic republish creates a derived compatibility Artifact and receipt instead.
+
 - Review is read-only on source — problems found are not fixed in this run; source modification belongs to the debug→plan→execute loop.
 - Every finding must be anchored to `file:line` and carry severity, evidence, impact, recommendation; vague conclusions without anchors are forbidden.
 - The verdict is driven by findings data; do not change severity based on user preference without new evidence.

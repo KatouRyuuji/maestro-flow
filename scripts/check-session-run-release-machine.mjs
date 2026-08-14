@@ -426,6 +426,9 @@ async function main() {
           request_receipts_v2: false,
           execution_lease: true,
           operation_registry: false,
+          artifact_compatibility_v1: true,
+          atomic_run_complete_seal: true,
+          generation_scoped_seal_receipts: true,
         },
       },
     );
@@ -458,6 +461,9 @@ async function main() {
           request_receipts_v2: true,
           execution_lease: false,
           operation_registry: false,
+          artifact_compatibility_v1: true,
+          atomic_run_complete_seal: true,
+          generation_scoped_seal_receipts: true,
         },
       },
     );
@@ -510,6 +516,7 @@ async function main() {
     const v3Help = JSON.parse(assertMachineStreams(v3HelpResult, 'v3 help --json'));
     assert.equal(v3Help.schema_version, 'help-catalog/1.0');
     const expectedV3Commands = [
+      'artifact inspect', 'artifact republish',
       'execution attach', 'execution handoff accept', 'execution handoff cancel', 'execution handoff prepare',
       'execution lease heartbeat', 'execution lease recover', 'execution lease release', 'execution lease status',
       'execution operation claim', 'execution operation heartbeat', 'execution operation release',
@@ -525,6 +532,15 @@ async function main() {
     const v3CompleteHelp = v3Help.commands.find(item => item.command === 'run complete');
     assert.equal(v3CompleteHelp?.cas_target, 'run');
     assert.equal(v3CompleteHelp?.options.includes('--advance'), true);
+    assert.equal(v3CompleteHelp?.description, 'Complete and seal a Run atomically');
+    const artifactInspectHelp = v3Help.commands.find(item => item.command === 'artifact inspect');
+    assert.equal(artifactInspectHelp?.mutation_scope, 'read');
+    const artifactRepublishHelp = v3Help.commands.find(item => item.command === 'artifact republish');
+    assert.equal(artifactRepublishHelp?.mutation_scope, 'artifact');
+    assert.equal(artifactRepublishHelp?.cas_target, 'artifact');
+    assert.equal(artifactRepublishHelp?.options.includes('--assessment-hash'), true);
+    const recoverySealHelp = v3Help.commands.find(item => item.command === 'run seal');
+    assert.equal(recoverySealHelp?.description, 'Deprecated recovery seal for an already terminal pre-upgrade Run');
     const retiredHelp = v3Help.commands.find(item => item.command === 'execution status');
     assert.equal(retiredHelp?.deprecated, true);
     assert.equal(typeof retiredHelp?.replacement, 'string');
@@ -599,7 +615,21 @@ async function main() {
     ]), 'v3 complete with --advance', 'run-response/1.2');
     assert.equal(completeWithAdvance.result.run_revision, 2);
     assert.equal(completeWithAdvance.result.orchestration_revision, 3);
-    assert.equal(v3Store.readRunV30('release-v3', 'release-v3-run').status, 'completed');
+    assert.equal(completeWithAdvance.result.status, 'sealed');
+    assert.deepEqual(completeWithAdvance.result.artifact_publication, {
+      authority: 'transition-receipt/2.0',
+      artifact_registry_revision: 1,
+      artifact_ids: [],
+      primary_artifact_id: null,
+      artifacts: {},
+      aliases: {},
+    });
+    assert.deepEqual(completeWithAdvance.result.next, {
+      suggest_only: true,
+      command: 'maestro run next --session release-v3',
+      reason: 'Run sealed; no pending chain step remains',
+    });
+    assert.equal(v3Store.readRunV30('release-v3', 'release-v3-run').status, 'sealed');
     assert.equal(v3Store.readSessionV30('release-v3').chain[0].status, 'completed');
     recordProof(proofs, 'v3-run-complete-requires-advance');
 

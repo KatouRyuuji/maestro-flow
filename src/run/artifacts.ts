@@ -38,6 +38,10 @@ export interface ArtifactScanHooks {
   afterFileInspection?: (path: string) => void;
 }
 
+export interface StrictArtifactValidationOptions {
+  skipArtifactMetadataValidation?: boolean;
+}
+
 export interface VerifiedContainedFile {
   data: Buffer;
   canonicalPath: string;
@@ -361,6 +365,63 @@ export function declaredPathMatches(declaredPath: string, outputRelative: string
       : part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
     .join('');
   return new RegExp(`^${pattern}$`).test(actual);
+}
+
+export function defaultArtifactAlias(kind: string, command: string): string | undefined {
+  const value = `${kind} ${command}`.toLowerCase();
+  if (value.includes('analy') || value.includes('finding')) return 'current-analysis';
+  if (value.includes('plan')) return 'current-plan';
+  if (value.includes('execut') || value.includes('change-manifest')) return 'latest-execution';
+  if (value.includes('verif')) return 'latest-verification';
+  if (value.includes('review')) return 'latest-review';
+  if (value.includes('test') || value.includes('acceptance')) return 'latest-test';
+  if (value.includes('debug') || value.includes('diagnos')) return 'latest-debug';
+  return undefined;
+}
+
+export function validateStrictArtifactContract(
+  runDir: string,
+  contract: CommandContract,
+  scan: ArtifactScanResult,
+  options: StrictArtifactValidationOptions = {},
+): void {
+  if (contract.contract_version !== 2 && contract.contract_version !== 2.1) return;
+  const reportMismatch = (message: string): void => {
+    if (options.skipArtifactMetadataValidation) {
+      scan.warnings.push(`artifact metadata validation skipped: ${message}`);
+    } else {
+      scan.errors.push(message);
+    }
+  };
+  for (const expected of contract.produces) {
+    const expectedPath = expected.path?.replaceAll('\\', '/').replace(/^\.\//, '');
+    const actuals = expectedPath
+      ? scan.artifacts.filter(item => declaredPathMatches(
+          expectedPath,
+          relative(runDir, item.absolutePath).replaceAll('\\', '/'),
+        ))
+      : [];
+    if (actuals.length === 0) {
+      if (expected.required) scan.errors.push(`Missing required contract v2 output: ${expectedPath ?? expected.kind}`);
+      continue;
+    }
+    for (const actual of actuals) {
+      const actualPath = relative(runDir, actual.absolutePath).replaceAll('\\', '/');
+      if (actual.kind !== expected.kind) {
+        reportMismatch(`${actualPath}: _meta.kind ${actual.kind} does not match contract ${expected.kind}`);
+      }
+      if (expected.schema && actual.schemaVersion !== expected.schema) {
+        reportMismatch(`${actualPath}: _meta.schema ${actual.schemaVersion} does not match contract ${expected.schema}`);
+      }
+      const expectedRole = expected.role ?? (expected.primary ? 'primary' : 'attachment');
+      if (actual.role !== expectedRole) {
+        reportMismatch(`${actualPath}: _meta.role ${actual.role} does not match contract ${expectedRole}`);
+      }
+      if (expected.alias && actual.alias !== expected.alias) {
+        reportMismatch(`${actualPath}: _meta.alias ${actual.alias ?? '(missing)'} does not match contract ${expected.alias}`);
+      }
+    }
+  }
 }
 
 function hasNestedDeclaredTemplate(contract: CommandContract, outputRelative: string): boolean {

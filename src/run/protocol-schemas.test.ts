@@ -2,10 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import {
   executionLocatorSchema,
+  executionSealReceiptReadSchema,
   executionSealReceiptSchema,
+  executionSealReceiptV11Schema,
   maestroCapabilitiesSchema,
   requestReceiptV20Schema,
   resumeMapV1Schema,
+  runOperationSchema,
+  runOperationV12Schema,
   runResponseV12Schema,
   transitionReceiptV20Schema,
   recallConfirmationRecordReadSchema,
@@ -226,7 +230,20 @@ describe('versioned source and seal protocols', () => {
       overall_hash: hash,
     };
     expect(executionSealReceiptSchema.parse(seal)).toEqual(seal);
+    expect(executionSealReceiptReadSchema.parse(seal)).toEqual(seal);
     expect(() => executionSealReceiptSchema.parse({ ...seal, status: 'sealed' })).toThrow();
+
+    const sealV11 = {
+      ...seal,
+      schema_version: 'execution-seal-receipt/1.1' as const,
+      execution_hash: hash,
+      gates: { ...seal.gates, snapshots: [], snapshot_hash: hash },
+      artifacts: { ...seal.artifacts, snapshots: [], snapshot_hash: hash },
+      evidence: { ...seal.evidence, snapshots: [], snapshot_hash: hash },
+    };
+    expect(executionSealReceiptV11Schema.parse(sealV11)).toEqual(sealV11);
+    expect(executionSealReceiptReadSchema.parse(sealV11)).toEqual(sealV11);
+    expect(() => executionSealReceiptSchema.parse(sealV11)).toThrow();
 
     const archive = {
       schema_version: 'session-archive-receipt/1.0' as const,
@@ -313,6 +330,11 @@ describe('execution-generation protocol schemas', () => {
   });
 
   it('validates execution locators and strict capability negotiation', () => {
+    expect(() => runOperationSchema.parse('artifact-inspect')).toThrow();
+    expect(() => runOperationSchema.parse('artifact-republish')).toThrow();
+    expect(runOperationV12Schema.parse('artifact-inspect')).toBe('artifact-inspect');
+    expect(runOperationV12Schema.parse('artifact-republish')).toBe('artifact-republish');
+
     expect(executionLocatorSchema.parse({
       session_id: 's', execution_id: 'exec-1', generation: 1, run_id: null,
     })).toMatchObject({ execution_id: 'exec-1', generation: 1 });
@@ -330,6 +352,9 @@ describe('execution-generation protocol schemas', () => {
         session_statusless: true,
         legacy_session_aliases: true,
         session_run_minimal_v3: false,
+        artifact_compatibility_v1: true,
+        atomic_run_complete_seal: true,
+        generation_scoped_seal_receipts: true,
       },
     };
     expect(maestroCapabilitiesSchema.parse(capabilities)).toEqual(capabilities);

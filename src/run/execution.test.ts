@@ -1520,7 +1520,10 @@ describe('Execution seal snapshot authority', () => {
       sessionId: 's', executionId: started.execution.execution_id, generation: 1,
       expectedExecutionRevision: 2, executionLease: claim(started.lease_claim), requestId: 'req-complete',
     });
-    const artifactHash = 'a'.repeat(64);
+    const artifactBytes = 'hello report';
+    const artifactHash = createHash('sha256').update(artifactBytes).digest('hex');
+    mkdirSync(join(store.sessionDir('s'), 'outputs'), { recursive: true });
+    writeFileSync(join(store.sessionDir('s'), 'outputs', 'report.md'), artifactBytes);
     store.update('s', draft => {
       draft.gates.revision = 1;
       draft.gates.gates.approval = {
@@ -1549,15 +1552,24 @@ describe('Execution seal snapshot authority', () => {
     });
     const receipt = store.readExecutionSealReceipt('s', started.execution.execution_id)!;
     expect(receipt).toMatchObject({
-      schema_version: 'execution-seal-receipt/1.0', session_id: 's',
+      schema_version: 'execution-seal-receipt/1.1', session_id: 's',
       execution_id: started.execution.execution_id, generation: 1, execution_revision: 4,
       session_identity_revision: 2, runs: [{ run_id: run.run_id }],
       gates: { clean: true, blocking_gate_ids: [], registry_revision: 1 },
-      artifacts: { registry_revision: 1, content_hashes: { 'artifact-1': `sha256:${artifactHash}` } },
-      evidence: { store_revision: 1, record_refs: ['evidence-1'] },
+      artifacts: {
+        registry_revision: 1,
+        content_hashes: { 'artifact-1': `sha256:${artifactHash}` },
+        snapshots: [{
+          artifact_id: 'artifact-1', role: 'report', producer_run_id: run.run_id,
+          content_hash: `sha256:${artifactHash}`,
+        }],
+      },
+      evidence: { store_revision: 1, record_refs: ['evidence-1'], snapshots: [{ record_id: 'evidence-1' }] },
     });
     expect(receipt.runs[0]).not.toHaveProperty('status');
     expect(receipt.runs[0].content_hash).toBe(fileHash(join(store.runDir('s', run.run_id), 'run.json')));
+    if (receipt.schema_version !== 'execution-seal-receipt/1.1') throw new Error('expected receipt/1.1');
+    expect(receipt.execution_hash).toBe(fileHash(store.executionPath('s', started.execution.execution_id)));
     expect(receipt.chain_hash).toMatch(/^sha256:[a-f0-9]{64}$/);
     expect(receipt.gates.registry_hash).toBe(fileHash(join(store.sessionDir('s'), 'gates.json')));
     expect(receipt.artifacts.registry_hash).toBe(fileHash(join(store.sessionDir('s'), 'artifacts.json')));

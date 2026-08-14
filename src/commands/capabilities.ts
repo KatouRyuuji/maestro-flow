@@ -33,6 +33,9 @@ export function registerCapabilitiesCommand(program: Command): void {
           request_receipts_v2: v3Ready,
           execution_lease: !v3,
           operation_registry: false,
+          artifact_compatibility_v1: true,
+          atomic_run_complete_seal: true,
+          generation_scoped_seal_receipts: true,
         },
       });
       process.stdout.write(`${JSON.stringify(result)}\n`);

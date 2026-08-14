@@ -34,6 +34,9 @@ function fixture(input: {
     schema_version: 'gates/1.0', revision: 0, gates: {},
     summary: { total: 0, passed: 0, blocked: 0, failed: 0, active_gate_ids: [], blocking_run_id: null },
   }, null, 2)}\n`);
+  writeFileSync(join(sessionDir, 'artifacts.json'), `${JSON.stringify({
+    schema_version: 'artifacts/1.0', revision: 0, artifacts: {}, aliases: {},
+  }, null, 2)}\n`);
   const hasRun = input.run !== undefined;
   const session: SessionStateV30 = {
     schema_version: 'session/3.0', session_id: 's-v3', objective: 'exercise CLI',
@@ -196,7 +199,10 @@ describe('formal session/3.0 Commander modules', () => {
     ]);
     expect(completed).toMatchObject({ operation: 'complete', ok: true });
     expect(JSON.parse(readFileSync(join(root, '.workflow', 'sessions', 's-v3', 'session.json'), 'utf8')))
-      .toMatchObject({ orchestration_revision: 3, chain: [{ status: 'completed' }, { status: 'pending' }] });
+      .toMatchObject({
+        orchestration_revision: 3,
+        chain: [{ status: 'completed' }, { status: 'pending', run_ids: [] }],
+      });
   });
 
   it('exposes active Run block and evidence-backed fail transitions', async () => {
@@ -250,6 +256,23 @@ describe('formal session/3.0 Commander modules', () => {
       .toMatchObject({ active_run_ids: [], activity_revision: 1 });
   });
 
+  it('keeps run seal as terminal-record recovery and refuses a running Run', async () => {
+    const root = fixture({ stepStatus: 'running', run: {
+      status: 'running', started_at: '2026-08-12T00:01:00.000Z',
+    } });
+    const beforeArtifacts = readFileSync(join(root, '.workflow', 'sessions', 's-v3', 'artifacts.json'), 'utf8');
+    const response = await invoke(registerRunV3Command, [
+      'run', 'seal', 'run-1', ...mutationFlags(root, '--expected-run-revision'),
+    ]);
+    expect(response).toMatchObject({
+      operation: 'run-seal', ok: false,
+      error: { code: 'INVALID_STATE_TRANSITION' },
+    });
+    expect(JSON.parse(readFileSync(join(root, '.workflow', 'sessions', 's-v3', 'runs', 'run-1', 'run.json'), 'utf8')))
+      .toMatchObject({ status: 'running', revision: 0, output_refs: [] });
+    expect(readFileSync(join(root, '.workflow', 'sessions', 's-v3', 'artifacts.json'), 'utf8')).toBe(beforeArtifacts);
+  });
+
   it('creates and starts a Run through the mutation engine', async () => {
     const root = fixture();
     const createArgs = [
@@ -285,18 +308,28 @@ describe('formal session/3.0 Commander modules', () => {
       .toMatchObject({ status: 'running', revision: 0 });
   });
 
-  it('completes a running Run and its chain step atomically with --advance', async () => {
+  it('completes and seals a running Run and its chain step atomically with --advance', async () => {
     const root = fixture({ stepStatus: 'running', run: { status: 'running', started_at: '2026-08-12T00:01:00.000Z' } });
     const response = await invoke(registerRunV3Command, [
       'run', 'complete', 'run-1', '--summary', 'done', '--advance',
       '--expected-orchestration-revision', '0',
       ...mutationFlags(root, '--expected-run-revision'),
     ]);
-    expect(response).toMatchObject({ operation: 'complete', ok: true });
+    expect(response).toMatchObject({
+      operation: 'complete', ok: true,
+      result: {
+        operation: 'run-complete-and-seal', status: 'sealed',
+        artifact_publication: { authority: 'transition-receipt/2.0', artifact_ids: [] },
+        next: { suggest_only: true, command: 'maestro run next --session s-v3' },
+      },
+    });
     const session = JSON.parse(readFileSync(join(root, '.workflow', 'sessions', 's-v3', 'session.json'), 'utf8'));
     const run = JSON.parse(readFileSync(join(root, '.workflow', 'sessions', 's-v3', 'runs', 'run-1', 'run.json'), 'utf8'));
     expect(session).toMatchObject({ orchestration_revision: 1, active_run_ids: [], chain: [{ status: 'completed' }] });
-    expect(run).toMatchObject({ status: 'completed', revision: 1, verdict: 'done', summary: 'done' });
+    expect(run).toMatchObject({
+      status: 'sealed', revision: 1, verdict: 'done', summary: 'done',
+      ended_at: expect.any(String), sealed_at: expect.any(String),
+    });
   });
 
   it('derives retry attempt metadata instead of accepting a caller attempt', async () => {

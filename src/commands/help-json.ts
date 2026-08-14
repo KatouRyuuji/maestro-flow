@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 
 import { SessionStore } from '../run/store.js';
 
+import { registerArtifactCommand } from './artifact.js';
 import { registerExecutionV3RetiredCommand } from './execution-v3-retired.js';
 import { registerParticipantCommand } from './participant.js';
 import { registerRunV3Command } from './run-v3.js';
@@ -11,8 +12,8 @@ import { registerSessionV3Command } from './session-v3.js';
 export interface HelpCatalogCommand {
   command: string;
   description: string;
-  mutation_scope: 'read' | 'run' | 'orchestration' | 'participant' | 'retired';
-  cas_target: 'none' | 'run' | 'orchestration';
+  mutation_scope: 'read' | 'run' | 'orchestration' | 'artifact' | 'participant' | 'retired';
+  cas_target: 'none' | 'run' | 'orchestration' | 'artifact';
   options: string[];
   examples: string[];
   deprecated: boolean;
@@ -24,6 +25,7 @@ function optionName(option: Option): string {
 }
 
 function classify(path: string, options: string[]): Pick<HelpCatalogCommand, 'mutation_scope' | 'cas_target'> {
+  if (path === 'artifact republish') return { mutation_scope: 'artifact', cas_target: 'artifact' };
   if (path.startsWith('execution ')) return { mutation_scope: 'retired', cas_target: 'none' };
   if (path.startsWith('participant ')) {
     return { mutation_scope: path === 'participant status' ? 'read' : 'participant', cas_target: 'none' };
@@ -58,6 +60,7 @@ export function buildV3HelpCatalog(): HelpCatalogCommand[] {
   const root = new Command('');
   root.helpCommand(false);
   root.exitOverride();
+  registerArtifactCommand(root);
   registerRunV3Command(root);
   registerSessionV3Command(root);
   registerParticipantCommand(root);

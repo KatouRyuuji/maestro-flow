@@ -43,6 +43,7 @@ const REQUIRED = [
   'execution operation claim', 'execution operation heartbeat',
   'execution operation release', 'execution operation status',
   'participant register', 'participant status', 'participant unregister',
+  'artifact inspect', 'artifact republish',
 ];
 
 describe('v3 help catalog', () => {
@@ -70,6 +71,19 @@ describe('v3 help catalog', () => {
       expect(item.options).not.toContain('--expected-activity-revision');
     }
     const migration = catalog.find(item => item.command === 'session migrate');
+    const inspect = catalog.find(item => item.command === 'artifact inspect');
+    const republish = catalog.find(item => item.command === 'artifact republish');
+    const complete = catalog.find(item => item.command === 'run complete');
+    const recoverySeal = catalog.find(item => item.command === 'run seal');
+    expect(inspect).toMatchObject({ mutation_scope: 'read', cas_target: 'none' });
+    expect(republish).toMatchObject({ mutation_scope: 'artifact', cas_target: 'artifact' });
+    expect(republish?.options).toEqual(expect.arrayContaining([
+      '--assessment-hash', '--request-id', '--expected-artifact-revision', '--expected-session-revision',
+      '--participant', '--actor', '--reason', '--evidence',
+    ]));
+    expect(complete?.description).toBe('Complete and seal a Run atomically');
+    expect(complete?.options).toContain('--advance');
+    expect(recoverySeal?.description).toBe('Deprecated recovery seal for an already terminal pre-upgrade Run');
     expect(migration).toMatchObject({ mutation_scope: 'orchestration', cas_target: 'none' });
     expect(migration?.options).toEqual(expect.arrayContaining(['--participant', '--actor', '--to-v3']));
     expect(migration?.options).not.toContain('--request-id');

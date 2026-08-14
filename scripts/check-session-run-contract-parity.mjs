@@ -698,10 +698,14 @@ const capabilityFeatureKeys = [
   'execution_generation', 'core_execution_lease', 'execution_handoff', 'session_statusless',
   'legacy_session_aliases', 'session_run_minimal_v3', 'entity_revision_cas',
   'participant_identity', 'request_receipts_v2', 'execution_lease', 'operation_registry',
+  'artifact_compatibility_v1', 'atomic_run_complete_seal', 'generation_scoped_seal_receipts',
 ];
 const legacyCapabilityFeatures = new Set([
   'execution_generation', 'core_execution_lease', 'execution_handoff', 'session_statusless',
   'legacy_session_aliases', 'execution_lease',
+]);
+const universalCapabilityFeatures = new Set([
+  'artifact_compatibility_v1', 'atomic_run_complete_seal', 'generation_scoped_seal_receipts',
 ]);
 const capabilityContract = {
   schema_version: zodLiteral(protocolPath, 'maestroCapabilitiesSchema'),
@@ -714,7 +718,13 @@ const capabilityContract = {
   v3_writer_switch: capabilitiesCommands?.includes("const v3 = writer === 'session/3.0';") ?? false,
   execution_writer_switch: capabilitiesCommands?.includes("execution_schema_writes: v3 ? [] : ['execution/1.0']") ?? false,
   feature_switches: capabilityFeatureKeys.map(key => capabilitiesCommands?.includes(
-    `${key}: ${key === 'operation_registry' ? 'false' : legacyCapabilityFeatures.has(key) ? '!v3' : 'v3Ready'}`,
+    `${key}: ${key === 'operation_registry'
+      ? 'false'
+      : universalCapabilityFeatures.has(key)
+        ? 'true'
+        : legacyCapabilityFeatures.has(key)
+          ? '!v3'
+          : 'v3Ready'}`,
   ) ?? false),
 };
 const expectedCapabilityContract = {

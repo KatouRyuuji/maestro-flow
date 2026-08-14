@@ -30,7 +30,8 @@ import {
   type SessionState,
 } from './schemas.js';
 import {
-  createExecutionSealReceipt,
+  createExecutionSealReceiptV11,
+  executionSealReceiptScopeSnapshots,
   SessionStore,
   type SessionBundle,
   type StoreTransaction,
@@ -658,22 +659,15 @@ function buildExecutionSealReceipt(
   if (!execution.sealed_at) throw new Error('sealed Execution timestamp is required for receipt');
   const runs = tx.listBoundExecutionRuns(execution.execution_id, execution.generation)
     .sort((left, right) => left.run_id.localeCompare(right.run_id));
-  const blockingGateIds = Object.entries(bundle.gates.gates)
-    .filter(([, gate]) => gate.blocking && ['pending', 'running', 'failed', 'blocked'].includes(gate.status))
-    .map(([gateId]) => gateId)
-    .sort();
-  const contentHashes = Object.fromEntries(
-    Object.entries(bundle.artifacts.artifacts)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([artifactId, artifact]) => [artifactId, `sha256:${artifact.content_hash}`]),
-  );
+  const scopeSnapshots = executionSealReceiptScopeSnapshots(runs, bundle);
   const chainSnapshot = structuredClone(execution.chain);
-  return createExecutionSealReceipt({
+  return createExecutionSealReceiptV11({
     session_id: execution.session_id,
     execution_id: execution.execution_id,
     generation: execution.generation,
     sealed_at: execution.sealed_at,
     execution_revision: execution.revision,
+    execution_hash: storedJsonHash(execution),
     session_identity_revision: bundle.session.identity_revision,
     session_activity_revision: bundle.session.activity_revision,
     runs: runs.map(run => ({
@@ -683,22 +677,7 @@ function buildExecutionSealReceipt(
     })),
     chain_snapshot: chainSnapshot,
     chain_hash: sha256(stableJsonUtf8(chainSnapshot)),
-    gates: {
-      clean: blockingGateIds.length === 0,
-      blocking_gate_ids: blockingGateIds,
-      registry_revision: bundle.gates.revision,
-      registry_hash: storedJsonHash(bundle.gates),
-    },
-    artifacts: {
-      registry_revision: bundle.artifacts.revision,
-      registry_hash: storedJsonHash(bundle.artifacts),
-      content_hashes: contentHashes,
-    },
-    evidence: {
-      store_revision: bundle.evidence.revision,
-      store_hash: storedJsonHash(bundle.evidence),
-      record_refs: Object.keys(bundle.evidence.records).sort(),
-    },
+    ...scopeSnapshots,
     corpus_refs: executionCorpusRefs(runs),
   });
 }

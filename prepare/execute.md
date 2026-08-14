@@ -103,6 +103,12 @@ Degradation seal: `maestro session done <run_id> --verdict needs-retry` with rep
 
 ## Boundaries and Invariants
 
+### Artifact Compatibility Recovery
+
+For an incompatible sealed input, the exact order is **blocked consumer attempt -> needs-retry/cancel -> artifact inspect -> semantic republish -> explicit retry/next**. Close the attempted execute Run with the current mode's fenced `needs-retry` completion or `run cancel`, confirm the execute step is pending with no allocated/active Run, run read-only `maestro artifact inspect` for the exact Artifact/consumer/alias, and use `maestro artifact republish` only for `classification=semantic_republish_required` with the unchanged assessment hash and returned Artifact/Session revisions. Re-read the immutable republish receipt, then explicitly allocate the retry with fenced `maestro run next`; neither atomic complete-and-seal nor republish advances implicitly.
+
+Migration must preserve the sealed source bytes and raw registry role/alias semantics. Never repair this boundary with chain skip, Run rebind, direct Artifact Registry edits/rewrites, or source Artifact mutation; semantic republish creates a derived compatibility Artifact and receipt instead.
+
 - self-check is only a scoped build/test smoke over this run's changes (narrowest suites covering changed behavior; never a repository-wide matrix), **not** an acceptance conclusion — formal acceptance is in a separate verify run; never overstep to issue a verdict here.
 - Write only source-code changes and this run's domain artifacts; protocol state (run completion, artifact registration) is handled by the CLI — do not manually edit state.
 - After each task completes, do knowledge extraction per trigger conditions: deviations → arch constraints; retry_count ≥ 2 → debug fix mode; design_rationale → learning knowhow.
