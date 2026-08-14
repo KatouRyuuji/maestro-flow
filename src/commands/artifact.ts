@@ -82,7 +82,7 @@ export function registerArtifactCommand(program: Command): void {
     .requiredOption('--assessment-hash <sha256>', 'exact inspect assessment hash')
     .requiredOption('--request-id <id>', 'idempotency request ID')
     .requiredOption('--expected-artifact-revision <n>', 'expected Artifact registry revision', parseV3Revision)
-    .requiredOption('--expected-orchestration-revision <n>', 'expected Session orchestration revision', parseV3Revision)
+    .option('--expected-orchestration-revision <n>', 'expected Session orchestration revision', parseV3Revision)
     .option('--expected-session-revision <n>', 'deprecated alias of --expected-orchestration-revision', parseV3Revision)
     .requiredOption('--participant <id>', 'participant performing the mutation')
     .requiredOption('--actor <id>', 'authorized actor')
@@ -90,6 +90,10 @@ export function registerArtifactCommand(program: Command): void {
     .option('--evidence <ref>', 'evidence reference (repeatable)', collectV3, [])
     .action((artifactId: string, options: ArtifactRepublishCliOptions) => {
       try {
+        const expectedSessionRevision = options.expectedOrchestrationRevision ?? options.expectedSessionRevision;
+        if (expectedSessionRevision === undefined) {
+          throw new Error('--expected-orchestration-revision is required');
+        }
         const projectRoot = resolve(options.workflowRoot);
         const store = new SessionStore(projectRoot);
         const common = {
@@ -100,7 +104,7 @@ export function registerArtifactCommand(program: Command): void {
           assessmentHash: options.assessmentHash,
           requestId: options.requestId,
           expectedArtifactRevision: options.expectedArtifactRevision,
-          expectedSessionRevision: options.expectedOrchestrationRevision ?? options.expectedSessionRevision ?? 0,
+          expectedSessionRevision,
           participantId: options.participant,
           actorId: options.actor,
           reason: options.reason,
