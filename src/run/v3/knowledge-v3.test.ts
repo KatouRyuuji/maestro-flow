@@ -331,4 +331,42 @@ describe('v3 knowledge reconciliation hook', () => {
     const generatedAtAfter = (JSON.parse(readFileSync(receiptPath, 'utf8')) as { generated_at: string }).generated_at;
     expect(generatedAtAfter).toBe(generatedAtBefore);
   });
+
+  it('stages frontmatter candidates into the knowledge delta atomically with the seal and exposes them to review/promote', async () => {
+    const root = cliFixture({ report: REPORT_WITH_DECISIONS, delta: transcriptOnlyDelta() });
+    const runPath = join(root, '.workflow', 'sessions', 's-v3', 'runs', 'run-1', 'run.json');
+    const runDoc = JSON.parse(readFileSync(runPath, 'utf8')) as RunV30;
+    writeFileSync(runPath, `${JSON.stringify({
+      ...runDoc, status: 'running', started_at: '2026-08-12T00:01:00.000Z',
+    }, null, 2)}\n`, 'utf8');
+
+    const completed = await invoke(registerRunV3Command, [
+      'run', 'complete', 'run-1', '--summary', 'done', '--advance',
+      '--expected-orchestration-revision', '0', '--expected-run-revision', '0',
+      '--session', 's-v3', '--participant', 'participant', '--actor', 'actor',
+      '--request-id', 'req-delta-stage', '--reason', 'delta stage test',
+      '--json', '--workflow-root', root,
+    ]);
+    expect(completed).toMatchObject({ operation: 'complete', ok: true });
+
+    // The staged delta lives at the canonical v2 path, so knowledge
+    // review/promote (summarizeSessionKnowledge) can see v3 candidates.
+    const deltaPath = join(root, '.workflow', 'sessions', 's-v3', 'runs', 'run-1', 'knowledge-delta.json');
+    expect(existsSync(deltaPath)).toBe(true);
+    const delta = JSON.parse(readFileSync(deltaPath, 'utf8')) as {
+      candidates: Array<{ source_kind: string; status: string }>;
+    };
+    const kinds = delta.candidates.map(candidate => candidate.source_kind).sort();
+    expect(kinds).toContain('constraint');
+    expect(kinds).toContain('decision');
+    expect(delta.candidates.length).toBe(3); // transcript fixture + constraint + decision
+    expect(delta.candidates.every(candidate => candidate.status === 'pending')).toBe(true);
+
+    // Promote/review visibility: summarizeSessionKnowledge aggregates v3 deltas.
+    const { summarizeSessionKnowledge } = await import('../knowledge.js');
+    const summary = summarizeSessionKnowledge(root, 's-v3', { readOnly: true, strict: true });
+    const v3Candidates = summary.candidates.filter(candidate => candidate.run_ids.includes('run-1'));
+    expect(v3Candidates.length).toBe(3);
+    expect(v3Candidates.every(candidate => candidate.status === 'pending')).toBe(true);
+  });
 });

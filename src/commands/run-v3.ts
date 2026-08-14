@@ -14,8 +14,8 @@ import {
   type DecideV3Verdict,
 } from '../run/v3/decide-v3.js';
 import {
+  generateV3RunKnowledgeReconciliation,
   readV3KnowledgeReconciliation,
-  reconcileV3RunKnowledge,
   v3ReconciliationSummary,
 } from '../run/v3/knowledge-v3.js';
 import { ensureV3RunShell } from '../run/v3/run-shell.js';
@@ -164,23 +164,23 @@ export function registerRunV3Command(program: Command): void {
         }
         const { store, options: resolved } = resolveV3Options(options);
         const verdict = resolved.verdict as 'done' | 'done_with_concerns';
+        // Knowledge reconciliation is generated BEFORE the mutation (pure
+        // computation, no writes) and committed atomically with the staged
+        // knowledge delta inside completeRunAndAdvance — receipt and delta
+        // can never diverge. A missing/unreadable report yields null and both
+        // are omitted.
+        const knowledgeReconciliation = generateV3RunKnowledgeReconciliation(
+          store.projectRoot, resolved.session, runId,
+        );
         const mutation = completeRunAndAdvance(store, {
           ...mutationIdentity(resolved), runId,
           expectedRunRevision: resolved.expectedRunRevision!,
           expectedOrchestrationRevision: resolved.expectedOrchestrationRevision!,
           summary: resolved.summary, verdict,
+          knowledgeReconciliation,
         });
-        // One-shot knowledge reconciliation after the mutation commits. The
-        // write is a plain idempotent file write (replay-safe) and never
-        // touches session authority. A missing/unreadable report yields null
-        // and the field is omitted.
-        const result: Record<string, unknown> = {
-          ...(runResult(mutation) as Record<string, unknown>),
-        };
-        const receipt = reconcileV3RunKnowledge(store.projectRoot, resolved.session, runId);
-        if (receipt) result.knowledge_reconciliation = v3ReconciliationSummary(receipt);
         emitV3Success({ operation: 'complete', sessionId: resolved.session, runId,
-          requestId: resolved.requestId, result, mutation });
+          requestId: resolved.requestId, result: runResult(mutation), mutation });
       } catch (error) {
         emitV3Error('complete', error, { session: options.session, runId, requestId: options.requestId });
       }

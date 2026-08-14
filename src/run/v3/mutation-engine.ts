@@ -3,6 +3,20 @@ import { resolve } from 'node:path';
 
 import { artifactRepublishReceiptSchema, type TransitionReceiptV20 } from '../protocol-schemas.js';
 import {
+  applyAutomaticKnowledgeSuppression,
+  knowledgeReconciliationSchema,
+  reconciliationPath,
+  reconciliationSummary,
+  type KnowledgeReconciliation,
+} from '../../knowledge/reconcile.js';
+import {
+  addCandidate,
+  readRunKnowledgeDelta,
+  runKnowledgeDeltaPath,
+  runKnowledgeDeltaSchema,
+  type RunKnowledgeDelta,
+} from '../knowledge.js';
+import {
   artifactRegistrySchema,
   type ArtifactRegistry,
   type RunV30,
@@ -24,7 +38,7 @@ import {
   type DiscoveredArtifact,
 } from '../artifacts.js';
 import { hashCommandContract, resolveCommandSource } from '../contract.js';
-import { readReportFrontmatter } from '../report.js';
+import { readReportFrontmatter, type ReportFrontmatter } from '../report.js';
 import { createRevisionConflictError, V3StructuredError } from './errors.js';
 import {
   canonicalPayloadHash,
@@ -74,6 +88,14 @@ export interface CompleteRunAndAdvanceInput extends V3MutationIdentity {
   expectedOrchestrationRevision: number;
   summary?: string | null;
   verdict: Extract<NonNullable<RunV30['verdict']>, 'done' | 'done_with_concerns'>;
+  /**
+   * Knowledge reconciliation receipt generated OUTSIDE the transaction (pure
+   * computation, run-v3.ts). Committed atomically here together with the
+   * staged knowledge delta, so reconciliation and staging can never diverge.
+   * Deliberately NOT part of the canonical payload (derived data, not caller
+   * intent) — replays keep the original receipt semantics.
+   */
+  knowledgeReconciliation?: KnowledgeReconciliation | null;
 }
 
 export interface RecoverSealRunV3Input extends V3MutationIdentity {
@@ -834,6 +856,57 @@ export function createRunningRunV3(store: SessionStore, input: CreateRunningRunV
   });
 }
 
+/**
+ * v3 staging adapter: convert report.md frontmatter facts into pending
+ * knowledge candidates inside the sealing transaction (mirrors v2
+ * stageHandoffKnowledgeCandidates, which requires the v2 handoff shape v3
+ * Runs do not carry). Accepted decisions and locked constraints become
+ * pending spec candidates with run-scoped evidence; automatic suppression is
+ * applied from the reconciliation receipt when provided. Writes the delta at
+ * the canonical v2 path so `knowledge review/promote` (summarizeSessionKnowledge)
+ * can see v3 candidates.
+ */
+function stageV3RunKnowledgeCandidates(input: {
+  store: SessionStore;
+  tx: SessionV30StoreTransaction;
+  sessionId: string;
+  runId: string;
+  frontmatter: ReportFrontmatter;
+  reconciliation?: KnowledgeReconciliation | null;
+}): RunKnowledgeDelta | null {
+  const { store, tx, sessionId, runId, frontmatter } = input;
+  const now = new Date().toISOString();
+  const delta = readRunKnowledgeDelta(store, sessionId, runId, true);
+  const evidence = [`run:${runId}`];
+  let staged = false;
+  for (const [index, decision] of frontmatter.decisions.entries()) {
+    const content = decision.text.trim();
+    if (decision.status !== 'accepted' || !content) continue;
+    addCandidate(delta, {
+      target: 'spec', action: 'propose', title: content.slice(0, 120), content,
+      category: 'arch', source_kind: 'decision',
+      evidence_refs: [...evidence, `report.md#decision:${index}`],
+    }, now);
+    staged = true;
+  }
+  for (const [index, constraint] of frontmatter.constraints.entries()) {
+    const content = constraint.text.trim();
+    if (constraint.status !== 'locked' || !content) continue;
+    addCandidate(delta, {
+      target: 'spec', action: 'propose', title: content.slice(0, 120), content,
+      category: 'arch', source_kind: 'constraint',
+      evidence_refs: [...evidence, `report.md#constraint:${index}`],
+    }, now);
+    staged = true;
+  }
+  if (!staged) return null;
+  delta.revision++;
+  delta.updated_at = now;
+  if (input.reconciliation) applyAutomaticKnowledgeSuppression(delta, input.reconciliation);
+  tx.writeJson(runKnowledgeDeltaPath(store, sessionId, runId), delta, runKnowledgeDeltaSchema);
+  return delta;
+}
+
 export function completeRunAndAdvance(
   store: SessionStore,
   input: CompleteRunAndAdvanceInput,
@@ -901,6 +974,22 @@ export function completeRunAndAdvance(
       chain,
       active_run_ids: session.active_run_ids.filter(id => id !== runId),
     }, identity.recordedAt, session.orchestration_revision + 1);
+
+    // ── knowledge staging + reconciliation receipt (atomic with the seal) ──
+    let knowledgeReceipt: KnowledgeReconciliation | null = null;
+    if (input.knowledgeReconciliation) {
+      stageV3RunKnowledgeCandidates({
+        store, tx, sessionId: identity.sessionId, runId, frontmatter,
+        reconciliation: input.knowledgeReconciliation,
+      });
+      tx.writeJson(
+        reconciliationPath(store, identity.sessionId, runId),
+        input.knowledgeReconciliation,
+        knowledgeReconciliationSchema,
+      );
+      knowledgeReceipt = input.knowledgeReconciliation;
+    }
+
     return stageApplied({
       tx, identity, payloadHash, session: nextSession, run: nextRun,
       targetType: 'orchestration', targetId: identity.sessionId,
@@ -922,6 +1011,9 @@ export function completeRunAndAdvance(
             ? 'Run sealed; explicit run next may allocate the next chain Run'
             : 'Run sealed; no pending chain step remains',
         },
+        ...(knowledgeReceipt
+          ? { knowledge_reconciliation: reconciliationSummary(knowledgeReceipt) }
+          : {}),
       },
     });
   });

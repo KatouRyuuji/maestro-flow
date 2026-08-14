@@ -8,6 +8,8 @@ import {
   type ReportFrontmatter,
 } from './schemas.js';
 
+export type { ReportFrontmatter };
+
 export function readReportFrontmatter(runDir: string): ReportFrontmatter {
   const path = join(runDir, 'report.md');
   if (!existsSync(path)) return reportFrontmatterSchema.parse({});

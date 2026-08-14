@@ -1012,11 +1012,15 @@ export function summarizeSessionKnowledge(
     ? readdirSync(runsDir).filter(runId => {
       if (!existsSync(join(store.runDir(sessionId, runId), 'run.json'))) return false;
       try {
-        const run = options.readOnly
-          ? store.readRunReadOnly(sessionId, runId)
-          : store.readRun(sessionId, runId);
-        if (run.run_id !== runId) {
-          throw new Error(`Run authority mismatch: directory ${runId} contains ${run.run_id}`);
+        // Schema-agnostic authority check: v2 readRun* rejects run/3.0
+        // (SessionSchemaUnsupportedError), which would make knowledge
+        // review/promote crash on v3 workspaces. The raw record carries
+        // run_id for both generations.
+        const record = options.readOnly
+          ? store.readRunRecordReadOnly(sessionId, runId)
+          : store.readRunRecord(sessionId, runId);
+        if (record.run_id !== runId) {
+          throw new Error(`Run authority mismatch: directory ${runId} contains ${record.run_id}`);
         }
         return true;
       } catch (error) {

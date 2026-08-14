@@ -11,18 +11,17 @@ import { readReportFrontmatter } from '../report.js';
 import { SessionStore } from '../store.js';
 
 /**
- * v3 seal-time knowledge reconciliation hook. Reuses the v2 reconciliation
- * engine verbatim (reconcileRunKnowledgeSync) and persists the receipt at the
- * exact v2 path (reconciliationPath, i.e. knowledge-reconciliation.json next
- * to the Run). The write is a plain, idempotent, non-CAS file write: it never
- * touches session.json, orchestration revision, or any receipt ledger, so a
- * failed or repeated reconcile cannot corrupt v3 mutation authority.
+ * Generate the v3 Run knowledge reconciliation receipt (pure computation, no
+ * writes). Reuses the v2 reconciliation engine verbatim
+ * (reconcileRunKnowledgeSync); the caller decides how to persist it. In the
+ * v3 complete path the receipt is committed inside the same atomic
+ * withV30Transaction as the staged knowledge delta (mutation-engine.ts), so
+ * reconciliation and staging can never diverge.
  *
- * Returns the written receipt, or null when reconciliation is unavailable
- * (e.g. missing/unreadable report frontmatter) so `run check` degrades
- * gracefully instead of failing the read command.
+ * Returns null when reconciliation is unavailable (e.g. missing/unreadable
+ * report frontmatter) so callers degrade gracefully instead of failing.
  */
-export function reconcileV3RunKnowledge(
+export function generateV3RunKnowledgeReconciliation(
   projectRoot: string,
   sessionId: string,
   runId: string,
@@ -31,7 +30,29 @@ export function reconcileV3RunKnowledge(
     const store = new SessionStore(projectRoot);
     const runDir = store.runDir(sessionId, runId);
     const frontmatter = readReportFrontmatter(runDir);
-    const receipt = reconcileRunKnowledgeSync(projectRoot, sessionId, runId, frontmatter);
+    return reconcileRunKnowledgeSync(projectRoot, sessionId, runId, frontmatter);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Legacy v3 seal-time knowledge reconciliation hook: generate + plain write
+ * outside any mutation transaction. Retained for compatibility/fallback
+ * (idempotent, non-CAS, never touches mutation authority); the canonical v3
+ * complete path uses generateV3RunKnowledgeReconciliation and commits the
+ * receipt inside the mutation transaction instead.
+ */
+export function reconcileV3RunKnowledge(
+  projectRoot: string,
+  sessionId: string,
+  runId: string,
+): KnowledgeReconciliation | null {
+  try {
+    const receipt = generateV3RunKnowledgeReconciliation(projectRoot, sessionId, runId);
+    if (!receipt) return null;
+    const store = new SessionStore(projectRoot);
+    const runDir = store.runDir(sessionId, runId);
     mkdirSync(runDir, { recursive: true });
     writeFileSync(
       reconciliationPath(store, sessionId, runId),
