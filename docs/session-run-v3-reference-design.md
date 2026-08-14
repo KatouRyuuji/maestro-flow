@@ -405,12 +405,48 @@ flowchart LR
 
 ## 13. 测试与验收
 
-- v3 单测：18 文件 291 例（含决策门 6 例、迁移 fixture、resume-view 2KB/禁词、并发 CAS/replay）全绿；`tsc --noEmit` 0 错误。
-- 发布门禁：`npm run prepublishOnly` 一轮通过（arch-kb + lint×3 + docs-reference + contract parity 41 项 + search-ranking×2 + release-machine 30 proofs + mirrors）。
-- 冒烟验收（ralph 路径 12 步）：capabilities 六键 → open --chain → next → complete --advance（frontmatter 回退 + knowledge 生成）→ 决策门阻断/放行 → resume-view/list → session complete → archive → replay 幂等。
-- 已知基线漂移：Pi 侧 4 个 real-CLI 集成测试（v2 plan publish fixture）为既有问题，与 v3 无关。
+- 当前可复现的 core 聚焦测试：`npx vitest run src/run/v3 src/commands/v3-cli.test.ts src/commands/help-json.test.ts` 为 17 文件、270 例通过；`tsc --noEmit` 通过。
+- 当前发布门禁并非全绿：`npm run check:session-run-release-machine` 仍期望已退役的 `use-participant-status` next action，因而失败。修复该断言前不得声明 `prepublishOnly` 一轮通过。
+- `lint:session-run` 与 contract parity 通过只能证明现有 v2 Execution/lease prompt 彼此一致，不能证明 v3 Skill/Agent 注入闭环成立。
+- Pi `test:conversion` 与 typecheck 通过；`test:session` 当前为 125 通过、4 失败、1 跳过。4 个失败来自既有 v2 real-CLI fixture，但该测试集也没有覆盖真实 core v3 birth/brief 到 executor 的跨仓链路。
+- ralph 路径 12 步目前是目标验收场景，不是已经闭合的发布证明；必须在隔离 workspace 中通过真实 core + packaged Pi consumer E2E 后才能改为“已通过”。
 
-## 14. 参考文档索引
+## 14. 实现符合性审查（2026-08-14 复核）
+
+结论：core v3 mutation 主体已实现并通过聚焦测试，但本参考设计尚未完全落地。Skill/Agent/Session/Run 注入链仍不匹配，当前状态不得标记为 v3 完成交付。
+
+### 14.1 已确认修复
+
+- `run create` 已统一执行前驱 publication authority 校验；Run shell 在 mutation 提交前创建；replay candidate 会清除引擎注入的 `input_refs`。
+- transition receipt 写路径强制 `participant_id = actor_id`；migration 已补 request receipt；`--participant` 仅兼容接收，不再参与幂等身份。
+- core ResumeMap 已删除 `identityRevision` 和 `paused`；禁词检查会拒绝任意 execution 字段；resolved/escalated decision 不再能绑定为新 gate。
+
+### 14.2 未闭合问题
+
+| 严重度 | 问题 | 当前证据与影响 |
+|---|---|---|
+| Critical | v3 birth packet 不完整 | `run next/create` 只返回 Run 标识、状态、revision 和 next hint，未提供 `run_dir`、`upstream`、`guidance`、`knowledge_context`、`brief.command` 或 `run_already_created`。orchestrator 无法向 executor 注入可执行的精确 Run 上下文。 |
+| Critical | v3 brief 不是 Resume Packet | `run brief` 直接返回原始 `run/3.0`，缺少路径、上游、当前 Skill 指令、知识上下文和 Session orchestration revision；压缩恢复、backtrack 和后续知识消费无法闭环。 |
+| Critical | canonical prompt 仍以 v2 为主 | `workflows/run-mode.md`、`workflows/orchestrator-run-loop.md`、`prepare/ralph.md` 仍把 `session/2.0 + execution/1.0 + run-response/1.1 + core_execution_lease` 定义为 canonical，并最终调用 `maestro execution seal`。`.claude/.agents/.codex` mirrors 继承同一语义。 |
+| High | Pi run-executor 使用 v3 不支持的命令 | packaged Pi agent 仍调用 `session next --inline-brief` 和 `run brief --platform pi`，且通过 Bash 绕过 run-control 的 actor/request-id/revision 注入。 |
+| High | Pi coordinator 便捷入口仍走 lease | raw `execV3` 已正确使用 actor + request-id + entity CAS 且无 lease，但 `next/done/edit` 便捷方法没有 `session-v3` 分支，会落入 `requireMutationLease`。 |
+| High | Pi ResumeMap/Skill 合同未同步 | Pi `ResumeMapV1` 仍要求已从 core 删除的 `identityRevision`；Pi Ralph 的 v3 文本仍声明 `run-response/1.1`，并引用以 Execution 为主的 shared loop。 |
+| High | 缺省 Run ID 不满足不确定写重放 | `run next` 省略 `--run` 时每次生成随机 UUID；同 request ID 在响应丢失后重试会得到不同 canonical payload hash，可能返回 `REQUEST_CONFLICT` 而非 replay 原 receipt。 |
+| Medium | 最终数据模型仍有有意漂移 | v3 仍允许 `archived -> open`/`session unarchive`，canonical `run/3.0` 仍保留 `parent_run_id`。若这些行为保留，必须更新本参考设计并明确兼容性与审计语义。 |
+| Medium | 双读与 migration 覆盖不完整 | v3 writer 下旧 Session 仍可能被标记 inaccessible；多 generation v2 Session 的迁移只选择单个 Execution，却校验全部历史 Run，真实历史数据可能迁移失败。 |
+| Medium | 发布门禁存在假绿范围 | prompt lint/parity 正向要求或放行 v2 Execution/lease token；Pi skill lint 未验证真实 v3 birth/brief 字段和 executor 命令可执行性。 |
+
+### 14.3 完成交付门槛
+
+以下条件全部满足后，才能把本节结论改为“完全实现”：
+
+1. 定义并实现版本化 v3 birth/brief schema，next/create/brief 同源投影 `run_dir`、upstream、guidance、knowledge context、Run/Session revisions 与重复创建防线。
+2. 将 canonical workflows、Ralph、Companion、session-seal、run-executor 及 `.claude/.agents/.codex/.pi` mirrors 统一为 capability-selected v3 主分支，v2 Execution/lease 明确降为 compatibility branch。
+3. Pi `next/done/edit` 全部委托 v3 CAS path，删除 v3 对 WorkflowLeaseStore 的依赖，并同步 ResumeMap 与 run-response 版本。
+4. 增加真实跨仓 E2E：pack/install 到隔离 HOME，执行完整 ralph 12 步、response-loss replay、compaction reattach、knowledge promote 后下一 Run brief 消费。
+5. `prepublishOnly`、release-machine、prompt parity、Pi package/session tests 全绿，且门禁对 v3 字段和命令做语义断言而非仅检查文本存在。
+
+## 15. 参考文档索引
 
 | 文档 | 用途 |
 |---|---|

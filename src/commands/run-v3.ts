@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Command } from 'commander';
 
 import type { RunV30 } from '../run/schemas.js';
@@ -48,7 +48,13 @@ export function registerRunV3Command(program: Command): void {
     .action((options: V3CommonOptions & { run?: string }) => {
       try {
         const { store, options: resolved } = resolveV3Options(options);
-        const runId = resolved.run?.trim() || `run-${randomUUID()}`;
+        // Default Run ID is derived deterministically from the request ID:
+        // a response-loss retry with the same request-id must rebuild the SAME
+        // canonical payload so the engine replays the original receipt instead
+        // of failing with REQUEST_CONFLICT (audit §14.2). Explicit --run still
+        // wins (caller-controlled).
+        const runId = resolved.run?.trim()
+          || `run-${createHash('sha256').update(resolved.requestId).digest('hex').slice(0, 12)}`;
         const state = store.readSessionV30(resolved.session);
         const existingRun = (() => {
           try { return store.readRunV30(resolved.session, runId); } catch { return null; }
