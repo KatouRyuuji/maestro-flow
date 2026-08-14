@@ -25,7 +25,9 @@ interface ArtifactRepublishCliOptions extends ArtifactReadOptions {
   assessmentHash: string;
   requestId: string;
   expectedArtifactRevision: number;
-  expectedSessionRevision: number;
+  expectedOrchestrationRevision?: number;
+  /** @deprecated alias of --expected-orchestration-revision */
+  expectedSessionRevision?: number;
   participant: string;
   actor: string;
   reason: string;
@@ -80,7 +82,8 @@ export function registerArtifactCommand(program: Command): void {
     .requiredOption('--assessment-hash <sha256>', 'exact inspect assessment hash')
     .requiredOption('--request-id <id>', 'idempotency request ID')
     .requiredOption('--expected-artifact-revision <n>', 'expected Artifact registry revision', parseV3Revision)
-    .requiredOption('--expected-session-revision <n>', 'expected activity/orchestration revision', parseV3Revision)
+    .requiredOption('--expected-orchestration-revision <n>', 'expected Session orchestration revision', parseV3Revision)
+    .option('--expected-session-revision <n>', 'deprecated alias of --expected-orchestration-revision', parseV3Revision)
     .requiredOption('--participant <id>', 'participant performing the mutation')
     .requiredOption('--actor <id>', 'authorized actor')
     .requiredOption('--reason <text>', 'audit reason')
@@ -97,7 +100,7 @@ export function registerArtifactCommand(program: Command): void {
           assessmentHash: options.assessmentHash,
           requestId: options.requestId,
           expectedArtifactRevision: options.expectedArtifactRevision,
-          expectedSessionRevision: options.expectedSessionRevision,
+          expectedSessionRevision: options.expectedOrchestrationRevision ?? options.expectedSessionRevision ?? 0,
           participantId: options.participant,
           actorId: options.actor,
           reason: options.reason,
