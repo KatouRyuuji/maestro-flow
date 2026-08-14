@@ -361,14 +361,20 @@ interface ResumeMapV1 {
 
 ```mermaid
 flowchart LR
-    R["Run 执行"] -->|"report.md frontmatter（summary/decisions/concerns）"| F["run complete --advance"]
-    F -->|"一次性 reconcileV3RunKnowledge"| REC["knowledge-reconciliation.json（run 级）"]
-    REC -->|"run check 只读回显"| C["候选 + review_required 警告"]
-    REC -->|"Review Presentation Protocol"| P["knowledge promote → 回灌 Session 知识库"]
+    R["Run 执行"] -->|"report.md frontmatter（decisions=accepted / constraints=locked）"| F["run complete --advance"]
+    F -->|"事务内原子"| S["stage → run knowledge-delta.json"]
+    F -->|"事务内原子"| REC["knowledge-reconciliation.json（同批）"]
+    S -->|"knowledge review / promote（summarizeSessionKnowledge 聚合）"| P["候选 → resolve → promote 回灌知识库"]
+    REC -->|"run check 只读回显"| C["review_required 警告"]
+    P -->|"后续 run 的 brief/resume 上下文"| R
 ```
 
-- 候选**只在 `run complete` 生成一次**（事务提交后平面写，幂等、非 CAS、不进 mutation 权威）；`run check` 只读已持久化 receipt。
-- promotion 后知识进入 session 级知识体系，供后续 Run 的 brief/resume 上下文使用——这是「run 过程中知识积累、session 共用」的完整闭环。
+- **候选生成与 staging 原子化**（0.5.72 修复）：`run complete --advance` 事务内把 frontmatter 事实（accepted decisions / locked constraints）通过 `stageV3RunKnowledgeCandidates` 写入 run `knowledge-delta.json`（v2 同路径），reconciliation receipt 同批提交——对账与 staging 不可能分叉；suppression（exact_duplicate）同步生效。
+- **promote 可见性**（0.5.72 修复）：`summarizeSessionKnowledge` 以 schema 无关方式枚举 run（`readRunRecord*`），v3 workspace 下 `knowledge review/promote` 可见 v3 候选（origin=run、pending）并正常 resolve/promote。
+- `run check` 只读回显已持久化 receipt（review_required 警告）。
+- promotion 后知识进入 workspace 知识库，供后续 Run 的上下文使用——「run 过程中知识积累、session 共用」完整闭环。
+
+> 历史缺陷（0.5.71 及之前）：v3 只生成 receipt 不 stage，且 summarizeSessionKnowledge 对 run/3.0 抛 `SessionSchemaUnsupportedError`——候选永远无法进入 review/promote。已修复。
 
 ## 11. 迁移（v2 → v3）
 
