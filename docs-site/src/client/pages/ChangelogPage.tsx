@@ -17,6 +17,15 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    version: '0.5.72',
+    date: '2026-08',
+    changes: [
+      { type: 'fix', text_en: 'Atomic knowledge staging: run complete persists knowledge candidates into the knowledge-delta in the same transaction as the completion receipt, making them visible to knowledge review immediately; summarizeSessionKnowledge reads are schema-agnostic', text_zh: '知识闭环原子化：run complete 在完成 receipt 的同一事务内将知识候选写入 knowledge-delta，立即对 knowledge review 可见；summarizeSessionKnowledge 读取与 schema 无关' },
+      { type: 'fix', text_en: 'Cross-repo audit round: run create enforces predecessor publication authority before creating Run shells and clears engine-injected input_refs on replay; transition receipts force participant_id = actor_id; ResumeMap drops identityRevision/paused; resolved or escalated decisions cannot be bound as new gates; run next derives the Run ID deterministically from the request ID so retries replay the original mutation; the canonical orchestration-revision flag replaces the retired session-revision flag', text_zh: '跨仓审查修复：run create 先通过前驱 publication authority 再建 Run shell，replay 时清除引擎注入的 input_refs；transition receipt 强制 participant_id = actor_id；ResumeMap 删除 identityRevision/paused；resolved/escalated 决策不可再绑为新门；run next 缺省 Run ID 从 request ID 确定性派生以支持重放；artifact flag 改用规范 orchestration-revision' },
+      { type: 'chore', text_en: 'Release gate proofs: drop the retired use-participant-status assertion and align the v3 proof sequence with the open-revision-1 orchestration contract; all 30 build-backed release-machine proofs pass', text_zh: '发布门禁修复：删除已退役的 use-participant-status 断言，v3 证明序列对齐 open-revision-1 orchestration 合同；30 项 build-backed release-machine 证明全部通过' },
+    ],
+  },
+  {
     version: '0.5.71',
     date: '2026-08',
     changes: [
