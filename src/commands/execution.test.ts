@@ -72,7 +72,7 @@ describe('maestro capabilities', () => {
     expect(await capabilities(root)).toEqual({
       schema_version: 'maestro-capabilities/1.0',
       cli_version: expect.any(String),
-      session_schema_writes: ['session/1.3', 'session/2.0', 'session/3.0'],
+      session_schema_writes: ['session/1.3'],
       execution_schema_writes: ['execution/1.0'],
       run_response_writes: ['run-response/1.0', 'run-response/1.1', 'run-response/1.2'],
       features: {
@@ -106,7 +106,7 @@ describe('maestro capabilities', () => {
     expect(await capabilities(root)).toEqual({
       schema_version: 'maestro-capabilities/1.0',
       cli_version: expect.any(String),
-      session_schema_writes: ['session/1.3', 'session/2.0', 'session/3.0'],
+      session_schema_writes: ['session/3.0'],
       execution_schema_writes: [],
       run_response_writes: ['run-response/1.0', 'run-response/1.1', 'run-response/1.2'],
       features: {

@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { resolve } from 'node:path';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { InvalidArgumentError, type Command } from 'commander';
 
 import type { RunOperationV12, RunResponseV12, TransitionReceiptV20 } from '../run/protocol-schemas.js';
 import { createRunResponseError, createRunResponseSuccess, emitRunResponse, stableRunResponseErrorCodeV12 } from '../run/response.js';
-import type { SessionStateV30 } from '../run/schemas.js';
+import { sessionStateV30Schema, type SessionStateV30 } from '../run/schemas.js';
 import { SessionStore } from '../run/store.js';
 import { createRevisionConflictError, V3StructuredError } from '../run/v3/errors.js';
 import { sessionContextErrorToV3Error } from '../run/v3/resolve-context.js';
@@ -109,7 +110,7 @@ function responseRevision(receipt: TransitionReceiptV20): NonNullable<RunRespons
 
 export function emitV3Success(input: {
   operation: RunOperationV12;
-  sessionId: string;
+  sessionId: string | null;
   runId?: string | null;
   requestId?: string | null;
   result: unknown;
@@ -166,14 +167,28 @@ export function emitV3Error(
   }));
 }
 
+export type SessionStatusOperation =
+  | 'session-pause'
+  | 'session-resume'
+  | 'session-archive'
+  | 'session-unarchive'
+  | 'session-fail';
+
 export function mutateSessionStatusV3(
   store: SessionStore,
   options: ResolvedV3CommonOptions,
-  toStatus: Extract<SessionStatus, 'paused' | 'open' | 'archived'>,
+  toStatus: Extract<SessionStatus, 'paused' | 'open' | 'archived' | 'failed'>,
+  operation: SessionStatusOperation = toStatus === 'open'
+    ? 'session-resume'
+    : toStatus === 'failed'
+      ? 'session-fail'
+      : toStatus === 'paused'
+        ? 'session-pause'
+        : 'session-archive',
 ): V3MutationResult {
   const recordedAt = new Date().toISOString();
   const payload = {
-    operation: `session-${toStatus === 'open' ? 'resume' : toStatus}`,
+    operation,
     expected_orchestration_revision: options.expectedOrchestrationRevision,
     to_status: toStatus,
     actor_id: options.actor,
@@ -211,7 +226,11 @@ export function mutateSessionStatusV3(
       orchestration_revision: session.orchestration_revision + 1,
       activity_revision: session.activity_revision + 1,
       updated_at: recordedAt,
-      archived_at: toStatus === 'archived' ? recordedAt : session.archived_at,
+      archived_at: toStatus === 'archived'
+        ? recordedAt
+        : operation === 'session-unarchive'
+          ? null
+          : session.archived_at,
     };
     const transition = createTransitionReceipt({
       transitionId: `tr_${randomUUID()}`,
@@ -239,4 +258,95 @@ export function mutateSessionStatusV3(
     }));
     return { status: 'applied', transition };
   });
+}
+
+/**
+ * Enumerate every canonical session/3.0 session.json under .workflow/sessions/.
+ * Read-only: no lock acquisition, no recovery writes, no projection writes.
+ * Non-v3 and unreadable entries are skipped so a listing never fails the batch.
+ */
+export function listV3Sessions(store: SessionStore): SessionStateV30[] {
+  if (!existsSync(store.sessionsRoot)) return [];
+  const sessions: SessionStateV30[] = [];
+  for (const name of readdirSync(store.sessionsRoot).sort()) {
+    const path = join(store.sessionsRoot, name, 'session.json');
+    if (!existsSync(path)) continue;
+    try {
+      const raw = JSON.parse(readFileSync(path, 'utf8')) as unknown;
+      if (typeof raw !== 'object' || raw === null) continue;
+      if ((raw as { schema_version?: unknown }).schema_version !== 'session/3.0') continue;
+      sessions.push(sessionStateV30Schema.parse(raw));
+    } catch {
+      // skip corrupt or non-v3 session files
+    }
+  }
+  return sessions;
+}
+
+/**
+ * Enumerate every non-session/3.0 session.json under .workflow/sessions/ as a
+ * batch migration candidate. Read-only: no lock acquisition, no writes.
+ * Unreadable or path-mismatched entries are skipped so a batch migration never
+ * fails on a corrupt sibling; every readable entry whose schema_version is not
+ * session/3.0 is returned and its individual migration attempt may still fail
+ * and be recorded per-session by the caller.
+ */
+export function listLegacyV3MigrationCandidates(store: SessionStore): Array<{
+  session_id: string;
+  source_schema_version: string;
+}> {
+  if (!existsSync(store.sessionsRoot)) return [];
+  const candidates: Array<{ session_id: string; source_schema_version: string }> = [];
+  for (const name of readdirSync(store.sessionsRoot).sort()) {
+    const path = join(store.sessionsRoot, name, 'session.json');
+    if (!existsSync(path)) continue;
+    try {
+      const raw = JSON.parse(readFileSync(path, 'utf8')) as unknown;
+      if (typeof raw !== 'object' || raw === null) continue;
+      const schemaVersion = (raw as { schema_version?: unknown }).schema_version;
+      if (typeof schemaVersion !== 'string' || schemaVersion === 'session/3.0') continue;
+      if ((raw as { session_id?: unknown }).session_id !== name) continue;
+      candidates.push({ session_id: name, source_schema_version: schemaVersion });
+    } catch {
+      // skip corrupt or unreadable session files
+    }
+  }
+  return candidates;
+}
+
+function retiredV3Operation(path: string) {
+  return path.replaceAll(' ', '-') as Parameters<typeof emitV3Error>[0];
+}
+
+/** Derive next_actions from a replacement command string such as 'run next / run create'. */
+export function retiredV3NextActions(replacement: string): string[] {
+  return replacement
+    .split(/[/|]/)
+    .map(part => part.trim().replace(/\s+/g, '-'))
+    .filter(Boolean)
+    .map(action => `use-${action}`);
+}
+
+/** v2-only subcommand retired stub options (mirrors execution-v3-retired.ts). */
+export function retiredV3Options(command: Command): Command {
+  return command
+    .option('--session <id>', 'Session ID')
+    .option('--request-id <id>', 'request ID')
+    .option('--json', 'emit run-response/1.2 JSON')
+    .option('--workflow-root <path>', 'project root', process.cwd())
+    .allowUnknownOption(true);
+}
+
+/** v2-only subcommand retired stub action emitting the 1.2 SESSION_SCHEMA_UNSUPPORTED envelope. */
+export function retiredV3Action(path: string, replacement: string) {
+  return (options: { session?: string; requestId?: string }): void => {
+    emitV3Error(retiredV3Operation(path), new V3StructuredError(
+      'SESSION_SCHEMA_UNSUPPORTED',
+      `${path} is retired for session/3.0 workspaces`,
+      {
+        details: { deprecated_command: path, replacement_command: replacement },
+        next_actions: retiredV3NextActions(replacement),
+      },
+    ), { session: options.session, requestId: options.requestId });
+  };
 }

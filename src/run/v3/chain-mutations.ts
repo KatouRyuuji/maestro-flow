@@ -14,7 +14,7 @@ import { assertSessionOperationAllowed } from './session-machine.js';
 type SessionChainStepV30 = SessionStateV30['chain'][number];
 
 export type ChainMutation =
-  | { kind: 'insert'; stepId: string; command: string; args?: readonly string[]; afterStepId?: string | null }
+  | { kind: 'insert'; stepId: string; command: string; args?: readonly string[]; afterStepId?: string | null; goalRef?: string | null; stage?: string | null }
   | { kind: 'skip'; stepId: string }
   | { kind: 'replace'; stepId: string; command: string; args?: readonly string[] };
 
@@ -51,7 +51,8 @@ function mutateSteps(session: SessionStateV30, mutation: ChainMutation, evidence
     if (after !== null && insertionIndex === 0) throw new V3StructuredError('INVALID_ARGUMENT', `unknown after-step ${after}`);
     const step: SessionChainStepV30 = {
       step_id: stepId, command: text(mutation.command, 'command'), args: [...(mutation.args ?? [])],
-      status: 'pending', run_ids: [], goal_ref: null, decision_refs: [],
+      status: 'pending', run_ids: [], goal_ref: mutation.goalRef?.trim() || null,
+      decision_refs: [], stage: mutation.stage?.trim() || null,
     };
     return [...session.chain.slice(0, insertionIndex), step, ...session.chain.slice(insertionIndex)];
   }

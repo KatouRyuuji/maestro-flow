@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { runResponseV12Schema } from '../run/protocol-schemas.js';
 import type { RunV30, SessionStateV30 } from '../run/schemas.js';
+import { createSessionState } from '../run/defaults.js';
 import { registerExecutionV3RetiredCommand } from './execution-v3-retired.js';
 import { registerRunV3Command } from './run-v3.js';
 import { registerSessionV3Command } from './session-v3.js';
@@ -423,5 +424,339 @@ describe('formal session/3.0 Commander modules', () => {
       .toEqual(expect.arrayContaining(['open', 'migrate', 'complete', 'status', 'resume-view', 'pause', 'resume', 'archive', 'chain']));
     expect(program.commands.find(command => command.name() === 'run')?.commands.map(command => command.name()))
       .toEqual(expect.arrayContaining(['next', 'create', 'transition', 'complete', 'cancel', 'seal', 'brief', 'check']));
+  });
+
+  it('opens a Session with a generated pending chain when --chain is provided', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'maestro-v3-open-chain-'));
+    roots.push(root);
+    mkdirSync(join(root, '.workflow'), { recursive: true });
+    writeFileSync(join(root, '.workflow', 'config.json'), JSON.stringify({
+      session_schema: { schema_version: 'session-schema-selection/1.0', writer: 'session/3.0', features: { session_statusless: false } },
+    }));
+    const chained = await invoke(registerSessionV3Command, [
+      'session', 'open', 'chain objective', '--id', 's-chain', '--participant', 'p-1', '--actor', 'actor',
+      '--request-id', 'req-chain', '--reason', 'chain test', '--chain', 'build', 'test', 'ship',
+      '--json', '--workflow-root', root,
+    ]);
+    expect(chained).toMatchObject({ operation: 'session-open', ok: true });
+    expect(JSON.parse(readFileSync(join(root, '.workflow', 'sessions', 's-chain', 'session.json'), 'utf8')))
+      .toMatchObject({ chain: [
+        { step_id: 's-1', command: 'build', args: [], status: 'pending', run_ids: [], goal_ref: null, decision_refs: [], stage: null },
+        { step_id: 's-2', command: 'test', args: [], status: 'pending', run_ids: [], goal_ref: null, decision_refs: [], stage: null },
+        { step_id: 's-3', command: 'ship', args: [], status: 'pending', run_ids: [], goal_ref: null, decision_refs: [], stage: null },
+      ] });
+    vi.restoreAllMocks();
+    const plain = await invoke(registerSessionV3Command, [
+      'session', 'open', 'plain objective', '--id', 's-plain', '--participant', 'p-1', '--actor', 'actor',
+      '--request-id', 'req-plain', '--reason', 'plain test', '--json', '--workflow-root', root,
+    ]);
+    expect(plain).toMatchObject({ operation: 'session-open', ok: true });
+    expect(JSON.parse(readFileSync(join(root, '.workflow', 'sessions', 's-plain', 'session.json'), 'utf8')))
+      .toMatchObject({ chain: [] });
+  });
+
+  it('lists v3 Sessions sorted by updated_at descending and skips non-v3 entries', async () => {
+    const root = fixture();
+    const sessionDir = join(root, '.workflow', 'sessions');
+    const second = JSON.parse(readFileSync(join(sessionDir, 's-v3', 'session.json'), 'utf8')) as SessionStateV30;
+    mkdirSync(join(sessionDir, 's-v3-b'), { recursive: true });
+    writeFileSync(join(sessionDir, 's-v3-b', 'session.json'), `${JSON.stringify({
+      ...second, session_id: 's-v3-b', objective: 'second Session',
+      active_run_ids: ['run-b'], updated_at: '2026-08-12T03:00:00.000Z',
+    }, null, 2)}\n`);
+    mkdirSync(join(sessionDir, 's-v2'), { recursive: true });
+    writeFileSync(join(sessionDir, 's-v2', 'session.json'), `${JSON.stringify({
+      schema_version: 'session/2.0', session_id: 's-v2', intent: 'legacy',
+    }, null, 2)}\n`);
+
+    const response = await invoke(registerSessionV3Command, [
+      'session', 'list', '--json', '--workflow-root', root,
+    ]);
+    expect(response).toMatchObject({ operation: 'session-list', ok: true, locator: { session_id: null } });
+    expect(response.result).toEqual([
+      { session_id: 's-v3-b', status: 'open', objective: 'second Session', orchestration_revision: 0, identity_revision: 1, activity_revision: 0, active_run_ids: ['run-b'], updated_at: '2026-08-12T03:00:00.000Z' },
+      { session_id: 's-v3', status: 'open', objective: 'exercise CLI', orchestration_revision: 0, identity_revision: 1, activity_revision: 0, active_run_ids: [], updated_at: '2026-08-12T00:00:00.000Z' },
+    ]);
+  });
+
+  it('returns an empty list for a workspace without sessions', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'maestro-v3-list-empty-'));
+    roots.push(root);
+    mkdirSync(join(root, '.workflow'), { recursive: true });
+    writeFileSync(join(root, '.workflow', 'config.json'), JSON.stringify({
+      session_schema: { schema_version: 'session-schema-selection/1.0', writer: 'session/3.0', features: { session_statusless: false } },
+    }));
+    const response = await invoke(registerSessionV3Command, [
+      'session', 'list', '--json', '--workflow-root', root,
+    ]);
+    expect(response).toMatchObject({ operation: 'session-list', ok: true });
+    expect(response.result).toEqual([]);
+  });
+
+  it('recalls v3 Sessions by objective, definition_of_done, and chain command read-only', async () => {
+    const root = fixture();
+    const sessionDir = join(root, '.workflow', 'sessions');
+    const second = JSON.parse(readFileSync(join(sessionDir, 's-v3', 'session.json'), 'utf8')) as SessionStateV30;
+    mkdirSync(join(sessionDir, 's-impl'), { recursive: true });
+    writeFileSync(join(sessionDir, 's-impl', 'session.json'), `${JSON.stringify({
+      ...second, session_id: 's-impl', objective: 'implement the widget', definition_of_done: 'verified',
+      chain: [{ step_id: 'step-1', command: 'verify', args: [], status: 'pending', run_ids: [], goal_ref: null, decision_refs: [] }],
+      updated_at: '2026-08-12T01:00:00.000Z',
+    }, null, 2)}\n`);
+    mkdirSync(join(sessionDir, 's-deploy'), { recursive: true });
+    writeFileSync(join(sessionDir, 's-deploy', 'session.json'), `${JSON.stringify({
+      ...second, session_id: 's-deploy', objective: 'unrelated topic', definition_of_done: 'nothing in common',
+      chain: [{ step_id: 'step-1', command: 'deploy', args: [], status: 'pending', run_ids: [], goal_ref: null, decision_refs: [] }],
+      updated_at: '2026-08-12T02:00:00.000Z',
+    }, null, 2)}\n`);
+
+    const before = readFileSync(join(sessionDir, 's-v3', 'session.json'), 'utf8');
+    const byObjective = await invoke(registerRunV3Command, [
+      'run', 'recall', 'implement', '--json', '--workflow-root', root,
+    ]);
+    expect(byObjective).toMatchObject({ operation: 'recall', ok: true, locator: { session_id: null } });
+    expect(byObjective.result).toEqual([
+      { session_id: 's-impl', status: 'open', objective: 'implement the widget', updated_at: '2026-08-12T01:00:00.000Z', matched: ['implement the widget'] },
+      { session_id: 's-v3', status: 'open', objective: 'exercise CLI', updated_at: '2026-08-12T00:00:00.000Z', matched: ['implement'] },
+    ]);
+    vi.restoreAllMocks();
+    const byDefinition = await invoke(registerRunV3Command, [
+      'run', 'recall', 'persist', '--json', '--workflow-root', root,
+    ]);
+    expect(byDefinition.result).toEqual([
+      { session_id: 's-v3', status: 'open', objective: 'exercise CLI', updated_at: '2026-08-12T00:00:00.000Z', matched: ['commands persist atomically'] },
+    ]);
+    expect(readFileSync(join(sessionDir, 's-v3', 'session.json'), 'utf8')).toBe(before);
+  });
+
+  it('fails an open Session and refuses further mutations', async () => {
+    const root = fixture();
+    const response = await invoke(registerSessionV3Command, [
+      'session', 'fail', ...mutationFlags(root, '--expected-orchestration-revision'),
+    ]);
+    expect(response).toMatchObject({ operation: 'session-fail', ok: true, result: { status: 'failed' } });
+    expect(JSON.parse(readFileSync(join(root, '.workflow', 'sessions', 's-v3', 'session.json'), 'utf8')))
+      .toMatchObject({ status: 'failed', orchestration_revision: 1, activity_revision: 1 });
+    vi.restoreAllMocks();
+    const create = await invoke(registerRunV3Command, [
+      'run', 'create', 'implement', '--run', 'run-after-fail', '--step', 'step-1',
+      ...mutationFlags(root, '--expected-orchestration-revision', 1),
+    ]);
+    expect(create).toMatchObject({
+      operation: 'create', ok: false, error: { code: 'INVALID_STATE_TRANSITION' },
+    });
+  });
+
+  it('fails a paused Session', async () => {
+    const root = fixture({ status: 'paused' });
+    const response = await invoke(registerSessionV3Command, [
+      'session', 'fail', ...mutationFlags(root, '--expected-orchestration-revision'),
+    ]);
+    expect(response).toMatchObject({ operation: 'session-fail', ok: true, result: { status: 'failed' } });
+    expect(JSON.parse(readFileSync(join(root, '.workflow', 'sessions', 's-v3', 'session.json'), 'utf8')))
+      .toMatchObject({ status: 'failed', orchestration_revision: 1 });
+  });
+
+  it('inserts a chain step with goal reference and stage metadata', async () => {
+    const root = fixture();
+    const response = await invoke(registerSessionV3Command, [
+      'session', 'chain', 'insert', '--step-id', 'step-2', '--command', 'verify',
+      '--goal-ref', 'goal-7', '--stage', 'release', ...mutationFlags(root, '--expected-orchestration-revision'),
+    ]);
+    expect(response).toMatchObject({ operation: 'session-chain-insert', ok: true });
+    const state = JSON.parse(readFileSync(join(root, '.workflow', 'sessions', 's-v3', 'session.json'), 'utf8')) as SessionStateV30;
+    expect(state.chain[1]).toMatchObject({ step_id: 'step-2', command: 'verify', goal_ref: 'goal-7', stage: 'release' });
+  });
+
+  it('registers v2-only run and session subcommands as retired stubs', async () => {
+    const root = fixture();
+    const registerBoth = (program: Command): void => {
+      registerSessionV3Command(program);
+      registerRunV3Command(program);
+    };
+    for (const [args, operation, replacement] of [
+      [['run', 'start'], 'run-start', 'run next / run create'],
+      [['run', 'done'], 'run-done', 'run complete'],
+      [['run', 'edit'], 'run-edit', 'session chain insert|skip|replace'],
+      [['run', 'prepare'], 'run-prepare', 'skills --steps'],
+      [['run', 'skill'], 'run-skill', 'skills --steps'],
+      [['run', 'recover'], 'run-recover', 'session resume'],
+      [['run', 'status'], 'run-status', 'session status'],
+      [['run', 'log-mutation'], 'run-log-mutation', 'session status'],
+      [['run', 'mutations'], 'run-mutations', 'session status'],
+      [['run', 'accept-reuse'], 'run-accept-reuse', 'run brief'],
+      [['run', 'seal-session'], 'run-seal-session', 'session complete'],
+      [['session', 'next'], 'session-next', 'run next'],
+      [['session', 'done'], 'session-done', 'run complete'],
+      [['session', 'decide'], 'session-decide', 'run decide'],
+      [['session', 'seal'], 'session-seal', 'session complete'],
+      [['session', 'meta'], 'session-meta', 'session status'],
+      [['session', 'prune'], 'session-prune', 'session list'],
+    ] as const) {
+      const response = await invoke(registerBoth, [
+        ...args, '--session', 's-v3', '--request-id', `req-stub-${operation}`, '--json', '--workflow-root', root,
+      ]);
+      expect(response).toMatchObject({
+        operation, ok: false,
+        error: {
+          code: 'SESSION_SCHEMA_UNSUPPORTED',
+          details: { deprecated_command: args.join(' '), replacement_command: replacement },
+          next_actions: expect.arrayContaining([expect.any(String)]),
+        },
+      });
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('appends step_id and a next hint to the run next result', async () => {
+    const root = fixture();
+    const response = await invoke(registerRunV3Command, [
+      'run', 'next', '--run', 'run-next', ...mutationFlags(root, '--expected-orchestration-revision'),
+    ]);
+    expect(response).toMatchObject({
+      operation: 'next', ok: true,
+      result: {
+        run_id: 'run-next', status: 'running', revision: 1,
+        step_id: 'step-1',
+        next: {
+          suggest_only: true,
+          command: 'maestro run complete run-next --advance',
+          reason: 'Run created — execute and complete it with run complete --advance',
+        },
+      },
+    });
+  });
+});
+
+function writeLegacySession(root: string, sessionId: string, intent: string): void {
+  const dir = join(root, '.workflow', 'sessions', sessionId);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'gates.json'), `${JSON.stringify({
+    schema_version: 'gates/1.0', revision: 0, gates: {},
+    summary: { total: 0, passed: 0, blocked: 0, failed: 0, active_gate_ids: [], blocking_run_id: null },
+  }, null, 2)}\n`);
+  writeFileSync(join(dir, 'artifacts.json'), `${JSON.stringify({
+    schema_version: 'artifacts/1.0', revision: 0, artifacts: {}, aliases: {},
+  }, null, 2)}\n`);
+  writeFileSync(join(dir, 'evidence.json'), `${JSON.stringify({
+    schema_version: 'evidence/1.0', revision: 0, records: {},
+  }, null, 2)}\n`);
+  writeFileSync(join(dir, 'session.json'), `${JSON.stringify(createSessionState(sessionId, intent), null, 2)}\n`);
+}
+
+function writeUnmigratableSession(root: string, sessionId: string): void {
+  const dir = join(root, '.workflow', 'sessions', sessionId);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'session.json'), `${JSON.stringify({
+    schema_version: 'session/9.9', session_id: sessionId, intent: 'unmigratable',
+  }, null, 2)}\n`);
+}
+
+function archiveFixture(root: string): string {
+  const sessionPath = join(root, '.workflow', 'sessions', 's-v3', 'session.json');
+  const state = JSON.parse(readFileSync(sessionPath, 'utf8')) as SessionStateV30;
+  writeFileSync(sessionPath, `${JSON.stringify({
+    ...state, status: 'archived', archived_at: '2026-08-12T02:00:00.000Z',
+  }, null, 2)}\n`);
+  return sessionPath;
+}
+
+describe('session migrate --all', () => {
+  const migrateAllFlags = (root: string): string[] => [
+    '--to-v3', '--participant', 'participant', '--actor', 'actor', '--json', '--workflow-root', root,
+  ];
+
+  it('migrates every non-v3 Session and skips already-v3 Sessions', async () => {
+    const root = fixture();
+    writeLegacySession(root, 's-legacy', 'legacy objective');
+    const response = await invoke(registerSessionV3Command, [
+      'session', 'migrate', '--all', ...migrateAllFlags(root),
+    ]);
+    expect(response).toMatchObject({ operation: 'session-migrate', ok: true, locator: { session_id: null } });
+    expect(response.result).toEqual([
+      { session_id: 's-legacy', source_schema_version: 'session/1.3', outcome: 'migrated' },
+    ]);
+    expect(JSON.parse(readFileSync(join(root, '.workflow', 'sessions', 's-legacy', 'session.json'), 'utf8')))
+      .toMatchObject({ schema_version: 'session/3.0', session_id: 's-legacy' });
+    expect(JSON.parse(readFileSync(join(root, '.workflow', 'sessions', 's-v3', 'session.json'), 'utf8')))
+      .toMatchObject({ schema_version: 'session/3.0', session_id: 's-v3', status: 'open' });
+  });
+
+  it('records a per-Session failure without interrupting the batch', async () => {
+    const root = fixture();
+    writeLegacySession(root, 's-legacy', 'legacy objective');
+    writeUnmigratableSession(root, 's-bad');
+    const response = await invoke(registerSessionV3Command, [
+      'session', 'migrate', '--all', ...migrateAllFlags(root),
+    ]);
+    expect(response).toMatchObject({ operation: 'session-migrate', ok: true });
+    expect(response.result).toEqual([
+      { session_id: 's-bad', source_schema_version: 'session/9.9', outcome: 'failed',
+        error: expect.stringContaining('cannot migrate from session/9.9') },
+      { session_id: 's-legacy', source_schema_version: 'session/1.3', outcome: 'migrated' },
+    ]);
+    expect(JSON.parse(readFileSync(join(root, '.workflow', 'sessions', 's-legacy', 'session.json'), 'utf8')))
+      .toMatchObject({ schema_version: 'session/3.0' });
+  });
+
+  it('rejects --all combined with --session as mutually exclusive', async () => {
+    const root = fixture();
+    const response = await invoke(registerSessionV3Command, [
+      'session', 'migrate', '--all', '--session', 's-v3', ...migrateAllFlags(root),
+    ]);
+    expect(response).toMatchObject({ operation: 'session-migrate', ok: false });
+    expect(response.error?.message).toContain('mutually exclusive');
+  });
+});
+
+describe('session unarchive', () => {
+  it('moves an archived Session back to open and advances the orchestration revision', async () => {
+    const root = fixture();
+    const sessionPath = archiveFixture(root);
+    const response = await invoke(registerSessionV3Command, [
+      'session', 'unarchive', ...mutationFlags(root, '--expected-orchestration-revision'),
+    ]);
+    expect(response).toMatchObject({
+      operation: 'session-unarchive', ok: true,
+      result: { status: 'open', orchestration_revision: 1 },
+    });
+    expect(JSON.parse(readFileSync(sessionPath, 'utf8'))).toMatchObject({
+      status: 'open', orchestration_revision: 1, activity_revision: 1, archived_at: null,
+    });
+  });
+
+  it('rejects unarchive for a non-archived Session', async () => {
+    const root = fixture();
+    const sessionPath = join(root, '.workflow', 'sessions', 's-v3', 'session.json');
+    const before = readFileSync(sessionPath, 'utf8');
+    const response = await invoke(registerSessionV3Command, [
+      'session', 'unarchive', ...mutationFlags(root, '--expected-orchestration-revision'),
+    ]);
+    expect(response).toMatchObject({
+      operation: 'session-unarchive', ok: false,
+      error: { code: 'INVALID_STATE_TRANSITION' },
+    });
+    expect(readFileSync(sessionPath, 'utf8')).toBe(before);
+  });
+
+  it('restores create_run permission after unarchive', async () => {
+    const root = fixture();
+    archiveFixture(root);
+    const before = await invoke(registerRunV3Command, [
+      'run', 'create', 'implement', '--run', 'run-before', '--step', 'step-1',
+      ...mutationFlags(root, '--expected-orchestration-revision'),
+    ]);
+    expect(before).toMatchObject({ operation: 'create', ok: false, error: { code: 'INVALID_STATE_TRANSITION' } });
+    vi.restoreAllMocks();
+    const unarchive = await invoke(registerSessionV3Command, [
+      'session', 'unarchive', ...mutationFlags(root, '--expected-orchestration-revision'),
+    ]);
+    expect(unarchive).toMatchObject({ operation: 'session-unarchive', ok: true });
+    vi.restoreAllMocks();
+    const created = await invoke(registerRunV3Command, [
+      'run', 'create', 'implement', '--run', 'run-after', '--step', 'step-1',
+      ...mutationFlags(root, '--expected-orchestration-revision', 1),
+    ]);
+    expect(created).toMatchObject({ operation: 'create', ok: true });
   });
 });

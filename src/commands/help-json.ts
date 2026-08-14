@@ -34,7 +34,12 @@ function classify(path: string, options: string[]): Pick<HelpCatalogCommand, 'mu
   if (path === 'session migrate') return { mutation_scope: 'orchestration', cas_target: 'none' };
   if (!options.includes('--request-id')) return { mutation_scope: 'read', cas_target: 'none' };
   if (options.includes('--expected-run-revision')) return { mutation_scope: 'run', cas_target: 'run' };
-  return { mutation_scope: 'orchestration', cas_target: 'orchestration' };
+  if (options.includes('--expected-orchestration-revision')) {
+    return { mutation_scope: 'orchestration', cas_target: 'orchestration' };
+  }
+  // Commands carrying --request-id without a CAS revision option are retired
+  // v2-only stubs (run start, session next, ...), not session/3.0 mutations.
+  return { mutation_scope: 'retired', cas_target: 'none' };
 }
 
 function walk(command: Command, prefix: string[] = []): HelpCatalogCommand[] {

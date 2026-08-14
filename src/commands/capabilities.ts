@@ -15,10 +15,20 @@ export function registerCapabilitiesCommand(program: Command): void {
       const writer = new SessionStore(resolve(options.workflowRoot)).sessionSchemaSelection().writer;
       const v3 = writer === 'session/3.0';
       const v3Ready = v3;
+      // session_schema_writes declares which Session schema versions this CLI
+      // can write for the selected writer. It is intentionally writer-scoped
+      // (a strict declaration, not a feature matrix): Pi-side
+      // hasCompleteV3Support reads features below, so the features block stays
+      // the authority for capability gating.
+      const sessionSchemaWrites = writer === 'session/3.0'
+        ? ['session/3.0']
+        : writer === 'session/2.0'
+          ? ['session/1.3', 'session/2.0']
+          : ['session/1.3'];
       const result = maestroCapabilitiesSchema.parse({
         schema_version: 'maestro-capabilities/1.0',
         cli_version: getPackageVersion(),
-        session_schema_writes: ['session/1.3', 'session/2.0', 'session/3.0'],
+        session_schema_writes: sessionSchemaWrites,
         execution_schema_writes: v3 ? [] : ['execution/1.0'],
         run_response_writes: ['run-response/1.0', 'run-response/1.1', 'run-response/1.2'],
         features: {

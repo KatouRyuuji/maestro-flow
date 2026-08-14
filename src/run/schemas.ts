@@ -291,6 +291,7 @@ export const sessionChainStepV30Schema = z.object({
   run_ids: z.array(nonEmptyString),
   goal_ref: z.string().min(1).nullable(),
   decision_refs: z.array(nonEmptyString),
+  stage: z.string().min(1).nullable().optional(),
 }).strict();
 
 export const sessionDecisionRefV30Schema = z.object({
@@ -680,6 +681,13 @@ export const runV30Schema = z.object({
   started_at: z.string().min(1).nullable(),
   ended_at: z.string().min(1).nullable(),
   sealed_at: z.string().min(1).nullable(),
+  // v2-contract-aligned completion inputs (TC-P0-3). Optional so pre-upgrade and
+  // already-migrated Runs without these fields keep parsing untouched.
+  notes: z.array(z.string()).optional(),
+  decision_records: z.array(z.object({
+    text: nonEmptyString,
+    status: z.enum(['proposed', 'accepted', 'rejected']).default('accepted'),
+  })).optional(),
 }).strict();
 
 /**

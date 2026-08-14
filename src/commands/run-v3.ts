@@ -1,5 +1,8 @@
+import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { isAbsolute, relative, resolve } from 'node:path';
 import type { Command } from 'commander';
 
+import { chainProposalV10Schema, type ChainProposal } from '../run/chain-proposal.js';
 import type { RunV30 } from '../run/schemas.js';
 import { buildRetryMetadata } from '../run/v3/run-machine.js';
 import {
@@ -9,21 +12,65 @@ import {
   recoverSealRunV3,
 } from '../run/v3/mutation-engine.js';
 import {
+  decideV3,
+  type DecideV3Confidence,
+  type DecideV3Verdict,
+} from '../run/v3/decide-v3.js';
+import {
+  readV3KnowledgeReconciliation,
+  reconcileV3RunKnowledge,
+  v3ReconciliationSummary,
+} from '../run/v3/knowledge-v3.js';
+import { ensureV3RunShell } from '../run/v3/run-shell.js';
+import {
   addV3MutationOptions,
   addV3ReadOptions,
   collectV3,
   emitV3Error,
   emitV3Success,
+  listV3Sessions,
   mutationIdentity,
   parseV3Revision,
   resolveV3Options,
+  retiredV3Action,
+  retiredV3Options,
   type V3CommonOptions,
+  v3Store,
 } from './v3-cli-shared.js';
 
 type RunMutationOptions = V3CommonOptions & { run: string };
 
 function runResult(mutation: ReturnType<typeof mutateRunV3>): unknown {
   return mutation.transition.result;
+}
+
+/**
+ * Read and validate a run-relative chain-proposal document under outputs/.
+ * Mirrors the v2 readProposal safety mode: realpath checks that the resolved
+ * file is a regular file inside the canonical Run outputs/ directory.
+ */
+function readV3ChainProposal(runDir: string, path: string): ChainProposal {
+  const outputsRoot = resolve(runDir, 'outputs');
+  if (!existsSync(outputsRoot)) {
+    throw new Error('chain proposal must remain under the current Run outputs/ directory');
+  }
+  const canonicalOutputs = realpathSync(outputsRoot);
+  const candidate = resolve(runDir, path);
+  const stat = lstatSync(candidate);
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('chain proposal must be a regular file');
+  const canonical = realpathSync(candidate);
+  const rel = relative(canonicalOutputs, canonical);
+  if (!rel || rel.startsWith('..') || isAbsolute(rel) || resolve(canonicalOutputs, rel) !== canonical) {
+    throw new Error('chain proposal must remain under the current Run outputs/ directory');
+  }
+  const parsed = chainProposalV10Schema.safeParse(JSON.parse(readFileSync(canonical, 'utf8')));
+  if (!parsed.success) {
+    const detail = parsed.error.issues
+      .map(issue => `${issue.path.join('.') || 'proposal'}: ${issue.message}`)
+      .join('; ');
+    throw new Error(`chain proposal is invalid: ${detail}`);
+  }
+  return parsed.data;
 }
 
 export function registerRunV3Command(program: Command): void {
@@ -62,8 +109,18 @@ export function registerRunV3Command(program: Command): void {
         const mutation = createRunningRunV3(store, {
           ...mutationIdentity(resolved), expectedOrchestrationRevision: resolved.expectedOrchestrationRevision!, run: candidate,
         });
+        ensureV3RunShell(store, resolved.session, resolved.run);
+        const result = {
+          ...(runResult(mutation) as Record<string, unknown>),
+          step_id: step.step_id,
+          next: {
+            suggest_only: true,
+            command: `maestro run complete ${resolved.run} --advance`,
+            reason: 'Run created — execute and complete it with run complete --advance',
+          },
+        };
         emitV3Success({ operation: 'next', sessionId: resolved.session, runId: resolved.run,
-          requestId: resolved.requestId, result: runResult(mutation), mutation });
+          requestId: resolved.requestId, result, mutation });
       } catch (error) {
         emitV3Error('next', error, { session: options.session, runId: options.run, requestId: options.requestId });
       }
@@ -117,6 +174,7 @@ export function registerRunV3Command(program: Command): void {
           requestOperation: 'run-create',
           run: candidate,
         });
+        ensureV3RunShell(store, resolved.session, resolved.run);
         emitV3Success({ operation: 'create', sessionId: resolved.session, runId: resolved.run,
           requestId: resolved.requestId, result: runResult(mutation), mutation });
       } catch (error) {
@@ -125,12 +183,19 @@ export function registerRunV3Command(program: Command): void {
     });
 
   addV3MutationOptions(run.command('complete <run-id>').description('Complete and seal a Run atomically'), 'run')
-    .requiredOption('--summary <text>', 'completion summary')
+    .option('--summary <text>', 'completion summary (fallback: report.md frontmatter summary)')
     .option('--verdict <verdict>', 'done or done_with_concerns', 'done')
     .option('--advance', 'complete the Run and its chain step atomically')
+    .option('--decision <text>', 'decision record (repeatable)', collectV3, [])
+    .option('--note <text>', 'supplementary note (repeatable)', collectV3, [])
+    .option('--artifact <path>', 'run-relative extra artifact (repeatable)', collectV3, [])
+    .option('--chain-proposal <path>', 'run-relative chain-proposal JSON under outputs/')
+    .option('--apply-proposal', 'apply the single validated chain-proposal artifact discovered in this Run')
     .requiredOption('--expected-orchestration-revision <n>', 'expected Session orchestration revision', parseV3Revision)
     .action((runId: string, options: V3CommonOptions & {
-      summary: string; verdict: string; advance?: boolean;
+      summary?: string; verdict: string; advance?: boolean;
+      decision: string[]; note: string[]; artifact: string[];
+      chainProposal?: string; applyProposal?: boolean;
     }) => {
       try {
         if (!options.advance) {
@@ -139,13 +204,24 @@ export function registerRunV3Command(program: Command): void {
         if (options.verdict !== 'done' && options.verdict !== 'done_with_concerns') {
           throw new Error('--verdict must be done or done_with_concerns');
         }
+        if (options.chainProposal && options.applyProposal) {
+          throw new Error('--chain-proposal and --apply-proposal are mutually exclusive');
+        }
         const { store, options: resolved } = resolveV3Options(options);
         const verdict = resolved.verdict as 'done' | 'done_with_concerns';
+        const chainProposal = resolved.chainProposal
+          ? readV3ChainProposal(store.runDir(resolved.session, runId), resolved.chainProposal)
+          : undefined;
         const mutation = completeRunAndAdvance(store, {
           ...mutationIdentity(resolved), runId,
           expectedRunRevision: resolved.expectedRunRevision!,
           expectedOrchestrationRevision: resolved.expectedOrchestrationRevision!,
           summary: resolved.summary, verdict,
+          notes: resolved.note,
+          decisionRecords: resolved.decision.map(text => ({ text })),
+          extraArtifactRefs: resolved.artifact,
+          chainProposal,
+          applyChainProposal: resolved.applyProposal,
         });
         emitV3Success({ operation: 'complete', sessionId: resolved.session, runId,
           requestId: resolved.requestId, result: runResult(mutation), mutation });
@@ -205,6 +281,38 @@ export function registerRunV3Command(program: Command): void {
       }
     });
 
+  addV3MutationOptions(run.command('decide <point-id>').description('Record a decision point verdict'), 'orchestration')
+    .requiredOption('--verdict <verdict>', 'proceed|fix|escalate')
+    .option('--confidence <level>', 'high|medium|low', 'medium')
+    .option('--summary <text>', 'decision summary')
+    .option('--after-step <id>', 'chain step the decision gates (default: first pending step)')
+    .action((pointId: string, options: V3CommonOptions & {
+      verdict: string; confidence: string; summary?: string; afterStep?: string;
+    }) => {
+      try {
+        if (!['proceed', 'fix', 'escalate'].includes(options.verdict)) {
+          throw new Error('--verdict must be proceed, fix, or escalate');
+        }
+        if (!['high', 'medium', 'low'].includes(options.confidence)) {
+          throw new Error('--confidence must be high, medium, or low');
+        }
+        const { store, options: resolved } = resolveV3Options(options);
+        const mutation = decideV3(store, {
+          ...mutationIdentity(resolved),
+          pointId,
+          verdict: resolved.verdict as DecideV3Verdict,
+          confidence: resolved.confidence as DecideV3Confidence,
+          summary: resolved.summary,
+          expectedOrchestrationRevision: resolved.expectedOrchestrationRevision!,
+          afterStepId: resolved.afterStep,
+        });
+        emitV3Success({ operation: 'run-decide', sessionId: resolved.session,
+          requestId: resolved.requestId, result: runResult(mutation), mutation });
+      } catch (error) {
+        emitV3Error('run-decide', error, { session: options.session, requestId: options.requestId });
+      }
+    });
+
   addV3ReadOptions(run.command('brief <run-id>').description('Read a Run brief'))
     .action((runId: string, options: { session?: string; workflowRoot: string }) => {
       try {
@@ -213,6 +321,47 @@ export function registerRunV3Command(program: Command): void {
         emitV3Success({ operation: 'brief', sessionId: resolved.session, runId, result: value });
       } catch (error) {
         emitV3Error('brief', error, { session: options.session, runId });
+      }
+    });
+
+  addV3ReadOptions(run.command('recall <command> [args...]').description('Read-only topic search across session/3.0 Sessions'))
+    .action((command: string, args: string[], options: { session?: string; workflowRoot: string }) => {
+      try {
+        const store = v3Store(options);
+        const query = [command, ...args].join(' ').trim().toLowerCase();
+        const matches: Array<{
+          session_id: string;
+          status: string;
+          objective: string;
+          updated_at: string;
+          matched: string[];
+        }> = [];
+        if (query) {
+          for (const session of listV3Sessions(store)) {
+            const matched: string[] = [];
+            const consider = (value: string): void => {
+              if (value.toLowerCase().includes(query)) matched.push(value);
+            };
+            consider(session.objective);
+            consider(session.definition_of_done);
+            for (const step of session.chain) consider(step.command);
+            const unique = [...new Set(matched)];
+            if (unique.length > 0) {
+              matches.push({
+                session_id: session.session_id,
+                status: session.status,
+                objective: session.objective,
+                updated_at: session.updated_at,
+                matched: unique,
+              });
+            }
+          }
+        }
+        matches.sort((left, right) => right.updated_at.localeCompare(left.updated_at)
+          || left.session_id.localeCompare(right.session_id));
+        emitV3Success({ operation: 'recall', sessionId: null, result: matches });
+      } catch (error) {
+        emitV3Error('recall', error, { session: options.session });
       }
     });
 
@@ -226,10 +375,51 @@ export function registerRunV3Command(program: Command): void {
           blocked: ['running', 'failed', 'cancelled'], completed: ['sealed'], failed: ['sealed'],
           cancelled: ['sealed'], sealed: [],
         };
-        emitV3Success({ operation: 'check', sessionId: resolved.session, runId,
-          result: { run_id: runId, status: value.status, revision: value.revision, available_transitions: transitions[value.status] } });
+        const result: Record<string, unknown> = {
+          run_id: runId, status: value.status, revision: value.revision,
+          available_transitions: transitions[value.status],
+        };
+        if (value.status === 'sealed') {
+          // Sealed Runs are immutable: attach the persisted receipt without
+          // re-running reconciliation (mirrors v2 checkRun's sealed branch).
+          const receipt = readV3KnowledgeReconciliation(store, resolved.session, runId);
+          if (receipt) result.knowledge_reconciliation = v3ReconciliationSummary(receipt);
+        } else {
+          const receipt = reconcileV3RunKnowledge(store.projectRoot, resolved.session, runId);
+          if (receipt) {
+            result.knowledge_reconciliation = v3ReconciliationSummary(receipt);
+            if (receipt.counts.review_required > 0) {
+              result.warnings = [
+                `${receipt.counts.review_required} knowledge candidate(s) require review before promotion`,
+              ];
+            }
+          }
+        }
+        emitV3Success({ operation: 'check', sessionId: resolved.session, runId, result });
       } catch (error) {
         emitV3Error('check', error, { session: options.session, runId });
       }
     });
+
+  for (const [name, replacement] of [
+    ['start', 'run next / run create'],
+    ['done', 'run complete'],
+    ['edit', 'session chain insert|skip|replace'],
+    ['prepare', 'skills --steps'],
+    ['skill', 'skills --steps'],
+    ['recover', 'session resume'],
+    ['status', 'session status'],
+    ['log-mutation', 'session status'],
+    ['mutations', 'session status'],
+    ['accept-reuse', 'run brief'],
+    ['recall-confirm', 'run check'],
+    ['fork', 'run create'],
+    ['import', 'session migrate'],
+    ['new', 'run create'],
+    ['rebind', 'run brief'],
+    ['seal-session', 'session complete'],
+  ] as const) {
+    retiredV3Options(run.command(name).description('Deprecated in session/3.0'))
+      .action(retiredV3Action(`run ${name}`, replacement));
+  }
 }

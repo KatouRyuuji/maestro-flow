@@ -1,5 +1,6 @@
-import { randomUUID } from 'node:crypto';
-import { resolve } from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
+import { basename, extname, isAbsolute, join, relative, resolve } from 'node:path';
 
 import { artifactRepublishReceiptSchema, type TransitionReceiptV20 } from '../protocol-schemas.js';
 import {
@@ -24,7 +25,10 @@ import {
   validateStrictArtifactContract,
   type DiscoveredArtifact,
 } from '../artifacts.js';
+import { chainProposalV10Schema, type ChainProposal } from '../chain-proposal.js';
 import { hashCommandContract, resolveCommandSource } from '../contract.js';
+import { readReportFrontmatter } from '../report.js';
+import { applyV3DecisionRecord } from './decide-v3.js';
 import { createRevisionConflictError, V3StructuredError } from './errors.js';
 import {
   canonicalPayloadHash,
@@ -73,8 +77,15 @@ export interface CompleteRunAndAdvanceInput extends V3MutationIdentity {
   runId: string;
   expectedRunRevision: number;
   expectedOrchestrationRevision: number;
-  summary: string;
+  summary?: string | null;
   verdict: Extract<NonNullable<RunV30['verdict']>, 'done' | 'done_with_concerns'>;
+  // v2-contract-aligned completion inputs (TC-P0-3). All optional so migrated
+  // and legacy callers keep working without them.
+  notes?: string[];
+  decisionRecords?: Array<{ text: string; status?: 'proposed' | 'accepted' | 'rejected' }>;
+  extraArtifactRefs?: string[];
+  chainProposal?: ChainProposal;
+  applyChainProposal?: boolean;
 }
 
 export interface RecoverSealRunV3Input extends V3MutationIdentity {
@@ -348,6 +359,221 @@ function registerRunArtifacts(
   return ids;
 }
 
+interface AppliedV3ProposalOperation {
+  op: ChainProposal['operations'][number]['op'];
+  target: string;
+  status: string;
+}
+
+interface AppliedV3Proposal {
+  proposal_id: string;
+  operations: AppliedV3ProposalOperation[];
+}
+
+function extraArtifactMediaType(path: string): string {
+  switch (extname(path).toLowerCase()) {
+    case '.json': return 'application/json';
+    case '.md': return 'text/markdown';
+    case '.yaml':
+    case '.yml': return 'application/yaml';
+    case '.txt': return 'text/plain';
+    case '.html':
+    case '.htm': return 'text/html';
+    default: return 'application/octet-stream';
+  }
+}
+
+function inferExtraArtifactMeta(bytes: Buffer, path: string): { kind: string; schemaVersion: string } {
+  const name = basename(path, extname(path));
+  let kind = name;
+  let schemaVersion = `${kind}/1.0`;
+  if (extname(path).toLowerCase() === '.json') {
+    try {
+      const parsed = JSON.parse(bytes.toString('utf8')) as unknown;
+      const meta = (parsed && typeof parsed === 'object' && '_meta' in parsed)
+        ? (parsed as { _meta?: { kind?: unknown; schema?: unknown } })._meta
+        : undefined;
+      if (meta && typeof meta.kind === 'string' && meta.kind) kind = meta.kind;
+      if (meta && typeof meta.schema === 'string' && meta.schema) schemaVersion = meta.schema;
+    } catch {
+      // not JSON; keep the basename-derived kind
+    }
+  }
+  return { kind, schemaVersion };
+}
+
+/**
+ * Turn run-relative `--artifact` paths into registry-discoverable entries.
+ * Paths resolve against the Run directory, must exist as regular files, and
+ * must stay inside the Run directory (realpath-checked against traversal).
+ * Registration itself happens inside prepareArtifactPublication so the extras
+ * share the same artifact registry read, revision bump, and transition receipt.
+ */
+function registerExtraArtifacts(
+  store: SessionStore,
+  session: SessionStateV30,
+  run: RunV30,
+  runDir: string,
+  paths: readonly string[],
+): DiscoveredArtifact[] {
+  const result: DiscoveredArtifact[] = [];
+  for (const item of paths) {
+    const candidate = resolve(runDir, item);
+    let stat: ReturnType<typeof lstatSync>;
+    try {
+      stat = lstatSync(candidate);
+    } catch {
+      throw new V3StructuredError('INVALID_ARGUMENT', `extra artifact does not exist: ${item}`);
+    }
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      throw new V3StructuredError('INVALID_ARGUMENT', `extra artifact must be a regular file: ${item}`);
+    }
+    const canonical = realpathSync(candidate);
+    const rel = relative(runDir, canonical);
+    if (!rel || rel.startsWith('..') || isAbsolute(rel) || resolve(runDir, rel) !== canonical) {
+      throw new V3StructuredError('INVALID_ARGUMENT', `extra artifact must remain under the Run directory: ${item}`);
+    }
+    const bytes = readFileSync(canonical);
+    const { kind, schemaVersion } = inferExtraArtifactMeta(bytes, canonical);
+    result.push({
+      absolutePath: canonical,
+      relativePath: relative(store.sessionDir(session.session_id), canonical).replaceAll('\\', '/'),
+      kind,
+      schemaVersion,
+      role: 'evidence',
+      mediaType: extraArtifactMediaType(canonical),
+      contentHash: createHash('sha256').update(bytes).digest('hex'),
+      size: bytes.length,
+    });
+  }
+  return result;
+}
+
+/**
+ * Simplified chain-proposal discovery (TC-P0-3): walk runDir/outputs in a
+ * deterministic order and return the first artifact whose `_meta` declares
+ * kind `chain-proposal` or schema `chain-proposal/1.0` and that parses as a
+ * chainProposalV10Schema document. Schema-invalid declarations are skipped;
+ * callers report INVALID_ARGUMENT when nothing valid is found.
+ */
+function findChainProposalInOutputs(runDir: string): ChainProposal | null {
+  const outputsDir = join(runDir, 'outputs');
+  if (!existsSync(outputsDir)) return null;
+  const files: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name))) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else if (entry.isFile() && !entry.isSymbolicLink()) files.push(path);
+    }
+  };
+  walk(outputsDir);
+  for (const file of files) {
+    if (extname(file).toLowerCase() !== '.json') continue;
+    try {
+      const parsed = JSON.parse(readFileSync(file, 'utf8')) as unknown;
+      const meta = (parsed && typeof parsed === 'object' && '_meta' in parsed)
+        ? (parsed as { _meta?: { kind?: unknown; schema?: unknown } })._meta
+        : undefined;
+      if (!meta || (meta.kind !== 'chain-proposal' && meta.schema !== 'chain-proposal/1.0')) continue;
+      return chainProposalV10Schema.parse(parsed);
+    } catch {
+      // unparseable or invalid chain-proposal declarations are skipped
+    }
+  }
+  return null;
+}
+
+function nextProposalStepId(chain: SessionStateV30['chain']): string {
+  const used = new Set(chain.map(step => step.step_id));
+  let seq = 1;
+  while (used.has(`s-${seq}`)) seq++;
+  return `s-${seq}`;
+}
+
+/**
+ * Apply chain-proposal/1.0 operations to a shallow copy of the current chain.
+ * Runs inside the complete-and-advance transaction, before the chain advance,
+ * so the proposal edits and the completion commit atomically. Every operation
+ * failure is surfaced as INVALID_ARGUMENT with the operation index/name.
+ */
+function applyChainProposalV3(
+  session: SessionStateV30,
+  proposal: ChainProposal,
+): { session: SessionStateV30; operations: AppliedV3ProposalOperation[] } {
+  let current: SessionStateV30 = { ...session, chain: session.chain.map(step => ({ ...step })) };
+  const operations: AppliedV3ProposalOperation[] = [];
+  for (const [index, operation] of proposal.operations.entries()) {
+    try {
+      if (operation.op === 'insert') {
+        const chain = [...current.chain];
+        const afterIndex = chain.findIndex(step => step.step_id === operation.after);
+        if (afterIndex < 0) throw new Error(`after step not found: ${operation.after}`);
+        const stepId = nextProposalStepId(chain);
+        const step: SessionStateV30['chain'][number] = {
+          step_id: stepId,
+          command: operation.command,
+          args: operation.args !== undefined ? [operation.args] : [],
+          status: 'pending',
+          run_ids: [],
+          goal_ref: null,
+          decision_refs: [],
+        };
+        chain.splice(afterIndex + 1, 0, step);
+        current = { ...current, chain };
+        operations.push({ op: operation.op, target: stepId, status: 'pending' });
+      } else if (operation.op === 'replace') {
+        const chain = [...current.chain];
+        const targetIndex = chain.findIndex(step => step.step_id === operation.step_id);
+        if (targetIndex < 0) throw new Error(`chain step not found: ${operation.step_id}`);
+        if (chain[targetIndex].status !== 'pending') {
+          throw new Error(`chain step ${operation.step_id} is ${chain[targetIndex].status}, expected pending`);
+        }
+        const step = { ...chain[targetIndex] };
+        if (operation.command !== undefined) step.command = operation.command;
+        if (operation.args !== undefined) step.args = [operation.args];
+        chain[targetIndex] = step;
+        current = { ...current, chain };
+        operations.push({ op: operation.op, target: step.step_id, status: step.status });
+      } else if (operation.op === 'skip') {
+        const chain = [...current.chain];
+        const targetIndex = chain.findIndex(step => step.step_id === operation.step_id);
+        if (targetIndex < 0) throw new Error(`chain step not found: ${operation.step_id}`);
+        if (chain[targetIndex].status === 'running' || chain[targetIndex].status === 'completed') {
+          throw new Error(`chain step ${operation.step_id} is ${chain[targetIndex].status}, cannot skip`);
+        }
+        chain[targetIndex] = {
+          ...chain[targetIndex],
+          status: 'skipped',
+          decision_refs: [...new Set([
+            ...chain[targetIndex].decision_refs,
+            `proposal:${proposal.proposal_id}:${index}`,
+          ])].sort(),
+        };
+        current = { ...current, chain };
+        operations.push({ op: operation.op, target: operation.step_id, status: 'skipped' });
+      } else {
+        const applied = applyV3DecisionRecord(current, {
+          pointId: operation.point_id,
+          verdict: operation.verdict,
+          confidence: operation.confidence,
+          summary: operation.summary,
+          evidenceRefs: operation.evidence !== undefined ? [operation.evidence] : [],
+          afterStepId: null,
+        });
+        current = applied.session;
+        operations.push({ op: operation.op, target: operation.point_id, status: applied.decisionStatus });
+      }
+    } catch (error) {
+      throw new V3StructuredError(
+        'INVALID_ARGUMENT',
+        `chain proposal operations[${index}] ${operation.op}: ${(error as Error).message}`,
+      );
+    }
+  }
+  return { session: current, operations };
+}
+
 interface ArtifactPublicationAuthority {
   authority: 'transition-receipt/2.0';
   artifact_registry_revision: number;
@@ -363,6 +589,7 @@ function prepareArtifactPublication(input: {
   session: SessionStateV30;
   run: RunV30;
   strict: boolean;
+  extraArtifacts?: readonly DiscoveredArtifact[];
 }): { authority: ArtifactPublicationAuthority; warnings: string[] } {
   const runDir = input.store.runDir(input.session.session_id, input.run.run_id);
   const sessionDir = input.store.sessionDir(input.session.session_id);
@@ -378,7 +605,12 @@ function prepareArtifactPublication(input: {
   }
   const artifactsPath = resolve(sessionDir, input.session.artifacts_ref);
   const artifacts = input.tx.readJson(artifactsPath, artifactRegistrySchema);
-  const artifactIds = registerRunArtifacts(artifacts, input.run, scan.artifacts);
+  // Extra artifacts (TC-P0-3 --artifact) register alongside the contract scan in
+  // the same authority: same registry read, same revision bump, same receipt.
+  const artifactIds = registerRunArtifacts(artifacts, input.run, [
+    ...scan.artifacts,
+    ...(input.extraArtifacts ?? []),
+  ]);
   const primaryArtifactId = artifactIds.find(id => artifacts.artifacts[id]?.role === 'primary') ?? null;
   const publishedArtifactSet = new Set(artifactIds);
   const authority: ArtifactPublicationAuthority = {
@@ -819,7 +1051,13 @@ export function completeRunAndAdvance(
     operation: 'run-complete-and-seal', run_id: runId,
     expected_run_revision: input.expectedRunRevision,
     expected_orchestration_revision: input.expectedOrchestrationRevision,
-    summary: input.summary, verdict: input.verdict,
+    summary: input.summary ?? null,
+    verdict: input.verdict,
+    notes: input.notes ?? [],
+    decision_records: input.decisionRecords ?? [],
+    extra_artifact_refs: input.extraArtifactRefs ?? [],
+    chain_proposal: input.chainProposal ?? null,
+    apply_chain_proposal: input.applyChainProposal ?? false,
     ...auditPayload(identity),
   };
   const payloadHash = canonicalPayloadHash(payload);
@@ -834,12 +1072,52 @@ export function completeRunAndAdvance(
     const stepIndex = session.chain.findIndex(step => step.step_id === run.step_id);
     if (stepIndex < 0) throw new V3StructuredError('INVALID_ARGUMENT', `Run ${runId} references unknown step ${run.step_id}`);
 
-    const publication = prepareArtifactPublication({ store, tx, session, run, strict: true });
+    const runDir = store.runDir(identity.sessionId, runId);
+
+    // ── report.md frontmatter fallback (TC-P0-3) ───────────────────────────
+    const frontmatter = readReportFrontmatter(runDir);
+    const summary = input.summary !== undefined && input.summary !== null && input.summary.trim() !== ''
+      ? input.summary
+      : frontmatter.summary;
+    const decisionRecords = input.decisionRecords !== undefined && input.decisionRecords.length > 0
+      ? input.decisionRecords.map(item => ({ text: item.text, status: item.status ?? 'accepted' as const }))
+      : frontmatter.decisions.map(item => ({ text: item.text, status: item.status ?? 'accepted' as const }));
+    const notes = input.notes ?? [];
+
+    // ── chain proposal resolution: explicit document or outputs discovery ───
+    const proposal = input.chainProposal
+      ?? (input.applyChainProposal ? findChainProposalInOutputs(runDir) : null);
+    if (input.applyChainProposal && !proposal) {
+      throw new V3StructuredError(
+        'INVALID_ARGUMENT',
+        'chain proposal requested but no valid chain-proposal/1.0 artifact was found under outputs/',
+      );
+    }
+
+    const publication = prepareArtifactPublication({
+      store, tx, session, run, strict: true,
+      extraArtifacts: registerExtraArtifacts(store, session, run, runDir, input.extraArtifactRefs ?? []),
+    });
     const artifactIds = publication.authority.artifact_ids;
     const primaryArtifactId = publication.authority.primary_artifact_id;
-    const nextPendingIndex = session.chain.findIndex((step, index) => index > stepIndex && step.status === 'pending');
-    const chain = session.chain.map((step, index) => (
-      index === stepIndex ? { ...step, status: 'completed' as const } : step
+
+    // ── chain proposal operations apply atomically before the chain advance ─
+    let proposalSession: SessionStateV30 = session;
+    let appliedProposal: AppliedV3Proposal | null = null;
+    if (proposal) {
+      const applied = applyChainProposalV3(proposalSession, proposal);
+      proposalSession = applied.session;
+      appliedProposal = { proposal_id: proposal.proposal_id, operations: applied.operations };
+    }
+    const completedStepIndex = proposalSession.chain.findIndex(step => step.step_id === run.step_id);
+    if (completedStepIndex < 0) {
+      throw new V3StructuredError('INVALID_ARGUMENT', `Run ${runId} references unknown step ${run.step_id}`);
+    }
+    const nextPendingIndex = proposalSession.chain.findIndex((step, index) => (
+      index > completedStepIndex && step.status === 'pending'
+    ));
+    const chain = proposalSession.chain.map((step, index) => (
+      index === completedStepIndex ? { ...step, status: 'completed' as const } : step
     ));
     const completed = transitionRun(run, 'completed');
     const nextRun: RunV30 = {
@@ -850,15 +1128,17 @@ export function completeRunAndAdvance(
       output_refs: artifactIds,
       primary_artifact_id: primaryArtifactId,
       verdict: input.verdict,
-      summary: required(input.summary, 'summary'),
+      summary: required(summary, 'summary'),
       ended_at: identity.recordedAt,
       sealed_at: identity.recordedAt,
+      ...(decisionRecords.length > 0 ? { decision_records: decisionRecords } : {}),
+      ...(notes.length > 0 ? { notes } : {}),
     };
     const nextSession = updatedSessionActivity({
-      ...session,
+      ...proposalSession,
       chain,
-      active_run_ids: session.active_run_ids.filter(id => id !== runId),
-    }, identity.recordedAt, session.orchestration_revision + 1);
+      active_run_ids: proposalSession.active_run_ids.filter(id => id !== runId),
+    }, identity.recordedAt, proposalSession.orchestration_revision + 1);
     return stageApplied({
       tx, identity, payloadHash, session: nextSession, run: nextRun,
       targetType: 'orchestration', targetId: identity.sessionId,
@@ -880,6 +1160,7 @@ export function completeRunAndAdvance(
             ? 'Run sealed; explicit run next may allocate the next chain Run'
             : 'Run sealed; no pending chain step remains',
         },
+        ...(appliedProposal ? { applied_proposal: appliedProposal } : {}),
       },
     });
   });

@@ -1264,14 +1264,20 @@ export const runOperationV12Schema = z.enum([
   ...runOperationSchema.options,
   'capabilities',
   'session-open', 'session-migrate', 'session-pause', 'session-resume', 'session-complete', 'session-archive',
-  'session-status', 'session-resume-view', 'session-chain-insert', 'session-chain-skip',
+  'session-unarchive',
+  'session-status', 'session-list', 'session-fail', 'session-resume-view', 'session-chain-insert', 'session-chain-skip',
   'session-chain-replace', 'session-chain-audit',
-  'run-cancel', 'run-seal', 'run-transition',
+  'run-cancel', 'run-seal', 'run-transition', 'run-decide',
   ...runOperationV11Schema.options.filter(operation => operation.startsWith('execution-')),
   'execution-operation-claim', 'execution-operation-heartbeat',
   'execution-operation-release', 'execution-operation-status',
   'participant-register', 'participant-status', 'participant-unregister',
   'artifact-inspect', 'artifact-republish',
+  // TC-P1: retired v2-only subcommand stubs for session/3.0 workspaces
+  'run-start', 'run-done', 'run-edit', 'run-prepare', 'run-skill', 'run-recover', 'run-status',
+  'run-log-mutation', 'run-mutations', 'run-accept-reuse', 'run-recall-confirm', 'run-fork',
+  'run-import', 'run-new', 'run-rebind', 'run-seal-session',
+  'session-next', 'session-done', 'session-decide', 'session-seal', 'session-meta', 'session-prune',
 ]);
 
 const responseCommonSchema = z.object({

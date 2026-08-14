@@ -21,12 +21,12 @@ const cleanCompletion = {
 };
 
 describe('v3 Session state machine', () => {
-  it('exports the session/3.0 transition matrix, including failure archival', () => {
+  it('exports the session/3.0 transition matrix, including unarchive', () => {
     expect(SESSION_TRANSITIONS).toEqual({
       open: ['paused', 'completed', 'failed'],
       paused: ['open', 'completed', 'failed'],
       completed: ['archived'],
-      archived: [],
+      archived: ['open'],
       failed: ['archived'],
     });
   });
@@ -103,7 +103,7 @@ describe('v3 Session state machine', () => {
 
   it('exports a stable permission table for mutation-engine dispatch', () => {
     expect(SESSION_OPERATION_PERMISSIONS).toEqual({
-      open: ['create_run', 'advance_chain', 'transition_run', 'add_evidence'],
+      open: ['create_run', 'advance_chain', 'transition_run', 'add_evidence', 'decide'],
       paused: ['transition_run', 'add_evidence'],
       completed: [],
       archived: [],
@@ -116,8 +116,11 @@ describe('v3 Session state machine', () => {
       .toEqual({ sessionId: 's-1', status: 'archived' });
   });
 
-  it('keeps archived Sessions terminal', () => {
+  it('allows unarchive only back to open and keeps other transitions terminal', () => {
+    expect(transitionSession({ sessionId: 's-1', status: 'archived' }, 'open'))
+      .toEqual({ sessionId: 's-1', status: 'open' });
     for (const status of SESSION_STATUSES) {
+      if (status === 'open') continue;
       expect(() => transitionSession({ status: 'archived' }, status, cleanCompletion))
         .toThrowError(expect.objectContaining({
           code: 'INVALID_STATE_TRANSITION',

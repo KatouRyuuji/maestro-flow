@@ -12,14 +12,18 @@ export const SESSION_TRANSITIONS: Readonly<Record<SessionStatus, readonly Sessio
   open: ['paused', 'completed', 'failed'],
   paused: ['open', 'completed', 'failed'],
   completed: ['archived'],
-  archived: [],
+  // archived is not terminal: unarchive returns the Session to open.
+  // The archived -> open edge is consumed by `session unarchive` only;
+  // there is no separate unarchive operation permission because it is a
+  // state transition, not an operation (SESSION_OPERATION_PERMISSIONS stays []).
+  archived: ['open'],
   failed: ['archived'],
 };
 
-export type SessionOperation = 'create_run' | 'advance_chain' | 'transition_run' | 'add_evidence';
+export type SessionOperation = 'create_run' | 'advance_chain' | 'transition_run' | 'add_evidence' | 'decide';
 
 export const SESSION_OPERATION_PERMISSIONS: Readonly<Record<SessionStatus, readonly SessionOperation[]>> = {
-  open: ['create_run', 'advance_chain', 'transition_run', 'add_evidence'],
+  open: ['create_run', 'advance_chain', 'transition_run', 'add_evidence', 'decide'],
   paused: ['transition_run', 'add_evidence'],
   completed: [],
   archived: [],
@@ -130,6 +134,9 @@ export function listSessionCompletionBlockers(
       kind: 'blocking_gate', id: gate.gateId,
       message: `blocking gate ${gate.gateId} is ${gate.status}, expected passed`,
     }));
+  // v3 has no gate evaluation channel today; this blocker stays defensive
+  // (gates.json is only initialized empty and migrated, never evaluated/written
+  // by v3 mutations; bridge/UI still consume gates.json).
   const steps: SessionCompletionBlocker[] = snapshot.requiredSteps
     .filter(step => step.status !== 'completed' && !(step.status === 'skipped' && hasSkipEvidence(step)))
     .map(step => ({

@@ -17,12 +17,18 @@
 //   maestro config delegate register → register settings file (TUI)
 //   maestro config delegate ref   → command reference (TUI)
 //   maestro config delegate config → config sources (TUI)
+//   maestro config session-schema set  → set the project Session schema writer
+//   maestro config session-schema show → print the current Session schema writer
 // ---------------------------------------------------------------------------
 
-import type { Command } from 'commander';
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { InvalidArgumentError, type Command } from 'commander';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
+
+import { sessionSchemaSelectionSchema, sessionSchemaWriterSchema } from '../run/schemas.js';
+import type { SessionSchemaWriter } from '../run/schemas.js';
+import { SessionStore } from '../run/store.js';
 
 /**
  * Check if the skill-context hook is installed in Claude Code settings.
@@ -163,6 +169,52 @@ async function printDelegateShow(json: boolean) {
     const src = userRoles[role] ? '*' : ' ';
     console.log(`  ${src}${role.padEnd(14)} → ${resolved?.name ?? '(none)'}`);
   }
+}
+
+const SESSION_SCHEMA_WRITERS = sessionSchemaWriterSchema.options;
+
+/** Commander argument validator: rejects writers outside the sessionSchemaWriterSchema enum. */
+function parseSessionSchemaWriter(value: string): SessionSchemaWriter {
+  if (!(SESSION_SCHEMA_WRITERS as readonly string[]).includes(value)) {
+    throw new InvalidArgumentError(`expected one of: ${SESSION_SCHEMA_WRITERS.join(', ')}`);
+  }
+  return value as SessionSchemaWriter;
+}
+
+function workflowConfigPath(workflowRoot: string): string {
+  return join(workflowRoot, '.workflow', 'config.json');
+}
+
+/** Read config.json with passthrough semantics; a missing file yields an empty object. */
+function readWorkflowConfig(workflowRoot: string): Record<string, unknown> {
+  const path = workflowConfigPath(workflowRoot);
+  if (!existsSync(path)) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf8'));
+  } catch (error) {
+    throw new Error(`Invalid project config at ${path}: ${(error as Error).message}`);
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`Invalid project config at ${path}: expected a JSON object`);
+  }
+  return parsed as Record<string, unknown>;
+}
+
+/**
+ * Validate the full selection (writer enum + session_statusless linkage) before
+ * writing, then merge into config.json preserving unrelated top-level fields.
+ */
+function writeSessionSchemaSelection(workflowRoot: string, writer: SessionSchemaWriter): void {
+  const selection = sessionSchemaSelectionSchema.parse({
+    schema_version: 'session-schema-selection/1.0',
+    writer,
+    features: { session_statusless: writer === 'session/2.0' },
+  });
+  const path = workflowConfigPath(workflowRoot);
+  mkdirSync(join(workflowRoot, '.workflow'), { recursive: true });
+  const next = { ...readWorkflowConfig(workflowRoot), session_schema: selection };
+  writeFileSync(path, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
 }
 
 export function registerConfigCommand(program: Command): void {
@@ -394,5 +446,29 @@ export function registerConfigCommand(program: Command): void {
     .action(async () => {
       const { runInstallTui } = await import('../tui/config-ui/index.js');
       await runInstallTui();
+    });
+
+  // ---------------------------------------------------------------------------
+  // maestro config session-schema — project Session schema writer selection
+  // ---------------------------------------------------------------------------
+
+  const sessionSchema = cmd
+    .command('session-schema')
+    .description('Project Session schema writer selection (.workflow/config.json)')
+    .option('--workflow-root <path>', 'project root containing .workflow', process.cwd());
+
+  sessionSchema.command('set')
+    .description('Set the Session schema writer (session/1.3, session/2.0, or session/3.0)')
+    .argument('<writer>', 'Session schema writer', parseSessionSchemaWriter)
+    .action((writer: SessionSchemaWriter) => {
+      writeSessionSchemaSelection(resolve(sessionSchema.opts().workflowRoot), writer);
+      console.log(`✓ session schema writer set to ${writer}`);
+    });
+
+  sessionSchema.command('show')
+    .description('Show the current Session schema writer (defaults to session/1.3)')
+    .action(() => {
+      const writer = new SessionStore(resolve(sessionSchema.opts().workflowRoot)).sessionSchemaSelection().writer;
+      console.log(writer);
     });
 }

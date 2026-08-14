@@ -28,9 +28,13 @@ import {
   addV3ReadOptions,
   emitV3Error,
   emitV3Success,
+  listLegacyV3MigrationCandidates,
+  listV3Sessions,
   mutateSessionStatusV3,
   mutationIdentity,
   resolveV3Options,
+  retiredV3Action,
+  retiredV3Options,
   type V3CommonOptions,
   v3Store,
 } from './v3-cli-shared.js';
@@ -51,10 +55,12 @@ function chainMutationAction(
   operation: 'session-chain-insert' | 'session-chain-skip' | 'session-chain-replace',
   build: (options: V3CommonOptions & {
     stepId: string; command?: string; afterStep?: string; arg?: string[];
+    goalRef?: string; stage?: string;
   }) => ChainMutation,
 ) {
   return (options: V3CommonOptions & {
     stepId: string; command?: string; afterStep?: string; arg?: string[];
+    goalRef?: string; stage?: string;
   }): void => {
     try {
       const { store, options: resolved } = resolveV3Options(options);
@@ -82,7 +88,8 @@ export function registerSessionV3Command(program: Command): void {
     .requiredOption('--reason <text>', 'audit reason')
     .option('--evidence <ref>', 'evidence reference (repeatable)', (value, previous: string[] = []) => [...previous, value], [])
     .option('--definition-of-done <text>', 'definition of done', '')
-    .action((objective: string, options: V3CommonOptions & { id: string; definitionOfDone: string }) => {
+    .option('--chain <commands...>', 'initial chain commands')
+    .action((objective: string, options: V3CommonOptions & { id: string; definitionOfDone: string; chain?: string[] }) => {
       try {
         const store = v3Store(options);
         const sessionId = options.id.trim();
@@ -100,7 +107,11 @@ export function registerSessionV3Command(program: Command): void {
           schema_version: 'session/3.0', session_id: sessionId, objective,
           definition_of_done: options.definitionOfDone, status: 'open',
           identity_revision: 1, orchestration_revision: 0, activity_revision: 1,
-          chain: [], decisions: [], active_run_ids: [],
+          chain: (options.chain ?? []).map((command, index) => ({
+            step_id: `s-${index + 1}`, command, args: [], status: 'pending' as const,
+            run_ids: [], goal_ref: null, decision_refs: [], stage: null,
+          })),
+          decisions: [], active_run_ids: [],
           gates_ref: 'gates.json', artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
           created_at: now, updated_at: now, completed_at: null, archived_at: null,
         });
@@ -145,8 +156,9 @@ export function registerSessionV3Command(program: Command): void {
     });
 
   session.command('migrate')
-    .description('Migrate one legacy Session atomically to session/3.0')
-    .requiredOption('--session <id>', 'legacy Session ID')
+    .description('Migrate one legacy Session atomically to session/3.0 (or every non-v3 Session with --all)')
+    .option('--session <id>', 'legacy Session ID (mutually exclusive with --all)')
+    .option('--all', 'migrate every non-session/3.0 Session')
     .requiredOption('--to-v3', 'confirm migration to session/3.0')
     .requiredOption('--participant <id>', 'participant performing the migration')
     .requiredOption('--actor <id>', 'authorized actor')
@@ -154,13 +166,54 @@ export function registerSessionV3Command(program: Command): void {
     .option('--json', 'emit run-response/1.2 JSON')
     .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
     .action((options: {
-      session: string; toV3: boolean; participant: string; actor: string;
+      session?: string; all?: boolean; toV3: boolean; participant: string; actor: string;
       definitionOfDone?: string; workflowRoot: string;
     }) => {
       try {
         const store = new SessionStore(resolve(options.workflowRoot));
         if (store.sessionSchemaSelection().writer !== 'session/3.0') {
           throw new Error('v3 migration requires the session/3.0 writer selection');
+        }
+        if (options.session !== undefined && options.all) {
+          throw new Error('--all and --session are mutually exclusive');
+        }
+        if (options.all) {
+          type MigrateAllResult = {
+            session_id: string;
+            source_schema_version: string;
+            outcome: 'migrated' | 'failed';
+            error?: string;
+          };
+          // Batch migration: enumerate every non-session/3.0 Session and
+          // migrate each one independently. A single failure is recorded in
+          // its result entry and never interrupts the remaining Sessions;
+          // both full success and partial failure surface in `result`.
+          const results: MigrateAllResult[] = listLegacyV3MigrationCandidates(store).map(candidate => {
+            try {
+              applyV3Migration(store, loadLegacyV3MigrationInput(store, candidate.session_id), {
+                actor_id: options.actor,
+                participant_id: options.participant,
+                definition_of_done: options.definitionOfDone,
+              });
+              return {
+                session_id: candidate.session_id,
+                source_schema_version: candidate.source_schema_version,
+                outcome: 'migrated' as const,
+              };
+            } catch (error) {
+              return {
+                session_id: candidate.session_id,
+                source_schema_version: candidate.source_schema_version,
+                outcome: 'failed' as const,
+                error: error instanceof Error ? error.message : String(error),
+              };
+            }
+          });
+          emitV3Success({ operation: 'session-migrate', sessionId: null, result: results });
+          return;
+        }
+        if (options.session === undefined) {
+          throw new Error('one of --session or --all is required');
         }
         const record = store.readSessionRecord(options.session);
         const result = record.schema_version === 'session/3.0'
@@ -180,12 +233,14 @@ export function registerSessionV3Command(program: Command): void {
     ['pause', 'session-pause', 'paused'],
     ['resume', 'session-resume', 'open'],
     ['archive', 'session-archive', 'archived'],
+    ['unarchive', 'session-unarchive', 'open'],
+    ['fail', 'session-fail', 'failed'],
   ] as const) {
     addV3MutationOptions(session.command(name).description(`${name} a Session`), 'orchestration')
       .action((options: V3CommonOptions) => {
         try {
           const { store, options: resolved } = resolveV3Options(options);
-          const mutation = mutateSessionStatusV3(store, resolved, target);
+          const mutation = mutateSessionStatusV3(store, resolved, target, operation);
           emitV3Success({ operation, sessionId: resolved.session, requestId: resolved.requestId,
             result: mutation.transition.result, mutation });
         } catch (error) {
@@ -217,6 +272,29 @@ export function registerSessionV3Command(program: Command): void {
         emitV3Success({ operation: 'session-status', sessionId: resolved.session, result: state });
       } catch (error) {
         emitV3Error('session-status', error, { session: options.session });
+      }
+    });
+
+  addV3ReadOptions(session.command('list').description('List session/3.0 Sessions'))
+    .action((options: { session?: string; workflowRoot: string }) => {
+      try {
+        const store = v3Store(options);
+        const sessions = listV3Sessions(store)
+          .sort((left, right) => right.updated_at.localeCompare(left.updated_at)
+            || left.session_id.localeCompare(right.session_id))
+          .map(item => ({
+            session_id: item.session_id,
+            status: item.status,
+            objective: item.objective,
+            orchestration_revision: item.orchestration_revision,
+            identity_revision: item.identity_revision,
+            activity_revision: item.activity_revision,
+            active_run_ids: [...item.active_run_ids].sort(),
+            updated_at: item.updated_at,
+          }));
+        emitV3Success({ operation: 'session-list', sessionId: null, result: sessions });
+      } catch (error) {
+        emitV3Error('session-list', error, { session: options.session });
       }
     });
 
@@ -284,9 +362,11 @@ export function registerSessionV3Command(program: Command): void {
     .requiredOption('--command <name>', 'step command')
     .option('--arg <value>', 'step argument (repeatable)', (value, previous: string[] = []) => [...previous, value], [])
     .option('--after-step <id>', 'insert after this step; default appends')
+    .option('--goal-ref <id>', 'chain step goal reference')
+    .option('--stage <name>', 'chain step stage')
     .action(chainMutationAction('session-chain-insert', options => ({
       kind: 'insert', stepId: options.stepId, command: options.command!, args: options.arg ?? [],
-      afterStepId: options.afterStep ?? null,
+      afterStepId: options.afterStep ?? null, goalRef: options.goalRef ?? null, stage: options.stage ?? null,
     })));
 
   addV3MutationOptions(chain.command('skip').description('Skip a non-running chain step with evidence'), 'orchestration')
@@ -300,4 +380,16 @@ export function registerSessionV3Command(program: Command): void {
     .action(chainMutationAction('session-chain-replace', options => ({
       kind: 'replace', stepId: options.stepId, command: options.command!, args: options.arg ?? [],
     })));
+
+  for (const [name, replacement] of [
+    ['next', 'run next'],
+    ['done', 'run complete'],
+    ['decide', 'run decide'],
+    ['seal', 'session complete'],
+    ['meta', 'session status'],
+    ['prune', 'session list'],
+  ] as const) {
+    retiredV3Options(session.command(name).description('Deprecated in session/3.0'))
+      .action(retiredV3Action(`session ${name}`, replacement));
+  }
 }
