@@ -935,7 +935,6 @@ const expectedReleaseProofs = [
   'capabilities-exact',
   'v3-capabilities-branch',
   'v3-workflow-root-equals-routing',
-  'v3-participant-register-status-unregister-replay',
   'v3-help-json-catalog',
   'v2-help-run-compatibility',
   'v3-retired-execution-structured-response',

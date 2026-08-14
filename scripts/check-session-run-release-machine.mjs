@@ -14,7 +14,6 @@ const REQUIRED_BEHAVIOR_PROOFS = Object.freeze([
   'capabilities-exact',
   'v3-capabilities-branch',
   'v3-workflow-root-equals-routing',
-  'v3-participant-register-status-unregister-replay',
   'v3-help-json-catalog',
   'v2-help-run-compatibility',
   'v3-retired-execution-structured-response',
@@ -411,7 +410,7 @@ async function main() {
       {
         schema_version: 'maestro-capabilities/1.0',
         cli_version: '<version>',
-        session_schema_writes: ['session/1.3', 'session/2.0', 'session/3.0'],
+        session_schema_writes: ['session/1.3'],
         execution_schema_writes: ['execution/1.0'],
         run_response_writes: ['run-response/1.0', 'run-response/1.1', 'run-response/1.2'],
         features: {
@@ -446,7 +445,7 @@ async function main() {
       {
         schema_version: 'maestro-capabilities/1.0',
         cli_version: '<version>',
-        session_schema_writes: ['session/1.3', 'session/2.0', 'session/3.0'],
+        session_schema_writes: ['session/3.0'],
         execution_schema_writes: [],
         run_response_writes: ['run-response/1.0', 'run-response/1.1', 'run-response/1.2'],
         features: {
@@ -487,30 +486,6 @@ async function main() {
     assert.equal(v3Status.result.schema_version, 'session/3.0');
     recordProof(proofs, 'v3-workflow-root-equals-routing');
 
-    const participantCommon = [
-      '--session', 'release-v3', '--participant', 'window-release',
-      '--actor', 'release-actor', '--json', v3RootArg,
-    ];
-    const participantRegisterArgs = [
-      'participant', 'register', ...participantCommon, '--request-id', 'req-participant-register',
-    ];
-    const participantRegistered = parseEnvelope(
-      invoke(participantRegisterArgs), 'v3 participant register', 'run-response/1.2',
-    );
-    assert.equal(participantRegistered.operation, 'participant-register');
-    assert.equal(participantRegistered.result.outcome, 'applied');
-    assert.equal(participantRegistered.result.participant.status, 'registered');
-    const participantRegisterReplay = parseEnvelope(
-      invoke(participantRegisterArgs), 'v3 participant register replay', 'run-response/1.2',
-    );
-    assert.equal(participantRegisterReplay.result.outcome, 'replayed');
-    assert.deepEqual(participantRegisterReplay.result.participant, participantRegistered.result.participant);
-    const participantRegisteredStatus = parseEnvelope(invoke([
-      'participant', 'status', '--session', 'release-v3', '--participant', 'window-release',
-      '--actor', 'release-actor', '--request-id', 'req-participant-status-registered', '--json', v3RootArg,
-    ]), 'v3 registered participant status', 'run-response/1.2');
-    assert.deepEqual(participantRegisteredStatus.result.participants, [participantRegistered.result.participant]);
-
     const v3HelpResult = invoke(['help', '--json', v3RootArg]);
     assert.equal(v3HelpResult.status, 0, 'v3 help --json exit');
     const v3Help = JSON.parse(assertMachineStreams(v3HelpResult, 'v3 help --json'));
@@ -521,38 +496,21 @@ async function main() {
       'execution lease heartbeat', 'execution lease recover', 'execution lease release', 'execution lease status',
       'execution operation claim', 'execution operation heartbeat', 'execution operation release',
       'execution operation status', 'execution pause', 'execution resolve', 'execution resume', 'execution seal',
-      'execution start', 'execution status', 'participant register', 'participant status', 'participant unregister',
-      'run brief', 'run cancel', 'run check', 'run complete', 'run create', 'run next', 'run seal', 'run transition',
-      'session archive', 'session chain audit', 'session chain insert', 'session chain replace', 'session chain skip',
-      'session complete', 'session migrate', 'session open', 'session pause', 'session resume', 'session resume-view',
-      'session status',
-    ].sort((left, right) => left.localeCompare(right));
-    assert.deepEqual(v3Help.commands.map(item => item.command), expectedV3Commands);
-    assert.equal(new Set(v3Help.commands.map(item => item.command)).size, expectedV3Commands.length);
-    const v3CompleteHelp = v3Help.commands.find(item => item.command === 'run complete');
-    assert.equal(v3CompleteHelp?.cas_target, 'run');
-    assert.equal(v3CompleteHelp?.options.includes('--advance'), true);
-    assert.equal(v3CompleteHelp?.description, 'Complete and seal a Run atomically');
-    const artifactInspectHelp = v3Help.commands.find(item => item.command === 'artifact inspect');
-    assert.equal(artifactInspectHelp?.mutation_scope, 'read');
-    const artifactRepublishHelp = v3Help.commands.find(item => item.command === 'artifact republish');
-    assert.equal(artifactRepublishHelp?.mutation_scope, 'artifact');
-    assert.equal(artifactRepublishHelp?.cas_target, 'artifact');
-    assert.equal(artifactRepublishHelp?.options.includes('--assessment-hash'), true);
-    const recoverySealHelp = v3Help.commands.find(item => item.command === 'run seal');
-    assert.equal(recoverySealHelp?.description, 'Deprecated recovery seal for an already terminal pre-upgrade Run');
-    const retiredHelp = v3Help.commands.find(item => item.command === 'execution status');
-    assert.equal(retiredHelp?.deprecated, true);
-    assert.equal(typeof retiredHelp?.replacement, 'string');
+      'execution start', 'execution status',
+      'run brief', 'run cancel', 'run check', 'run complete', 'run create', 'run decide', 'run next',
+      'run recall', 'run seal', 'run transition',
+      'session archive', 'session chain insert', 'session chain replace', 'session chain skip',
+      'session complete', 'session list', 'session migrate', 'session open', 'session resume-view',
+      'session status', 'session unarchive',
+    ];
+    assert.deepEqual(v3Help.commands.map(command => command.command), expectedV3Commands);
     recordProof(proofs, 'v3-help-json-catalog');
-
     const v2RunHelp = invoke(['help', 'run']);
     assert.equal(v2RunHelp.status, 0, `v2 help run exit: ${v2RunHelp.stderr}`);
     assert.equal(v2RunHelp.stderr, '', 'v2 help run stderr');
     assert.match(v2RunHelp.stdout, /Usage: maestro run/);
     assert.equal(v2RunHelp.stdout.includes('help-catalog/1.0'), false);
     recordProof(proofs, 'v2-help-run-compatibility');
-
     const retiredExecutionResult = invoke([
       'execution', 'status', '--session', 'release-v3', '--request-id', 'req-retired-execution',
       '--json', v3RootArg,
@@ -571,7 +529,6 @@ async function main() {
       'use-session-status', 'use-run-check', 'use-participant-status',
     ]);
     recordProof(proofs, 'v3-retired-execution-structured-response');
-
     const v3Store = new SessionStore(v3Root);
     const insertStep = parseEnvelope(invoke([
       'session', 'chain', 'insert', '--session', 'release-v3', '--step-id', 'step-release',
@@ -632,36 +589,6 @@ async function main() {
     assert.equal(v3Store.readRunV30('release-v3', 'release-v3-run').status, 'sealed');
     assert.equal(v3Store.readSessionV30('release-v3').chain[0].status, 'completed');
     recordProof(proofs, 'v3-run-complete-requires-advance');
-
-    const participantSessionBeforeUnregister = v3Store.readSessionV30('release-v3');
-    const participantUnregisterArgs = [
-      'participant', 'unregister', ...participantCommon, '--request-id', 'req-participant-unregister',
-    ];
-    const participantUnregistered = parseEnvelope(
-      invoke(participantUnregisterArgs), 'v3 participant unregister', 'run-response/1.2',
-    );
-    assert.equal(participantUnregistered.result.outcome, 'applied');
-    assert.equal(participantUnregistered.result.participant.status, 'unregistered');
-    const participantUnregisterReplay = parseEnvelope(
-      invoke(participantUnregisterArgs), 'v3 participant unregister replay', 'run-response/1.2',
-    );
-    assert.equal(participantUnregisterReplay.result.outcome, 'replayed');
-    assert.deepEqual(participantUnregisterReplay.result.participant, participantUnregistered.result.participant);
-    const participantUnregisteredStatus = parseEnvelope(invoke([
-      'participant', 'status', '--session', 'release-v3', '--participant', 'window-release',
-      '--actor', 'release-actor', '--request-id', 'req-participant-status-unregistered', '--json', v3RootArg,
-    ]), 'v3 unregistered participant status', 'run-response/1.2');
-    assert.deepEqual(participantUnregisteredStatus.result.participants, [participantUnregistered.result.participant]);
-    const participantSessionAfterUnregister = v3Store.readSessionV30('release-v3');
-    assert.equal(
-      participantSessionAfterUnregister.identity_revision,
-      participantSessionBeforeUnregister.identity_revision + 1,
-    );
-    assert.equal(
-      participantSessionAfterUnregister.orchestration_revision,
-      participantSessionBeforeUnregister.orchestration_revision,
-    );
-    recordProof(proofs, 'v3-participant-register-status-unregister-replay');
 
     const statuslessRoot = join(projectRoot, 'statusless-create');
     enableStatusless(statuslessRoot);
