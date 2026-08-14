@@ -1,5 +1,7 @@
 # Session/Run v3（方案 B）core 实现蓝图（2026-08-12）
 
+> ⚠️ **SUPERSEDED（2026-08-14）**：本文是 v0.5.70 时代的实现蓝图，多处内容与最终实现**冲突**，已由 `docs/session-run-v3-reference-design.md` 取代。冲突点：① `participant.ts`（register/status/unregister）与 `participant_id` 字段已删除（`--participant` option 仅兼容忽略）；② `identity_revision` 已从 session/3.0 删除（三 revision → 两 revision）；③ `paused` 状态与 `session pause/resume` 已删除（决策门 escalated 替代）；④ gates 系统（gates_ref/blocking 校验/run.gate_refs）已删除；⑤ chain-proposal/TC-P0-3 附加输入/resume-map 截断/22 条 retired stub/chain audit 已删除；⑥ 决策门（step.decision_ref + 未决阻断）为最终实现新增，蓝图未覆盖。阅读请直接以参考设计为准。
+
 > 状态：实现蓝图（依据 Pi 侧权威文档 `D:\pi-maestro-flow\docs\session-run-minimal-state-architecture-20260812.md`，下称「方案 B」；合同来源 `session-run-v3-core-contract-checklist-20260812.md`，下称「合同清单」；对应 Pi 侧行动规划的阶段 1）。
 > 范围：本仓库（maestro core CLI，`bin/maestro.js` → `dist/src/cli.js`，Node/TypeScript/ESM，zod schema，vitest）的 v3 schema、原子 mutation 引擎、receipt、命令面、resume-view 与 v2→v3 迁移器。
 > 前提：operation registry / drain 与 `execution handoff prepare --drain-operation` 强制参数的拆除由另一并行工作流负责，本蓝图视其为**已删除**，不再重复规划。普查时在 `store.ts`/`execution.ts`/`commands/execution.ts` 中读到的 operation claim/drain 代码属拆除中的过渡态，本蓝图各工作流不触碰这些区域。
