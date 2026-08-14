@@ -290,6 +290,12 @@ export const sessionChainStepV30Schema = z.object({
   status: z.enum(['pending', 'running', 'completed', 'failed', 'skipped']),
   run_ids: z.array(nonEmptyString),
   goal_ref: z.string().min(1).nullable(),
+  // Decision gate declaration: when non-null, the decision identified by this
+  // id must be `resolved` before the chain may advance past this step (run
+  // next checks the completed predecessor) and before the Session completes.
+  // Default null keeps pre-gate session/3.0 files parseable; the write path
+  // always assigns it explicitly.
+  decision_ref: z.string().min(1).nullable().default(null),
   decision_refs: z.array(nonEmptyString),
   stage: z.string().min(1).nullable().optional(),
 }).strict();
@@ -681,13 +687,6 @@ export const runV30Schema = z.object({
   started_at: z.string().min(1).nullable(),
   ended_at: z.string().min(1).nullable(),
   sealed_at: z.string().min(1).nullable(),
-  // v2-contract-aligned completion inputs (TC-P0-3). Optional so pre-upgrade and
-  // already-migrated Runs without these fields keep parsing untouched.
-  notes: z.array(z.string()).optional(),
-  decision_records: z.array(z.object({
-    text: nonEmptyString,
-    status: z.enum(['proposed', 'accepted', 'rejected']).default('accepted'),
-  })).optional(),
 }).strict();
 
 /**

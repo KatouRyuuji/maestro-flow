@@ -140,9 +140,11 @@ const runMachineSubcommands = new Set([
 const planMachineSubcommands = new Set(['publish']);
 const sessionMachineSubcommands = new Set(['create', 'resolve', 'resume', 'seal', 'chain', 'meta']);
 const v3SessionMachineSubcommands = new Set([
-  'open', 'migrate', 'pause', 'resume', 'complete', 'archive', 'status', 'resume-view', 'chain',
+  'open', 'migrate', 'pause', 'resume', 'complete', 'archive', 'status', 'resume-view', 'chain', 'list',
 ]);
-const v3RunMachineSubcommands = new Set(['next', 'create', 'complete', 'transition', 'cancel', 'seal', 'brief', 'check']);
+const v3RunMachineSubcommands = new Set([
+  'next', 'create', 'complete', 'transition', 'cancel', 'seal', 'brief', 'check', 'decide', 'recall',
+]);
 const artifactMachineMode = requestedCommand === 'artifact' && argv.includes('--json');
 const v3MachineMode = argv.includes('--json') && v3WriterMode && (
   (requestedCommand === 'session' && v3SessionMachineSubcommands.has(requestedSubcommand ?? ''))
@@ -205,11 +207,11 @@ function inferMachineOperation(command: 'run' | 'session' | 'plan', args: string
 }
 
 type V3MachineOperation =
-  | 'create' | 'next' | 'complete' | 'brief' | 'check'
+  | 'create' | 'next' | 'complete' | 'brief' | 'check' | 'recall'
   | 'session-open' | 'session-migrate' | 'session-pause' | 'session-resume' | 'session-complete' | 'session-archive'
-  | 'session-status' | 'session-resume-view' | 'session-chain-audit'
+  | 'session-status' | 'session-resume-view' | 'session-list'
   | 'session-chain-insert' | 'session-chain-skip' | 'session-chain-replace'
-  | 'run-transition' | 'run-cancel' | 'run-seal'
+  | 'run-transition' | 'run-cancel' | 'run-seal' | 'run-decide'
   | 'participant-register' | 'participant-status' | 'participant-unregister';
 
 function inferV3MachineOperation(command: string | undefined, subcommand: string | undefined): V3MachineOperation | 'artifact-inspect' | 'artifact-republish' {
@@ -223,23 +225,25 @@ function inferV3MachineOperation(command: string | undefined, subcommand: string
     if (subcommand === 'chain') {
       const chainIndex = argv.indexOf('chain');
       const action = argv.slice(chainIndex + 1).find(token => !token.startsWith('-'));
-      if (action === 'insert' || action === 'skip' || action === 'replace' || action === 'audit') {
+      if (action === 'insert' || action === 'skip' || action === 'replace') {
         return `session-chain-${action}`;
       }
-      return 'session-chain-audit';
+      return 'session-chain-insert';
     }
     if (subcommand === 'migrate') return 'session-migrate';
     if (subcommand === 'pause' || subcommand === 'resume' || subcommand === 'complete'
-      || subcommand === 'archive' || subcommand === 'status' || subcommand === 'resume-view') {
+      || subcommand === 'archive' || subcommand === 'status' || subcommand === 'resume-view'
+      || subcommand === 'list') {
       return `session-${subcommand}`;
     }
     return 'session-open';
   }
   if (subcommand === 'next' || subcommand === 'create' || subcommand === 'complete'
-    || subcommand === 'brief' || subcommand === 'check') {
+    || subcommand === 'brief' || subcommand === 'check' || subcommand === 'recall') {
     return subcommand;
   }
   if (subcommand === 'transition') return 'run-transition';
+  if (subcommand === 'decide') return 'run-decide';
   return subcommand === 'seal' ? 'run-seal' : 'run-cancel';
 }
 

@@ -15,7 +15,6 @@ import {
 } from './receipts.js';
 import {
   assertSessionOperationAllowed,
-  transitionSession,
 } from './session-machine.js';
 
 export type DecideV3Verdict = 'proceed' | 'fix' | 'escalate';
@@ -173,8 +172,11 @@ function decisionStatusForVerdict(verdict: DecideV3Verdict): 'resolved' | 'escal
  *
  * Verdict semantics:
  *   proceed/fix → decision ref becomes `resolved`, Session stays `open`
- *   escalate    → decision ref becomes `escalated`, Session `open` → `paused`
- *                 (validated through SESSION_TRANSITIONS via transitionSession)
+ *   escalate    → decision ref becomes `escalated`, Session stays in its
+ *                 current status (no pause). Chain advancement past a gate
+ *                 stays blocked until the decision is re-decided to
+ *                 proceed/fix (enforced by the run next gate check in
+ *                 mutation-engine.ts).
  */
 export function applyV3DecisionRecord(
   session: SessionStateV30,
@@ -228,9 +230,7 @@ export function applyV3DecisionRecord(
       : step)
     : session.chain;
 
-  const nextSession = verdict === 'escalate'
-    ? transitionSession({ ...session, decisions, chain }, 'paused')
-    : { ...session, decisions, chain };
+  const nextSession = { ...session, decisions, chain };
   return { session: nextSession, decisionStatus };
 }
 
@@ -245,8 +245,9 @@ export function applyV3DecisionRecord(
  *
  * Verdict semantics:
  *   proceed/fix → decision ref becomes `resolved`, Session stays `open`
- *   escalate    → decision ref becomes `escalated`, Session `open` → `paused`
- *                 (validated through SESSION_TRANSITIONS via transitionSession)
+ *   escalate    → decision ref becomes `escalated`, Session stays in its
+ *                 current status (no pause). Chain advancement past a gate
+ *                 stays blocked until the decision is re-decided.
  */
 export function decideV3(store: SessionStore, input: DecideV3Input): V3MutationResult {
   const identity = normalizedIdentity(input);
@@ -296,10 +297,10 @@ export function decideV3(store: SessionStore, input: DecideV3Input): V3MutationR
         next: {
           suggest_only: true,
           command: verdict === 'escalate'
-            ? `maestro session resume --session ${identity.sessionId}`
+            ? `maestro run decide ${pointId} --verdict proceed`
             : `maestro run next --session ${identity.sessionId}`,
           reason: verdict === 'escalate'
-            ? 'Session paused by escalation — resume the Session once the blocker is resolved, then run next'
+            ? 'Decision escalated — Session stays open; re-decide once the blocker is resolved (run next stays blocked until the decision is resolved)'
             : 'Decision recorded — run next may advance the chain',
         },
       },

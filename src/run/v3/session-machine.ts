@@ -59,12 +59,15 @@ export interface SessionCompletionSnapshot {
   runs: readonly SessionCompletionRun[];
   blockingGates: readonly SessionCompletionGate[];
   requiredSteps: readonly SessionCompletionStep[];
+  /** Decision gates declared on chain steps (step.decision_ref → decisions[] status). */
+  decisionGates: readonly SessionCompletionGate[];
 }
 
 export type SessionCompletionBlocker =
   | { kind: 'running_run'; id: string; message: string }
   | { kind: 'blocking_gate'; id: string; message: string }
-  | { kind: 'required_step'; id: string; message: string };
+  | { kind: 'required_step'; id: string; message: string }
+  | { kind: 'open_decision_gate'; id: string; message: string };
 
 export function assertSessionOperationAllowed(
   status: SessionStatus,
@@ -145,7 +148,16 @@ export function listSessionCompletionBlockers(
         ? `required step ${step.stepId} was skipped without evidence`
         : `required step ${step.stepId} is ${step.status}`,
     }));
-  return [...runningRuns, ...gates, ...steps];
+  // Open decision gates block completion: a declared gate whose decision is
+  // still open is an unresolved correction point. Escalated gates deliberately
+  // do NOT block here — completion records them as concerns instead.
+  const decisionGates: SessionCompletionBlocker[] = snapshot.decisionGates
+    .filter(gate => gate.status === 'open')
+    .map(gate => ({
+      kind: 'open_decision_gate', id: gate.gateId,
+      message: `open decision gate ${gate.gateId} must be resolved before completing`,
+    }));
+  return [...runningRuns, ...gates, ...steps, ...decisionGates];
 }
 
 export function assertSessionCanComplete(snapshot: SessionCompletionSnapshot): void {

@@ -33,8 +33,6 @@ import {
   mutateSessionStatusV3,
   mutationIdentity,
   resolveV3Options,
-  retiredV3Action,
-  retiredV3Options,
   type V3CommonOptions,
   v3Store,
 } from './v3-cli-shared.js';
@@ -55,12 +53,12 @@ function chainMutationAction(
   operation: 'session-chain-insert' | 'session-chain-skip' | 'session-chain-replace',
   build: (options: V3CommonOptions & {
     stepId: string; command?: string; afterStep?: string; arg?: string[];
-    goalRef?: string; stage?: string;
+    goalRef?: string; stage?: string; decisionRef?: string;
   }) => ChainMutation,
 ) {
   return (options: V3CommonOptions & {
     stepId: string; command?: string; afterStep?: string; arg?: string[];
-    goalRef?: string; stage?: string;
+    goalRef?: string; stage?: string; decisionRef?: string;
   }): void => {
     try {
       const { store, options: resolved } = resolveV3Options(options);
@@ -109,7 +107,7 @@ export function registerSessionV3Command(program: Command): void {
           identity_revision: 1, orchestration_revision: 0, activity_revision: 1,
           chain: (options.chain ?? []).map((command, index) => ({
             step_id: `s-${index + 1}`, command, args: [], status: 'pending' as const,
-            run_ids: [], goal_ref: null, decision_refs: [], stage: null,
+            run_ids: [], goal_ref: null, decision_ref: null, decision_refs: [], stage: null,
           })),
           decisions: [], active_run_ids: [],
           gates_ref: 'gates.json', artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
@@ -234,7 +232,6 @@ export function registerSessionV3Command(program: Command): void {
     ['resume', 'session-resume', 'open'],
     ['archive', 'session-archive', 'archived'],
     ['unarchive', 'session-unarchive', 'open'],
-    ['fail', 'session-fail', 'failed'],
   ] as const) {
     addV3MutationOptions(session.command(name).description(`${name} a Session`), 'orchestration')
       .action((options: V3CommonOptions) => {
@@ -337,26 +334,6 @@ export function registerSessionV3Command(program: Command): void {
     });
 
   const chain = session.command('chain').description('Inspect or mutate the Session chain');
-  addV3ReadOptions(chain.command('audit').description('Audit chain consistency'))
-    .action((options: { session?: string; workflowRoot: string }) => {
-      try {
-        const { store, options: resolved } = resolveV3Options(options);
-        const state = store.readSessionV30(resolved.session);
-        const ids = state.chain.flatMap(step => step.run_ids);
-        const duplicateRunIds = [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))].sort();
-        const missingRunIds = [...new Set(ids)].filter(id => {
-          try { store.readRunV30(resolved.session, id); return false; } catch { return true; }
-        }).sort();
-        emitV3Success({ operation: 'session-chain-audit', sessionId: resolved.session, result: {
-          chain: state.chain,
-          consistent: duplicateRunIds.length === 0 && missingRunIds.length === 0,
-          issues: { duplicate_run_ids: duplicateRunIds, missing_run_ids: missingRunIds },
-        } });
-      } catch (error) {
-        emitV3Error('session-chain-audit', error, { session: options.session });
-      }
-    });
-
   addV3MutationOptions(chain.command('insert').description('Insert a pending chain step'), 'orchestration')
     .requiredOption('--step-id <id>', 'new chain step ID')
     .requiredOption('--command <name>', 'step command')
@@ -364,9 +341,11 @@ export function registerSessionV3Command(program: Command): void {
     .option('--after-step <id>', 'insert after this step; default appends')
     .option('--goal-ref <id>', 'chain step goal reference')
     .option('--stage <name>', 'chain step stage')
+    .option('--decision-ref <id>', 'decision gate: the decision that must be resolved before the chain advances past this step')
     .action(chainMutationAction('session-chain-insert', options => ({
       kind: 'insert', stepId: options.stepId, command: options.command!, args: options.arg ?? [],
       afterStepId: options.afterStep ?? null, goalRef: options.goalRef ?? null, stage: options.stage ?? null,
+      decisionRef: options.decisionRef ?? null,
     })));
 
   addV3MutationOptions(chain.command('skip').description('Skip a non-running chain step with evidence'), 'orchestration')
@@ -381,15 +360,4 @@ export function registerSessionV3Command(program: Command): void {
       kind: 'replace', stepId: options.stepId, command: options.command!, args: options.arg ?? [],
     })));
 
-  for (const [name, replacement] of [
-    ['next', 'run next'],
-    ['done', 'run complete'],
-    ['decide', 'run decide'],
-    ['seal', 'session complete'],
-    ['meta', 'session status'],
-    ['prune', 'session list'],
-  ] as const) {
-    retiredV3Options(session.command(name).description('Deprecated in session/3.0'))
-      .action(retiredV3Action(`session ${name}`, replacement));
-  }
 }

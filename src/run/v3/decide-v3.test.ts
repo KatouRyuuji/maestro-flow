@@ -111,7 +111,7 @@ describe('v3 run decide mutation', () => {
     expect(after.chain[1].decision_refs).toEqual([]);
   });
 
-  it('escalates a decision and pauses the Session through SESSION_TRANSITIONS', () => {
+  it('escalates a decision while keeping the Session open and allowing re-decide', () => {
     const store = setup();
     const applied = decideV3(store, {
       ...identity('req-escalate'), pointId: 'P-1', verdict: 'escalate', confidence: 'medium',
@@ -123,19 +123,27 @@ describe('v3 run decide mutation', () => {
         target_type: 'orchestration', revision_before: 0, revision_after: 1,
         result: {
           point_id: 'P-1', status: 'escalated', orchestration_revision: 1,
-          next: { suggest_only: true, command: 'maestro session resume --session s-1' },
+          next: { suggest_only: true, command: 'maestro run decide P-1 --verdict proceed' },
         },
       },
     });
     expect(store.readSessionV30('s-1')).toMatchObject({
-      status: 'paused', orchestration_revision: 1, activity_revision: 1,
+      // escalate no longer pauses the Session; the run next gate check blocks
+      // advancement while the decision stays escalated.
+      status: 'open', orchestration_revision: 1, activity_revision: 1,
       decisions: [{ decision_id: 'P-1', after_step_id: 'step-1', status: 'escalated', evidence_refs: ['EVD-x'] }],
       chain: [{ decision_refs: ['P-1'] }, { decision_refs: [] }],
     });
-    expect(() => decideV3(store, {
-      ...identity('req-escalate-again'), pointId: 'P-2', verdict: 'proceed', confidence: 'high',
-      expectedOrchestrationRevision: 1,
-    })).toThrow(expect.objectContaining({ code: 'INVALID_STATE_TRANSITION' }));
+    // The Session stays open, so further decisions remain allowed.
+    const followUp = decideV3(store, {
+      ...identity('req-follow-up'), pointId: 'P-1', verdict: 'proceed', confidence: 'high',
+      expectedOrchestrationRevision: 1, evidenceRefs: ['EVD-y'],
+    });
+    expect(followUp.status).toBe('applied');
+    expect(store.readSessionV30('s-1')).toMatchObject({
+      status: 'open', orchestration_revision: 2,
+      decisions: [{ decision_id: 'P-1', status: 'resolved', evidence_refs: ['EVD-x', 'EVD-y'] }],
+    });
   });
 
   it('replays the same requestId without re-applying', () => {

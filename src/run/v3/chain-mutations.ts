@@ -14,7 +14,7 @@ import { assertSessionOperationAllowed } from './session-machine.js';
 type SessionChainStepV30 = SessionStateV30['chain'][number];
 
 export type ChainMutation =
-  | { kind: 'insert'; stepId: string; command: string; args?: readonly string[]; afterStepId?: string | null; goalRef?: string | null; stage?: string | null }
+  | { kind: 'insert'; stepId: string; command: string; args?: readonly string[]; afterStepId?: string | null; goalRef?: string | null; stage?: string | null; decisionRef?: string | null }
   | { kind: 'skip'; stepId: string }
   | { kind: 'replace'; stepId: string; command: string; args?: readonly string[] };
 
@@ -41,7 +41,11 @@ function text(value: string, label: string): string {
   return normalized;
 }
 
-function mutateSteps(session: SessionStateV30, mutation: ChainMutation, evidence: readonly string[]): SessionChainStepV30[] {
+function mutateSteps(
+  session: SessionStateV30,
+  mutation: ChainMutation,
+  evidence: readonly string[],
+): { chain: SessionChainStepV30[]; decisions: SessionStateV30['decisions'] } {
   const stepId = text(mutation.stepId, 'step ID');
   const index = session.chain.findIndex(step => step.step_id === stepId);
   if (mutation.kind === 'insert') {
@@ -49,12 +53,29 @@ function mutateSteps(session: SessionStateV30, mutation: ChainMutation, evidence
     const after = mutation.afterStepId?.trim() || null;
     const insertionIndex = after === null ? session.chain.length : session.chain.findIndex(step => step.step_id === after) + 1;
     if (after !== null && insertionIndex === 0) throw new V3StructuredError('INVALID_ARGUMENT', `unknown after-step ${after}`);
+    const decisionRef = mutation.decisionRef?.trim() || null;
     const step: SessionChainStepV30 = {
       step_id: stepId, command: text(mutation.command, 'command'), args: [...(mutation.args ?? [])],
       status: 'pending', run_ids: [], goal_ref: mutation.goalRef?.trim() || null,
+      decision_ref: decisionRef,
       decision_refs: [], stage: mutation.stage?.trim() || null,
     };
-    return [...session.chain.slice(0, insertionIndex), step, ...session.chain.slice(insertionIndex)];
+    // Declaring a decision gate on the inserted step records the open decision
+    // it refers to, so run next and session complete see the gate as open until
+    // `run decide` resolves it. An already-recorded decision keeps its status.
+    let decisions = session.decisions;
+    if (decisionRef !== null && !decisions.some(decision => decision.decision_id === decisionRef)) {
+      decisions = [...decisions, {
+        decision_id: decisionRef,
+        after_step_id: stepId,
+        status: 'open' as const,
+        evidence_refs: [],
+      }];
+    }
+    return {
+      chain: [...session.chain.slice(0, insertionIndex), step, ...session.chain.slice(insertionIndex)],
+      decisions,
+    };
   }
   if (index < 0) throw new V3StructuredError('INVALID_ARGUMENT', `unknown chain step ${stepId}`);
   if (session.chain[index].status !== 'pending') {
@@ -62,13 +83,19 @@ function mutateSteps(session: SessionStateV30, mutation: ChainMutation, evidence
   }
   if (mutation.kind === 'skip') {
     if (evidence.length === 0) throw new V3StructuredError('INVALID_ARGUMENT', 'skipping a chain step requires evidence');
-    return session.chain.map((step, itemIndex) => itemIndex === index
-      ? { ...step, status: 'skipped' as const, decision_refs: [...new Set([...step.decision_refs, ...evidence])].sort() }
-      : step);
+    return {
+      chain: session.chain.map((step, itemIndex) => itemIndex === index
+        ? { ...step, status: 'skipped' as const, decision_refs: [...new Set([...step.decision_refs, ...evidence])].sort() }
+        : step),
+      decisions: session.decisions,
+    };
   }
-  return session.chain.map((step, itemIndex) => itemIndex === index
-    ? { ...step, command: text(mutation.command, 'command'), args: [...(mutation.args ?? [])] }
-    : step);
+  return {
+    chain: session.chain.map((step, itemIndex) => itemIndex === index
+      ? { ...step, command: text(mutation.command, 'command'), args: [...(mutation.args ?? [])] }
+      : step),
+    decisions: session.decisions,
+  };
 }
 
 export function mutateChainV3(store: SessionStore, input: MutateChainV3Input): ChainMutationResult {
@@ -100,10 +127,11 @@ export function mutateChainV3(store: SessionStore, input: MutateChainV3Input): C
       });
     }
     assertSessionOperationAllowed(session.status, 'advance_chain');
-    const chain = mutateSteps(session, input.mutation, evidenceRefs);
+    const { chain, decisions } = mutateSteps(session, input.mutation, evidenceRefs);
     const nextSession: SessionStateV30 = {
       ...session,
       chain,
+      decisions,
       orchestration_revision: session.orchestration_revision + 1,
       activity_revision: session.activity_revision + 1,
       updated_at: recordedAt,

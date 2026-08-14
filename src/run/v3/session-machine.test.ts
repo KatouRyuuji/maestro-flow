@@ -18,6 +18,7 @@ const cleanCompletion = {
     { stepId: 'step-1', status: 'completed' as const },
     { stepId: 'step-2', status: 'skipped' as const, skipEvidence: ['evidence/skip.json'] },
   ],
+  decisionGates: [] as Array<{ gateId: string; status: string }>,
 };
 
 describe('v3 Session state machine', () => {
@@ -137,12 +138,44 @@ describe('v3 Session state machine', () => {
         { stepId: 'step-1', status: 'pending' },
         { stepId: 'step-2', status: 'skipped', skipEvidence: [] },
       ],
+      decisionGates: [],
     })).toEqual([
       expect.objectContaining({ kind: 'running_run', id: 'run-1' }),
       expect.objectContaining({ kind: 'blocking_gate', id: 'gate-1' }),
       expect.objectContaining({ kind: 'required_step', id: 'step-1' }),
       expect.objectContaining({ kind: 'required_step', id: 'step-2' }),
     ]);
+  });
+
+  it('blocks completion only on open decision gates and ignores resolved/escalated ones', () => {
+    expect(listSessionCompletionBlockers({
+      runs: [], blockingGates: [], requiredSteps: [],
+      decisionGates: [
+        { gateId: 'gate-open', status: 'open' },
+        { gateId: 'gate-resolved', status: 'resolved' },
+        { gateId: 'gate-escalated', status: 'escalated' },
+      ],
+    })).toEqual([
+      expect.objectContaining({ kind: 'open_decision_gate', id: 'gate-open' }),
+    ]);
+    expect(() => assertSessionCanComplete({
+      runs: [], blockingGates: [], requiredSteps: [],
+      decisionGates: [{ gateId: 'gate-open', status: 'open' }],
+    })).toThrowError(expect.objectContaining({
+      code: 'INVALID_STATE_TRANSITION',
+      details: expect.objectContaining({
+        reason: 'SESSION_COMPLETION_BLOCKED',
+        blockers: [expect.objectContaining({ kind: 'open_decision_gate', id: 'gate-open' })],
+      }),
+      next_actions: ['resolve-open_decision_gate:gate-open'],
+    }));
+    expect(() => assertSessionCanComplete({
+      runs: [], blockingGates: [], requiredSteps: [],
+      decisionGates: [
+        { gateId: 'gate-resolved', status: 'resolved' },
+        { gateId: 'gate-escalated', status: 'escalated' },
+      ],
+    })).not.toThrow();
   });
 
   it.each(['open', 'paused'] as const)(

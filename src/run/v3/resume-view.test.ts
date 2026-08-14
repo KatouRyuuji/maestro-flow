@@ -4,7 +4,6 @@ import { resumeMapV1Schema } from '../protocol-schemas.js';
 import type { RunV30, SessionStateV30 } from '../schemas.js';
 import {
   RESUME_MAP_MAX_UTF8_BYTES,
-  RESUME_MAP_TRUNCATED_ACTION,
   ResumeMapProjectionError,
   assertResumeMapHasNoForbiddenFields,
   computeResumeMapFingerprint,
@@ -185,46 +184,42 @@ describe('ResumeMapV1 projection', () => {
     expect(() => assertResumeMapHasNoForbiddenFields(projectResumeMapV1(input()))).not.toThrow();
   });
 
-  it('enforces the 2KB boundary and marks truncation through an authority-consistent action', () => {
+  it('passes maps within the 2KB boundary and throws when the projection exceeds it', () => {
+    const small = projectResumeMapV1(input());
+    expect(resumeMapUtf8Bytes(small)).toBeLessThanOrEqual(RESUME_MAP_MAX_UTF8_BYTES);
+    expect(verifyResumeMapFingerprint(small)).toBe(true);
+
+    // A map that fits exactly at the boundary still projects.
     let exactBoundary: ReturnType<typeof projectResumeMapV1> | undefined;
     let boundaryUriLength = -1;
     for (let length = 0; length < 3000; length += 1) {
       const map = projectResumeMapV1(input({
         pendingPublications: [{ publicationId: 'publication-a', resourceUri: `x:${'a'.repeat(length)}` }],
       }));
-      if (resumeMapUtf8Bytes(map) === RESUME_MAP_MAX_UTF8_BYTES
-        && !map.nextActions.some(action => action.action === RESUME_MAP_TRUNCATED_ACTION)) {
+      if (resumeMapUtf8Bytes(map) === RESUME_MAP_MAX_UTF8_BYTES) {
         exactBoundary = map;
         boundaryUriLength = length;
         break;
       }
     }
-
     expect(exactBoundary).toBeDefined();
     expect(resumeMapUtf8Bytes(exactBoundary!)).toBe(2048);
 
-    const truncated = projectResumeMapV1(input({
+    // One byte beyond the boundary throws instead of truncating.
+    expect(() => projectResumeMapV1(input({
       pendingPublications: [{
         publicationId: 'publication-a',
         resourceUri: `x:${'a'.repeat(boundaryUriLength + 1)}`,
       }],
-    }));
-    expect(resumeMapUtf8Bytes(truncated)).toBeLessThanOrEqual(2048);
-    expect(truncated.nextActions).toContainEqual({
-      action: RESUME_MAP_TRUNCATED_ACTION,
-      targetId: truncated.sessionId,
-      expectedRevision: truncated.orchestrationRevision,
-    });
-    expect(truncated.pendingPublications).toEqual([{ publicationId: 'publication-a' }]);
-    expect(verifyResumeMapFingerprint(truncated)).toBe(true);
+    }))).toThrowError(ResumeMapProjectionError);
   });
 
-  it('drops actions whose known target was truncated instead of misrepresenting authority', () => {
+  it('throws on oversized projections instead of evicting runs, gates, or actions', () => {
     const manyRuns = Array.from({ length: 80 }, (_, index) => {
       const id = `run-${String(index).padStart(3, '0')}`;
       return run(id, { revision: index, status: index === 0 ? 'blocked' : 'pending' });
     });
-    const map = projectResumeMapV1(input({
+    expect(() => projectResumeMapV1(input({
       session: session({ active_run_ids: manyRuns.map(item => item.run_id) }),
       runs: manyRuns,
       blockingGates: ['gate-critical'],
@@ -233,15 +228,7 @@ describe('ResumeMapV1 projection', () => {
       nextActions: manyRuns.map(item => ({
         action: 'run-check', targetId: item.run_id, expectedRevision: item.revision,
       })),
-    }));
-    const retainedRuns = new Map(map.activeRuns.map(item => [item.runId, item.revision]));
-    for (const action of map.nextActions) {
-      if (action.action === RESUME_MAP_TRUNCATED_ACTION) continue;
-      expect(retainedRuns.get(action.targetId)).toBe(action.expectedRevision);
-    }
-    expect(map.activeRuns[0]).toMatchObject({ runId: 'run-000', status: 'blocked' });
-    expect(map.blockingGates).toContain('gate-critical');
-    expect(resumeMapUtf8Bytes(map)).toBeLessThanOrEqual(2048);
+    }))).toThrowError(ResumeMapProjectionError);
   });
 
   it('fails closed when an active Run document is unavailable', () => {
@@ -258,6 +245,6 @@ describe('ResumeMapV1 projection', () => {
       openDecisions: [],
       pendingPublications: [],
       nextActions: [],
-    }))).toThrowError(/without altering authority IDs/);
+    }))).toThrowError(/exceeds 2048 UTF-8 bytes/);
   });
 });

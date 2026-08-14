@@ -37,9 +37,7 @@ function classify(path: string, options: string[]): Pick<HelpCatalogCommand, 'mu
   if (options.includes('--expected-orchestration-revision')) {
     return { mutation_scope: 'orchestration', cas_target: 'orchestration' };
   }
-  // Commands carrying --request-id without a CAS revision option are retired
-  // v2-only stubs (run start, session next, ...), not session/3.0 mutations.
-  return { mutation_scope: 'retired', cas_target: 'none' };
+  throw new Error(`unclassifiable v3 command: ${path}`);
 }
 
 function walk(command: Command, prefix: string[] = []): HelpCatalogCommand[] {

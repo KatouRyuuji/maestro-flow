@@ -1035,6 +1035,7 @@ export function projectLegacySessionToV30(
       status: mapStepStatus(step.status),
       run_ids: matchingRuns.map(run => run.run_id),
       goal_ref: step.goal_ref ?? null,
+      decision_ref: null,
       decision_refs: decisionRefsForStep(step.step_id, step.decision_ref),
     };
   });
@@ -1058,6 +1059,7 @@ export function projectLegacySessionToV30(
       status: stepStatus,
       run_ids: sortedRuns.map(run => run.run_id),
       goal_ref: first.goal,
+      decision_ref: null,
       decision_refs: [],
     });
   }

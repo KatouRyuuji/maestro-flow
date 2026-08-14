@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -309,6 +309,24 @@ describe('formal session/3.0 Commander modules', () => {
       .toMatchObject({ status: 'running', revision: 0 });
   });
 
+  it('run check is read-only and omits knowledge_reconciliation without a receipt', async () => {
+    const root = fixture({ run: {} });
+    const response = await invoke(registerRunV3Command, [
+      'run', 'check', 'run-1', '--session', 's-v3', '--json', '--workflow-root', root,
+    ]);
+    expect(response).toMatchObject({
+      operation: 'check', ok: true,
+      result: {
+        run_id: 'run-1', status: 'pending', revision: 0,
+        available_transitions: ['running', 'cancelled'],
+      },
+    });
+    const result = response.result as Record<string, unknown>;
+    expect(result.knowledge_reconciliation).toBeUndefined();
+    expect(result.warnings).toBeUndefined();
+    expect(existsSync(join(root, '.workflow', 'sessions', 's-v3', 'runs', 'run-1', 'knowledge-reconciliation.json'))).toBe(false);
+  });
+
   it('completes and seals a running Run and its chain step atomically with --advance', async () => {
     const root = fixture({ stepStatus: 'running', run: { status: 'running', started_at: '2026-08-12T00:01:00.000Z' } });
     const response = await invoke(registerRunV3Command, [
@@ -529,34 +547,6 @@ describe('formal session/3.0 Commander modules', () => {
     expect(readFileSync(join(sessionDir, 's-v3', 'session.json'), 'utf8')).toBe(before);
   });
 
-  it('fails an open Session and refuses further mutations', async () => {
-    const root = fixture();
-    const response = await invoke(registerSessionV3Command, [
-      'session', 'fail', ...mutationFlags(root, '--expected-orchestration-revision'),
-    ]);
-    expect(response).toMatchObject({ operation: 'session-fail', ok: true, result: { status: 'failed' } });
-    expect(JSON.parse(readFileSync(join(root, '.workflow', 'sessions', 's-v3', 'session.json'), 'utf8')))
-      .toMatchObject({ status: 'failed', orchestration_revision: 1, activity_revision: 1 });
-    vi.restoreAllMocks();
-    const create = await invoke(registerRunV3Command, [
-      'run', 'create', 'implement', '--run', 'run-after-fail', '--step', 'step-1',
-      ...mutationFlags(root, '--expected-orchestration-revision', 1),
-    ]);
-    expect(create).toMatchObject({
-      operation: 'create', ok: false, error: { code: 'INVALID_STATE_TRANSITION' },
-    });
-  });
-
-  it('fails a paused Session', async () => {
-    const root = fixture({ status: 'paused' });
-    const response = await invoke(registerSessionV3Command, [
-      'session', 'fail', ...mutationFlags(root, '--expected-orchestration-revision'),
-    ]);
-    expect(response).toMatchObject({ operation: 'session-fail', ok: true, result: { status: 'failed' } });
-    expect(JSON.parse(readFileSync(join(root, '.workflow', 'sessions', 's-v3', 'session.json'), 'utf8')))
-      .toMatchObject({ status: 'failed', orchestration_revision: 1 });
-  });
-
   it('inserts a chain step with goal reference and stage metadata', async () => {
     const root = fixture();
     const response = await invoke(registerSessionV3Command, [
@@ -566,46 +556,6 @@ describe('formal session/3.0 Commander modules', () => {
     expect(response).toMatchObject({ operation: 'session-chain-insert', ok: true });
     const state = JSON.parse(readFileSync(join(root, '.workflow', 'sessions', 's-v3', 'session.json'), 'utf8')) as SessionStateV30;
     expect(state.chain[1]).toMatchObject({ step_id: 'step-2', command: 'verify', goal_ref: 'goal-7', stage: 'release' });
-  });
-
-  it('registers v2-only run and session subcommands as retired stubs', async () => {
-    const root = fixture();
-    const registerBoth = (program: Command): void => {
-      registerSessionV3Command(program);
-      registerRunV3Command(program);
-    };
-    for (const [args, operation, replacement] of [
-      [['run', 'start'], 'run-start', 'run next / run create'],
-      [['run', 'done'], 'run-done', 'run complete'],
-      [['run', 'edit'], 'run-edit', 'session chain insert|skip|replace'],
-      [['run', 'prepare'], 'run-prepare', 'skills --steps'],
-      [['run', 'skill'], 'run-skill', 'skills --steps'],
-      [['run', 'recover'], 'run-recover', 'session resume'],
-      [['run', 'status'], 'run-status', 'session status'],
-      [['run', 'log-mutation'], 'run-log-mutation', 'session status'],
-      [['run', 'mutations'], 'run-mutations', 'session status'],
-      [['run', 'accept-reuse'], 'run-accept-reuse', 'run brief'],
-      [['run', 'seal-session'], 'run-seal-session', 'session complete'],
-      [['session', 'next'], 'session-next', 'run next'],
-      [['session', 'done'], 'session-done', 'run complete'],
-      [['session', 'decide'], 'session-decide', 'run decide'],
-      [['session', 'seal'], 'session-seal', 'session complete'],
-      [['session', 'meta'], 'session-meta', 'session status'],
-      [['session', 'prune'], 'session-prune', 'session list'],
-    ] as const) {
-      const response = await invoke(registerBoth, [
-        ...args, '--session', 's-v3', '--request-id', `req-stub-${operation}`, '--json', '--workflow-root', root,
-      ]);
-      expect(response).toMatchObject({
-        operation, ok: false,
-        error: {
-          code: 'SESSION_SCHEMA_UNSUPPORTED',
-          details: { deprecated_command: args.join(' '), replacement_command: replacement },
-          next_actions: expect.arrayContaining([expect.any(String)]),
-        },
-      });
-      vi.restoreAllMocks();
-    }
   });
 
   it('appends step_id and a next hint to the run next result', async () => {

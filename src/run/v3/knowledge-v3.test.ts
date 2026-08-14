@@ -263,7 +263,7 @@ describe('v3 knowledge reconciliation hook', () => {
     });
   });
 
-  it('attaches a zero-candidate reconciliation to run check on a pending Run', async () => {
+  it('omits knowledge_reconciliation from run check and never writes a receipt on read', async () => {
     const root = cliFixture({ report: RUN_REPORT_TEMPLATE });
     const response = await invoke(registerRunV3Command, checkArgs(root));
     expect(response).toMatchObject({
@@ -274,32 +274,56 @@ describe('v3 knowledge reconciliation hook', () => {
       },
     });
     const result = response.result as Record<string, unknown>;
-    expect(result.knowledge_reconciliation).toMatchObject({
-      schema_version: 'knowledge-reconciliation-receipt/1.0',
-      candidates: 0,
-      review_required: 0,
-    });
+    // check is read-only: no reconciliation is run and no field is invented.
+    expect(result.knowledge_reconciliation).toBeUndefined();
     expect(result.warnings).toBeUndefined();
-    expect(existsSync(join(root, '.workflow', 'sessions', 's-v3', 'runs', 'run-1', 'knowledge-reconciliation.json'))).toBe(true);
+    expect(existsSync(join(root, '.workflow', 'sessions', 's-v3', 'runs', 'run-1', 'knowledge-reconciliation.json'))).toBe(false);
   });
 
-  it('flags transcript-only candidates as review_required in run check warnings', async () => {
+  it('run complete reconciles once and run check then attaches the persisted receipt without warnings', async () => {
     const root = cliFixture({ report: RUN_REPORT_TEMPLATE, delta: transcriptOnlyDelta() });
     const sessionPath = join(root, '.workflow', 'sessions', 's-v3', 'session.json');
-    const sessionBefore = readFileSync(sessionPath, 'utf8');
-    const response = await invoke(registerRunV3Command, checkArgs(root));
-    const result = response.result as Record<string, unknown>;
-    expect(result.knowledge_reconciliation).toMatchObject({
+    const runPath = join(root, '.workflow', 'sessions', 's-v3', 'runs', 'run-1', 'run.json');
+    const runDoc = JSON.parse(readFileSync(runPath, 'utf8')) as RunV30;
+    writeFileSync(runPath, `${JSON.stringify({
+      ...runDoc, status: 'running', started_at: '2026-08-12T00:01:00.000Z',
+    }, null, 2)}\n`, 'utf8');
+
+    const completed = await invoke(registerRunV3Command, [
+      'run', 'complete', 'run-1', '--summary', 'done', '--advance',
+      '--expected-orchestration-revision', '0', '--expected-run-revision', '0',
+      '--session', 's-v3', '--participant', 'participant', '--actor', 'actor',
+      '--request-id', 'req-complete-knowledge', '--reason', 'complete test',
+      '--json', '--workflow-root', root,
+    ]);
+    expect(completed).toMatchObject({ operation: 'complete', ok: true });
+    const completedResult = completed.result as Record<string, unknown>;
+    expect(completedResult.knowledge_reconciliation).toMatchObject({
+      schema_version: 'knowledge-reconciliation-receipt/1.0',
       candidates: 1,
       review_required: 1,
     });
-    expect(result.warnings).toEqual([
-      '1 knowledge candidate(s) require review before promotion',
-    ]);
-    expect(readFileSync(sessionPath, 'utf8')).toBe(sessionBefore);
+
+    // The complete mutation legitimately advances the Session; the one-shot
+    // reconcile itself is a plain idempotent file write (re-run leaves the
+    // session untouched — covered by the direct hook tests above).
+    expect(JSON.parse(readFileSync(sessionPath, 'utf8'))).toMatchObject({
+      orchestration_revision: 1,
+      chain: [{ status: 'completed' }],
+      active_run_ids: [],
+    });
+    const receiptPath = join(root, '.workflow', 'sessions', 's-v3', 'runs', 'run-1', 'knowledge-reconciliation.json');
+    expect(existsSync(receiptPath)).toBe(true);
+
+    const response = await invoke(registerRunV3Command, checkArgs(root));
+    const result = response.result as Record<string, unknown>;
+    expect(response).toMatchObject({ operation: 'check', ok: true, result: { run_id: 'run-1', status: 'sealed' } });
+    expect(result.knowledge_reconciliation).toMatchObject({ candidates: 1, review_required: 1 });
+    // check never re-derives warnings from the receipt.
+    expect(result.warnings).toBeUndefined();
   });
 
-  it('reads the persisted receipt without reconciling again for a sealed Run', async () => {
+  it('reads the persisted receipt on check for any Run status without reconciling again', async () => {
     const root = cliFixture({ report: RUN_REPORT_TEMPLATE, delta: transcriptOnlyDelta() });
     const receipt = reconcileV3RunKnowledge(root, 's-v3', 'run-1');
     expect(receipt).not.toBeNull();
@@ -307,17 +331,9 @@ describe('v3 knowledge reconciliation hook', () => {
     const receiptPath = join(root, '.workflow', 'sessions', 's-v3', 'runs', 'run-1', 'knowledge-reconciliation.json');
     const generatedAtBefore = (JSON.parse(readFileSync(receiptPath, 'utf8')) as { generated_at: string }).generated_at;
 
-    // Seal the Run, then check: the sealed branch must only read the receipt.
-    const runPath = join(root, '.workflow', 'sessions', 's-v3', 'runs', 'run-1', 'run.json');
-    const runDoc = JSON.parse(readFileSync(runPath, 'utf8')) as RunV30;
-    writeFileSync(runPath, `${JSON.stringify({
-      ...runDoc, status: 'sealed', revision: 2, verdict: 'done', summary: 'done',
-      ended_at: '2026-08-12T00:02:00.000Z', sealed_at: '2026-08-12T00:02:00.000Z',
-    }, null, 2)}\n`, 'utf8');
-
     const response = await invoke(registerRunV3Command, checkArgs(root));
     const result = response.result as Record<string, unknown>;
-    expect(response).toMatchObject({ operation: 'check', ok: true, result: { run_id: 'run-1', status: 'sealed' } });
+    expect(response).toMatchObject({ operation: 'check', ok: true, result: { run_id: 'run-1', status: 'pending' } });
     expect(result.knowledge_reconciliation).toMatchObject({ review_required: 1, candidates: 1 });
     expect(result.warnings).toBeUndefined();
     const generatedAtAfter = (JSON.parse(readFileSync(receiptPath, 'utf8')) as { generated_at: string }).generated_at;

@@ -531,6 +531,7 @@ describe('v2 to v3 pure migration projection', () => {
       status: 'completed',
       run_ids: ['run-1'],
       goal_ref: 'goal-1',
+      decision_ref: null,
       decision_refs: ['decision-1'],
     }]);
     expect(result.session.decisions).toEqual([{

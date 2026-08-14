@@ -171,20 +171,17 @@ export type SessionStatusOperation =
   | 'session-pause'
   | 'session-resume'
   | 'session-archive'
-  | 'session-unarchive'
-  | 'session-fail';
+  | 'session-unarchive';
 
 export function mutateSessionStatusV3(
   store: SessionStore,
   options: ResolvedV3CommonOptions,
-  toStatus: Extract<SessionStatus, 'paused' | 'open' | 'archived' | 'failed'>,
+  toStatus: Extract<SessionStatus, 'paused' | 'open' | 'archived'>,
   operation: SessionStatusOperation = toStatus === 'open'
     ? 'session-resume'
-    : toStatus === 'failed'
-      ? 'session-fail'
-      : toStatus === 'paused'
-        ? 'session-pause'
-        : 'session-archive',
+    : toStatus === 'paused'
+      ? 'session-pause'
+      : 'session-archive',
 ): V3MutationResult {
   const recordedAt = new Date().toISOString();
   const payload = {
@@ -314,39 +311,4 @@ export function listLegacyV3MigrationCandidates(store: SessionStore): Array<{
   return candidates;
 }
 
-function retiredV3Operation(path: string) {
-  return path.replaceAll(' ', '-') as Parameters<typeof emitV3Error>[0];
-}
 
-/** Derive next_actions from a replacement command string such as 'run next / run create'. */
-export function retiredV3NextActions(replacement: string): string[] {
-  return replacement
-    .split(/[/|]/)
-    .map(part => part.trim().replace(/\s+/g, '-'))
-    .filter(Boolean)
-    .map(action => `use-${action}`);
-}
-
-/** v2-only subcommand retired stub options (mirrors execution-v3-retired.ts). */
-export function retiredV3Options(command: Command): Command {
-  return command
-    .option('--session <id>', 'Session ID')
-    .option('--request-id <id>', 'request ID')
-    .option('--json', 'emit run-response/1.2 JSON')
-    .option('--workflow-root <path>', 'project root', process.cwd())
-    .allowUnknownOption(true);
-}
-
-/** v2-only subcommand retired stub action emitting the 1.2 SESSION_SCHEMA_UNSUPPORTED envelope. */
-export function retiredV3Action(path: string, replacement: string) {
-  return (options: { session?: string; requestId?: string }): void => {
-    emitV3Error(retiredV3Operation(path), new V3StructuredError(
-      'SESSION_SCHEMA_UNSUPPORTED',
-      `${path} is retired for session/3.0 workspaces`,
-      {
-        details: { deprecated_command: path, replacement_command: replacement },
-        next_actions: retiredV3NextActions(replacement),
-      },
-    ), { session: options.session, requestId: options.requestId });
-  };
-}

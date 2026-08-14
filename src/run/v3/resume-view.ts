@@ -11,7 +11,6 @@ import {
 import { sha256Digest, stableJsonUtf8 } from '../transition-receipts.js';
 
 export const RESUME_MAP_MAX_UTF8_BYTES = 2048;
-export const RESUME_MAP_TRUNCATED_ACTION = 'resume-map-truncated';
 
 type ResumeMapBody = Omit<ResumeMapV1, 'fingerprint'>;
 type ResumeMapRun = ResumeMapV1['activeRuns'][number];
@@ -172,8 +171,7 @@ function canonicalActions(
 ): NextAction[] {
   const selected = new Map<string, NextAction>();
   for (const value of values) {
-    if (value.action === RESUME_MAP_TRUNCATED_ACTION
-      || !actionMatchesAuthority(value, session, runs)) continue;
+    if (!actionMatchesAuthority(value, session, runs)) continue;
     const candidate = {
       action: value.action,
       targetId: value.targetId,
@@ -192,118 +190,9 @@ function canonicalActions(
   ));
 }
 
-function cloneBody(body: ResumeMapBody): ResumeMapBody {
-  return {
-    ...body,
-    activeRuns: body.activeRuns.map(run => ({ ...run })),
-    blockingGates: [...body.blockingGates],
-    openDecisions: [...body.openDecisions],
-    pendingPublications: body.pendingPublications.map(publication => ({ ...publication })),
-    nextActions: body.nextActions.map(action => ({ ...action })),
-  };
-}
-
 function tryFinalize(body: ResumeMapBody): ResumeMapV1 | null {
   const map = finalize(body);
   return resumeMapUtf8Bytes(map) <= RESUME_MAP_MAX_UTF8_BYTES ? map : null;
-}
-
-function removeDanglingActions(body: ResumeMapBody, knownTargetIds: ReadonlySet<string>): void {
-  const retainedTargetIds = new Set<string>([
-    body.sessionId,
-    ...body.activeRuns.map(run => run.runId),
-    ...body.blockingGates,
-    ...body.openDecisions,
-    ...body.pendingPublications.map(publication => publication.publicationId),
-  ]);
-  body.nextActions = body.nextActions.filter(action => (
-    action.action === RESUME_MAP_TRUNCATED_ACTION
-    || !knownTargetIds.has(action.targetId)
-    || retainedTargetIds.has(action.targetId)
-  ));
-}
-
-function truncateBody(fullBody: ResumeMapBody): ResumeMapV1 {
-  // Frozen ResumeMapV1 has no truncation flag. Signal loss through a Session
-  // orchestration action, then evict in this deterministic low-to-high priority:
-  // publication URI, publication, decision, terminal/pending Run, ordinary
-  // action, running Run, blocked Run, blocking gate.
-  const body = cloneBody(fullBody);
-  body.nextActions.push({
-    action: RESUME_MAP_TRUNCATED_ACTION,
-    targetId: body.sessionId,
-    expectedRevision: body.orchestrationRevision,
-  });
-  body.nextActions.sort((left, right) => (
-    compareText(left.targetId, right.targetId)
-    || compareText(left.action, right.action)
-    || left.expectedRevision - right.expectedRevision
-  ));
-
-  const knownTargetIds = new Set<string>([
-    ...body.activeRuns.map(run => run.runId),
-    ...body.blockingGates,
-    ...body.openDecisions,
-    ...body.pendingPublications.map(publication => publication.publicationId),
-  ]);
-  const finishIfBounded = (): ResumeMapV1 | null => tryFinalize(body);
-
-  for (let index = body.pendingPublications.length - 1; index >= 0; index -= 1) {
-    if (body.pendingPublications[index].resourceUri === undefined) continue;
-    delete body.pendingPublications[index].resourceUri;
-    const bounded = finishIfBounded();
-    if (bounded) return bounded;
-  }
-
-  const removeLast = <T>(items: T[]): ResumeMapV1 | null => {
-    while (items.length > 0) {
-      items.pop();
-      removeDanglingActions(body, knownTargetIds);
-      const bounded = finishIfBounded();
-      if (bounded) return bounded;
-    }
-    return null;
-  };
-
-  let bounded = removeLast(body.pendingPublications);
-  if (bounded) return bounded;
-  bounded = removeLast(body.openDecisions);
-  if (bounded) return bounded;
-
-  const evictRunStatus = (status: ResumeMapRun['status']): ResumeMapV1 | null => {
-    for (let index = body.activeRuns.length - 1; index >= 0; index -= 1) {
-      if (body.activeRuns[index].status !== status) continue;
-      body.activeRuns.splice(index, 1);
-      removeDanglingActions(body, knownTargetIds);
-      const result = finishIfBounded();
-      if (result) return result;
-    }
-    return null;
-  };
-
-  for (const status of ['sealed', 'cancelled', 'completed', 'failed', 'pending'] as const) {
-    bounded = evictRunStatus(status);
-    if (bounded) return bounded;
-  }
-
-  for (let index = body.nextActions.length - 1; index >= 0; index -= 1) {
-    if (body.nextActions[index].action === RESUME_MAP_TRUNCATED_ACTION) continue;
-    body.nextActions.splice(index, 1);
-    bounded = finishIfBounded();
-    if (bounded) return bounded;
-  }
-
-  for (const status of ['running', 'blocked'] as const) {
-    bounded = evictRunStatus(status);
-    if (bounded) return bounded;
-  }
-
-  bounded = removeLast(body.blockingGates);
-  if (bounded) return bounded;
-
-  throw new ResumeMapProjectionError(
-    `ResumeMapV1 cannot fit within ${RESUME_MAP_MAX_UTF8_BYTES} UTF-8 bytes without altering authority IDs`,
-  );
 }
 
 /**
@@ -330,5 +219,10 @@ export function projectResumeMapV1(input: ResumeMapProjectionInput): ResumeMapV1
   };
 
   const complete = tryFinalize(fullBody);
-  return complete ?? truncateBody(fullBody);
+  if (complete === null) {
+    throw new ResumeMapProjectionError(
+      `ResumeMapV1 exceeds ${RESUME_MAP_MAX_UTF8_BYTES} UTF-8 bytes (projected ${resumeMapUtf8Bytes(finalize(fullBody))} bytes); the projection refuses to truncate authority data`,
+    );
+  }
+  return complete;
 }

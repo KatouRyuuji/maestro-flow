@@ -275,7 +275,7 @@ describe('Session schema compatibility', () => {
       activity_revision: 3,
       chain: [{
         step_id: 'step-1', command: 'implement', args: [], status: 'running' as const,
-        run_ids: ['run-1'], goal_ref: null, decision_refs: ['decision-1'],
+        run_ids: ['run-1'], goal_ref: null, decision_ref: null, decision_refs: ['decision-1'],
       }],
       decisions: [{
         decision_id: 'decision-1', after_step_id: 'step-1', status: 'open' as const, evidence_refs: [],
