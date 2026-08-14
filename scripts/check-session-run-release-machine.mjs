@@ -526,7 +526,7 @@ async function main() {
       deprecated_command: 'execution status', replacement_command: 'session status / run check',
     });
     assert.deepEqual(retiredExecution.error?.next_actions, [
-      'use-session-status', 'use-run-check', 'use-participant-status',
+      'use-session-status', 'use-run-check',
     ]);
     recordProof(proofs, 'v3-retired-execution-structured-response');
     const v3Store = new SessionStore(v3Root);
