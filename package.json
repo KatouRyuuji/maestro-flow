@@ -1,6 +1,6 @@
 {
   "name": "maestro-flow",
-  "version": "0.5.72",
+  "version": "0.5.73",
   "description": "Intent-driven workflow orchestration for multi-agent AI development with adaptive lifecycle engine and self-reinforcing knowledge graph",
   "type": "module",
   "imports": {

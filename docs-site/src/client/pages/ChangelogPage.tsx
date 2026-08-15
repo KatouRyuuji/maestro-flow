@@ -17,6 +17,14 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    version: '0.5.73',
+    date: '2026-08',
+    changes: [
+      { type: 'feat', text_en: 'Canonical v3 convergence: session/3.0 becomes the default workspace writer with the six-key capability set; run next emits a full birth packet (run_dir/step_id/upstream/guidance/knowledge_context/brief.command/run_already_created); run brief returns a brief-result/3.0 Resume Packet with orchestration_revision and a suggest-only next hint; replays return the identical packet via the persisted receipt', text_zh: 'Canonical v3 收敛：session/3.0 成为默认 workspace writer（六键能力集）；run next 输出完整 birth packet（run_dir/step_id/upstream/guidance/knowledge_context/brief.command/run_already_created）；run brief 返回 brief-result/3.0 Resume Packet（含 orchestration_revision 与 suggest-only next hint）；同 request 重放经持久化 receipt 返回相同 packet' },
+      { type: 'refactor', text_en: 'Canonical prompts, gates and mirrors v3-ified: run-mode/orchestrator-run-loop/run-mode-lite/ralph/prepare/* and all .claude/.agents/.codex/.agy mirrors describe the session/3.0 + run/3.0 surface with the six-key capability gate; v2 content moved into labeled Legacy branches; gate scripts enforce v3 tokens and the new default writer; existing workspaces keep their stored writer (legacy escape hatch: config session-schema set session/1.3|2.0)', text_zh: 'Canonical 文档/门禁/镜像 v3 化：run-mode/orchestrator-run-loop/run-mode-lite/ralph/prepare/* 及全部 .claude/.agents/.codex/.agy 镜像改用 session/3.0 + run/3.0 面与六键能力门；v2 内容移入带标签的 Legacy 分支；门禁脚本强制执行 v3 token 与新默认 writer；既有 workspace 保留已存 writer（legacy 逃生口：config session-schema set session/1.3|2.0）' },
+    ],
+  },
+  {
     version: '0.5.72',
     date: '2026-08',
     changes: [
