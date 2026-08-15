@@ -878,4 +878,46 @@ describe('v3 migration atomic publication', () => {
       expect(() => readFileSync(join(store.sessionDir('s'), 'v3-migration-report.json'))).toThrow();
     }
   });
+
+  it('migrates a multi-generation Session: the selected Execution binds its own Runs while historical sealed Runs stay read-only', () => {
+    // session/2.0 references execution-B (current) but historical generation-1
+    // Runs remain under runs/ bound to a sealed execution-A. The projection
+    // must not assert those historical Runs against the selected Execution.
+    const session = v20Session();
+    const execB = execution('active');
+    const execA = executionStateSchema.parse({
+      ...execution('sealed', 'done'),
+      execution_id: 'execution-1',
+      generation: 1,
+    });
+    const runB = runV14();
+    const runA = commandRunV14Schema.parse({
+      ...runV14('sealed'),
+      run_id: 'run-0',
+      execution_id: 'execution-1',
+      generation: 1,
+      chain_step_id: 'step-1',
+      handoff: null,
+    });
+    const input: LegacyV3MigrationInput = {
+      session,
+      execution: execB,
+      runs: [runA, runB],
+      ...registries(),
+    };
+    const result = projectLegacySessionToV30(input, { recorded_at: RECORDED_AT });
+    expect(result.runs.map(run => run.run_id).sort()).toEqual(['run-0', 'run-1']);
+    const historical = result.runs.find(run => run.run_id === 'run-0');
+    expect(historical).toMatchObject({
+      status: 'sealed',
+      legacy_execution_generation: 1,
+    });
+    expect(result.report.publication).toMatchObject({
+      legacy_execution_storage: 'retained-read-only',
+    });
+    // The migrated Session owns both Runs; the current Run binds the selected
+    // Execution's generation.
+    const current = result.runs.find(run => run.run_id === 'run-1');
+    expect(current).toMatchObject({ legacy_execution_generation: 7 });
+  });
 });

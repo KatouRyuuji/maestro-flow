@@ -1,6 +1,6 @@
 # Session/Run v3 架构参考设计（Reference Design）
 
-> 版本基线：maestro-flow `0.5.71`（commit `45ddac50`）+ pi-maestro-flow `0.21.2`（commit `2ccf72bc`），2026-08-14 发布。
+> 版本基线：maestro-flow `0.5.73`（release commit `9d97a7df`，参考设计状态 commit `695ee537`，tag `v0.5.73`）+ pi-maestro-flow `0.21.4`（commit `9ee5edbe`），2026-08-14 发布。
 > 本文是 v3 的**权威参考设计**：概念模型、数据模型、协议、mutation 引擎、状态机、决策门、并发语义、迁移与知识流的完整描述。实现细节以源码为准，本文给出设计意图与约束。
 > 上游文档：方案 B（`session-run-minimal-state-architecture-20260812.md`）、合同清单（`session-run-v3-core-contract-checklist-20260812.md`）、实现蓝图（`session-run-v3-implementation-blueprint-20260812.md`）、简化规划（`session-run-v3-simplified-plan.md`）、当前架构审计（`session-run-v3-current-architecture-audit.md`）。
 
@@ -31,8 +31,8 @@ v3 是 Session/Run 的「最小状态」架构，取代 v2 的 Execution + lease
 | 代际 | 模型 | 状态 |
 |---|---|---|
 | session/1.x | 全量文档 + ralph-meta | 读兼容（normalization 升格） |
-| session/2.0 + execution/1.0 | statusless Session + Execution 实体 + lease | **v2 分支保留**（读/写均可用，Pi 阶段 3 前默认）；迁移器可投影到 v3 |
-| session/3.0 + run/3.0 | 最小状态：Session 容器 + Run 执行 + receipt + 决策门 | **新 canonical**（writer 显式选择） |
+| session/2.0 + execution/1.0 | statusless Session + Execution 实体 + lease | **Legacy compatibility**（读/写保留；既有 workspace 保持已存 writer；可用 `config session-schema set 1.3|2.0` 显式选择） |
+| session/3.0 + run/3.0 | 最小状态：Session 容器 + Run 执行 + receipt + 决策门 | **Canonical 默认**（0.5.73 起新 workspace 默认 writer） |
 
 ## 2. 概念模型
 
@@ -98,7 +98,7 @@ goal_ref / stage / decision_ref: string | null      // 决策门声明（可空�
 
 ```
 run_id / session_id / step_id
-retry_of_run_id / attempt                            // 谱系（parent_run_id 已移除）
+parent_run_id / retry_of_run_id / attempt             // parent 为一般/兼容谱系；retry_of + attempt 为重试谱系
 command / args / goal（创建时快照）
 status / revision                                    // revision 为 per-Run CAS target
 actor_id                                             // participant_id 已移除
@@ -290,15 +290,16 @@ stateDiagram-v2
     open --> failed
     completed --> archived
     failed --> archived
-    archived --> [*]
+    archived --> open: session unarchive
 ```
 
-`paused` 已移除——**决策门 escalated 完全替代暂停语义**。操作权限：
+`paused` 已移除——**决策门 escalated 完全替代暂停语义**。`archived` 禁止创建 Run 或修改 chain，只允许显式 `session unarchive` 回到 `open` 后继续。操作权限：
 
-| Session | create/advance | transition existing Run | decide | evidence |
-|---|---|---|---|---|
-| open | ✅ | ✅ | ✅ | ✅ |
-| completed/failed/archived | ❌ | ❌ | ❌ | ❌ |
+| Session | create/advance | transition existing Run | decide | evidence | archive mutation |
+|---|---|---|---|---|---|
+| open | ✅ | ✅ | ✅ | ✅ | ❌ |
+| completed/failed | ❌ | ❌ | ❌ | ❌ | `session archive` |
+| archived | ❌ | ❌ | ❌ | ❌ | `session unarchive` → open |
 
 `session complete` 前置校验（事务内从锁定权威推导）：无 running Run、全部 chain step completed/skipped 带依据、**无 open 决策门**（escalated 以 `concerns` 通过并记录）。
 
@@ -395,25 +396,25 @@ flowchart LR
 
 | 面 | 状态 |
 |---|---|
-| v2（session/2.0 + execution/1.0） | 完整保留（读/写），Pi 阶段 3 前为默认 workspace |
+| v2（session/2.0 + execution/1.0） | Legacy compatibility 完整保留（读/写）；既有 workspace 保持已存 writer，新 workspace 默认 session/3.0；`config session-schema set 1.3|2.0` 为显式逃生口 |
 | 旧 v3 文件（含 identity_revision/paused/gates_ref/participant_id/gate_refs） | **strip 宽容读 schema**：读时剥离退役字段、`paused`→`open` 映射；引擎重写后文档不再含退役字段 |
 | participant 命令族 | 已删除；`--participant` option 兼容接收（值忽略） |
 | session pause/resume、chain audit、session fail | 已删除 |
 | chain-proposal、TC-P0-3 附加输入、retired stubs、resume-map 截断、mutations.jsonl | 已删除（审计权威 = transition receipt） |
-| artifact republish、run recall | **冻结**（Pi 侧已消费，随 Pi 阶段 3 退役） |
+| artifact republish、run recall | 兼容保留：artifact republish 仍由 Pi v3 通过 orchestration revision CAS 消费；run recall 保持只读，不扩展新的 authority 语义 |
 | execution 命令族 | retired 壳（结构化 replacement，不模拟） |
 
 ## 13. 测试与验收
 
-- 当前可复现的 core 聚焦测试：`npx vitest run src/run/v3 src/commands/v3-cli.test.ts src/commands/help-json.test.ts` 为 17 文件、270 例通过；`tsc --noEmit` 通过。
-- 当前发布门禁全绿：`npm run check:session-run-release-machine` 的 30 项 build-backed 证明全部通过（`8842a3a1` 删除已退役的 `use-participant-status` 断言，`a6bd2a2f` 对齐 open-revision-1 orchestration 序列）。
-- `lint:session-run` 与 contract parity 通过只能证明现有 v2 Execution/lease prompt 彼此一致，不能证明 v3 Skill/Agent 注入闭环成立。
-- Pi 五组聚焦测试最新实跑为 138 tests：133 通过、4 失败、1 跳过；4 个失败均为既有 v2 real-CLI identity-revision/plan-publish fixture。Pi typecheck 通过。该测试集仍未覆盖真实 core v3 birth/brief 到 packaged executor 的跨仓链路。
-- ralph 路径 12 步目前是目标验收场景，不是已经闭合的发布证明；必须在隔离 workspace 中通过真实 core + packaged Pi consumer E2E 后才能改为“已通过”。
+- Core 发布验收：`prepublishOnly` 全绿；release-machine 30 proofs、contract parity 41 checks、`build:mirrors` 与 v3 prompt lint 全部通过。
+- Core 全量 Vitest：1104/1109 通过；剩余 5 个为既有基线（run-context×2、built-bin check、wiki-live、complete-verdict），stash 对照确认非 v3 收敛引入。
+- Pi 发布验收：session/CLI v3 集成 113 通过、1 跳过，typecheck 0 错误，`test:package` 18/18 通过；此前 4 个 v2 real-CLI fixture 失败已随 v3 fixture 迁移消除。
+- 真实跨仓 E2E 已通过：全新 v3 workspace + 真实 core CLI 完成 open→insert→next birth→brief→check→complete --advance→decide→session complete→resume-view→knowledge review；同时验证 stale CAS 拒绝/重试、response-loss replay 和双进程同 revision 竞争仅分配一个 Run。
+- 剩余测试工作仅为自动化补强：pack/install 隔离 HOME 冒烟、compaction reattach 专项用例；不阻断 0.5.73/0.21.4 功能交付。
 
 ## 14. 实现符合性审查（2026-08-14 复核）
 
-结论：core v3 mutation 与 Pi v3 CAS adapter 主体已实现并通过聚焦测试，但本参考设计尚未完全落地。当前 v2 canonical prompt、agent 和门禁属于行动规划阶段 3/4 的有意过渡态，不要求在 v2 仍为默认 workspace 时提前切换；v3 birth/brief 注入与真实 packaged-consumer E2E 仍未闭合，因此当前状态不得标记为 v3 完成交付。
+结论：Session/Run v3 已完成 canonical 收敛并发布。maestro-flow 0.5.73 默认写 session/3.0，Pi 0.21.4 的 executor/coordinator/knowledge 路径已消费 v3 birth/brief 和无 lease CAS；v2 Execution/lease 仅保留在明确标注的 Legacy compatibility branch。功能交付门槛已闭合，剩余事项仅为测试自动化补强与 legacy migration 风险跟踪。
 
 ### 14.1 已确认修复
 
@@ -424,28 +425,28 @@ flowchart LR
 - Pi `next/done` 已委托 `execV3` 的无 lease CAS 路径，`edit` 在 v3 下显式拒绝并指引 `session chain insert|skip|replace`；artifact republish 使用 canonical orchestration revision flag。
 - Pi v3 capability 选择、response operation/request 绑定、strict ResumeMap、bridge decisions/retry lineage 与 run-control operation 面已同步最终 core 合同。
 
-### 14.2 未闭合问题
+### 14.2 收敛状态与残余跟踪
 
-| 严重度 | 问题 | 当前证据与影响 |
+| 状态 | 项目 | 当前证据与影响 |
 |---|---|---|
-| 已确认修复 | v3 birth packet 补齐 | `8ffb8b0a`（0.5.73）：`run next/create` result 现含 `run_dir`、`step_id`、`upstream`（artifact registry 投影）、guidance snapshot、`knowledge_context` 句柄、`brief.command` 与 `run_already_created: true`；同 request 重放经持久化 receipt 返回相同 packet。真实 E2E 已验证（D3 冒烟）。 |
-| 已确认修复 | v3 brief Resume Packet 补齐 | `8ffb8b0a`（0.5.73）：`run brief` 返回 `brief-result/3.0`（session status/orchestration_revision/objective/definition_of_done/active_run_ids + run 记录 + birth 字段 + suggest-only next）。 |
-| Planned transition | canonical prompt、agents 与 mirrors 已 v3 化 | `d278d050`/`4a89ea8d`（0.5.73）：run-mode/orchestrator-run-loop/run-mode-lite/ralph/prepare/* 与全部 `.claude/.agents/.codex/.agy` mirrors 已切换为 session/3.0 + run/3.0 面与六键能力门；v2 内容移入带标签的 Legacy 分支；默认 workspace writer 已切 session/3.0（`8ffb8b0a`）。 |
-| Planned transition | prompt/parity 门禁已 v3 化 | `d278d050`/`1b99b990`（0.5.73）：`session-execution-prompt-semantics`、`lint-session-run-prompts`、contract parity（默认 writer 断言 3.0、v3 capability fixtures）与 release-machine 均对 v3 token/字段做断言；v2 兼容证明保留为 legacy 段。 |
-| 已确认修复 | Pi packaged executor 接入新 birth/brief | `63bdb148`（Pi 0.21.4）：run-executor 全面 v3（无 session next/done/ralph-meta）；coordinator session-v3 主路径 + publishPlanV3；extension v3 receipt 驱动知识 review；真实 CLI 集成测试迁移 v3 fixture（4 个既有失败消除）。 |
-| Medium | 最终数据模型仍有有意漂移 | v3 允许 `archived -> open`/`session unarchive`，canonical `run/3.0` 仍保留 `parent_run_id`。若这些行为作为产品决策保留，应更新本参考设计并明确兼容性与审计语义。 |
-| Medium | 双读与 migration 覆盖不完整 | v3 writer 下旧 Session 仍可能被标记 inaccessible；多 generation v2 Session 的迁移只选择单个 Execution，却校验全部历史 Run，真实历史数据可能迁移失败。 |
-| Medium | 发布证明闭合度 | core release-machine 30 proofs 绿；真实跨仓 E2E（open→insert→next birth→brief→check→complete --advance→decide→session complete + 并发 CAS + knowledge review 可见）已通过；剩余：pack/install 隔离 HOME 冒烟与 compaction reattach 自动化用例。 |
+| ✅ 已完成 | v3 birth packet | `8ffb8b0a`（0.5.73）：`run next/create` result 含 `run_dir`、`step_id`、`upstream`、guidance snapshot、`knowledge_context`、`brief.command` 与 `run_already_created`；同 request replay 返回相同 packet。 |
+| ✅ 已完成 | v3 brief Resume Packet | `8ffb8b0a`（0.5.73）：`run brief` 返回 `brief-result/3.0`，包含 Session 状态/orchestration revision、Run 记录、birth 字段与 suggest-only next。 |
+| ✅ 已完成 | canonical prompts、agents 与 mirrors v3 化 | `d278d050`/`4a89ea8d`：run-mode/orchestrator/run-mode-lite/ralph/prepare 及 `.claude/.agents/.codex/.agy` mirrors 已切换 v3 六键能力门；v2 移入带标签 Legacy 分支；新 workspace 默认 session/3.0。 |
+| ✅ 已完成 | prompt/parity/release 门禁 v3 化 | `d278d050`/`1b99b990`：prompt lint、contract parity、release-machine 对 v3 birth/brief、run-response/1.2、默认 writer 与无 lease CAS 做语义断言，同时保留 legacy compatibility 证明。 |
+| ✅ 已完成 | Pi packaged consumer v3 化 | `63bdb148`/`9ee5edbe`（Pi 0.21.4）：run-executor、coordinator、publishPlanV3、receipt 驱动知识 review 与真实 CLI fixture 已进入 session/3.0 主路径。 |
+| ✅ 产品决策已同步 | archive 与 Run 谱系 | `archived -> open` 仅通过显式 `session unarchive`；`parent_run_id` 作为一般/兼容谱系保留，`retry_of_run_id + attempt` 作为重试谱系。本文 §3.3/§6.2 已与实现对齐。 |
+| Medium 跟踪 | legacy 双读与多 generation migration | 新 workspace 已默认 v3，既有 workspace 保持已存 writer并可显式迁移。v3 resolver 对 legacy authority fail-closed、多 generation 历史迁移覆盖仍作为 compatibility 风险跟踪，不阻断 canonical v3 运行。 |
+| Medium 自动化 | packaged install / compaction recovery | 真实跨仓功能 E2E、并发 CAS、replay 与知识可见性已通过；仍需将隔离 HOME pack/install 冒烟和 compaction reattach 固化为发布自动化。 |
 
 ### 14.3 完成交付门槛
 
-以下条件全部满足后，才能把本节结论改为“完全实现”：
+五项功能交付门槛均已满足；第 4 项保留两项自动化补强：
 
 1. ✅ 版本化 v3 birth/brief schema 已实现（`8ffb8b0a`）：next/create/brief 同源投影 `run_dir`、upstream、guidance、knowledge context、Run/Session revisions 与重复创建防线（`run_already_created` + request-id 确定性派生）。
 2. ✅ canonical workflows、Ralph、Companion、session-seal、run-executor 与 `.claude/.agents/.codex/.agy` mirrors 已统一为 v3 主分支（`d278d050`/`4a89ea8d`/`63bdb148`）；v2 Execution/lease 明确降为 compatibility branch；默认 workspace 已切 session/3.0（用户级决策执行）。
 3. ✅ prompt/parity/mirror 门禁已改为 v3 断言：`session-execution-prompt-semantics`、`lint-session-run-prompts`、contract parity、release-machine 对 v3 birth/brief、run-response/1.2 与无 lease CAS 做语义断言；v2 兼容证明保留 legacy 段。
 4. ✅ 真实跨仓 E2E 已通过：全新 v3 workspace + 真实 core CLI + Pi 集成，完整链路（open→insert→run next birth→brief Resume Packet→check→complete --advance→decide→session complete）含 response-loss replay（request-id 重试）与并发 CAS（同 rev 双进程竞争仅单 Run 分配）、knowledge review 可见。剩余自动化项：pack/install 隔离 HOME 冒烟、compaction reattach 用例。
-5. ✅ `prepublishOnly`、release-machine（30 proofs）、prompt parity、Pi package/session tests 全绿（Pi 113 pass/1 skip、core 1104/1109 仅 5 个既有基线）。
+5. ✅ 发布门禁全绿：`prepublishOnly`、release-machine（30 proofs）、prompt parity、Pi session/CLI（113 pass/1 skip）与 `test:package`（18/18）通过；core 全量 suite 的 1104/1109 与 5 个既有基线单独跟踪，不属于本次 v3 收敛回归。
 
 ## 15. 参考文档索引
 
@@ -455,8 +456,8 @@ flowchart LR
 | `session-run-v3-simplified-plan.md` | 简化规划（ralph 锚、批次 A/B/C、实施状态） |
 | `session-run-v3-current-architecture-audit.md` | 缺口审计（G1–G17 + N1–N5 状态） |
 | `session-run-v3-simplified-model.md` | 简化心智模型（4 概念 + 决策门） |
-| `~/.maestro/workflows/run-mode.md` | 运行契约（v2 主体 + session/3.0 branch） |
-| `~/.maestro/prepare/ralph.md` | ralph 策略层（Stage Mapping + v3 命令面） |
-| `~/.maestro/workflows/orchestrator-run-loop.md` | ralph 执行循环（v3 branch） |
+| `~/.maestro/workflows/run-mode.md` | canonical v3 运行契约（v2 位于 Legacy compatibility branch） |
+| `~/.maestro/prepare/ralph.md` | canonical v3 Ralph 策略层（六键能力门 + Session chain） |
+| `~/.maestro/workflows/orchestrator-run-loop.md` | canonical v3 执行循环（birth/brief + CAS；无 Execution/lease） |
 | Pi 侧 `docs/session-run-minimal-state-architecture-20260812.md` | 方案 B（权威需求基线） |
 | Pi 侧 `docs/session-run-v3-core-contract-checklist-20260812.md` | 合同清单（§1–§8） |

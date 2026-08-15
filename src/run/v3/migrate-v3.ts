@@ -882,10 +882,22 @@ export function projectLegacySessionToV30(
           `Run ${run.run_id} is bound to Execution ${run.execution_id}, but no Execution snapshot was supplied`,
         );
       }
-      if (run.execution_id !== execution.execution_id || run.generation !== execution.generation) {
+      // Historical-generation Runs (bound to a sealed Execution that is not
+      // the selected one) migrate read-only: their bytes are still verified
+      // against the source snapshot, but their Execution binding is not
+      // asserted against the selected Execution. Only Runs bound to the
+      // selected Execution must match its identity/generation exactly.
+      if (run.execution_id === execution!.execution_id) {
+        if (run.generation !== execution!.generation) {
+          fail(
+            'MIGRATION_REFERENCE_INTEGRITY',
+            `Run ${run.run_id} Execution binding does not match ${execution!.execution_id} generation ${execution!.generation}`,
+          );
+        }
+      } else if (run.generation >= execution!.generation) {
         fail(
           'MIGRATION_REFERENCE_INTEGRITY',
-          `Run ${run.run_id} Execution binding does not match ${execution.execution_id} generation ${execution.generation}`,
+          `Run ${run.run_id} references Execution ${run.execution_id} generation ${run.generation} newer than the selected ${execution!.execution_id} generation ${execution!.generation}`,
         );
       }
     }
