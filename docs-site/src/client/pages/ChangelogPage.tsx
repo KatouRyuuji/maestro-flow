@@ -28,6 +28,7 @@ const changelog: ChangelogEntry[] = [
     ],
   },
   {
+    version: '0.5.73',
     date: '2026-08',
     changes: [
       { type: 'feat', text_en: 'Canonical v3 convergence: session/3.0 becomes the default workspace writer with the six-key capability set; run next emits a full birth packet (run_dir/step_id/upstream/guidance/knowledge_context/brief.command/run_already_created); run brief returns a brief-result/3.0 Resume Packet with orchestration_revision and a suggest-only next hint; replays return the identical packet via the persisted receipt', text_zh: 'Canonical v3 收敛：session/3.0 成为默认 workspace writer（六键能力集）；run next 输出完整 birth packet（run_dir/step_id/upstream/guidance/knowledge_context/brief.command/run_already_created）；run brief 返回 brief-result/3.0 Resume Packet（含 orchestration_revision 与 suggest-only next hint）；同 request 重放经持久化 receipt 返回相同 packet' },
