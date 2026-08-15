@@ -61,7 +61,13 @@ export function updateSessionKnowledgeSidecar<T>(
     createSessionDelta(sessionId, nowIso()),
     draft => {
       const session = store.readSessionRecordReadOnly(sessionId);
-      if (session.schema_version !== 'session/2.0') {
+      if (session.schema_version === 'session/3.0') {
+        // v3 has no running/paused lifecycle: an open Session may stage;
+        // completed/archived Sessions are sealed against sidecar mutation.
+        if (session.status !== 'open') {
+          throw new Error(`Session ${sessionId} is ${session.status} and cannot mutate knowledge sidecars`);
+        }
+      } else if (session.schema_version !== 'session/2.0') {
         const status = store.readBundle(sessionId).session.status;
         if (status !== 'running' && status !== 'paused') {
           throw new Error(`Session ${sessionId} is ${status} and cannot mutate knowledge sidecars`);

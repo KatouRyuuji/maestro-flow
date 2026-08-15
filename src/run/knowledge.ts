@@ -3,7 +3,7 @@ import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { z } from 'zod';
 
-import type { CommandRun, ReportFrontmatter } from './schemas.js';
+import { artifactRegistrySchema, type ArtifactRegistry, type CommandRun, type ReportFrontmatter, type SessionStateV30 } from './schemas.js';
 import {
   SessionStore,
   type ExecutionRunSidecarAuthority,
@@ -476,7 +476,15 @@ export function resolveSessionKnowledgeEvidenceRoots(
   if (normalizedRefs.length === 0) {
     throw new Error('Session-source candidate evidence must contain a resolvable immutable root');
   }
-  const bundle = store.readBundle(sessionId);
+  // v3 Sessions keep the artifact registry at session.artifacts_ref instead of
+  // the v2 bundle; readBundle rejects session/3.0 (SESSION_SCHEMA_UNSUPPORTED).
+  const sessionRecord = store.readSessionRecordReadOnly(sessionId);
+  const artifacts: ArtifactRegistry = sessionRecord.schema_version === 'session/3.0'
+    ? store.readJsonFileReadOnly(
+        join(store.sessionDir(sessionId), (sessionRecord as SessionStateV30).artifacts_ref),
+        artifactRegistrySchema,
+      )
+    : store.readBundle(sessionId).artifacts;
   const descriptors = normalizedRefs.map((ref): SessionKnowledgeEvidenceRoot => {
     if (ref.startsWith('inline:')) {
       const content = ref.slice('inline:'.length);
@@ -512,7 +520,7 @@ export function resolveSessionKnowledgeEvidenceRoots(
     }
     if (ref.startsWith('artifact:')) {
       const artifactId = ref.slice('artifact:'.length).trim();
-      const artifact = bundle.artifacts.artifacts[artifactId];
+      const artifact = artifacts.artifacts[artifactId];
       if (!artifact || artifact.status !== 'sealed') {
         throw new Error(`Artifact evidence is missing or not sealed: ${artifactId || ref}`);
       }
