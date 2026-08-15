@@ -23,7 +23,7 @@ allowed-tools:
   - update_plan
   - wait_agent
 session-mode: run
-version: 0.5.73
+version: 0.5.74
 contract:
   discovery: self-described
   consumes: []

@@ -17,7 +17,17 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
-    version: '0.5.73',
+    version: '0.5.74',
+    date: '2026-08',
+    changes: [
+      { type: 'fix', text_en: 'Migration deadlock removed: session migrate --to-v3 accepts running Runs (projected run/3.0 running, active run bound) and orphaned running/failed steps project as pending; the v3 face can resume and complete in-flight work. E2E: running Run → migrate → run brief → run complete --advance → session complete', text_zh: '迁移死锁消除：session migrate --to-v3 接受 running Run（投影为 run/3.0 running，active run 绑定）与 orphaned running/failed step（投影 pending）；v3 面可继续完成在途工作。E2E：running Run → migrate → run brief → run complete --advance → session complete' },
+      { type: 'fix', text_en: 'knowledge stage works against session/3.0: the knowledge sidecar opens the v3 branch for staging; artifact evidence roots resolve from session.artifacts_ref through the registry', text_zh: 'knowledge stage 支持 session/3.0：knowledge sidecar 打开 v3 分支供 stage；artifact 证据根从 session.artifacts_ref 经 registry 解析' },
+      { type: 'fix', text_en: 'CAS fence is derived from the explicit --session target (not a stale state.json active); session unarchive is a v3 orchestration target; publishPlanV3 replays open/insert as idempotent with stable request ids', text_zh: 'CAS fence 从显式 --session 目标派生（不再依赖 stale state.json active）；session unarchive 成为 v3 orchestration target；publishPlanV3 的 open/insert 重放幂等（稳定 request-id）' },
+      { type: 'fix', text_en: 'Execution selection prefers the unique non-sealed Execution; a stale sealed current_execution_id no longer hides the open chain; v2 residue removed from run-executor/skill-iter-tune/maestro-help canonical sources and the Codex conversion profile', text_zh: 'Execution 选择优先唯一 non-sealed Execution；stale sealed current_execution_id 不再隐藏 open chain；run-executor/skill-iter-tune/maestro-help 规范源与 Codex 转换配置的 v2 残留清零' },
+      { type: 'chore', text_en: 'Prepublish gates: skill-surface check (123 invocations cross-validated + v3 knowledge-stage smoke), packaged-install isolated-HOME smoke, legacy multi-generation migration and compaction-reattach tests', text_zh: '发布门禁补强：skill-surface 检查（123 处命令调用交叉验证 + v3 knowledge-stage 冒烟）、packaged-install 隔离 HOME 冒烟、legacy 多代迁移与 compaction-reattach 测试' },
+    ],
+  },
+  {
     date: '2026-08',
     changes: [
       { type: 'feat', text_en: 'Canonical v3 convergence: session/3.0 becomes the default workspace writer with the six-key capability set; run next emits a full birth packet (run_dir/step_id/upstream/guidance/knowledge_context/brief.command/run_already_created); run brief returns a brief-result/3.0 Resume Packet with orchestration_revision and a suggest-only next hint; replays return the identical packet via the persisted receipt', text_zh: 'Canonical v3 收敛：session/3.0 成为默认 workspace writer（六键能力集）；run next 输出完整 birth packet（run_dir/step_id/upstream/guidance/knowledge_context/brief.command/run_already_created）；run brief 返回 brief-result/3.0 Resume Packet（含 orchestration_revision 与 suggest-only next hint）；同 request 重放经持久化 receipt 返回相同 packet' },
