@@ -9,6 +9,13 @@ import { createExecutionRun } from './runtime.js';
 import { recallRuns } from './recall.js';
 import { runRecallSchema } from './protocol-schemas.js';
 
+function v2Workspace(root: string): void {
+  mkdirSync(join(root, ".workflow"), { recursive: true });
+  writeFileSync(join(root, ".workflow", "config.json"), JSON.stringify({
+    session_schema: { schema_version: "session-schema-selection/1.0", writer: "session/1.3", features: { session_statusless: false } },
+  }));
+}
+
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
@@ -37,6 +44,8 @@ function executionClaim(started: ReturnType<typeof startExecution>) {
 describe('read-only run recall', () => {
   it('uses command-independent Unicode topic identity and preserves authority mtimes', async () => {
     const root = mkdtempSync(join(tmpdir(), 'maestro-recall-')); roots.push(root);
+
+    v2Workspace(root);
     const store = new SessionStore(root);
     store.createSession('live', '修复 Unicode intent', { command: 'demo' });
     const sessionPath = join(store.sessionDir('live'), 'session.json');
@@ -54,6 +63,8 @@ describe('read-only run recall', () => {
 
   it('derives live session/2.0 lifecycle from canonical identity and current Execution authority', async () => {
     const root = mkdtempSync(join(tmpdir(), 'maestro-recall-')); roots.push(root);
+
+    v2Workspace(root);
     enableV20(root);
     const store = new SessionStore(root);
     for (const id of ['idle', 'runnable', 'executing', 'blocked', 'archived']) {
@@ -127,6 +138,8 @@ describe('read-only run recall', () => {
 
   it('keeps multiple exact live Sessions ambiguous and emits no confirmation mutation surface', async () => {
     const root = mkdtempSync(join(tmpdir(), 'maestro-recall-')); roots.push(root);
+
+    v2Workspace(root);
     const store = new SessionStore(root);
     store.createSession('a', 'same intent', { command: 'demo' });
     store.createSession('b', 'same intent', { command: 'demo' });
@@ -139,6 +152,8 @@ describe('read-only run recall', () => {
 
   it('does not select or emit a mutation pointer for a paused Session', async () => {
     const root = mkdtempSync(join(tmpdir(), 'maestro-recall-')); roots.push(root);
+
+    v2Workspace(root);
     const store = new SessionStore(root);
     store.createSession('paused', 'paused intent', { command: 'demo' });
     store.update('paused', draft => { draft.session.status = 'paused'; });

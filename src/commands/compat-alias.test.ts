@@ -10,12 +10,20 @@ import { SessionStore } from '../run/store.js';
 import { registerRunCommand } from './run.js';
 import { registerSessionCommand } from './session.js';
 
+function v2Workspace(root: string): void {
+  mkdirSync(join(root, ".workflow"), { recursive: true });
+  writeFileSync(join(root, ".workflow", "config.json"), JSON.stringify({
+    session_schema: { schema_version: "session-schema-selection/1.0", writer: "session/1.3", features: { session_statusless: false } },
+  }));
+}
+
 let root: string;
 let stdout: string[];
 let stderr: string[];
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'maestro-compat-alias-'));
+  v2Workspace(root);
   stdout = [];
   stderr = [];
   vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: string | Uint8Array) => {
@@ -142,6 +150,7 @@ describe('migration plan 8.12 compatibility aliases', () => {
 
     rmSync(root, { recursive: true, force: true });
     root = mkdtempSync(join(tmpdir(), 'maestro-compat-alias-legacy-'));
+    v2Workspace(root);
     installDemoCommand();
     const legacy = createChainSession('next-legacy', false);
     const response = runResponseV10Schema.parse(await invoke(
@@ -409,6 +418,7 @@ describe('migration plan 8.12 compatibility aliases', () => {
 
     rmSync(root, { recursive: true, force: true });
     root = mkdtempSync(join(tmpdir(), 'maestro-compat-alias-create-'));
+    v2Workspace(root);
     installDemoCommand();
     const response = runResponseV11Schema.parse(await invoke(
       'session', 'create', 'chain alias', '--id', 'chain-alias', '--chain', 'demo',

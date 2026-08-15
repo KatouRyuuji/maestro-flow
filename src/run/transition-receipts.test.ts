@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync,} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -37,6 +37,13 @@ import {
   type SessionTransitionOptions,
 } from './session-transition.js';
 import { SessionStore } from './store.js';
+
+function v2Workspace(root: string): void {
+  mkdirSync(join(root, ".workflow"), { recursive: true });
+  writeFileSync(join(root, ".workflow", "config.json"), JSON.stringify({
+    session_schema: { schema_version: "session-schema-selection/1.0", writer: "session/1.3", features: { session_statusless: false } },
+  }));
+}
 
 const hash = `sha256:${'a'.repeat(64)}`;
 const otherHash = `sha256:${'b'.repeat(64)}`;
@@ -331,6 +338,8 @@ describe('transition request/outcome receipts', () => {
 describe('canonical paused recovery transitions', () => {
   it('keeps the Session paused after resolving one recovery target', () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'maestro-resolve-paused-'));
+
+    v2Workspace(projectRoot);
     roots.push(projectRoot);
     const store = seedPausedRecovery(projectRoot, 's');
     store.update('s', draft => {
@@ -442,6 +451,8 @@ describe('canonical paused recovery transitions', () => {
 
     for (const item of cases) {
       const projectRoot = mkdtempSync(join(tmpdir(), `maestro-resume-${item.name.replaceAll(' ', '-')}-`));
+
+      v2Workspace(projectRoot);
       roots.push(projectRoot);
       const store = seedPausedRecovery(projectRoot, 's');
       item.mutate(store);
@@ -591,6 +602,8 @@ describe('recall, confirmation, transition and import protocol schemas', () => {
 describe('SessionStore confirmation and transition APIs', () => {
   it('issues, reads and consumes a single-use confirmation under the global lock', () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'maestro-confirmation-'));
+
+    v2Workspace(projectRoot);
     roots.push(projectRoot);
     const store = new SessionStore(projectRoot);
     const identity = createIntentIdentity(projectRoot, 'plan', 'target');
@@ -626,6 +639,8 @@ describe('SessionStore confirmation and transition APIs', () => {
 
   it('persists a transition receipt with the Session mutation and replays without mutation', () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'maestro-transition-store-'));
+
+    v2Workspace(projectRoot);
     roots.push(projectRoot);
     const store = new SessionStore(projectRoot);
     store.createSession('s', 'resume me', { command: 'plan' });

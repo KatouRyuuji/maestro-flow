@@ -12,6 +12,13 @@ import { createRun } from '../run/runtime.js';
 import { SessionStore } from '../run/store.js';
 import { recordLoadedKnowledge } from './load.js';
 
+function v2Workspace(root: string): void {
+  mkdirSync(join(root, ".workflow"), { recursive: true });
+  writeFileSync(join(root, ".workflow", "config.json"), JSON.stringify({
+    session_schema: { schema_version: "session-schema-selection/1.0", writer: "session/1.3", features: { session_statusless: false } },
+  }));
+}
+
 let previousCwd = process.cwd();
 let root = '';
 
@@ -83,6 +90,7 @@ function wikiEntry(): WikiEntry {
 describe('explicit knowledge load attribution', () => {
   it('records full-content loads as consumed on the unique active Run', async () => {
     root = mkdtempSync(join(tmpdir(), 'maestro-load-consumed-'));
+    v2Workspace(root);
     previousCwd = process.cwd();
     const commandDir = join(root, '.claude', 'commands');
     mkdirSync(commandDir, { recursive: true });

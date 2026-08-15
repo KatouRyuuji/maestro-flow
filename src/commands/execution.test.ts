@@ -11,12 +11,20 @@ import { registerCapabilitiesCommand } from './capabilities.js';
 import { registerRunCommand } from './run.js';
 import { registerExecutionCommand } from './execution.js';
 
+function v2Workspace(root: string): void {
+  mkdirSync(join(root, ".workflow"), { recursive: true });
+  writeFileSync(join(root, ".workflow", "config.json"), JSON.stringify({
+    session_schema: { schema_version: "session-schema-selection/1.0", writer: "session/1.3", features: { session_statusless: false } },
+  }));
+}
+
 let root: string;
 let stdout: string[];
 let logs: string[];
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'maestro-execution-cli-'));
+  v2Workspace(root);
   stdout = [];
   logs = [];
   vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: string | Uint8Array) => {

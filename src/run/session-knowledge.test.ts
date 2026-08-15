@@ -22,10 +22,19 @@ import { completeRun, createRun, sealSession } from './runtime.js';
 import { SessionStore } from './store.js';
 import { sessionKnowledgeReceiptCandidateSchema } from '../knowledge/reconciliation-schema.js';
 
+function v2Workspace(root: string): void {
+  mkdirSync(join(root, ".workflow"), { recursive: true });
+  writeFileSync(join(root, ".workflow", "config.json"), JSON.stringify({
+    session_schema: { schema_version: "session-schema-selection/1.0", writer: "session/1.3", features: { session_statusless: false } },
+  }));
+}
+
 const roots: string[] = [];
 
 function root(): string {
   const path = mkdtempSync(join(tmpdir(), 'maestro-session-knowledge-'));
+
+  v2Workspace(path);
   roots.push(path);
   installCommand(path);
   const srcDir = join(path, 'src');

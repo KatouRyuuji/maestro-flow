@@ -6,11 +6,20 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { registerPlanCommand } from './plan.js';
 
+function v2Workspace(root: string): void {
+  mkdirSync(join(root, ".workflow"), { recursive: true });
+  writeFileSync(join(root, ".workflow", "config.json"), JSON.stringify({
+    session_schema: { schema_version: "session-schema-selection/1.0", writer: "session/1.3", features: { session_statusless: false } },
+  }));
+}
+
 const roots: string[] = [];
 const originalExitCode = process.exitCode;
 
 function fixture(): { root: string; source: string } {
   const root = mkdtempSync(join(tmpdir(), 'maestro-plan-cli-'));
+
+  v2Workspace(root);
   roots.push(root);
   mkdirSync(join(root, 'prepare'), { recursive: true });
   writeFileSync(join(root, 'prepare', 'plan-publish.md'), `---

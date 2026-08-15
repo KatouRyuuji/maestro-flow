@@ -7,6 +7,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { buildV3HelpCatalog, registerHelpJsonCommand } from './help-json.js';
 
+function v2Workspace(root: string): void {
+  mkdirSync(join(root, ".workflow"), { recursive: true });
+  writeFileSync(join(root, ".workflow", "config.json"), JSON.stringify({
+    session_schema: { schema_version: "session-schema-selection/1.0", writer: "session/1.3", features: { session_statusless: false } },
+  }));
+}
+
 const roots: string[] = [];
 
 afterEach(() => {
@@ -16,6 +23,8 @@ afterEach(() => {
 
 function v3Root(): string {
   const root = mkdtempSync(join(tmpdir(), 'maestro-help-v3-'));
+
+  v2Workspace(root);
   roots.push(root);
   mkdirSync(join(root, '.workflow'), { recursive: true });
   writeFileSync(join(root, '.workflow', 'config.json'), `${JSON.stringify({
@@ -118,6 +127,8 @@ describe('v3 help catalog', () => {
 
   it('does not advertise the v3 catalog in a v2 workspace', async () => {
     const root = mkdtempSync(join(tmpdir(), 'maestro-help-v2-'));
+
+    v2Workspace(root);
     roots.push(root);
     mkdirSync(join(root, '.workflow'), { recursive: true });
     const program = new Command().exitOverride();

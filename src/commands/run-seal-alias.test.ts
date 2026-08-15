@@ -9,11 +9,19 @@ import { runResponseV10Schema, runResponseV11Schema } from '../run/protocol-sche
 import { SessionStore } from '../run/store.js';
 import { registerRunCommand } from './run.js';
 
+function v2Workspace(root: string): void {
+  mkdirSync(join(root, ".workflow"), { recursive: true });
+  writeFileSync(join(root, ".workflow", "config.json"), JSON.stringify({
+    session_schema: { schema_version: "session-schema-selection/1.0", writer: "session/1.3", features: { session_statusless: false } },
+  }));
+}
+
 let projectRoot: string;
 let stdout: string[];
 
 beforeEach(() => {
   projectRoot = mkdtempSync(join(tmpdir(), 'maestro-run-seal-alias-'));
+  v2Workspace(projectRoot);
   stdout = [];
   vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: string | Uint8Array) => {
     stdout.push(String(chunk));

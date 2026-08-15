@@ -7,6 +7,13 @@ import { runResponseSchema } from '../run/protocol-schemas.js';
 import { SessionStore } from '../run/store.js';
 import { createTopicIdentity } from '../run/topic-identity.js';
 
+function v2Workspace(root: string): void {
+  mkdirSync(join(root, ".workflow"), { recursive: true });
+  writeFileSync(join(root, ".workflow", "config.json"), JSON.stringify({
+    session_schema: { schema_version: "session-schema-selection/1.0", writer: "session/1.3", features: { session_statusless: false } },
+  }));
+}
+
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 function invoke(root: string, args: string[]) {
@@ -16,6 +23,8 @@ function invoke(root: string, args: string[]) {
 }
 function fixture(): { root: string; chain: string } {
   const root = mkdtempSync(join(tmpdir(), 'maestro-run-machine-')); roots.push(root);
+
+  v2Workspace(root);
   mkdirSync(join(root, '.claude', 'commands'), { recursive: true });
   writeFileSync(join(root, '.claude', 'commands', 'demo.md'), '---\nsession-mode: run\n---\n# Demo\n');
   mkdirSync(join(root, 'workflows'), { recursive: true });

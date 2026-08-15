@@ -6,10 +6,19 @@ import { join } from 'node:path';
 import { chainProposalV10Schema } from './chain-proposal.js';
 import { briefRun, checkRun, completeRun, createRun } from './runtime.js';
 
+function v2Workspace(root: string): void {
+  mkdirSync(join(root, ".workflow"), { recursive: true });
+  writeFileSync(join(root, ".workflow", "config.json"), JSON.stringify({
+    session_schema: { schema_version: "session-schema-selection/1.0", writer: "session/1.3", features: { session_statusless: false } },
+  }));
+}
+
 const roots: string[] = [];
 
 function root(): string {
   const path = mkdtempSync(join(tmpdir(), 'maestro-chain-proposal-'));
+
+  v2Workspace(path);
   roots.push(path);
   return path;
 }

@@ -24,6 +24,13 @@ import { completeExecutionRun, createExecutionRun } from './runtime.js';
 import { SessionStore } from './store.js';
 import type { SourceFenceV11 } from './protocol-schemas.js';
 
+function v2Workspace(root: string): void {
+  mkdirSync(join(root, ".workflow"), { recursive: true });
+  writeFileSync(join(root, ".workflow", "config.json"), JSON.stringify({
+    session_schema: { schema_version: "session-schema-selection/1.0", writer: "session/1.3", features: { session_statusless: false } },
+  }));
+}
+
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -31,6 +38,8 @@ afterEach(() => {
 
 function root(): string {
   const value = mkdtempSync(join(tmpdir(), 'maestro-recall-v11-'));
+
+  v2Workspace(value);
   roots.push(value);
   mkdirSync(join(value, '.workflow'), { recursive: true });
   writeFileSync(join(value, '.workflow', 'config.json'), JSON.stringify({
@@ -228,6 +237,8 @@ describe('receipt-backed source-fence/1.1', () => {
     const sourceRoot = root();
     const source = sealedSource(sourceRoot);
     const projectRoot = mkdtempSync(join(tmpdir(), 'maestro-recall-v11-target-'));
+
+    v2Workspace(projectRoot);
     roots.push(projectRoot);
     const commandDir = join(projectRoot, '.claude', 'commands');
     mkdirSync(commandDir, { recursive: true });

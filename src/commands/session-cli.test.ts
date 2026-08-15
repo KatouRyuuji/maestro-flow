@@ -15,12 +15,20 @@ import { runResponseSchema } from '../run/protocol-schemas.js';
 import { startExecution } from '../run/execution.js';
 import { migrateV1toV2, readStateJson, writeStateJson } from '../utils/state-schema.js';
 
+function v2Workspace(root: string): void {
+  mkdirSync(join(root, ".workflow"), { recursive: true });
+  writeFileSync(join(root, ".workflow", "config.json"), JSON.stringify({
+    session_schema: { schema_version: "session-schema-selection/1.0", writer: "session/1.3", features: { session_statusless: false } },
+  }));
+}
+
 let root: string;
 let logs: string[];
 let errs: string[];
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'session-cli-'));
+  v2Workspace(root);
   logs = [];
   errs = [];
   vi.spyOn(console, 'log').mockImplementation((v: unknown) => { logs.push(String(v)); });

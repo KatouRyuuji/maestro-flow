@@ -18,10 +18,19 @@ import { SessionStore } from './store.js';
 import { migrateSession } from './migrate.js';
 import { readStateJson } from '../utils/state-schema.js';
 
+function v2Workspace(root: string): void {
+  mkdirSync(join(root, ".workflow"), { recursive: true });
+  writeFileSync(join(root, ".workflow", "config.json"), JSON.stringify({
+    session_schema: { schema_version: "session-schema-selection/1.0", writer: "session/1.3", features: { session_statusless: false } },
+  }));
+}
+
 const roots: string[] = [];
 
 function root(): string {
   const value = mkdtempSync(join(tmpdir(), 'maestro-run-execution-binding-'));
+
+  v2Workspace(value);
   roots.push(value);
   return value;
 }

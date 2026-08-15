@@ -1,3 +1,4 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -31,6 +32,11 @@ describe.sequential('Session/Run live Wiki search and load', () => {
   beforeEach(async () => {
     originalCwd = process.cwd();
     projectRoot = await mkdtemp(join(tmpdir(), 'session-run-wiki-live-'));
+    // This fixture drives the runtime v2 (session/1.3) writer semantics.
+    mkdirSync(join(projectRoot, '.workflow'), { recursive: true });
+    writeFileSync(join(projectRoot, '.workflow', 'config.json'), JSON.stringify({
+      session_schema: { schema_version: 'session-schema-selection/1.0', writer: 'session/1.3', features: { session_statusless: false } },
+    }));
     process.chdir(projectRoot);
   });
 

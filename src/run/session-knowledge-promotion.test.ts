@@ -34,10 +34,19 @@ import { completeRun, createRun, sealSession } from './runtime.js';
 import { SessionStore } from './store.js';
 import { buildTranscriptUri, storeTranscriptEvidence } from './transcript-evidence.js';
 
+function v2Workspace(root: string): void {
+  mkdirSync(join(root, ".workflow"), { recursive: true });
+  writeFileSync(join(root, ".workflow", "config.json"), JSON.stringify({
+    session_schema: { schema_version: "session-schema-selection/1.0", writer: "session/1.3", features: { session_statusless: false } },
+  }));
+}
+
 const roots: string[] = [];
 
 function root(): string {
   const path = mkdtempSync(join(tmpdir(), 'maestro-session-promotion-'));
+
+  v2Workspace(path);
   roots.push(path);
   const srcDir = join(path, 'src');
   mkdirSync(srcDir, { recursive: true });

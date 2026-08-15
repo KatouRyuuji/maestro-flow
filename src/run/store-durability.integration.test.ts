@@ -18,6 +18,13 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { SessionStore } from './store.js';
 
+function v2Workspace(root: string): void {
+  mkdirSync(join(root, ".workflow"), { recursive: true });
+  writeFileSync(join(root, ".workflow", "config.json"), JSON.stringify({
+    session_schema: { schema_version: "session-schema-selection/1.0", writer: "session/1.3", features: { session_statusless: false } },
+  }));
+}
+
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const childFixture = join(repoRoot, 'src', 'run', '__fixtures__', 'session-store-crash-child.mjs');
 const sourceStore = join(repoRoot, 'src', 'run', 'store.ts');
@@ -64,6 +71,8 @@ interface StressRound {
 
 function createRoot(): string {
   const root = mkdtempSync(join(tmpdir(), 'maestro-store-integration-'));
+
+  v2Workspace(root);
   roots.push(root);
   return root;
 }
@@ -72,6 +81,7 @@ function buildCurrentSourceStore(): void {
   const sourceBuildBase = join(repoRoot, '.workflow', 'tmp');
   mkdirSync(sourceBuildBase, { recursive: true });
   sourceBuildRoot = mkdtempSync(join(sourceBuildBase, 'maestro-store-source-build-'));
+  v2Workspace(sourceBuildRoot);
   sourceBuildStore = join(sourceBuildRoot, 'src', 'run', 'store.js');
   sourceStoreSha256 = sha(sourceStore);
   mkdirSync(dirname(sourceBuildStore), { recursive: true });

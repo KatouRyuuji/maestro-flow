@@ -20,6 +20,13 @@ import {
 } from './store.js';
 import { migrateSession } from './migrate.js';
 
+function v2Workspace(root: string): void {
+  mkdirSync(join(root, ".workflow"), { recursive: true });
+  writeFileSync(join(root, ".workflow", "config.json"), JSON.stringify({
+    session_schema: { schema_version: "session-schema-selection/1.0", writer: "session/1.3", features: { session_statusless: false } },
+  }));
+}
+
 let tmpRoot: string;
 
 function sessionDir(sessionId: string): string {
@@ -106,6 +113,7 @@ function readSessionRaw(sessionId: string): Record<string, unknown> {
 
 beforeEach(() => {
   tmpRoot = mkdtempSync(join(tmpdir(), 'session-migrate-'));
+  v2Workspace(tmpRoot);
 });
 
 afterEach(() => {

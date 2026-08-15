@@ -34,6 +34,13 @@ import { createChainSession } from './chain-admin.js';
 import { migrateSession } from './migrate.js';
 import { archiveSession, unarchiveSession } from './session-transition.js';
 import { completeExecutionRun, createExecutionRun, createRun } from './runtime.js';
+
+function v2Workspace(root: string): void {
+  mkdirSync(join(root, ".workflow"), { recursive: true });
+  writeFileSync(join(root, ".workflow", "config.json"), JSON.stringify({
+    session_schema: { schema_version: "session-schema-selection/1.0", writer: "session/1.3", features: { session_statusless: false } },
+  }));
+}
 import {
   createSessionArchiveReceipt,
   executionSealReceiptHash,
@@ -46,6 +53,8 @@ const roots: string[] = [];
 
 function root(): string {
   const value = mkdtempSync(join(tmpdir(), 'maestro-execution-'));
+
+  v2Workspace(value);
   roots.push(value);
   return value;
 }

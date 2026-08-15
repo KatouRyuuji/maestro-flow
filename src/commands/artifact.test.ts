@@ -13,10 +13,19 @@ import { loadLegacyV3MigrationInput } from '../run/v3/migrate-v3-loader.js';
 import { createRunningRunV3 } from '../run/v3/mutation-engine.js';
 import { registerArtifactCommand } from './artifact.js';
 
+function v2Workspace(root: string): void {
+  mkdirSync(join(root, ".workflow"), { recursive: true });
+  writeFileSync(join(root, ".workflow", "config.json"), JSON.stringify({
+    session_schema: { schema_version: "session-schema-selection/1.0", writer: "session/1.3", features: { session_statusless: false } },
+  }));
+}
+
 const roots: string[] = [];
 
 function root(): string {
   const value = mkdtempSync(join(tmpdir(), 'maestro-artifact-command-'));
+
+  v2Workspace(value);
   roots.push(value);
   return value;
 }

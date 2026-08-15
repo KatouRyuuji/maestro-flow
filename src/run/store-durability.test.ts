@@ -103,11 +103,20 @@ vi.mock('node:fs', async importOriginal => {
 import { SessionStore } from './store.js';
 import { safeRename } from '../utils/state-schema.js';
 
+function v2Workspace(root: string): void {
+  mkdirSync(join(root, ".workflow"), { recursive: true });
+  writeFileSync(join(root, ".workflow", "config.json"), JSON.stringify({
+    session_schema: { schema_version: "session-schema-selection/1.0", writer: "session/1.3", features: { session_statusless: false } },
+  }));
+}
+
 const roots: string[] = [];
 const authorityFiles = ['session.json', 'gates.json', 'artifacts.json', 'evidence.json'];
 
 function createRoot(): string {
   const root = mkdtempSync(join(tmpdir(), 'maestro-store-durability-'));
+
+  v2Workspace(root);
   roots.push(root);
   return root;
 }

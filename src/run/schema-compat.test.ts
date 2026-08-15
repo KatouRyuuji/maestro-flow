@@ -1,5 +1,12 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdirSync, writeFileSync,} from 'node:fs';
 import { describe, expect, it } from 'vitest';
+
+function v2Workspace(root: string): void {
+  mkdirSync(join(root, ".workflow"), { recursive: true });
+  writeFileSync(join(root, ".workflow", "config.json"), JSON.stringify({
+    session_schema: { schema_version: "session-schema-selection/1.0", writer: "session/1.3", features: { session_statusless: false } },
+  }));
+}
 import {
   commandRunReadSchema,
   commandRunSchema,
