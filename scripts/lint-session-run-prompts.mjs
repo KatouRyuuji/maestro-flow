@@ -43,7 +43,7 @@ export function validateExecutorLifecycleBoundary(text, label) {
   const required = [
     'maestro run brief',
     'maestro run check',
-    'Do not call `maestro session done`',
+    'Do not call `maestro run complete`',
     'handled by the orchestrator',
   ];
   return required

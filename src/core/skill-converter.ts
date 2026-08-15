@@ -788,7 +788,9 @@ const CODEX_PROFILE: ConversionProfile = {
   bodyReplacements: [
     [/maestro skills --platform claude\b/g, 'maestro skills --platform codex'],
     [/<task_tracking>[\s\S]*?<\/task_tracking>/g, CODEX_TASK_TRACKING_BLOCK],
-    [/\bmaestro run (prepare|skill|brief)\b(?![^\n`]*--platform)/g, 'maestro run $1 --platform codex'],
+    // v3 removed the standalone run prepare/skill dispatchers and the
+    // --platform option on run brief; only the skills catalog keeps a platform.
+    [/\bmaestro run (prepare|skill)\b(?![^\n`]*--platform)/g, 'maestro run $1 --platform codex'],
     [/\bAskUserQuestion\b/g, 'request_user_input'],
     [/\bSendMessage\s*\(\s*\{\s*to:/g, 'followup_task({ target:'],
     [/\bSendMessage\b/g, 'send_message'],
