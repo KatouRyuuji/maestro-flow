@@ -786,7 +786,11 @@ function validateReferences(
   }
 
   for (const [gateId, gate] of Object.entries(gates.gates)) {
-    requireRef(gate.key === gateId, `gate registry key ${gateId} != gate.key ${gate.key}`);
+    // The registry key is the gate ID; `gate.key` is a display name that v2
+    // data legitimately writes differently (e.g. registry key GATE-001-01
+    // with key "produce-artifact"). Requiring equality rejects real legacy
+    // gates, so only the registry presence is asserted here.
+    void gate.key;
     if (gate.run_id) requireRef(runIds.has(gate.run_id), `gate ${gateId} -> Run ${gate.run_id}`);
     for (const evidenceRef of gate.evidence_refs) {
       requireRef(evidenceIds.has(evidenceRef), `gate ${gateId} -> evidence ${evidenceRef}`);
@@ -907,12 +911,12 @@ export function projectLegacySessionToV30(
         `Run ${run.run_id} handoff belongs to Run ${run.handoff.producer_run_id}`,
       );
     }
-    if (run.status === 'running') {
-      fail(
-        'MIGRATION_RUNNING_RUN',
-        `Session ${session.session_id} has running Run ${run.run_id}; complete it before migration`,
-      );
-    }
+    // A running Run migrates as running: the v3 projection keeps the Run and
+    // its chain step in the running state so the migrated Session can be
+    // completed through the v3 surface (run complete --advance). Rejecting it
+    // here created a deadlock under the v3 default writer: `session migrate`
+    // demanded the Run be completed first, while the v3 command surface
+    // refused to touch the legacy Run (SESSION_INACCESSIBLE).
   }
 
   const sourceChain = legacyChain(session, execution);

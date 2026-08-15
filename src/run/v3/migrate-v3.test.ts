@@ -640,13 +640,19 @@ describe('v2 to v3 pure migration projection', () => {
     expect(result.session.status).toBe(expected);
   });
 
-  it('rejects running Runs and every dangling Run/gate/artifact/evidence reference fail closed', () => {
+  it('migrates a running Run as running (deadlock escape under the v3 default writer) and rejects every dangling reference fail closed', () => {
+    // A legacy running Run must migrate as running: rejecting it made
+    // `session migrate` demand a Run completion that the v3 surface refused
+    // (SESSION_INACCESSIBLE on the legacy Run) — an unreachable precondition.
     const running = openV20Input();
     running.runs = [runV14('running')];
-    expectMigrationError(
-      () => projectLegacySessionToV30(running, { recorded_at: RECORDED_AT }),
-      'MIGRATION_RUNNING_RUN',
-    );
+    const projected = projectLegacySessionToV30(running, { recorded_at: RECORDED_AT });
+    expect(projected.runs[0]).toMatchObject({ status: 'running' });
+    expect(projected.session.active_run_ids).toEqual(['run-1']);
+    // The chain step keeps its source status; the active run stays bound.
+    expect(projected.session.chain).toEqual(expect.arrayContaining([
+      expect.objectContaining({ run_ids: ['run-1'] }),
+    ]));
 
     const mutations: Array<(input: LegacyV3MigrationInput) => void> = [
       input => { (input.runs[0] as ReturnType<typeof runV14>).chain_step_id = 'missing-step'; },
@@ -862,11 +868,19 @@ describe('v3 migration atomic publication', () => {
     ))).toThrow();
   });
 
-  it('rejects invalid references and running Runs before any store publication', () => {
+  it('rejects invalid references before any store publication and migrates running Runs atomically', () => {
     for (const source of [openV20Input(), openV20Input()]) {
       const projectRoot = root();
       if (roots.length % 2 === 0) {
-        source.runs = [runV14('running')];
+        // A running Run is a valid migration subject (deadlock escape); apply
+        // it atomically and verify the v3 state became authoritative.
+        const input = persistLegacy(projectRoot, { ...source, runs: [runV14('running')] });
+        const store = new SessionStore(projectRoot);
+        const applied = applyV3Migration(store, input, { recorded_at: RECORDED_AT });
+        expect(applied.runs[0]).toMatchObject({ status: 'running' });
+        expect(JSON.parse(readFileSync(join(store.sessionDir('s'), 'session.json'), 'utf8')).schema_version)
+          .toBe('session/3.0');
+        continue;
       } else {
         source.gates.gates['gate-1'].evidence_refs = ['missing-evidence'];
       }
