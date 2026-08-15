@@ -64,6 +64,7 @@
     "check:docs-reference": "node scripts/sync-docs-reference.mjs --check",
     "check:session-run-contract-parity": "node scripts/check-session-run-contract-parity.mjs",
     "check:session-run-release-machine": "node scripts/check-session-run-release-machine.mjs",
+    "check:session-run-packaged-install": "node scripts/check-session-run-packaged-install.mjs",
     "check:search-ranking-release-machine": "node scripts/check-search-ranking-release-machine.mjs",
     "check:search-ranking-release-machine:source": "node scripts/check-search-ranking-release-machine.mjs --source-only",
     "check:search-ranking-release-machine:built": "node scripts/check-search-ranking-release-machine.mjs --built",
@@ -76,7 +77,7 @@
     "migrate:session-run-prompts": "node scripts/migrate-session-run-prompts.mjs --write",
     "clean": "rm -rf dist",
     "build:mirrors": "node scripts/lint-session-execution-prompts.mjs && node scripts/lint-session-run-prompts.mjs && node scripts/convert-claude-to-agy.mjs && node scripts/build-agents-standard.mjs && node scripts/build-codex-skills.mjs && node scripts/sync-codex-run-mode.mjs --write && node scripts/sync-codex-run-mode.mjs --check && node scripts/sync-codex-agents.mjs --check && node scripts/lint-session-run-mirrors.mjs",
-    "prepublishOnly": "npm run build:arch-kb && node scripts/lint-invocation-policy.mjs && node scripts/lint-session-execution-prompts.mjs && node scripts/lint-session-run-prompts.mjs && npm run check:docs-reference && npm run check:session-run-contract-parity && npm run check:search-ranking-release-machine:source && npm run build && npm run check:search-ranking-release-machine:built && npm run check:session-run-release-machine && npm run build:mirrors"
+    "prepublishOnly": "npm run build:arch-kb && node scripts/lint-invocation-policy.mjs && node scripts/lint-session-execution-prompts.mjs && node scripts/lint-session-run-prompts.mjs && npm run check:docs-reference && npm run check:session-run-contract-parity && npm run check:search-ranking-release-machine:source && npm run build && npm run check:search-ranking-release-machine:built && npm run check:session-run-release-machine && npm run build:mirrors && npm run check:session-run-packaged-install"
   },
   "engines": {
     "node": ">=22.19.0"
