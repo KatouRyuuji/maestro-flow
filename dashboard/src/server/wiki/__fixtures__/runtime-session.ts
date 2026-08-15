@@ -20,6 +20,12 @@ export function createRuntimeSessionFixture(projectRoot: string): RuntimeSession
   const command = 'wiki-runtime-fixture';
   const summary = 'Runtime 1.3 wiki projection sentinel';
   const kind = 'review-findings';
+  // Pin the legacy writer: this fixture drives the v2 runtime writer and the
+  // default workspace writer is now session/3.0.
+  mkdirSync(join(projectRoot, '.workflow'), { recursive: true });
+  writeFileSync(join(projectRoot, '.workflow', 'config.json'), JSON.stringify({
+    session_schema: { schema_version: 'session-schema-selection/1.0', writer: 'session/1.3', features: { session_statusless: false } },
+  }));
   const commandDir = join(projectRoot, '.claude', 'commands');
   mkdirSync(commandDir, { recursive: true });
   writeFileSync(join(commandDir, `${command}.md`), [
