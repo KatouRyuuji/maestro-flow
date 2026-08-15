@@ -34,7 +34,7 @@ version: 0.5.73
 If any required file above was not expanded into context by the host, or its content is no longer in context, Read it explicitly before executing any step.
 
 <purpose>
-Seal a completed bounded Execution after verifying all Runs are immutable and terminal, review the durable knowledge candidate backlog, and recommend the next dep-ready Session from the DAG.
+Complete the current Session after verifying all Runs are immutable and terminal, review the durable knowledge candidate backlog, and recommend the next dep-ready Session from the DAG.
 
 Run completion already stages accepted decisions, locked constraints, and explicit `maestro knowledge stage` entries. This command reviews those receipts; it does not re-extract the same artifacts or write project knowledge through a second path.
 </purpose>
@@ -57,7 +57,7 @@ $ARGUMENTS -- optional session ID and flags.
 Note: maestro-next suggests session-seal when 'Tests green + active session'. This command additionally requires verify/review gates (or W002 if absent). Both conditions should be met for clean seal.
 
 1. Resolve target session from `--session` flag or `active_session_id`
-2. Read `session.json` — verify status is `running` or `paused`
+2. Read `maestro session status --session {session_id} --json` — verify status is `open` (a completed/archived Session is terminal)
 3. Verify no active runs (all runs completed or sealed)
 4. Verify critical gates passed (entry/exit gates from last verify/review run). If no verify/review run exists in this session, treat gate check as not applicable (pass) but emit W002.
 5. If not ready → display blockers, suggest next action (e.g., "run the `review` step first")
@@ -87,7 +87,7 @@ Note: maestro-next suggests session-seal when 'Tests green + active session'. Th
 
 1. Resolve the exact Session and current `orchestration_revision` from the retained `run-response/1.2` state.
 2. When the chain is terminal (every Run sealed, every decision terminal), call the complete `maestro session complete` command from `run-mode.md`, supplying the exact `session_id`, `--participant`, `--actor`, `--request-id`, `--reason`, `--expected-orchestration-revision`, and `--json`.
-3. Verify the transition receipt; never mutate Session lifecycle state or edit runtime-owned protocol JSON.
+3. Verify the transition receipt; never mutate Session lifecycle state or edit runtime-owned protocol JSON. The completed Session identity remains durable and may be unarchived later.
 
 ### Step 4: DAG Progression
 
@@ -118,7 +118,7 @@ Status: DONE
 
 | Condition | Suggestion |
 |-----------|-----------|
-| Next session activated | step `analyze` (`maestro run prepare --platform codex analyze` + `maestro run create analyze --session {next-slug} --intent "{goal}"`) |
+| Next session activated | step `analyze` — open a v3 Session (`maestro session open "<goal>" --id YYYYMMDD-analyze-{next-slug} --chain analyze --participant {p} --actor {a} --request-id {r} --reason "<reason>" --json` → fenced `maestro run next --session {session_id} ... --json`), or route via `/maestro-next` |
 | Knowledge candidates pending | `maestro knowledge review {session_id}` |
 | Knowledge health review needed | `/maestro-knowledge audit` |
 </completion>
@@ -127,7 +127,7 @@ Status: DONE
 | Code | Severity | Condition | Recovery |
 |------|----------|-----------|----------|
 | E001 | error | Session not found | Check `state.json.sessions[]` |
-| E002 | error | Session already sealed | Nothing to do |
+| E002 | error | Session already completed | Nothing to do |
 | E003 | error | Active runs exist | Complete or seal pending runs first |
 | E004 | error | Critical gates failed | Run verify/review to resolve |
 | W001 | warning | No knowledge candidates found | Proceed to seal |
@@ -137,12 +137,11 @@ Status: DONE
 </error_codes>
 
 <success_criteria>
-- [ ] Target session resolved and verified as ready for seal
+- [ ] Target session resolved and verified as ready for completion
 - [ ] Knowledge candidate receipt/backlog and evidence loaded via `maestro knowledge review`
 - [ ] Reconciliation dispositions reviewed; unresolved items were explicitly retained or resolved
 - [ ] User reviewed candidates, or pending backlog was reported and deliberately retained
 - [ ] Selected knowledge promoted only through `maestro knowledge promote`
-- [ ] Session sealed via CLI (`session.json.lifecycle.sealed_at` written)
-- [ ] `state.json.sessions[].status` updated to `sealed`
+- [ ] Session completed via `maestro session complete` (transition receipt verified; status `completed`)
 - [ ] Dep-ready sessions identified and activation offered to user
 </success_criteria>

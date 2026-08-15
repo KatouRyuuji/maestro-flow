@@ -25,7 +25,7 @@ contract:
 <purpose>
 Unified interactive entry for all development intents. Pure router: parse intent + project state → classify → assess complexity → route to the appropriate channel:
 - **Companion** (lightweight): route to `/maestro-companion "<intent>"` — minimal run lifecycle, continuous evidence recording
-- **Standard** (single run): recommend a step → confirm → execute via `maestro run prepare` + `maestro run start`
+- **Standard** (single run): recommend a step → confirm → execute via a v3 Session (`maestro session open` + `maestro run next`)
 - **Multi-step**: route to `/maestro "<intent>"` (manual stepwise control) or `/maestro-ralph "<intent>"` (orchestrated closed-loop)
 
 This command is the single entry point. It classifies and routes. Multi-step execution loops live in `/maestro` (manual) and `/maestro-ralph` (orchestrated).
@@ -53,7 +53,7 @@ $ARGUMENTS — intent text + optional flags.
 2. **Pipeline orchestrators excluded** — only recommend registered steps as single-run targets
 3. **Lifecycle continuation** — "continue"/"next"/"go" are explicit continuation signals → lifecycle_position inference (S_STATE). Truly empty arguments (no text at all) → 1 clarify round via [@ask] AskUserQuestion; still empty → S_FALLBACK (E001)
 4. **Literal match priority** — keyword match takes precedence; lifecycle is tie-breaker
-5. **Argument pass-through** — the intent phrase is Session metadata only (the positional phrase to `run start`); the selected step's domain payload becomes command input through repeatable `--arg <value>`. The user can modify command inputs at confirmation; `-y` only passes through when the user provided it
+5. **Argument pass-through** — the intent phrase is Session metadata only (the objective to `session open`); the selected step's domain payload becomes command input through repeatable `--arg <value>`. The user can modify command inputs at confirmation; `-y` only passes through when the user provided it
 6. **Manual campaigns excluded** — `team-*` and `maestro-odyssey` never enter the executable candidate pool and are never executed in this turn; they may only be emitted as suggest-only invocations (see the odyssey campaign rows in the intent routing table)
 7. **Retained commands are suggest-only** — route retained commands to an exact slash command. Never execute them in this turn; `-y` applies only to first-tier steps
 8. **Companion routing is suggest-or-execute** — when complexity == lightweight, output `/maestro-companion "<intent>"` invocation. With `-y`, emit the invocation directly (`/maestro-companion "<intent>" -y`); the companion command owns its own execution. Without `-y`, present it as the recommended channel for user confirmation
@@ -70,7 +70,7 @@ S_STATE    — Read project state, infer lifecycle_position
 S_RANK     — Score candidates, assess complexity, determine channel
 S_PRESENT  — Show top pick + alternatives + reasoning + channel verdict
 S_CONFIRM  — [@ask] AskUserQuestion for confirmation (skipped by -y)
-S_EXECUTE  — Run prepare + start for selected single step
+S_EXECUTE  — Open Session + dispatch the selected single step Run
 S_FALLBACK — Intent empty after clarification
 </states>
 
@@ -115,7 +115,7 @@ S_FALLBACK:
 Read project state to infer `lifecycle_position`:
 
 ```bash
-maestro run prepare   # check if prepare command works
+maestro session list 2>/dev/null   # read-only: enumerate session/3.0 Sessions
 cat .workflow/state.json 2>/dev/null
 ```
 
@@ -244,25 +244,27 @@ Single-run path only. Multi-step execution is handled by `/maestro` (manual) and
 For first-tier steps (those with prepare/ + workflows/ files):
 
 ```bash
-# 1. Run prepare to get pre-task thinking content
-maestro run prepare <step>
+# 1. Open the Session — prepare guidance is injected by Runtime into the birth packet
+#    (prepare is embedded in the Run, not a standalone `run prepare` step):
+maestro session open "<objective>" --id YYYYMMDD-<step>-<topic> --chain <step> --participant {participant_id} --actor {actor_id} --request-id {request_id} --reason "<reason>" --json
+#    Or attach an existing compatible Session read-only first: maestro session status --session {session_id} --json
 
-# 2. LLM performs pre-task thinking using prepare content
+# 2. LLM performs pre-task thinking using the injected prepare guidance
 #    Produces prep YAML (goal/approach/scope/risks/gates/reads)
 
-# 3. Start run — the intent is the positional phrase; --cmd names the step;
-#    always pass --session (ASCII slug). When the command contract or
-#    argument-hint requires input, pass each value with repeatable --arg <value>.
-maestro run start "<short goal>" --cmd <step> --session YYYYMMDD-<step>-<topic> [--arg "<required command input>"]
+# 3. Dispatch the step Run (chain-bound); --arg passes each required command input:
+maestro run next --session {session_id} --participant {participant_id} --actor {actor_id} --request-id {request_id} --reason "<reason>" --expected-orchestration-revision {orchestration_revision} --json
+#    (Self-started alternative: maestro run create <step> [args...] --session {session_id} ... --json)
 #    Returns: run_id, run_dir, upstream (alias→artifact), entry_gates, entry_blockers, next (progressive hint)
 
 # 3a. Entry blocker degradation (execute-specific)
 #    IF step == execute AND entry_blockers is non-empty (missing current-plan):
 #      Inspect upstream for alternative artifacts (latest-review, latest-debug, latest-fix-directions).
 #      Route per the degradation table in prepare/execute.md:
-#        - Small scope (≤3 findings, ≤2 files each) → seal run as needs-retry, surface /maestro-companion
-#        - Larger scope → seal run as needs-retry, surface /odyssey-planex
-#        - No alternative upstream → seal run as blocked, surface E001 + suggest /plan
+#        - Small scope (≤3 findings, ≤2 files each) → transition/cancel the attempt, surface /maestro-companion
+#        - Larger scope → transition/cancel the attempt, surface /odyssey-planex
+#        - No alternative upstream → `maestro run transition {run_id} blocked`, surface E001 + suggest /plan
+#      The chain step returns to pending; a later fenced `maestro run next` may retry it.
 #      Do NOT proceed to step 4 with a blocked execute run.
 
 # 3b. Entry blocker handling (general, non-execute steps)
@@ -270,19 +272,20 @@ maestro run start "<short goal>" --cmd <step> --session YYYYMMDD-<step>-<topic> 
 #      Display each blocker with recovery suggestion:
 #        - Missing upstream artifact → suggest the producing step (e.g., "run analyze first")
 #        - Gate failure → suggest the gate step (review/verify/auto-test)
-#      Seal run as blocked. Do NOT proceed to step 4.
+#      `maestro run transition {run_id} blocked` (or `maestro run cancel {run_id}`) — do NOT proceed to step 4.
 
-# 4. Load the execution manual (follow the `next` hint from start)
-#    Execute the `next` hint returned by step 3's start verbatim — append no flag.
+# 4. Load the execution manual (follow the birth packet `guidance`/`brief.command` from step 3)
+#    Execute the birth packet guidance verbatim — append no flag.
 #    Returns: workflow content, run-mode summary, goal, gate status
 
 # 5. LLM executes the workflow (core process)
 
-# 6. Complete the run
-maestro run done <run_id>
+# 6. Check and complete the run
+maestro run check {run_id} --session {session_id} --json
+maestro run complete {run_id} --session {session_id} --participant {participant_id} --actor {actor_id} --request-id {request_id} --reason "<reason>" --expected-orchestration-revision {orchestration_revision} --expected-run-revision {run_revision} --verdict done --advance --json
 ```
 
-After `run done`: re-infer lifecycle and surface the natural next step as a continuation hint — stepwise multi-step work proceeds by re-invoking `/maestro-next` or `/maestro -c`.
+After `run complete --advance`: re-infer lifecycle and surface the natural next step as a continuation hint — stepwise multi-step work proceeds by re-invoking `/maestro-next` or `/maestro -c`.
 
 For retained commands, output the exact slash command as a suggest-only result. Do not execute it, including under `-y`; the user invokes it explicitly in a subsequent message.
 

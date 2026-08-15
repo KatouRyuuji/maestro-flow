@@ -43,7 +43,7 @@ Only these user flags are accepted:
 
 - `-y` — skip all confirmation/clarification interactions, use default choices. Does NOT change data semantics (no auto-deferred decisions). Never bypasses: high-risk classification, confidence <60, ambiguity requiring user input, failed gates, or drift escalation.
 - `-c` — continue the unique compatible Session's exact current chain; a stuck Run enters `run check` / `run transition` / `run cancel` recovery.
-- `--amend` — amend the exact current Execution goal; remaining text is the change request.
+- `--amend` — amend the exact current Session objective/definition-of-done; remaining text is the change request.
 
 All remaining text is intent. No engine, roadmap, script, depth, role, tier, platform, resume or dry-run flags are parsed. Those choices belong to Skill contracts and Runtime.
 </interface>
@@ -75,14 +75,14 @@ S_INFER — infer lifecycle position and roadmap need
 S_DECOMPOSE — derive boundary and observable goals for a new Session
 S_ASSESS — classify creation risk and evidence confidence
 S_BUILD — build initial Skill chain
-S_CREATE — create/resolve Session identity, start Execution, bootstrap its chain
+S_CREATE — open/resolve Session identity, bootstrap its chain
 S_CONFIRM — confirm unless `-y`
-S_RUN_LOOP — shared Execution-aware Run lifecycle
+S_RUN_LOOP — shared v3 Run lifecycle (`run next` → execute → check → complete/decide)
 S_EVALUATE — quality/goal/scope/reground decision
 S_AMEND — audited goal amendment
-S_RECOVER — audited paused-Execution recovery
-S_FAIL — retry or pause; retry exhaustion pauses the current Execution
-S_DONE — seal current Execution
+S_RECOVER — audited recovery for an open decision gate or stuck Run
+S_FAIL — retry or stop; retry exhaustion leaves the chain step pending (no paused Execution)
+S_DONE — complete the current Session
 </states>
 
 <transitions>
@@ -92,11 +92,11 @@ S_PARSE:
   → S_FAIL OTHERWISE
 
 S_RESOLVE:
-  -> S_RECOVER WHEN: exact current Execution is paused and `-c`
-  -> S_RUN_LOOP WHEN: exact current Execution is active with a chain and valid/acquirable core authority
-  -> S_INFER WHEN: only a paused Execution exists and no `-c` (treat as new intent; do not mutate it)
-  -> S_INFER WHEN: no current Execution and intent present
-  -> S_FAIL WHEN: multiple identities/Executions or archived identity
+  -> S_RECOVER WHEN: exact current Session has an open decision gate or a stuck Run and `-c`
+  -> S_RUN_LOOP WHEN: exact current Session is `open` with a chain and a valid orchestration_revision fence
+  -> S_INFER WHEN: only a gated/stuck Session exists and no `-c` (treat as new intent; do not mutate it)
+  -> S_INFER WHEN: no current Session and intent present
+  -> S_FAIL WHEN: multiple identities/Sessions or archived identity
 
 S_INFER → S_DECOMPOSE → S_ASSESS → S_BUILD → S_CREATE
 S_CREATE → S_RUN_LOOP WHEN: `-y` AND risk ≠ high AND confidence_score ≥ 60
@@ -116,29 +116,29 @@ S_RUN_LOOP:
 
 S_EVALUATE:
   -> S_RUN_LOOP WHEN: proceed or accepted fix proposal
-  -> S_RECOVER WHEN: escalate pauses Execution
+  -> S_RECOVER WHEN: escalate blocks the decision gate (Session stays open until re-decided)
   -> S_FAIL WHEN: escalation cannot be committed
   -> S_RUN_LOOP WHEN: post-goal-audit AND has_unmet (fix loop; insert repair step at `target_stage`)
   -> S_DONE WHEN: post-goal-audit AND all_met AND INTENT_ALIGNED
   -> END WHEN: post-goal-audit AND all_met AND NOT INTENT_ALIGNED (REGROUND_HALT)
-  -> S_RUN_LOOP WHEN: post-analyze-scope (apply `scope_verdict` to the Execution chain path)
-  -> S_DONE WHEN: post-execution AND preflight passed (decide then Execution seal)
+  -> S_RUN_LOOP WHEN: post-analyze-scope (apply `scope_verdict` to the Session chain path)
+  -> S_DONE WHEN: post-execution AND preflight passed (decide then Session completion)
   -> S_RUN_LOOP WHEN: post-execution AND preflight failed (fix loop)
-  -> END WHEN: post-debug-escalate (always pauses Execution)
+  -> END WHEN: post-debug-escalate (gate stays escalated)
   -> END WHEN: post-reground AND drifted AND confidence >= 60 (REGROUND_HALT; `-y` does not bypass)
   -> S_RUN_LOOP WHEN: post-reground AND aligned
   -> S_RUN_LOOP WHEN: post-reground AND drifted AND confidence < 60 (proceed, mark LOW CONFIDENCE)
 
 S_FAIL:
   -> S_RUN_LOOP WHEN: retry budget remains
-  -> END WHEN: retry budget exhausted (Execution paused)
-  -> END WHEN: Execution paused or user aborts
+  -> END WHEN: retry budget exhausted (chain step stays pending for a later fenced `run next`)
+  -> END WHEN: gate escalated or user aborts
 
 S_AMEND → S_RUN_LOOP WHEN: shared amend protocol committed
-S_RECOVER → S_RUN_LOOP WHEN: blockers resolved and resume committed
+S_RECOVER → S_RUN_LOOP WHEN: blockers resolved and re-dispatch committed
 S_RECOVER → S_FAIL WHEN: blockers unresolvable
 S_RECOVER → END WHEN: user aborts recovery
-S_DONE → S_RUN_LOOP WHEN: seal fails due to unmet gates
+S_DONE → S_RUN_LOOP WHEN: Session completion fails due to unmet gates
 S_DONE → END
 </transitions>
 
@@ -213,7 +213,7 @@ Confidence maps to low `<60`, medium `60–79`, high `≥80`. High risk always r
 
 Consume the outputs of A_INFER, A_DECOMPOSE and A_ASSESS; do not re-infer them while assembling the chain. Quality is quick/standard/full based on specs and observable risk, not a user flag. Quality criteria: quick = single-file + existing tests; standard = multi-file + new logic; full = cross-module + no existing coverage.
 
-Build the chain from `prepare/ralph.md` Stage Mapping. If the Stage Mapping or Build Rules are not in context, fetch them first via read-only `maestro run prepare ralph --json` (no Session required; `prepare.content` carries the full protocol). Propagate goal references, map the current host to the Skill scanner's `target_platform` (`claude|codex|agent|agy|pi`), and prevalidate every command with `maestro skills --steps --json --platform {target_platform}`. Never default a non-Claude host to `claude`; `pi` resolves Skills from the installed `pi-maestro-flow` npm package's `package.json#pi.skills` directories. Every chain includes at least one final quality/goal/scope decision node before seal; long chains also include periodic reground decision nodes. Step execution strategy is defined by each Skill, never by Ralph flags.
+Build the chain from `prepare/ralph.md` Stage Mapping. If the Stage Mapping or Build Rules are not in context, Read `prepare/ralph.md` directly (it is in required_reading) — in v3 the same prepare guidance is injected into the `run next` / `run create` birth packet (`guidance-snapshot/1.0`); prepare is embedded in the Run, not a standalone `run prepare` step. Propagate goal references, map the current host to the Skill scanner's `target_platform` (`claude|codex|agent|agy|pi`), and prevalidate every command with `maestro skills --steps --json --platform {target_platform}`. Never default a non-Claude host to `claude`; `pi` resolves Skills from the installed `pi-maestro-flow` npm package's `package.json#pi.skills` directories. Every chain includes at least one final quality/goal/scope decision node before `session complete`; long chains also include periodic reground decision nodes. Step execution strategy is defined by each Skill, never by Ralph flags.
 
 ### A_EXECUTE
 
@@ -231,8 +231,8 @@ Follow `orchestrator-run-loop.md` "4. Decision Step"; the VERDICT format is defi
 
 ### A_FAIL
 
-- Repairable failure → verdict `needs-retry`; re-dispatch only after Runtime returns the step to pending.
-- External or exhausted blocker -> verdict `blocked`; current Execution pauses and releases its claim.
+- Repairable failure → verdict `needs-retry`; re-dispatch only after Runtime returns the step to pending (via `run transition`/`run cancel`).
+- External or exhausted blocker → `maestro run transition {run_id} blocked ... --json` (or `run cancel`); the chain step stays pending for a later fenced `run next`. There is no Execution lease to release.
 - Never allocate a new Run while the previous Run is running or gate-blocked.
 
 ### A_RECOVER

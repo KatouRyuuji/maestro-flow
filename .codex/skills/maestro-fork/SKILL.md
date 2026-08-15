@@ -92,7 +92,7 @@ Fork and sync algorithm steps are defined in workflow `fork.md`.
 
 | Condition | Suggestion |
 |-----------|-----------|
-| Fork complete | `cd {wt.path}` then step `analyze` (`maestro run prepare --platform codex analyze` + `maestro run create analyze --session YYYYMMDD-analyze-{topic} --intent "{goal}" --arg "{goal}"`) |
+| Fork complete | `cd {wt.path}` then step `analyze` — open a v3 Session (`maestro session open "<goal>" --id YYYYMMDD-analyze-{topic} --chain analyze --participant {p} --actor {a} --request-id {r} --reason "<reason>" --json` → fenced `maestro run next --session {session_id} ... --json`), or route via `/maestro-next` |
 | Fork + automated | `maestro delegate "run full lifecycle for session" --cd {wt.path} --mode write` |
 | Sync complete | Resume work in worktree |
 | Sync conflicts found | Resolve manually, then retry |
@@ -102,10 +102,10 @@ Fork and sync algorithm steps are defined in workflow `fork.md`.
 | Code | Severity | Condition | Recovery |
 |------|----------|-----------|----------|
 | E001 | error | Project not initialized | Run maestro-init first |
-| E002 | error | No roadmap found | Run step `roadmap` first (`maestro run prepare --platform codex roadmap` + `maestro run create roadmap --session YYYYMMDD-roadmap-{topic} --intent "{goal}" --arg "{goal}"`) |
+| E002 | error | No roadmap found | Run step `roadmap` first — open a v3 Session (`maestro session open "<goal>" --id YYYYMMDD-roadmap-{topic} --chain roadmap ... --json` → fenced `maestro run next`) |
 | E003 | error | Running inside a worktree | Run from main worktree |
 | E004 | error | No session ID provided | Provide `--session <session_id>` |
-| E005 | error | No sessions defined in state.json | Run step `roadmap` first (`maestro run prepare --platform codex roadmap` + `maestro run create roadmap --session YYYYMMDD-roadmap-{topic} --intent "{goal}" --arg "{goal}"`) |
+| E005 | error | No sessions defined in state.json | Run step `roadmap` first — open a v3 Session (`maestro session open "<goal>" --id YYYYMMDD-roadmap-{topic} --chain roadmap ... --json` → fenced `maestro run next`) |
 | E006 | error | Session not found in state.json.sessions[] | Check available sessions |
 | E007 | error | No active worktree for session (--sync) | Check worktrees.json |
 | E008 | error | Session already has active worktree | Merge or cleanup first |
