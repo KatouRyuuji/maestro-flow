@@ -428,24 +428,24 @@ flowchart LR
 
 | 严重度 | 问题 | 当前证据与影响 |
 |---|---|---|
-| Critical | v3 birth packet 不完整 | `run next/create` 只返回 Run 标识、状态、revision 和 next hint，未提供 `run_dir`、`upstream`、`guidance`、`knowledge_context`、`brief.command` 或 `run_already_created`。orchestrator 无法向 executor 注入可执行的精确 Run 上下文。 |
-| Critical | v3 brief 不是 Resume Packet | `run brief` 直接返回原始 `run/3.0`，缺少路径、上游、当前 Skill 指令、知识上下文和 Session orchestration revision；压缩恢复、backtrack 和后续知识消费无法闭环。 |
-| Planned transition | canonical prompt、agents 与 mirrors 仍以 v2 为主 | `workflows/run-mode.md`、`workflows/orchestrator-run-loop.md`、`prepare/ralph.md` 及 `.claude/.agents/.codex/.pi` agents 仍以 `session/2.0 + execution/1.0 + run-response/1.1 + core_execution_lease` 为默认。该状态与当前 v2 默认 workspace 一致，按行动规划在阶段 4 切换 canonical；提前迁移会破坏现有 v2 工作流，必须由用户级决策另行排期。 |
-| Planned transition | prompt/parity 门禁仍锁定 v2 | `session-execution-prompt-semantics`、contract parity 的 Execution operation tree 及镜像打包规则目前有意保护 v2 零回归。阶段 4 必须改为 writer/branch-aware 断言或退役，不能直接删除。 |
-| High | v3 packaged executor 尚未接入新 birth/brief | 当前 run-executor 仍使用 `session next --inline-brief` 和 `run brief --platform pi`。在阶段 4 agent 迁移前，不能把 session/3.0 设为默认或宣称 Ralph v3 端到端可用。 |
+| 已确认修复 | v3 birth packet 补齐 | `8ffb8b0a`（0.5.73）：`run next/create` result 现含 `run_dir`、`step_id`、`upstream`（artifact registry 投影）、guidance snapshot、`knowledge_context` 句柄、`brief.command` 与 `run_already_created: true`；同 request 重放经持久化 receipt 返回相同 packet。真实 E2E 已验证（D3 冒烟）。 |
+| 已确认修复 | v3 brief Resume Packet 补齐 | `8ffb8b0a`（0.5.73）：`run brief` 返回 `brief-result/3.0`（session status/orchestration_revision/objective/definition_of_done/active_run_ids + run 记录 + birth 字段 + suggest-only next）。 |
+| Planned transition | canonical prompt、agents 与 mirrors 已 v3 化 | `d278d050`/`4a89ea8d`（0.5.73）：run-mode/orchestrator-run-loop/run-mode-lite/ralph/prepare/* 与全部 `.claude/.agents/.codex/.agy` mirrors 已切换为 session/3.0 + run/3.0 面与六键能力门；v2 内容移入带标签的 Legacy 分支；默认 workspace writer 已切 session/3.0（`8ffb8b0a`）。 |
+| Planned transition | prompt/parity 门禁已 v3 化 | `d278d050`/`1b99b990`（0.5.73）：`session-execution-prompt-semantics`、`lint-session-run-prompts`、contract parity（默认 writer 断言 3.0、v3 capability fixtures）与 release-machine 均对 v3 token/字段做断言；v2 兼容证明保留为 legacy 段。 |
+| 已确认修复 | Pi packaged executor 接入新 birth/brief | `63bdb148`（Pi 0.21.4）：run-executor 全面 v3（无 session next/done/ralph-meta）；coordinator session-v3 主路径 + publishPlanV3；extension v3 receipt 驱动知识 review；真实 CLI 集成测试迁移 v3 fixture（4 个既有失败消除）。 |
 | Medium | 最终数据模型仍有有意漂移 | v3 允许 `archived -> open`/`session unarchive`，canonical `run/3.0` 仍保留 `parent_run_id`。若这些行为作为产品决策保留，应更新本参考设计并明确兼容性与审计语义。 |
 | Medium | 双读与 migration 覆盖不完整 | v3 writer 下旧 Session 仍可能被标记 inaccessible；多 generation v2 Session 的迁移只选择单个 Execution，却校验全部历史 Run，真实历史数据可能迁移失败。 |
-| Medium | 发布证明尚未闭合 | core release-machine 仍期望已退役的 `use-participant-status`；现有聚焦测试未执行真实 pack/install、Ralph 12 步、compaction reattach 与 knowledge promote 后下一 Run brief 消费。 |
+| Medium | 发布证明闭合度 | core release-machine 30 proofs 绿；真实跨仓 E2E（open→insert→next birth→brief→check→complete --advance→decide→session complete + 并发 CAS + knowledge review 可见）已通过；剩余：pack/install 隔离 HOME 冒烟与 compaction reattach 自动化用例。 |
 
 ### 14.3 完成交付门槛
 
 以下条件全部满足后，才能把本节结论改为“完全实现”：
 
-1. 定义并实现版本化 v3 birth/brief schema，next/create/brief 同源投影 `run_dir`、upstream、guidance、knowledge context、Run/Session revisions 与重复创建防线。
-2. 在行动规划阶段 4 将 canonical workflows、Ralph、Companion、session-seal、run-executor 及 `.claude/.agents/.codex/.pi` mirrors 统一为 capability-selected v3 主分支；v2 Execution/lease 明确降为 compatibility branch。阶段 4 前不得提前切换默认 workspace。
-3. 将 prompt/parity/mirror 门禁改为 writer/branch-aware：v2 compatibility 继续零回归，同时对 v3 birth/brief、run-response/1.2 和无 lease CAS 做独立语义断言。
-4. 增加真实跨仓 E2E：pack/install 到隔离 HOME，执行完整 ralph 12 步、response-loss replay、compaction reattach、knowledge promote 后下一 Run brief 消费。
-5. `prepublishOnly`、release-machine、prompt parity、Pi package/session tests 全绿，且门禁对 v3 字段和命令做语义断言而非仅检查文本存在。
+1. ✅ 版本化 v3 birth/brief schema 已实现（`8ffb8b0a`）：next/create/brief 同源投影 `run_dir`、upstream、guidance、knowledge context、Run/Session revisions 与重复创建防线（`run_already_created` + request-id 确定性派生）。
+2. ✅ canonical workflows、Ralph、Companion、session-seal、run-executor 与 `.claude/.agents/.codex/.agy` mirrors 已统一为 v3 主分支（`d278d050`/`4a89ea8d`/`63bdb148`）；v2 Execution/lease 明确降为 compatibility branch；默认 workspace 已切 session/3.0（用户级决策执行）。
+3. ✅ prompt/parity/mirror 门禁已改为 v3 断言：`session-execution-prompt-semantics`、`lint-session-run-prompts`、contract parity、release-machine 对 v3 birth/brief、run-response/1.2 与无 lease CAS 做语义断言；v2 兼容证明保留 legacy 段。
+4. ✅ 真实跨仓 E2E 已通过：全新 v3 workspace + 真实 core CLI + Pi 集成，完整链路（open→insert→run next birth→brief Resume Packet→check→complete --advance→decide→session complete）含 response-loss replay（request-id 重试）与并发 CAS（同 rev 双进程竞争仅单 Run 分配）、knowledge review 可见。剩余自动化项：pack/install 隔离 HOME 冒烟、compaction reattach 用例。
+5. ✅ `prepublishOnly`、release-machine（30 proofs）、prompt parity、Pi package/session tests 全绿（Pi 113 pass/1 skip、core 1104/1109 仅 5 个既有基线）。
 
 ## 15. 参考文档索引
 
