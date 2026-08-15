@@ -435,8 +435,8 @@ flowchart LR
 | ✅ 已完成 | prompt/parity/release 门禁 v3 化 | `d278d050`/`1b99b990`：prompt lint、contract parity、release-machine 对 v3 birth/brief、run-response/1.2、默认 writer 与无 lease CAS 做语义断言，同时保留 legacy compatibility 证明。 |
 | ✅ 已完成 | Pi packaged consumer v3 化 | `63bdb148`/`9ee5edbe`（Pi 0.21.4）：run-executor、coordinator、publishPlanV3、receipt 驱动知识 review 与真实 CLI fixture 已进入 session/3.0 主路径。 |
 | ✅ 产品决策已同步 | archive 与 Run 谱系 | `archived -> open` 仅通过显式 `session unarchive`；`parent_run_id` 作为一般/兼容谱系保留，`retry_of_run_id + attempt` 作为重试谱系。本文 §3.3/§6.2 已与实现对齐。 |
-| Medium 跟踪 | legacy 双读与多 generation migration | 新 workspace 已默认 v3，既有 workspace 保持已存 writer并可显式迁移。v3 resolver 对 legacy authority fail-closed、多 generation 历史迁移覆盖仍作为 compatibility 风险跟踪，不阻断 canonical v3 运行。 |
-| Medium 自动化 | packaged install / compaction recovery | 真实跨仓功能 E2E、并发 CAS、replay 与知识可见性已通过；仍需将隔离 HOME pack/install 冒烟和 compaction reattach 固化为发布自动化。 |
+| 已确认修复 | legacy 多 generation migration | `a92c83ac`：多 generation v2 Session 迁移不再断言历史 Runs 绑定选中 Execution——历史 generation Runs 以只读方式随迁（源字节仍校验），并新增反超前校验（历史 Run 不得引用比选中 Execution 更新的 generation）+ 专项测试（gen-1 sealed Runs + gen-7 active Execution 原子迁移）。v3 resolver 对 legacy authority 保持 fail-closed。 |
+| 已确认修复 | packaged install / compaction recovery 自动化 | `04302457`：`check:session-run-packaged-install`（npm pack → 隔离 prefix+HOME → 六键契约 + 全 v3 冒烟链）已接入 prepublishOnly；`9d4e42cf`：compaction reattach 专项用例（新进程仅凭持久状态 resume-view + brief Resume Packet 重挂并继续，orchestration revision 跨进程连续）。 |
 
 ### 14.3 完成交付门槛
 
