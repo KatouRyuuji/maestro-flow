@@ -9,10 +9,10 @@ contract:
     required: true
     schema: plan/1.0
     role: primary
-  - kind: execution
+  - kind: artifact
     alias: current-execution
     required: true
-    schema: execution/1.0
+    schema: artifacts/1.0
     role: primary
   produces:
   - path: outputs/verification.json
@@ -102,3 +102,7 @@ Table of invalid reasons: a one-line change most easily buries an insidious bug;
 - `goal-backward-verified`: every success criterion and per-task convergence.criterion is checked across the three layers (existence L1, substance L2, wiring L3), each with method + status + grounded evidence (live run this round or still-valid live-run result); every failure has an actionable gap and coverage has no silent omission.
 - `nyquist-covered`: test coverage is computed from a live run of the suites covering the changed surface this round (skipped only under `--skip-tests`); regression risk on changed files' direct importers is assessed.
 - verdict mapping: pass → all VERIFIED with no blocker; warn → only medium/low gaps; fail/blocked → has a critical gap or a key path unverified.
+
+## Legacy `session/1.x/2.x` Compatibility Branch
+
+deprecated/legacy-only：v2 运行时以 `kind: execution / schema: execution/1.0`（alias `current-execution`）消费当前 Execution 状态记录（implementation scope / change manifest）；v3 下不存在 Execution 记录，等价消费为 Session artifact registry（`artifacts/1.0`）。

@@ -9,10 +9,10 @@ contract:
     required: false
     schema: verification/1.0
     role: primary
-  - kind: execution
+  - kind: artifact
     alias: current-execution
     required: false
-    schema: execution/1.0
+    schema: artifacts/1.0
     role: primary
   - kind: review-findings
     alias: latest-review
@@ -91,3 +91,7 @@ Pre-load (all optional, continue if missing):
 
 - `tests-generated`: layer write-results are merged into master CSV state and temp files cleaned before execution (tests-generated gate); RED-first integrity holds and spec-source scenarios trace to a REQ.
 - `execution-converged`: L0→L3 ran in order (fail-fast) and `report.json` exists before post-processing (execution-converged gate); pass rate and confidence are computed from actual runs within `--max-iter` bounds.
+
+## Legacy `session/1.x/2.x` Compatibility Branch
+
+deprecated/legacy-only：v2 运行时以 `kind: execution / schema: execution/1.0`（alias `current-execution`）消费当前 Execution 状态记录；v3 下不存在 Execution 记录，等价消费为 Session artifact registry（`artifacts/1.0`）。

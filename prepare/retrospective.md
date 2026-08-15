@@ -4,10 +4,10 @@ description: Post-phase retrospective — four parallel lenses (technical/proces
 argument-hint: '[phase|N..M] [--lens technical|process|quality|decision] [--all] [--no-route] [--compare N] [-y]'
 contract:
   consumes:
-  - kind: execution
+  - kind: artifact
     alias: current-execution
     required: false
-    schema: execution/1.0
+    schema: artifacts/1.0
     role: primary
   - kind: verification
     alias: latest-verification
@@ -83,3 +83,7 @@ Lens selection defaults to all four; a specific lens narrows analysis. Routing c
 
 - `lenses-complete`: every selected lens (technical/process/quality/decision) produced an independent analysis before synthesis (Stage 4→5); a missing lens result blocks or flags [LOW CONFIDENCE].
 - `insights-routed`: each distilled insight has a stable `INS-{8hex}` id and a routing decision (spec/knowhow/issue or `--no-route`), with external writes user-confirmed unless `-y`.
+
+## Legacy `session/1.x/2.x` Compatibility Branch
+
+deprecated/legacy-only：v2 运行时以 `kind: execution / schema: execution/1.0`（alias `current-execution`）消费当前 Execution 状态记录；v3 下不存在 Execution 记录，等价消费为 Session artifact registry（`artifacts/1.0`）。

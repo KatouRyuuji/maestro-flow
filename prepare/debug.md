@@ -14,10 +14,10 @@ contract:
     required: false
     schema: review-findings/1.0
     role: primary
-  - kind: execution
+  - kind: artifact
     alias: current-execution
     required: false
-    schema: execution/1.0
+    schema: artifacts/1.0
     role: primary
   produces:
   - path: outputs/diagnosis.json
@@ -104,3 +104,7 @@ When prior debug artifacts of the same scope exist, check their root cause first
 
 - `hypothesis-tested`: each hypothesis records a tested action + evidence + status; investigation stops after 3 failures and escalates to architecture inspection rather than free-associating a 4th.
 - `evidence-grounded`: root cause is confirmed only with a reproduction or code/log evidence (`understanding.md` + `evidence.ndjson` present); an unproven hypothesis stays "suspected" and status maps confirmed/partial/inconclusive accordingly.
+
+## Legacy `session/1.x/2.x` Compatibility Branch
+
+deprecated/legacy-only：v2 运行时以 `kind: execution / schema: execution/1.0`（alias `current-execution`）消费当前 Execution 状态记录；v3 下不存在 Execution 记录，等价消费为 Session artifact registry（`artifacts/1.0`）。

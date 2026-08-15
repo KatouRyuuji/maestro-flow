@@ -31,11 +31,11 @@ contract:
     role: evidence
   produces:
   - path: outputs/execution.json
-    kind: execution
+    kind: artifact
     alias: current-execution
     role: primary
     required: true
-    schema: execution/1.0
+    schema: artifacts/1.0
   - path: outputs/task-results.json
     kind: task-results
     role: attachment
@@ -80,7 +80,7 @@ When `current-plan` is absent (entry gate skipped, not failed), execute enters *
 | `latest-debug` (diagnosis + fix-directions) | fix-directions present | **Companion** if ≤2 files; **Odyssey planex** otherwise |
 | No upstream at all | — | **Abort**: report E001 "No plan and no alternative upstream; run plan first" |
 
-Degradation seal: `maestro session done <run_id> --verdict needs-retry` with report.md noting the degradation reason and target command. This preserves the run record without faking a plan.
+Degradation close: complete the Run honestly with `maestro run complete <run_id> ... --verdict done_with_concerns --advance --json`（report.md `concerns` 记录 degradation reason 与 target command），或 `maestro run cancel <run_id> ... --json` 后重新派发目标命令。这保留 run 记录而不伪造 plan。（v2 的 `maestro session done <run_id> --verdict needs-retry` 为 deprecated/legacy-only。）
 
 **Never fabricate a plan artifact to satisfy the gate.** The degradation path is the compliant escape.
 
@@ -128,3 +128,7 @@ Migration must preserve the sealed source bytes and raw registry role/alias sema
 
 - `execution-complete`: every task in the plan reaches a terminal state (done / blocked with checkpoint); `execution.json` is written and completed tasks carry a summary + status.
 - `self-check-passed`: the gate fails only when the scoped build/test smoke over this run's changes was not run this round or an unhandled critical tech-stack violation (allowed_languages / disallowed_imports) remains. A self-check result of `gaps_found` does **not** block run completion — gaps are recorded as concerns in the report for the separate verify run to consume (formal acceptance lives in verify, not here).
+
+## Legacy `session/1.x/2.x` Compatibility Branch
+
+deprecated/legacy-only：v2 运行时以 `kind: execution / schema: execution/1.0` 产出 `outputs/execution.json`（alias `current-execution`）作为 Execution 状态记录；v3 下 Execution 记录由 Runtime 独占、不存在独立 Execution schema，等价产出为写入 Session artifact registry（`artifacts/1.0`）的 `outputs/execution.json` 域工件。

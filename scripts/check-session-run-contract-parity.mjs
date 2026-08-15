@@ -526,7 +526,7 @@ const sessionWriterSelection = zodArray(writerPath, 'sessionSchemaWriterSchema')
 const defaultSessionSelection = literalValue(findVariable('src/run/defaults.ts', 'DEFAULT_SESSION_SCHEMA_SELECTION'));
 const expectedDefaultSessionSelection = {
   schema_version: 'session-schema-selection/1.0',
-  writer: 'session/1.3',
+  writer: 'session/3.0',
   features: { session_statusless: false },
 };
 addCheck(

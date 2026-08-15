@@ -1,50 +1,38 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-const LEGACY_HEADING = /^## Legacy `session\/1\.x` Compatibility Branch\s*$/m;
+const LEGACY_HEADING = /^## Legacy `session\/1\.x(?:\/2\.x)?` Compatibility Branch\s*$/m;
 
 const COMMON_REQUIRED = [
   'maestro capabilities --json',
-  'session/2.0',
-  'execution/1.0',
-  'run-response/1.1',
-  'session_statusless',
-  'execution_generation',
-  'core_execution_lease',
-  'session_id',
-  'execution_id',
-  'generation',
+  'session/3.0',
+  'run-response/1.2',
+  'orchestration_revision',
+  'session_run_minimal_v3',
+  'entity_revision_cas',
+  'participant_identity',
+  'request_receipts_v2',
+  'session_schema_writes',
   '--request-id',
-  '--expected-identity-revision',
-  '--expected-activity-revision',
-  '--expected-execution-revision',
-  '--owner-id',
-  '--owner-kind',
-  '--lease-epoch',
-  '--lease-id',
-  'maestro execution start',
-  'maestro execution status',
-  'maestro execution resolve',
-  'maestro execution resume',
-  'maestro execution seal',
-  'execution-seal-receipt/1.0',
+  '--expected-orchestration-revision',
+  '--participant',
+  '--actor',
+  'maestro session status',
 ];
 
 const KNOWLEDGE_REQUIRED = [
-  'candidate_version',
-  'content_hash',
-  'observed_activity_revision',
-  'evidence_roots',
-  'evidence_root_hash',
-  'candidate_snapshot_hash',
-  'corpus_fingerprint',
-  'does **not** require Session seal',
+  'knowledge_context',
+  'knowledge-delta.json',
+  'candidate',
+  'reconcile',
+  'promotion',
+  'corpus',
 ];
 
 const CANONICAL_FORBIDDEN = [
   {
     description: 'Session lifecycle mutation command',
-    pattern: /maestro session (?:start|next|done|decide|resolve|resume|seal)\b/i,
+    pattern: /maestro session (?:start|next|done|decide|resolve(?!-view)|resume(?!-view)|seal)\b/i,
   },
   {
     description: 'Session-owned orchestration authority',
@@ -52,11 +40,15 @@ const CANONICAL_FORBIDDEN = [
   },
   {
     description: 'permanent running/paused/sealed Session assumption',
-    pattern: /\b(?:running|paused|sealed) Session\b|\bSession (?:is|remains|stays) (?:running|paused|sealed)\b|Session\s*(?:为|保持)\s*(?:running|paused|sealed)/i,
+    pattern: /(?<![nN][oO]\s)(?<![nN][oO][tT]\s)(?<![nN][eE][vV][eE][rR]\s)\b(?:running|paused|sealed) Session\b|\bSession (?:is|remains|stays) (?:running|paused|sealed)\b|Session\s*(?:为|保持)\s*(?:running|paused|sealed)/i,
   },
   {
-    description: 'Session-owned chain authority',
-    pattern: /Every Session uses[^\n]*chain|Session (?:owns|stores|persists)[^\n]*chain/i,
+    description: 'retired Execution-era authority (lease/paused/identity revisions)',
+    pattern: /(?:core_execution_lease|execution_generation|session_statusless|identity_revision|(?<![nN][oO]\s)(?<![nN][oO][tT]\s)(?<![nN][eE][vV][eE][rR]\s)paused Execution|execution-seal-receipt\/1\.0)/i,
+  },
+  {
+    description: 'retired Execution lifecycle command',
+    pattern: /maestro execution (?:start|status|resolve|resume|seal)/i,
   },
   {
     description: 'Session-owned gate authority',
@@ -69,38 +61,49 @@ const CANONICAL_FORBIDDEN = [
 ];
 
 const EXECUTION_MUTATIONS = {
-  'maestro execution start': [
-    '--session', '--request-id', '--expected-identity-revision', '--expected-activity-revision',
-    '--expected-lease-epoch', '--execution-owner', '--owner-kind', '--actor', '--reason', '--evidence', '--json',
+  'maestro session open': [
+    '--id', '--participant', '--actor', '--request-id', '--reason', '--json',
+  ],
+  'maestro session chain insert': [
+    '--step-id', '--command', '--participant', '--actor', '--request-id', '--reason',
+    '--expected-orchestration-revision', '--json',
+  ],
+  'maestro session chain replace': [
+    '--step-id', '--command', '--participant', '--actor', '--request-id', '--reason',
+    '--expected-orchestration-revision', '--json',
+  ],
+  'maestro session chain skip': [
+    '--step-id', '--participant', '--actor', '--request-id', '--reason',
+    '--expected-orchestration-revision', '--json',
+  ],
+  'maestro session complete': [
+    '--participant', '--actor', '--request-id', '--reason',
+    '--expected-orchestration-revision', '--json',
+  ],
+  'maestro session migrate': ['--to', '--participant', '--actor', '--json'],
+  'maestro run next': [
+    '--participant', '--actor', '--request-id', '--reason',
+    '--expected-orchestration-revision', '--json',
   ],
   'maestro run create': [
-    '--session', '--execution', '--generation', '--request-id', '--expected-execution-revision',
-    '--owner-id', '--owner-kind', '--lease-epoch', '--lease-id', '--intent', '--json',
-  ],
-  'maestro run next': [
-    '--session', '--execution', '--generation', '--request-id', '--expected-execution-revision',
-    '--owner-id', '--owner-kind', '--lease-epoch', '--lease-id', '--json',
+    '--run', '--step', '--participant', '--actor', '--request-id', '--reason',
+    '--expected-orchestration-revision', '--json',
   ],
   'maestro run complete': [
-    '--session', '--execution', '--generation', '--request-id', '--expected-execution-revision',
-    '--owner-id', '--owner-kind', '--lease-epoch', '--lease-id', '--verdict', '--json',
+    '--advance', '--verdict', '--expected-run-revision', '--expected-orchestration-revision',
+    '--participant', '--actor', '--request-id', '--reason', '--json',
   ],
   'maestro run decide': [
-    '--session', '--execution', '--generation', '--request-id', '--expected-execution-revision',
-    '--owner-id', '--owner-kind', '--lease-epoch', '--lease-id', '--verdict', '--confidence', '--json',
+    '--verdict', '--confidence', '--expected-orchestration-revision',
+    '--participant', '--actor', '--request-id', '--reason', '--json',
   ],
-  'maestro execution resolve': [
-    '--session', '--execution', '--request-id', '--expected-execution-revision', '--actor', '--reason',
-    '--evidence', '--disposition', '--json',
+  'maestro run cancel': [
+    '--expected-run-revision', '--expected-orchestration-revision',
+    '--participant', '--actor', '--request-id', '--reason', '--json',
   ],
-  'maestro execution resume': [
-    '--session', '--execution', '--request-id', '--expected-execution-revision', '--expected-activity-revision',
-    '--expected-lease-epoch', '--execution-owner', '--owner-kind', '--actor', '--reason', '--evidence', '--json',
-  ],
-  'maestro execution seal': [
-    '--session', '--execution', '--request-id', '--expected-execution-revision', '--expected-activity-revision',
-    '--execution-owner', '--owner-kind', '--owner-epoch', '--lease-id', '--actor', '--reason', '--evidence',
-    '--outcome', '--json',
+  'maestro artifact republish': [
+    '--assessment-hash', '--expected-artifact-revision', '--expected-orchestration-revision',
+    '--participant', '--actor', '--request-id', '--reason', '--json',
   ],
 };
 
@@ -108,13 +111,21 @@ export const EXECUTION_PROMPT_PROFILES = [
   {
     id: 'full',
     path: 'workflows/run-mode.md',
-    mutations: Object.keys(EXECUTION_MUTATIONS),
+    mutations: [
+      'maestro session open', 'maestro session chain insert', 'maestro session chain replace',
+      'maestro session chain skip', 'maestro session complete',
+      'maestro run next', 'maestro run complete', 'maestro run decide', 'maestro run cancel',
+      'maestro artifact republish',
+    ],
     required: [
       ...COMMON_REQUIRED,
-      'maestro run create',
+      'run/3.0',
+      'maestro run brief',
+      'maestro session chain insert',
       'maestro run next',
       'maestro run complete',
       'maestro run decide',
+      'run_already_created',
       ...KNOWLEDGE_REQUIRED,
     ],
   },
@@ -122,29 +133,26 @@ export const EXECUTION_PROMPT_PROFILES = [
     id: 'lite',
     path: 'workflows/run-mode-lite.md',
     mutations: [
-      'maestro execution start', 'maestro run create', 'maestro run complete',
-      'maestro execution resolve', 'maestro execution resume', 'maestro execution seal',
+      'maestro session complete', 'maestro run complete',
     ],
     required: [
       ...COMMON_REQUIRED,
-      'maestro run create',
       'maestro run complete',
-      ...KNOWLEDGE_REQUIRED,
     ],
   },
   {
     id: 'orchestrator',
     path: 'workflows/orchestrator-run-loop.md',
     mutations: [
-      'maestro execution start', 'maestro run next', 'maestro run complete', 'maestro run decide',
-      'maestro execution resolve', 'maestro execution resume', 'maestro execution seal',
+      'maestro session chain insert', 'maestro session chain replace', 'maestro session chain skip',
+      'maestro session complete', 'maestro run next', 'maestro run complete', 'maestro run decide',
     ],
     required: [
       ...COMMON_REQUIRED,
       'maestro run next',
       'maestro run complete',
       'maestro run decide',
-      'Execution is the only authority for chain',
+      'chain disposition',
     ],
   },
   {
@@ -152,11 +160,13 @@ export const EXECUTION_PROMPT_PROFILES = [
     path: 'prepare/ralph.md',
     required: [
       ...COMMON_REQUIRED,
+      'maestro run brief',
       'maestro run next',
       'maestro run complete',
       'maestro run decide',
-      'execution-seal',
-      'post-execution',
+      'run_already_created',
+      'brief-result/3.0',
+      'session complete',
     ],
   },
 ];
@@ -186,10 +196,9 @@ const SUPPORT_PROFILES = [
     id: 'ralph-amend-source',
     path: 'workflows/ralph-amend-goal.md',
     required: [
-      'maestro capabilities --json', 'session/2.0', 'execution/1.0', 'core_execution_lease',
-      'run-response/1.1', 'execution_id', 'generation', '--expected-execution-revision',
-      '--owner-id', '--owner-kind', '--lease-epoch', '--lease-id',
-      'maestro execution status', 'maestro execution resolve', 'maestro execution resume', 'maestro execution seal',
+      'maestro capabilities --json', 'session/3.0', 'run/3.0', 'run-response/1.2',
+      'orchestration_revision', 'maestro session status', 'maestro session chain replace',
+      'maestro session chain insert', 'maestro run next', 'maestro run complete', 'maestro run check',
     ],
     forbidden: [
       { description: 'canonical Session amendment mutation', pattern: /maestro session (?:meta|next|done|resolve|resume|seal)\b/i },

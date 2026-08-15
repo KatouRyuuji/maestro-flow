@@ -17,9 +17,7 @@ const skillDir = join(root, '.claude', 'skills');
 const obsoleteRunMode = /\.workflow\/(?:scratch|\.scratchpad)|Legacy Compatibility Mapping|state\.json\.artifacts\[\]|<run_mode>|## Run Mode Contract|## Run Artifact Boundary|\{run_dir\}\/outputs\/(?:\*|\{YYYYMMDD\}|\$\{date\})/;
 const legacyTeamStateFile = /team-state\.json|(?<!team-)session\.json/;
 const runCreateArgumentChannelTokens = [
-  '--intent',
   'Session metadata only',
-  '--arg <value>',
   '-- <args...>',
 ];
 
@@ -241,7 +239,7 @@ else {
     'suggest_only',
     'maestro run next',
     'deprecated admin-only',
-    'brief-result/1.1',
+    'brief-result/3.0',
     'knowledge_context',
     '--signal-ids',
     'maestro knowledge stage',
@@ -250,11 +248,12 @@ else {
     'review_required',
     'knowledge-candidate-receipt/1.0',
     'maestro knowledge promote',
-    'maestro execution seal',
-    'run-response/1.1',
+    'run-response/1.2',
+    'orchestration_revision',
     'artifact_compatibility_v1',
     'atomic_run_complete_seal',
     'generation_scoped_seal_receipts',
+    'run_already_created',
     'blocked consumer attempt -> needs-retry/cancel -> artifact inspect -> semantic republish -> explicit retry/next',
     'Migration preserves sealed source bytes',
     'MUST NOT use chain skip, Run rebind, a direct Artifact Registry edit/rewrite',
@@ -297,8 +296,8 @@ else {
     '--signal-ids',
     'maestro knowledge stage',
     'maestro knowledge review',
-    'maestro execution seal',
-    'run-response/1.1',
+    'run-response/1.2',
+    'maestro run complete',
   ]) {
     if (!text.includes(token)) errors.push(`workflows/run-mode-lite.md: missing ${token}`);
   }
@@ -325,7 +324,6 @@ if (!existsSync(canonicalOrchestratorLoop)) {
     '### `complete` / `decide` 闭环',
     'run_already_created=true',
     'maestro run decide',
-    'reason_code=DECISION_CARD_READY',
   ]) {
     if (!text.includes(token)) errors.push(`workflows/orchestrator-run-loop.md: missing ${token}`);
   }

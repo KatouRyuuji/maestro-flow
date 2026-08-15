@@ -1,67 +1,72 @@
 <!-- session-mode: inherited -->
 # Canonical Run Mode
 
-This file is the single Session/Execution/Run contract for every command, workflow, and stateful skill that declares `session-mode: run`.
+This file is the single Session/Run contract for every command, workflow, and stateful skill that declares `session-mode: run`.
 
-Canonical lifecycle: **negotiate -> resolve/create Session identity -> start/attach Execution -> create/next Run -> brief/check/complete -> seal Execution**.
+Canonical lifecycle: **negotiate -> open/attach Session identity (`session/3.0`) -> dispatch/attach chain Run (`run next` / `run create`) -> brief/check/complete `--advance` -> decide / `session chain insert|replace|skip` as needed -> `session complete`**.
 
-New-runtime mutation uses the Execution-aware `maestro execution ...` and `maestro run ...` machine protocol. Session lifecycle aliases are retained only in the clearly labeled `session/1.x` compatibility branch below.
+All new-runtime mutation runs through the `session/3.0 + run/3.0` minimal protocol: the Session owns the chain and the `orchestration_revision` CAS fence; each step is driven by a Run. The Execution-era machinery (`execution start/resolve/resume/seal`, core leases, `session next/done/decide`, identity/activity revisions, paused/sealed Execution state) is retained only in the clearly labeled `Legacy session/1.x/2.x Compatibility Branch` at the end of this file.
 
 ## Authority and Reuse
 
-- A Session is a durable **topic grouping/index**. Under `session/2.0` it has identity/activity revisions and archive metadata, but no permanent running/paused/sealed lifecycle. Sealing one unit of work never seals the Session identity.
-- An Execution is one bounded generation inside a Session. It exclusively owns the current chain, decisions, gates, active Run, revision, lifecycle (`active|paused|sealed`), and core lease. At most one Execution per Session is non-sealed.
-- A Run is one immutable execution attempt bound to the exact `session_id + execution_id + generation`. Its sealed outputs remain immutable and may be consumed by later Runs in the **same Session** through the canonical `upstream`/Artifact Registry map.
+- A Session (schema `session/3.0`) is a durable **topic grouping/index** that owns the ordered **chain**, the decisions array, the artifact registry, and the durable `objective` / `definition_of_done`. It has no Execution, no lease, no running/paused/sealed lifecycle, and no identity revisions; the only mutation fence is the Session `orchestration_revision` (CAS via `entity_revision_cas`). Completing one unit of work never destroys the Session identity — it may later be unarchived and extended.
+- A Run (schema `run/3.0`) is one immutable execution attempt bound to the exact `session_id + run_id`. Its sealed outputs remain immutable and may be consumed by later Runs in the **same Session** through the canonical `upstream`/Artifact Registry map.
 - Reuse references eligible sealed outputs in place. Normal routing does not fork, import, copy, resume, or resolve Sessions to obtain prior work.
 - Historical similarity is read-only evidence. It may explain potentially related work, but it never selects a Session, binds an output, creates a Run, or becomes a next action.
-- Machine callers MUST pass the exact Session and Execution locator returned by Runtime. Never rely on an active-session fallback, a unique-directory scan, topic similarity, or a Session-wide status to choose mutation authority.
+- Machine callers MUST pass the exact Session locator returned by Runtime. Never rely on an active-session fallback, a unique-directory scan, topic similarity, or a Session-wide status to choose mutation authority.
 
 ## New Runtime Capability Gate
 
 1. Before the first lifecycle mutation, run `maestro capabilities --json` and parse the exact `maestro-capabilities/1.0` response.
-2. The canonical branch requires `session_schema_writes` containing `session/2.0`, `execution_schema_writes` containing `execution/1.0`, `run_response_writes` containing `run-response/1.1`, and `features.session_statusless=true`, `features.execution_generation=true`, and `features.core_execution_lease=true`.
-   The additive artifact recovery contract requires `run-response/1.2` plus `features.artifact_compatibility_v1=true`; callers must separately retain `features.atomic_run_complete_seal=true` and `features.generation_scoped_seal_receipts=true` before relying on atomic completion/seal or generation-scoped receipt authority. Missing additive flags disable only those mutations; structured capability, status, brief, check, and artifact-inspect reads remain available.
-3. If any required capability is absent or malformed, fail closed for new-runtime mutation. Do not silently fall back to a host-only lock or Session lifecycle alias. Enter the labeled legacy branch only when the caller explicitly selected an old CLI/schema compatibility workflow.
-4. Every successful new-runtime mutation emits exactly one `run-response/1.1` envelope. Retain its exact `locator.session_id`, `locator.execution_id`, `locator.generation`, and `locator.run_id`, plus `fence.session_identity_revision`, `fence.session_activity_revision`, `fence.execution_revision`, and `fence.lease_epoch`.
-5. Acquisition also returns the private core Execution lease claim: owner ID, owner kind, epoch, and `lease_id`. Keep it in coordinator-private memory or a mode-0600 claim file; never write the raw token to `report.md`, team state, logs, prompts, receipts, or artifacts. Status/read responses expose only the redacted claim/hash.
-6. Use a stable unique `--request-id` per transition. After every mutation, replace the cached revisions with the returned fence before issuing another command. A partial locator, stale revision, changed generation, lost claim, or uncertain write result requires canonical status/recovery; never guess missing fields or retry under a new request ID.
+2. The canonical v3 branch requires the exact capability contract:
+   - `features.session_run_minimal_v3 = true`, `features.entity_revision_cas = true`, `features.participant_identity = true`, `features.request_receipts_v2 = true`;
+   - `features.execution_lease = false` and `features.operation_registry = false` (the Execution/lease surface is retired);
+   - `session_schema_writes` containing `session/3.0`;
+   - `execution_schema_writes` empty;
+   - `run_response_writes` containing `run-response/1.2` (1.0/1.1 remain readable for historical data only).
+   Callers must separately retain `features.artifact_compatibility_v1=true` before relying on artifact compatibility recovery, `features.request_receipts_v2=true` before relying on idempotent request replay, `features.atomic_run_complete_seal=true` before relying on the atomic complete-and-advance transition, and `features.generation_scoped_seal_receipts=true` before relying on generation-scoped seal receipts. Missing additive flags disable only those mutations; structured capability, status, brief, check, and artifact-inspect reads remain available.
+3. If any required capability is absent or malformed, fail closed for new-runtime mutation. Do not silently fall back to a host-only lock or a Session lifecycle alias. Enter the labeled legacy branch only when the caller explicitly selected an old CLI/schema compatibility workflow.
+4. Every successful new-runtime mutation emits exactly one `run-response/1.2` envelope. Retain its exact `locator.session_id` and `locator.run_id`, plus the returned `fence` — the Session `orchestration_revision` for orchestration-target mutations, or the Run `revision` for run-target mutations.
+5. Participant identity is mandatory on every mutation: `--participant <id>` (who performs the mutation) and `--actor <id>` (the authorized actor), recorded with `--reason "<reason>"` and repeatable `--evidence <ref>`. This is the `participant_identity` capability contract.
+6. Use a stable unique `--request-id` per transition; the request-receipt log makes a repeated `--request-id` replay-safe (identical payload replays the original receipt). After every mutation, replace the cached revision with the returned fence before issuing another command. A partial locator, stale orchestration revision, changed run revision, or uncertain write result requires canonical status/recovery; never guess missing fields or retry under a new request ID.
 
 ## Prepare (optional, read-only)
 
-- `maestro run prepare <step>` resolves what a step would consume and produce without side effects.
-- `maestro run prepare <step> --session <id>` also returns read-only guidance, prior artifacts, and knowledge context. Treat any Session lifecycle wording from a legacy projection as compatibility data, not new-runtime mutation authority.
-- Read-only and idempotent - it never allocates a Session or creates directories.
-- Use it to preview upstream availability and the derived artifact contract before committing to a Run.
+- prepare/workflow/run-mode guidance is resolved by Runtime and embedded in the `run next`/`run create` birth packet as `guidance` (a `guidance-snapshot/1.0` carrying `prepare_hash` / `workflow_hash` / `run_mode_hash`). There is no standalone `run prepare` step in the v3 surface; the executor consumes the injected guidance.
+- `maestro run recall <command> [args...]` is the read-only topic search across `session/3.0` Sessions. Recall is exposure only — it never allocates a Session, binds an output, or creates a Run.
+- `maestro session list` enumerates `session/3.0` Sessions and `maestro session resume-view` projects the project ResumeMap (both read-only).
+- `maestro run brief <run_id> --session <id>` re-attaches a Run read-only (Resume Packet) for executor crash recovery, context overflow, or manual inspection.
+- Read-only and idempotent — none of these allocate a Session or create directories.
 
 ## Start or Continue a Run
 
-> **Dispatched by an orchestrator?** When `maestro run next` invokes you, the Run is already created and its exact `session_id` / `execution_id` / `generation` / `run_id` / `run_dir` / `upstream` / guidance are injected in the birth packet. Use them directly and do **NOT** call `maestro run create` (a second create mints an empty duplicate Run). The dispatching coordinator retains mutation authority; an executor without the private core lease claim writes outputs and runs read-only checks but does not complete or advance the Execution.
+> **Dispatched by an orchestrator?** When `maestro run next` invokes you, the Run is already created and its exact `session_id` / `run_id` / `run_dir` / `step_id` / `upstream` / `guidance` / `knowledge_context` / `brief.command` are injected in the birth packet (`run_already_created: true`). Use them directly and do **NOT** call `maestro run create` (a second create mints an empty duplicate Run). The dispatching coordinator retains mutation authority; an executor without mutation authority writes outputs and runs read-only checks but does not complete or advance the Run.
 >
 > **Resume Packet**: use birth-packet guidance directly in normal forward flow. `maestro run brief <run_id> --session <session_id>` remains available for read-only **re-attach/backtracking** (executor crash recovery, context overflow, or manual inspection).
 
 1. Read the caller frontmatter `name` as `<command-name>`.
 2. **Compose a session slug** - `YYYYMMDD-{command}-{topic}` where `{topic}` is a 1-3 word ASCII-only slug derived from the intent (for example, `20260715-odyssey-jwt-auth`). NEVER let the runtime auto-generate from a Chinese or long intent string.
-3. Negotiate capabilities. Resolve an existing compatible Session identity explicitly, or create an identity-only Session with `maestro session create "<short intent phrase>" --id <slug> --json`.
+3. Negotiate capabilities. Resolve an existing compatible Session identity explicitly, or open a new Session with:
+
+   `maestro session open "<objective>" --id <slug> [--definition-of-done "<text>"] [--chain <commands...>] --participant {participant_id} --actor {actor_id} --request-id {request_id} --reason "<reason>" [--evidence <ref> ...] --json`
+
    - `<slug>` is explicit, ASCII-only, and <=64 chars.
-   - Intent text is **Session metadata only** - a short human-readable phrase describing the goal. It may contain Chinese, is NOT used as the Session ID, does not enter `Run input.args`, and does not satisfy the command contract or `argument-hint`.
-4. Start the next bounded generation and acquire its core lease:
+   - Objective text is **Session metadata only** — a short human-readable phrase describing the goal. It may contain Chinese, is NOT used as the Session ID, does not enter `Run input.args`, and does not satisfy the command contract or `argument-hint`.
+   - `--chain` seeds the Session chain with pending step commands; per-step metadata (goal/stage/decision gate) is added with `session chain insert`.
+4. Dispatch the next pending chain step as a Run:
 
-   `maestro execution start --session {session_id} --request-id {request_id} --expected-identity-revision {identity_revision} --expected-activity-revision {activity_revision} --expected-lease-epoch 0 --execution-owner {owner_id} --owner-kind {owner_kind} --actor {actor} --reason "{reason}" --evidence {evidence} --json`
+   `maestro run next --session {session_id} --participant {participant_id} --actor {actor_id} --request-id {request_id} --reason "<reason>" [--evidence <ref> ...] --expected-orchestration-revision {orchestration_revision} --json`
 
-5. Create the self-started Run inside that exact Execution:
-
-   `maestro run create <command-name> --session {session_id} --execution {execution_id} --generation {generation} --request-id {request_id} --expected-execution-revision {execution_revision} --owner-id {owner_id} --owner-kind {owner_kind} --lease-epoch {lease_epoch} --lease-id {lease_id} --intent "<short intent phrase>" [--arg <value> ...] --json`
-
-   Command inputs use repeatable `--arg <value>`; raw positional passthrough after `-- <args...>` is accepted only when the command contract requires it. `--intent` remains Session metadata only.
-6. Retain the returned exact locator, refreshed revisions, private claim, `run_id`, `run_dir`, and `upstream`. Do not locate Sessions, Executions, Runs, or artifacts with glob, mtime, directory ordering, or hidden command folders.
-7. `maestro run brief <run_id> --session <session_id>` returns the `brief-result/1.1` Resume Packet - same-Session sealed artifacts, the authoritative upstream map, open decisions, and a compact `knowledge_context` reconciliation card - for continuing an existing Run. Protocol readers retain `brief-result/1.0` compatibility for read-only historical data; new-runtime mutations never downgrade from `run-response/1.1`.
+   (Self-started path, used by team skills and non-chain contexts: `maestro run create <command> [args...] --session {session_id} --run <run_id> --step <step_id> [--parent-run <id>] [--retry-of-run <id>] [--goal "<text>"] [--input <ref> ...] --participant {participant_id} --actor {actor_id} --request-id {request_id} --reason "<reason>" [--evidence <ref> ...] --expected-orchestration-revision {orchestration_revision} --json`. Command inputs use repeatable `--arg <value>`; raw positional passthrough after `-- <args...>` is accepted only when the command contract requires it.)
+5. Retain the returned exact locator, refreshed `orchestration_revision`, `run_id`, `run_dir`, and `upstream`. Do not locate Sessions, Runs, or artifacts with glob, mtime, directory ordering, or hidden command folders.
+6. `maestro run brief <run_id> --session <session_id>` returns the `brief-result/3.0` Resume Packet: the Session summary (`session_id`, `status`, `orchestration_revision`, `objective`, `definition_of_done`, `active_run_ids`), the full Run record, the birth packet (`upstream`, `guidance`, `knowledge_context`, `brief.command`), and a `suggest_only` `next` hint. Protocol readers retain `brief-result/1.1`/`1.2` compatibility for read-only historical data; new-runtime mutations never downgrade from `run-response/1.2`.
 
 **Session slug examples:**
 ```text
-# Correct: use the complete `maestro execution start` and `maestro run create`
+# Correct: use the complete `maestro session open` + `maestro run next`
 # option sets shown above; command input uses --arg.
 
-# Wrong: no explicit Session/Execution locator.
+# Wrong: no explicit Session locator.
 maestro run create odyssey-planex --intent "complete the integration plan" --arg "complete the integration plan"
 # Wrong: --intent is metadata and does not satisfy learn's required command arguments.
 maestro run create learn --session 20260715-learn-auth-flow --intent "follow src/auth/"
@@ -75,9 +80,10 @@ maestro run create odyssey --session 20260715-odyssey-planex-todo -- --mode plan
 - A Run may validly produce no formal artifact. Only contract v2/v2.1 outputs declared with `required: true`, or an explicit required+blocking exit gate, make an artifact mandatory. Legacy v1 `produces` entries and `required: false` outputs are descriptive/optional and MUST NOT block completion when absent.
 - Every new formal JSON artifact MUST contain a complete top-level `_meta` object: `{"_meta":{"kind":"<stable-kind>","schema":"<stable-kind>/1.0"},...}`. `kind` and `schema` are required together; `role` and `alias` are optional.
 - A legacy JSON artifact with no `_meta` remains readable through contract/filename inference. Never write a partial, null, or non-object `_meta`; strict validation rejects the artifact and blocks Run completion.
+- `maestro run complete` with `--advance` validates and publishes `outputs/` into the Session artifact registry (`artifacts/1.0`, Runtime-owned) atomically with chain-step completion and Run sealing. Do not hand-edit the registry.
 - Human-readable synthesis and handoff MUST be written to `{run_dir}/report.md`.
 - report.md frontmatter keys are a fixed whitelist (`verdict`, `summary`, `constraints`, `decisions`, `concerns`, `next`, `details`); every risk, caveat, or open question MUST go into `concerns`. Keys outside the whitelist are silently dropped and never reach the handoff, the next brief's signals, or a `done-with-concerns` verdict.
-- report.md frontmatter `verdict` uses the report-layer vocabulary `ready|ready_with_concerns|blocked|failed` (default `ready`) - write these canonical tokens. The chain-advance tokens (`done|done-with-concerns|needs-retry`) are also accepted and mapped internally (done->ready, done-with-concerns->ready_with_concerns, needs-retry->failed). `maestro run complete --verdict` takes `done|done-with-concerns|needs-retry|blocked` and accepts the ready-vocabulary aliases. `session done` is a legacy compatibility alias, not the canonical new-runtime authority.
+- report.md frontmatter `verdict` uses the report-layer vocabulary `ready|ready_with_concerns|blocked|failed` (default `ready`) - write these canonical tokens. The chain-advance tokens (`done|done-with-concerns|needs-retry`) are also accepted and mapped internally (done->ready, done-with-concerns->ready_with_concerns, needs-retry->failed). `maestro run complete --verdict` takes `done|done-with-concerns` on the v3 surface (needs-retry/blocked are handled by `run transition`/`run cancel`).
 - `constraints`/`decisions` items are `{ text, status }` objects — `id` is optional and auto-derived by the runtime (`C-001`/`D-001`…), never write it yourself. `next` items are `{ command, reason, needs }` (reason/needs optional). Block-style YAML is preferred; quote text values containing commas:
 
 ```yaml
@@ -101,18 +107,18 @@ details: {}
 ```
 - Informal worker traces and intermediate logs may use `{run_dir}/evidence/` (lazily created, not gate-checked).
 - Temporary computation may use `{run_dir}/work/`; it is never an artifact and is never indexed.
-- `.workflow/sessions/{session_id}/` is the only durable Session identity and lineage authority. Execution and Run records beneath it are Runtime-owned; do not create private command Session/Execution directories or a second status/manifest truth source. Team message buses may exist only as transient coordination and never contain formal artifacts.
-- Protocol files (`sessions/<sid>/session.json`, Execution records, `run.json`, `artifacts.json`) are Runtime-owned and MUST NOT be edited directly. Do not confuse protocol `session.json` with a workflow artifact named `outputs/session.json`; the latter is a workflow-owned formal artifact registered by Run completion.
-- Consume upstream only from the canonical `upstream` map returned by `maestro run create`, `maestro run next`, or `maestro run brief`.
+- `.workflow/sessions/{session_id}/` is the only durable Session identity and lineage authority. Session/Run records beneath it are Runtime-owned; do not create private command Session directories or a second status/manifest truth source. Team message buses may exist only as transient coordination and never contain formal artifacts.
+- Protocol files (`sessions/<sid>/session.json`, `artifacts.json`, `evidence.json`, Run records) are Runtime-owned and MUST NOT be edited directly. Do not confuse protocol `session.json` with a workflow artifact named `outputs/session.json`; the latter is a workflow-owned formal artifact registered by Run completion.
+- Consume upstream only from the canonical `upstream` map returned by `maestro run next`, `maestro run create`, or `maestro run brief`.
 
 ### Artifact Compatibility Recovery
 
 The exact recovery order is **blocked consumer attempt -> needs-retry/cancel -> artifact inspect -> semantic republish -> explicit retry/next**.
 
 1. Stop after the consumer attempt reports an incompatible sealed Artifact. Do not allocate another consumer Run while the blocked attempt remains active.
-2. Return the consumer step to pending: on the Execution writer, complete the attempt with the fully fenced `maestro run complete ... --verdict needs-retry --json`; on `session/3.0`, use the fully fenced `maestro run cancel {consumer_run_id} ... --json`. Re-read authority and confirm there is exactly one pending consumer step with no allocated or active Run.
+2. Return the consumer step to pending: complete the attempt with the fully fenced `maestro run complete {consumer_run_id} --session {session_id} --participant {participant_id} --actor {actor_id} --request-id {request_id} --reason "<reason>" --expected-orchestration-revision {orchestration_revision} --expected-run-revision {run_revision} --verdict done_with_concerns --advance --json` and a blocking concern, or cancel it with the fully fenced `maestro run cancel {consumer_run_id} --session {session_id} --participant {participant_id} --actor {actor_id} --request-id {request_id} --reason "<reason>" --expected-orchestration-revision {orchestration_revision} --expected-run-revision {run_revision} --json`. Confirm the consumer step is pending with no allocated or active Run.
 3. Run `maestro artifact inspect {artifact_id} --session {session_id} --consumer {consumer_command} --alias {consumer_alias} --json`. This is read-only. Continue only when its exact assessment reports `classification=semantic_republish_required`.
-4. Run `maestro artifact republish {artifact_id} --session {session_id} --consumer {consumer_command} --alias {consumer_alias} --assessment-hash {assessment_hash} --request-id {request_id} --expected-artifact-revision {artifact_revision} --expected-session-revision {session_revision} --participant {participant_id} --actor {actor_id} --reason "{reason}" --evidence {evidence_ref} --json`. Use the inspect result unchanged; a conflict requires a fresh inspect and a new request ID. Republish creates a sealed compatibility Run, a derived Artifact, and an immutable receipt without mutating the source Artifact.
+4. Run `maestro artifact republish {artifact_id} --session {session_id} --assessment-hash {assessment_hash} --request-id {request_id} --expected-artifact-revision {artifact_revision} --expected-orchestration-revision {session_revision} --participant {participant_id} --actor {actor_id} --reason "{reason}" [--evidence {evidence_ref}] --json`. Use the inspect result unchanged; a conflict requires a fresh inspect and a new request ID. Republish creates a sealed compatibility Run, a derived Artifact, and an immutable receipt without mutating the source Artifact.
 5. Re-read the republish receipt, then explicitly allocate the retry through the mode's fenced `maestro run next ... --json` (or the explicit retry form returned by Runtime). Completion and republish never allocate the consumer retry implicitly.
 
 Migration preserves sealed source bytes and their raw registry role/alias semantics. Recovery MUST NOT use chain skip, Run rebind, a direct Artifact Registry edit/rewrite, or any source Artifact mutation; those actions destroy the compatibility evidence instead of repairing it.
@@ -129,69 +135,70 @@ Migration preserves sealed source bytes and their raw registry role/alias semant
 - Completion requires a fresh `knowledge-reconciliation/1.0` fence for both the candidate snapshot and project corpus. Exact same-store duplicates are automatically suppressed. Semantic duplicates, extensions, conflicts, and supersession candidates remain reviewable and may be sealed, but cannot be promoted until explicitly resolved with `maestro knowledge review {session_id} --resolve <candidate-id> --as <choice> [--target <knowledge-id>] --reason "<reason>"`.
 - Completion returns a `knowledge-candidate-receipt/1.0` with the exact staged candidate IDs and reconciliation summary. Use `maestro knowledge review {session_id}` for evidence-backed matches and copyable next commands; add `--refresh` for missing/stale receipts. Before promotion, refresh receipts with `maestro knowledge review {session_id} --refresh` as the TOCTOU fence. Promotion has two source-specific gates:
   - Run-source candidates require every source Run sealed and a fresh reconciliation receipt.
-  - A `session/2.0` session-source candidate does **not** require Session seal. At stage time it must bind immutable `candidate_version` + `content_hash`, the exact `session_id` + `observed_activity_revision`, and non-empty immutable `evidence_roots` + `evidence_root_hash`. Review/promotion must revalidate those candidate/evidence roots, the `candidate_snapshot_hash`, and a fresh session-level reconciliation receipt for the current `corpus_fingerprint`; final commit repeats the reconciliation/corpus check. Later unrelated Session activity does not invalidate the candidate unless its bound candidate content or evidence roots changed.
-  Promote selected IDs with repeatable `maestro knowledge promote {session_id} --candidate <candidate-id>`. `--all` promotes all eligible pending candidates (observed-only emits a warning); it skips unresolved and suppressed candidates. A confirmed `supersede` resolution lets promotion create the successor and link the evolution chain atomically. Neither Run completion nor Execution seal implicitly promotes or discards a backlog.
+  - A `session/3.0` session-source candidate does **not** require Session completion. At stage time it must bind immutable `candidate_version` + `content_hash`, the exact `session_id` + `orchestration_revision`, and non-empty immutable `evidence_roots` + `evidence_root_hash`. Review/promotion must revalidate those candidate/evidence roots, the `candidate_snapshot_hash`, and a fresh session-level reconciliation receipt for the current `corpus_fingerprint`; final commit repeats the reconciliation/corpus check. Later unrelated Session activity does not invalidate the candidate unless its bound candidate content or evidence roots changed.
+  Promote selected IDs with repeatable `maestro knowledge promote {session_id} --candidate <candidate-id>`. `--all` promotes all eligible pending candidates (observed-only emits a warning); it skips unresolved and suppressed candidates. A confirmed `supersede` resolution lets promotion create the successor and link the evolution chain atomically. Neither Run completion nor Session completion implicitly promotes or discards a backlog.
 - Knowledge pruning is separate maintenance: `maestro knowledge audit --prune` emits a deterministic plan, and `--apply` backs up files before soft deprecation/supersession. Usage frequency alone never prunes, and the workflow never physically deletes knowledge.
 
 ## Chain Effects and Proposals
 
-- Every Execution uses one ordered chain. There is no static/dynamic Session type and no strategy promotion; whether a step leaves the remaining Execution chain unchanged or proposes adaptation is decided by that step's Skill contract and output.
-- `execution_contract.orchestration.chain_effects` is the Run's complete mutation capability set. An empty set means the Skill cannot propose chain changes. Capability does not require a proposal on every Run.
-- A capable Skill may write `outputs/chain-proposal.json` with `_meta.kind=chain-proposal` and `_meta.schema=chain-proposal/1.0`. It may only contain operations allowed by the execution contract. The executor writes the artifact, runs `run check`, and returns; it never edits Execution state or invokes chain mutation commands.
-- The orchestrator owns proposal disposition after a clean `run check`: accept, reject, or request revision. Accept adds `--apply-proposal` to the fenced `maestro run complete ... --json` call, which applies the single discovered valid proposal atomically with completion inside the current Execution; reject omits it; revision re-attaches the same Run and asks the Skill to replace its proposal, then checks again. The path-based `--chain-proposal` option is legacy compatibility only.
-- Interactive mode asks before accepting. Under an explicit user-provided `-y`, an orchestrator may auto-accept only validated `insert`/`replace`/`skip` operations that stay in the current Execution's pending tail, remain within its declared budget, and align with the Session intent. Decision escalation, ambiguous intent/boundary changes, or low-confidence proposals are rejected or pause the Execution for review; `-y` never invents authority.
-- `maestro run complete` seals the immutable Run, applies the selected proposal, records the receipt, and advances the current Execution step in one transition. Its next action remains `suggest_only`; only an explicit fenced `maestro run next` allocates the following chain-bound Run.
-- Under `session/3.0`, `maestro run complete ... --advance` validates and publishes artifacts, completes the chain step, and seals the Run in one atomic mutation. `maestro run seal` is recovery-only for terminal pre-upgrade records; it is never the normal second half of completion. The returned next command remains suggest-only and requires an explicit `maestro run next` mutation.
+- Every Session uses one ordered chain (`session/3.0`). There is no static/dynamic Session type and no strategy promotion; whether a step leaves the remaining chain unchanged or proposes adaptation is decided by that step's Skill contract and output.
+- The chain is Session-owned. The complete mutation capability set is the `session chain insert|replace|skip` surface, plus decision gates recorded by `run decide`:
+  - `maestro session chain insert --session {session_id} --step-id <id> --command <name> [--arg <value> ...] [--after-step <id>] [--goal-ref <id>] [--stage <name>] [--decision-ref <id>] --participant ... --actor ... --request-id ... --reason ... --expected-orchestration-revision {orchestration_revision} --json`
+  - `maestro session chain replace --session {session_id} --step-id <id> --command <name> [--arg <value> ...] --participant {participant_id} --actor {actor_id} --request-id {request_id} --reason "<reason>" --expected-orchestration-revision {orchestration_revision} --json`
+  - `maestro session chain skip --session {session_id} --step-id <id> --participant {participant_id} --actor {actor_id} --request-id {request_id} --reason "<reason>" --evidence <ref> --expected-orchestration-revision {orchestration_revision} --json` (skip requires evidence via `--evidence`)
+- The orchestrator owns chain disposition. The executor writes its outputs, runs `run check`, and returns; it never edits Session chain state or invokes chain mutation commands.
+- Interactive mode asks before chain mutation. Under an explicit user-provided `-y`, an orchestrator may auto-apply only validated `insert`/`replace`/`skip` operations that stay in the pending tail, remain within its declared budget, and align with the Session objective. Decision escalation, ambiguous intent/boundary changes, or low-confidence proposals are rejected; `-y` never invents authority.
+- A step that declares `decision_ref` is gated: `maestro run next` refuses to advance past an unresolved gate until `maestro run decide` records `proceed`/`fix`. `escalate` marks the gate `escalated` (the Session stays open; advancement stays blocked until re-decided) — there is no paused Execution state.
+- `maestro run complete` with `--advance` seals the immutable Run, publishes its artifacts, and completes the chain step in one atomic transition. Its next action remains `suggest_only`; only an explicit fenced `maestro run next` allocates the following chain-bound Run. `maestro run seal` is recovery-only for terminal pre-upgrade records; it is never the normal second half of completion.
 
 ## Completion
 
-1. Run `maestro run check {run_id} --session {session_id} --json` and repair any blocking artifact or exit gate it reports. This read does not rotate or acquire the lease.
-2. When every gate is clean, `run check` emits a `finish` checklist - handoff frontmatter, knowledge relation/candidate staging, reconciliation review/annotation, verdict choice, plus norms declared by the workflow. Work through it before completing; it is prompt-layer guidance, never a blocking gate. Unresolved reconciliation is visible in the receipt and blocks later promotion, not Run sealing.
-3. Complete inside the current Execution with the exact cached authority:
+1. Run `maestro run check {run_id} --session {session_id} --json` and repair any blocking artifact or exit gate it reports. This read does not mutate state.
+2. When every gate is clean, `run check` emits the Run status, available transitions, and any knowledge reconciliation receipt. Work through the workflow's declared finish norms before completing; they are prompt-layer guidance, never a blocking gate. Unresolved reconciliation is visible in the receipt and blocks later promotion, not Run sealing.
+3. Complete inside the current Session with the exact cached authority:
 
-   `maestro run complete {run_id} --session {session_id} --execution {execution_id} --generation {generation} --request-id {request_id} --expected-execution-revision {execution_revision} --owner-id {owner_id} --owner-kind {owner_kind} --lease-epoch {lease_epoch} --lease-id {lease_id} --verdict {verdict} --summary "{summary}" [--evidence ...] [--decision ...] [--note ...] [--apply-proposal] --json`
+   `maestro run complete {run_id} --session {session_id} --participant {participant_id} --actor {actor_id} --request-id {request_id} --reason "<reason>" [--evidence <ref> ...] --expected-orchestration-revision {orchestration_revision} --expected-run-revision {run_revision} --verdict {done|done_with_concerns} [--summary "<summary>"] --advance --json`
 
-   Completion atomically registers `outputs/`, seals the Run, updates the current Execution chain/gates/revision, and stages handoff-derived knowledge candidates. It never promotes project knowledge, executes the suggested next action, creates another Run, or changes permanent Session lifecycle.
+   `--advance` is required: completion atomically validates and publishes `outputs/` into the artifact registry, seals the Run, completes the chain step, and stages handoff-derived knowledge candidates. It never promotes project knowledge, executes the suggested next action, creates another Run, or changes permanent Session lifecycle.
    - **Evidence path base**: `--evidence <path>` / `--artifact <path>` resolve relative paths against `{run_dir}`, not shell CWD, and must stay inside the Run directory.
-   - `done` / `done-with-concerns` enforce required success artifacts and exit gates.
-   - `needs-retry` / `blocked` close the failed attempt without requiring success artifacts. `blocked` pauses the Execution and releases its lease; do not keep using the old claim.
-4. Parse the `run-response/1.1` result, verify the exact locator/generation did not change, and replace cached revisions with its returned fence. If the continuation is automatic and the Execution remains active with a valid claim, invoke:
+   - `done` / `done_with_concerns` are the only completion verdicts on the v3 surface.
+4. Parse the `run-response/1.2` result, verify the exact locator did not change, and replace cached revisions with its returned fence. If the chain has another pending step and no open gate, invoke:
 
-   `maestro run next --session {session_id} --execution {execution_id} --generation {generation} --request-id {request_id} --expected-execution-revision {execution_revision} --owner-id {owner_id} --owner-kind {owner_kind} --lease-epoch {lease_epoch} --lease-id {lease_id} --json`
+   `maestro run next --session {session_id} --participant {participant_id} --actor {actor_id} --request-id {request_id} --reason "<reason>" [--evidence <ref> ...] --expected-orchestration-revision {orchestration_revision} --json`
 
-   `suggest_only` describes Runtime passivity; it is not an implicit user-confirmation gate. Re-read each receipt before the next mutation. Never copy an old command carrying stale revisions.
-5. For a decision node, submit the evaluator result through the same current Execution:
+   `suggest_only` describes Runtime passivity; it is not an implicit user-confirmation gate. Re-read each receipt before the next mutation. Never copy an old command carrying stale revisions. When the chain has no pending step, terminate with `maestro session complete ... --json` (below).
+5. For a decision node, submit the evaluator result through the current Session:
 
-   `maestro run decide {point_id} --session {session_id} --execution {execution_id} --generation {generation} --request-id {request_id} --expected-execution-revision {execution_revision} --owner-id {owner_id} --owner-kind {owner_kind} --lease-epoch {lease_epoch} --lease-id {lease_id} --verdict {verdict} --confidence {confidence} [--summary "..."] [--evidence ...] --json`
+   `maestro run decide {point_id} --session {session_id} --participant {participant_id} --actor {actor_id} --request-id {request_id} --reason "<reason>" [--evidence <ref> ...] --expected-orchestration-revision {orchestration_revision} --verdict {proceed|fix|escalate} [--confidence {high|medium|low}] [--summary "..."] [--after-step <id>] --json`
 
 6. Read the Run completion receipt. If it contains candidate IDs or reconciliation warnings, apply the **Review Presentation Protocol**: present each candidate needing a disposition with title, content summary, evidence anchors, evidence-backed matches, and recommended disposition plus rationale; collect the user's decisions, then execute the resolution.
    - Happy path: `maestro knowledge promote {session_id} --resolve <candidate-id> --as <choice> [--target <knowledge-id>] --reason "<reason>"`.
    - Compatibility fallback for missing/stale receipt repair, batch triage, or re-presentation: `maestro knowledge review {session_id} --resolve <candidate-id> --as <choice> [--target <knowledge-id>] --reason "<reason>"`.
-7. Report Run success only after completion succeeds. A sealed Run and its artifacts are immutable; later Runs or later Execution generations reuse eligible sealed outputs through `upstream` rather than copying or reopening them.
+7. Report Run success only after completion succeeds. A sealed Run and its artifacts are immutable; later Runs reuse eligible sealed outputs through `upstream` rather than copying or reopening them.
 
-## Execution Recovery and Seal
+## Session Lifecycle End and Recovery
 
-- On a revision/lease conflict or uncertain mutation, stop publishing, discard any unverified cached authority, and run `maestro execution status --session {session_id} --execution {execution_id} --json`. Do not force, infer a generation, or replay with changed inputs.
-- A paused Execution is unleased. Resolve each exact blocker with `maestro execution resolve --session {session_id} --execution {execution_id} --request-id {request_id} --expected-execution-revision {execution_revision} --actor {actor} --reason "{reason}" --evidence {evidence} (--decision {point}|--step {step}) --disposition {value} --json`. Refresh the revision after every receipt.
-- After all blockers are clear, reacquire authority with `maestro execution resume --session {session_id} --execution {execution_id} --request-id {request_id} --expected-execution-revision {execution_revision} --expected-activity-revision {activity_revision} --expected-lease-epoch {lease_epoch} --execution-owner {owner_id} --owner-kind {owner_kind} --actor {actor} --reason "{reason}" --evidence {evidence} --json`. Retain the newly returned claim and epoch; the pre-pause claim stays invalid.
-- When every Run is sealed, every chain/decision step terminal, no request claimed, goals satisfied, and Execution gates clean, finish the bounded generation with:
+- On an orchestration-revision conflict or uncertain mutation, stop publishing, discard any unverified cached authority, and run `maestro session status --session {session_id} --json` (or `maestro run check {run_id} ...`). Do not force, infer a run, or replay with changed inputs.
+- A Run that must stop early is transitioned, not paused: `maestro run transition {run_id} running|blocked|failed --session {session_id} ... --expected-run-revision {run_revision} --json`, or `maestro run cancel {run_id} --session {session_id} ... --json`. A cancelled/failed Run leaves the chain step pending for a later fenced `maestro run next` retry; there is no Execution lease to release.
+- An `escalate` decision blocks chain advancement until the gate is re-decided (`run decide ... --verdict proceed|fix`). There is no paused Session state and no `execution resolve/resume` surface.
+- When every Run is sealed, every chain step terminal (completed or skipped with evidence), and no open decision gate remains, finish the Session with:
 
-  `maestro execution seal --session {session_id} --execution {execution_id} --request-id {request_id} --expected-execution-revision {execution_revision} --expected-activity-revision {activity_revision} --execution-owner {owner_id} --owner-kind {owner_kind} --owner-epoch {lease_epoch} --lease-id {lease_id} --actor {actor} --reason "{reason}" --evidence {evidence} --outcome {done|done_with_concerns|failed} --summary "{summary}" --json`
+  `maestro session complete --session {session_id} --participant {participant_id} --actor {actor_id} --request-id {request_id} --reason "<reason>" [--evidence <ref> ...] --expected-orchestration-revision {orchestration_revision} --json`
 
-  Verify the returned `execution-seal-receipt/1.0`, stop heartbeat, and discard the claim. The Execution is immutable after seal; the durable Session identity remains available for a later higher generation.
+  Verify the returned transition receipt, then stop. The completed Session identity remains durable and may be **unarchived** (`maestro session unarchive ... --json`) for a later extension; archived Sessions cannot host new Runs. `maestro session archive` / `maestro session unarchive` are the only archive-state mutations. Legacy Sessions are folded into `session/3.0` with `maestro session migrate [--session <id>|--all] --to-v3 ... --json`; `maestro run seal {run_id}` is a deprecated recovery-only seal for already-terminal pre-upgrade Run records.
 
-## Legacy `session/1.x` Compatibility Branch
+## Legacy `session/1.x/2.x` Compatibility Branch
 
-This branch exists only for an explicitly selected old CLI/schema that lacks the negotiated `session/2.0 + execution/1.0 + core_execution_lease + run-response/1.1` contract. It is not canonical authority for new runtimes.
+This branch exists only for an explicitly selected old CLI/schema that lacks the negotiated `session/3.0 + run/3.0` minimal protocol (or its pre-v3 `session/2.0 + execution/1.0 + core_execution_lease + run-response/1.1` contract). It is not canonical authority for new runtimes.
 
-- Old runtimes may use `maestro session start`, `maestro session next --inline-brief`, `maestro session done`, `maestro session decide`, `maestro session resolve`, `maestro session resume`, and `maestro session seal`, or their `maestro run ...` aliases, with `run-response/1.0` and Session revisions.
-- A legacy Session may have durable running/paused/sealed state. Do not project those states onto `session/2.0`, and do not use this branch merely because a new-runtime claim was lost.
-- `maestro session seal` and `maestro run seal-session` are deprecated bridges when an Execution exists; new-runtime completion always uses `maestro execution seal`.
-- Historical `session/1.x` session-source promotion may retain its old sealed-Session rule. `session/2.0` promotion always uses the immutable candidate/evidence/corpus receipt gate above.
+- Old runtimes may use `maestro execution start/resolve/resume/seal`, `maestro session start`, `maestro session next --inline-brief`, `maestro session done`, `maestro session decide`, `maestro session resolve`, `maestro session resume`, and `maestro session seal`, or their `maestro run ...` aliases, with `run-response/1.0`/`1.1`, Session identity/activity revisions, Execution generations, and the private core Execution lease claim. `maestro run create`/`maestro run complete` in that era carried `--execution {execution_id} --generation {generation} --expected-identity-revision/--expected-activity-revision/--expected-execution-revision --owner-id/--owner-kind/--lease-epoch/--lease-id`, and completion atomically applied a `chain-proposal/1.0` via `--apply-proposal` inside the current Execution.
+- A legacy Execution may have running/paused/sealed state and own the chain/gates/decisions/active Run/revision and the core lease; at most one Execution per Session was non-sealed. Do not project those states onto `session/3.0`, and do not use this branch merely because a run was lost.
+- `maestro execution seal` (verifying `execution-seal-receipt/1.0`), `maestro session seal`, and `maestro run seal-session` are deprecated bridges; new-runtime completion uses `run complete --advance` + `session complete`.
+- Historical `session/1.x`/`session/2.0` session-source promotion may retain its old sealed-Session rule; the canonical `session/3.0` promotion always uses the immutable candidate/evidence/corpus receipt gate above.
 
 ## Legacy/Admin Compatibility
 
-`maestro run recall-confirm`, `run fork`, `run import`, `run new`, and `run rebind` are deprecated admin-only compatibility commands. They may remain callable while legacy records exist, but normal topic resolution, output reuse, recall recommendations, and next-action routing MUST NOT invoke or recommend them. They provide no force bypass; durability and recovery internals remain Runtime-owned.
+`maestro run recall-confirm`, `run fork`, `run import`, `run new`, `run rebind`, `run prepare <step>`, and `session create --chain-file` are deprecated admin-only compatibility commands. They may remain callable while legacy records exist, but normal topic resolution, output reuse, recall recommendations, and next-action routing MUST NOT invoke or recommend them. They provide no force bypass; durability and recovery internals remain Runtime-owned.
 
 **Workflow-specific finish norms**: declare a `finish:` list in the workflow file's YAML frontmatter; each entry is one norm line appended to the `run check` finish checklist.
 

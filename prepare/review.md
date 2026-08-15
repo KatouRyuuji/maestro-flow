@@ -4,10 +4,10 @@ description: Perform layered multi-dimensional code review of executed changes, 
 argument-hint: '[scope] [--level quick|standard|deep] [--dimensions <list>] [--skip-specs]'
 contract:
   consumes:
-  - kind: execution
+  - kind: artifact
     alias: current-execution
     required: true
-    schema: execution/1.0
+    schema: artifacts/1.0
     role: primary
   - kind: verification
     alias: latest-verification
@@ -115,3 +115,7 @@ Migration must preserve the sealed source bytes and raw registry role/alias sema
 - `dimension-coverage`: the dimensions required by the level all produced findings (quick = correctness + security; standard/deep = all 6), and each finding is anchored to `file:line` with severity/evidence/impact/recommendation.
 - `severity-triaged`: every finding has a triaged severity and there are no unhandled UNMET spec-compliance criteria; the PASS/WARN/BLOCK verdict is driven by finding data, not preference.
 - `repair-routing`: BLOCK is followed by either a formal decision node or a validated `chain-proposal/1.0`; without either, complete the Run with a failure verdict instead of advancing the chain.
+
+## Legacy `session/1.x/2.x` Compatibility Branch
+
+deprecated/legacy-only：v2 运行时以 `kind: execution / schema: execution/1.0`（alias `current-execution`）消费当前 Execution 状态记录（change manifest 等）；v3 下不存在 Execution 记录，等价消费为 Session artifact registry（`artifacts/1.0`）。

@@ -4,16 +4,16 @@
 @~/.maestro/workflows/run-mode.md
 @~/.maestro/workflows/orchestrator-run-loop.md
 </required_reading>
-# Execution Goal Amendment Flow
+# Session Chain Goal Amendment Flow
 
-The filename is retained for compatibility. Under `session/2.0`, goal/boundary/decomposition and pending-tail changes belong to the exact current Execution, not durable Session identity.
+The filename is retained for compatibility. Under `session/3.0`, goal/boundary/decomposition and pending-tail changes belong to the Session chain and its policy, never to a separate Execution or durable Session metadata command. Runs use the `run/3.0` schema driven by fenced `maestro run next`/`maestro run complete`.
 
 ## 1. Capability and Snapshot
 
-1. Run `maestro capabilities --json`; require the canonical `session/2.0 + execution/1.0 + core_execution_lease + run-response/1.1` contract or fail closed.
-2. Resolve exactly one compatible Session through read-only recall, then read `maestro execution status --session {session_id} --execution {execution_id} --json`.
-3. Retain exact `session_id + execution_id + generation`, Session identity/activity revisions, `--expected-execution-revision`, and the private `--owner-id + --owner-kind + --lease-epoch + --lease-id` claim. Never infer current authority from Session status.
-4. Snapshot current Execution goals, boundary contract, sealed Run handoffs, pending chain, gates, and revision. A sealed Execution is immutable; amend a new higher generation instead. An archived Session cannot start one.
+1. Run `maestro capabilities --json`; require the v3 six-key exact contract (`features.session_run_minimal_v3/entity_revision_cas/participant_identity/request_receipts_v2 = true`, `execution_lease/operation_registry = false`, `session_schema_writes` containing `session/3.0`, `execution_schema_writes` empty, `run_response_writes` containing `run-response/1.2`) or fail closed.
+2. Resolve exactly one compatible Session through read-only recall, then read `maestro session status --session {session_id} --json`.
+3. Retain exact `session_id + orchestration_revision` (plus `run_revision` for run-target mutations) and `--participant + --actor` identity. Never infer current authority from Session status.
+4. Snapshot current Session objective, boundary contract, sealed Run handoffs, pending chain, decisions, and revision. A completed/archived Session cannot host new Runs until unarchived.
 
 ## 2. Parse and Assess
 
@@ -21,32 +21,40 @@ Use remaining `--amend` text as `change_request`; ask when empty. Classify `modi
 
 Assessment is read-only. Completed Run evidence remains immutable. High risk always requires explicit confirmation; `-y` cannot bypass it.
 
-## 3. Build One Typed Proposal
+## 3. Build the Pending-Tail Chain Change
 
-Construct the complete replacement decomposition plus pending-tail changes in memory:
+Construct the pending-tail chain change in memory:
 
 - Append one `CHG-NNN` entry with before/after goals, reason, risk, and evidence.
 - Supersede only unfinished affected goals; completed goals remain immutable evidence.
 - Give modified goals versioned IDs and added goals the next `G{n}` ID.
 - Add boundaries without deleting historical constraints.
-- Preserve all required `execution_criteria`, `goals`, and `changelog` keys.
+- Preserve the chain step shape: `command/args?/stage?/goal_ref?/decision_ref?`.
 
-Do not edit protocol JSON or issue direct chain mutations. Dispatch a planning Skill inside the same exact Execution through fenced `maestro run next` (or an Execution-aware `maestro run create` only when the current Execution contract explicitly permits an ad-hoc amendment Run). The Skill writes one typed proposal allowed by its Execution contract, then runs `maestro run check`.
+Do not edit protocol JSON or issue direct chain mutations from a Skill. The orchestrator applies the pending-tail change through the fenced chain surface after Skill assessment:
 
-## 4. Commit Inside the Current Execution
+`maestro session chain replace --session {session_id} --step-id <id> --command <name> --participant {participant_id} --actor {actor_id} --request-id {request_id} --reason "{reason}" --expected-orchestration-revision {orchestration_revision} --json`
 
-After confirmation, accept exactly one valid proposal by adding `--apply-proposal` to the exact fenced completion call:
+or `maestro session chain insert ... --step-id <id> --command <name> [--arg <value> ...] [--after-step <id>] [--goal-ref <id>] [--stage <name>] [--decision-ref <id>] --participant ... --actor ... --request-id ... --reason ... --expected-orchestration-revision ... --json` for added steps. Skipping a non-running step uses `maestro session chain skip --step-id <id> ... --json` with evidence.
 
-`maestro run complete {run_id} --session {session_id} --execution {execution_id} --generation {generation} --request-id {request_id} --expected-execution-revision {execution_revision} --owner-id {owner_id} --owner-kind {owner_kind} --lease-epoch {lease_epoch} --lease-id {lease_id} --verdict done --apply-proposal --json`
+## 4. Commit the Amendment
 
-Runtime must atomically validate and update the current Execution decomposition/chain/gates and return `run-response/1.1`. Consume its fresh locator/fence before continuing. Reject by omitting `--apply-proposal` and recording a concern; revise by reattaching the same Run.
+After confirmation, dispatch the amended step through the exact fenced call:
 
-If the installed Runtime cannot express the complete goal/decomposition replacement as an Execution-owned typed proposal, stop with a capability blocker. Do not silently call a Session metadata command in the canonical branch.
+`maestro run next --session {session_id} --participant {participant_id} --actor {actor_id} --request-id {request_id} --reason "{reason}" --expected-orchestration-revision {orchestration_revision} --json`
+
+and complete it with:
+
+`maestro run complete {run_id} --session {session_id} --participant {participant_id} --actor {actor_id} --request-id {request_id} --reason "{reason}" --expected-orchestration-revision {orchestration_revision} --expected-run-revision {run_revision} --verdict {done|done_with_concerns} --advance --json`
+
+Runtime must atomically validate and seal the Run plus advance the chain step and return `run-response/1.2`. Consume its fresh `orchestration_revision` before continuing. Reject by recording a blocking concern; revise by re-reading `maestro session status` and applying another fenced chain mutation.
+
+If the installed Runtime cannot express the complete goal/decomposition replacement as a Session-chain pending-tail change, stop with a capability blocker. Do not silently call a Session metadata command in the canonical branch.
 
 ## 5. Continue
 
-Display amendment ID, risk, superseded/added goal counts, and proposal disposition. Re-read exact `maestro execution status`, then continue through fenced `maestro run next`. Recovery remains `maestro execution resolve` -> `maestro execution resume`; final completion remains `maestro execution seal`.
+Display amendment ID, risk, superseded/added goal counts, and chain disposition. Re-read exact `maestro session status`, then continue through fenced `maestro run next`. Recovery reads `maestro run check {run_id} --session {session_id} --json` and transitions/cancels the stuck Run; final completion remains `maestro session complete`.
 
-## Legacy `session/1.x` Compatibility Branch
+## Legacy `session/1.x/2.x` Compatibility Branch
 
-Only an explicitly selected old CLI/schema may use `maestro session status`, `maestro session meta update --decomposition-file`, `maestro session next --inline-brief`, ad-hoc legacy `maestro run create`, and `maestro session done --apply-proposal`. These Session lifecycle/revision commands are compatibility authority only and must never replace a lost or stale new-runtime Execution claim.
+Only an explicitly selected old CLI/schema (`session/2.0 + execution/1.0 + core_execution_lease + run-response/1.1`) may use `maestro execution status/resolve/resume/seal`, `maestro session meta update --decomposition-file`, `maestro session next --inline-brief`, ad-hoc legacy `maestro run create`, and `maestro session done --apply-proposal`. These Session lifecycle/revision commands are compatibility authority only and must never replace a lost or stale new-runtime `orchestration_revision` claim.

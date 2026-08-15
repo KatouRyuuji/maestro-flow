@@ -14,10 +14,10 @@ contract:
     required: false
     schema: plan/1.0
     role: primary
-  - kind: execution
+  - kind: artifact
     alias: current-execution
     required: false
-    schema: execution/1.0
+    schema: artifacts/1.0
     role: primary
   - kind: review-findings
     alias: latest-review
@@ -133,3 +133,7 @@ Context injection (optional, may continue if missing):
 
 - `coverage-met`: two components must both hold — (1) every mapped scenario source (requirements, tool steps, review findings, debug root causes) has a corresponding UAT scenario, and (2) the Readiness Gate passes (scenario_coverage ≥ 40%). `test-results.json` is written.
 - `pass-rate-met`: each scenario has a real observed outcome (timeout / no-response / missing-entry may never be scored as pass); under `--frontend-verify`, any `[UI-observable]` failure or a write endpoint with no UI entry forces NEEDS_RETRY.
+
+## Legacy `session/1.x/2.x` Compatibility Branch
+
+deprecated/legacy-only：v2 运行时以 `kind: execution / schema: execution/1.0`（alias `current-execution`）消费当前 Execution 状态记录；v3 下不存在 Execution 记录，等价消费为 Session artifact registry（`artifacts/1.0`）。
