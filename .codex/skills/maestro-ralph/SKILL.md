@@ -41,35 +41,35 @@ If any required file above was not expanded into context by the host, or its con
 </deferred_reading>
 
 <purpose>
-Apply retry, confidence, drift, goal-audit and stopping policy over the exact current Execution of a durable topic Session. Ralph does not own a CLI driver, private Session type, host-only lease, or second state store; it follows the shared Execution-aware Run loop. Primary path: locate and drive an existing Execution. Creating Session identity plus a bounded Execution is a fallback when no compatible identity exists.
+Apply retry, confidence, drift, goal-audit and stopping policy over the exact current Session chain of a durable topic Session. Ralph does not own a CLI driver, private Session type, host-only lease, or second state store; it follows the shared session/3.0 Run loop. Primary path: locate and drive an existing Session. Opening a Session is a fallback when no compatible identity exists.
 </purpose>
 
 <interface>
 Only these user flags are accepted:
 
 - `-y` — skip all confirmation/clarification interactions, use default choices. Does NOT change data semantics (no auto-deferred decisions). Never bypasses: high-risk classification, confidence <60, ambiguity requiring user input, failed gates, or drift escalation.
-- `-c` — continue the unique compatible Session's exact current Execution; paused Execution enters audited recovery.
+- `-c` — continue the unique compatible Session's exact current chain; a stuck Run enters `run check` / `run transition` / `run cancel` recovery.
 - `--amend` — amend the exact current Execution goal; remaining text is the change request.
 
 All remaining text is intent. No engine, roadmap, script, depth, role, tier, platform, resume or dry-run flags are parsed. Those choices belong to Skill contracts and Runtime.
 </interface>
 
 <invariants>
-1. **Ralph owns policy, not authority** — locate Session identity -> bind exact Execution/generation/claim -> dispatch -> check -> drift/proposal evaluation -> complete/decide -> next -> seal Execution.
+1. **Ralph owns policy, not authority** — locate Session identity -> bind exact session_id + orchestration_revision -> dispatch -> check -> drift evaluation -> complete/decide -> next -> session complete.
 2. **One executor per Run** — dispatch one unnamed `run-executor`; nested execution strategy belongs to the Skill.
 3. **Thin executor** — executor executes and checks one Run but never receives the private claim or completes it.
-4. **Session is identity; Execution is lifecycle** — Session is a durable topic grouping/index; Execution owns chain, gates, decisions, revision, pause/resume/seal, and core lease; Runs own immutable attempts and outputs.
+4. **Session owns chain and lifecycle** — Session is a durable topic grouping/index that owns the chain, decisions, artifact registry, and the orchestration_revision CAS fence; Runs own immutable attempts and outputs. There is no Execution, no lease, no pause/resume/seal.
 5. **Canonical upstream map** — same-Session sealed outputs enter only through birth/brief; no manual context reconstruction.
-6. **Runtime mutation authority** — protocol JSON is never written directly; canonical mutation uses exact Execution-aware `maestro execution ...` / `maestro run ...` commands and `run-response/1.1`.
-7. **Proposal governance** — Skill proposes, Ralph evaluates budget/confidence/intent, Runtime applies atomically inside the current Execution.
+6. **Runtime mutation authority** — protocol JSON is never written directly; canonical mutation uses exact `maestro session ...` / `maestro run ...` commands and `run-response/1.2` envelopes.
+7. **Proposal governance** — Skill proposes, Ralph evaluates budget/confidence/intent, Runtime applies atomically inside the Session chain (`session chain insert|replace|skip`).
 8. **No prompt fix templates** — fix/review/goal gaps dispatch a Skill that may emit a proposal.
 9. **Decision receipts are single-source** — decisions land through fenced `maestro run decide`, never direct append.
 10. **Auto is bounded** — `-y` cannot bypass high risk, confidence <60, ambiguity, escalation, failed gates or reground halt.
 11. **Legacy compatibility is out of band** — Session lifecycle aliases are allowed only by the labeled `session/1.x` branch in the shared loop.
-12. **Generation terminality** — a sealed Execution never resumes; the Session identity may host a later higher generation.
-13. **Decision is mandatory** — every Ralph-created Execution chain contains at least one formal decision node before Execution seal; Run completion never substitutes for `run decide`.
-14. **Completion and decision both continue** — after successful Execution-aware `run complete --json` or `run decide --json`, consume the fresh fence and immediately execute any satisfiable automatic continuation in the same turn.
-15. **Capability negotiation is mandatory** — before mutation, call `maestro capabilities --json`; require `session/2.0`, `execution/1.0`, `core_execution_lease`, and `run-response/1.1`, otherwise fail closed or enter the explicitly selected legacy branch.
+12. **Session terminality** — a completed Session never hosts new Runs until unarchived; the Session identity may be unarchived and extended.
+13. **Decision is mandatory** — every Ralph-created Session chain contains at least one formal decision node before `session complete`; Run completion never substitutes for `run decide`.
+14. **Completion and decision both continue** — after successful `run complete --json` or `run decide --json`, consume the fresh `orchestration_revision` and immediately execute any satisfiable automatic continuation in the same turn.
+15. **Capability negotiation is mandatory** — before mutation, call `maestro capabilities --json`; require the v3 six-key exact contract (`session_run_minimal_v3`/`entity_revision_cas`/`participant_identity`/`request_receipts_v2` true, `execution_lease`/`operation_registry` false, `session_schema_writes` containing `session/3.0`, `execution_schema_writes` empty, `run_response_writes` containing `run-response/1.2`), otherwise fail closed or enter the explicitly selected legacy branch.
 </invariants>
 
 <state_machine>
@@ -154,7 +154,7 @@ All command syntax and lifecycle mechanics follow `orchestrator-run-loop.md` and
 
 ### A_RESOLVE
 
-Read-only lookup via `run recall`. Explicit birth `session_id + execution_id + generation + run_id` wins. Multiple candidates require user selection; historical similarity never grants authority.
+Read-only lookup via `run recall`. Explicit birth `session_id + run_id` wins. Multiple candidates require user selection; historical similarity never grants authority.
 
 ### A_INFER
 
@@ -251,7 +251,7 @@ Read `ralph-amend-goal.md`. High risk always asks. Pending-tail changes come fro
 
 ### A_DONE
 
-When every Run is sealed, every decision is terminal, every goal is done, no request is claimed, and Execution gates are clean -> `maestro execution seal` with the exact locator/revision/core claim. Session identity remains reusable.
+When every Run is sealed, every decision is terminal, every goal is done, no request is claimed, and the chain is complete -> `maestro session complete` with the exact `session_id + orchestration_revision`. Session identity remains reusable.
 
 </actions>
 
@@ -260,8 +260,8 @@ When every Run is sealed, every decision is terminal, every goal is done, no req
 <success_criteria>
 - Public flags are exactly `-y`, `-c`, `--amend`.
 - No legacy Ralph driver, private Session type, or independent Skills CLI appears in normal flow.
-- Each Run follows Execution-aware `run next` -> execute -> `run check` -> fenced `run complete --verdict`; backtracking uses `run brief`. Every decision uses fenced `run decide`.
-- Final completion uses `maestro execution seal`; Session identity is never permanently sealed in the canonical branch.
+- Each Run (`run/3.0`) follows `run next` -> execute -> `run check` -> fenced `maestro run complete --verdict --advance`; backtracking uses `run brief`. Every decision uses fenced `run decide`.
+- Final completion uses `maestro session complete`; Session identity is never permanently sealed in the canonical branch.
 - Proposal acceptance is pathless from Ralph's perspective and atomic with Run completion.
 - Retry, confidence, drift, goal audit, recovery and terminal semantics remain explicit.
 </success_criteria>

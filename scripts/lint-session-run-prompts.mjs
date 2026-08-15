@@ -334,7 +334,7 @@ if (existsSync(canonicalRalphCommand)) {
   const text = readFileSync(canonicalRalphCommand, 'utf8');
   for (const token of [
     'Decision is mandatory',
-    'every Ralph-created Execution chain',
+    'every Ralph-created Session chain',
     'run decide --json',
     'run complete --json',
   ]) {

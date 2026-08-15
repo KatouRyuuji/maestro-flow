@@ -128,8 +128,9 @@ Before completion, put accepted decisions/locked constraints in `report.md`. If 
 
 ```bash
 maestro knowledge stage knowhow "<title>" "<content>" --run <run_id>
-# Then use the complete fenced `maestro run complete` and `maestro execution seal`
-# commands from run-mode.md with the current locator, fence, and private claim.
+# Then use the complete fenced `maestro run complete ... --advance` and, when the
+# chain is terminal, `maestro session complete` from run-mode.md with the current
+# locator, orchestration_revision, and identity.
 ```
 
 Display: `Companion done. Run: {run_id} | Evidence: {path}`

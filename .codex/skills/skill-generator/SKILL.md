@@ -243,7 +243,7 @@ Phase 5: Validation & Documentation
    - Generate: README.md (usage instructions)
    - Generate: validation-report.json (completeness check)
    - Output: Final documentation
-   - Close the Run: `maestro run check {run_id}` -> repair any reported gate -> if self-started, use the complete fenced `maestro run complete` and `maestro execution seal` commands from `run-mode.md`; if dispatched, return to the claim-holding orchestrator. Report success only after the authoritative completion path succeeds.
+   - Close the Run: `maestro run check {run_id}` -> repair any reported gate -> if self-started, use the complete fenced `maestro run complete ... --advance` (and `maestro session complete` when the chain is terminal) from `run-mode.md`; if dispatched, return to the orchestrator. Report success only after the authoritative completion path succeeds.
 ```
 
 **Execution Protocol**:

@@ -75,11 +75,11 @@ Note: maestro-next suggests session-seal when 'Tests green + active session'. Th
    - `-y` may run `--all`, which promotes all eligible candidates (observed-only emits a warning) and skips review-required and suppressed candidates. It MUST NOT auto-resolve a candidate without explicit user selection.
 8. For a replacement candidate, confirm `--as supersede` and then promote it; promotion creates the successor and links the evolution chain. For coexisting valid rules, confirm `related` or `conflict` as appropriate. Never direct-write a candidate that was already promoted successfully.
 
-### Step 3: Seal Execution
+### Step 3: Complete the Session
 
-1. Resolve the exact current Execution and private claim from the retained `run-response/1.1` state.
-2. Call the complete `maestro execution seal` command from `run-mode.md`, supplying the exact Session/Execution locator, request ID, Execution and activity revisions, owner/epoch/lease claim, audit actor/reason/evidence, outcome, summary, and `--json`.
-3. Verify `execution-seal-receipt/1.0`; never mutate Session lifecycle state or edit runtime-owned protocol JSON.
+1. Resolve the exact Session and current `orchestration_revision` from the retained `run-response/1.2` state.
+2. When the chain is terminal (every Run sealed, every decision terminal), call the complete `maestro session complete` command from `run-mode.md`, supplying the exact `session_id`, `--participant`, `--actor`, `--request-id`, `--reason`, `--expected-orchestration-revision`, and `--json`.
+3. Verify the transition receipt; never mutate Session lifecycle state or edit runtime-owned protocol JSON.
 
 ### Step 4: DAG Progression
 

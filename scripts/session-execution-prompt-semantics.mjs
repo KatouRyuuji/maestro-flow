@@ -176,8 +176,9 @@ const SUPPORT_PROFILES = [
     id: 'ralph-command-source',
     path: '.claude/commands/maestro-ralph.md',
     required: [
-      'maestro capabilities --json', 'session/2.0', 'execution/1.0', 'run-response/1.1',
-      'core_execution_lease', 'execution_id', 'generation', 'maestro execution seal',
+      'maestro capabilities --json', 'session/3.0', 'run/3.0', 'run-response/1.2',
+      'session_run_minimal_v3', 'orchestration_revision', 'maestro session complete',
+      'maestro run complete',
     ],
     forbidden: [
       { description: 'Session terminal state', pattern: /S_DONE\s+[^\n]*seal Session|Session auto-paused/i },
@@ -454,8 +455,9 @@ export function inspectExecutionPromptMirrors(root = process.cwd()) {
   const sourcePath = '.claude/commands/maestro-ralph.md';
   if (!existsSync(join(root, sourcePath))) return [];
   const required = [
-    'maestro capabilities --json', 'session/2.0', 'execution/1.0', 'run-response/1.1',
-    'core_execution_lease', 'execution_id', 'generation', 'maestro execution seal',
+    'maestro capabilities --json', 'session/3.0', 'run/3.0', 'run-response/1.2',
+    'session_run_minimal_v3', 'orchestration_revision', 'maestro session complete',
+    'maestro run complete',
   ];
   const forbidden = [
     { description: 'Session terminal state', pattern: /S_DONE\s+[^\n]*seal Session|Session auto-paused/i },
