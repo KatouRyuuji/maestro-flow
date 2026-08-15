@@ -358,10 +358,10 @@ describe('Session schema compatibility', () => {
     expect(parsedRun).not.toHaveProperty('gate_refs');
   });
 
-  it('defaults to session/1.3 and requires a coherent explicit 2.0 feature selection', () => {
+  it('defaults to session/3.0 and requires a coherent explicit 2.0 feature selection', () => {
     expect(DEFAULT_SESSION_SCHEMA_SELECTION).toEqual({
       schema_version: 'session-schema-selection/1.0',
-      writer: 'session/1.3',
+      writer: 'session/3.0',
       features: { session_statusless: false },
     });
     const enabled = {

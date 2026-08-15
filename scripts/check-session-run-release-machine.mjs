@@ -75,6 +75,19 @@ function enableStatusless(projectRoot) {
   }, null, 2)}\n`, 'utf8');
 }
 
+function enableV13(projectRoot) {
+  const workflowRoot = join(projectRoot, '.workflow');
+  mkdirSync(workflowRoot, { recursive: true });
+  writeFileSync(join(workflowRoot, 'config.json'), `${JSON.stringify({
+    session_schema: {
+      schema_version: 'session-schema-selection/1.0',
+      writer: 'session/1.3',
+      features: { session_statusless: false },
+    },
+  }, null, 2)}
+`, 'utf8');
+}
+
 function enableV3(projectRoot) {
   const workflowRoot = join(projectRoot, '.workflow');
   mkdirSync(workflowRoot, { recursive: true });
@@ -388,6 +401,9 @@ async function main() {
   const projectRoot = mkdtempSync(join(tmpdir(), 'maestro-release-machine-'));
   const proofs = new Set();
   try {
+    // The v2 proofs below exercise the legacy writer surface; the default
+    // writer is now session/3.0, so pin an explicit session/1.3 workspace.
+    enableV13(projectRoot);
     const { SessionStore } = await import('../dist/src/run/store.js');
     const { createChainSession } = await import('../dist/src/run/chain-admin.js');
     const store = new SessionStore(projectRoot);
@@ -615,6 +631,7 @@ async function main() {
     assert.match(nonIdentityError.error?.message ?? '', /session create --chain requires/);
 
     const migrationRoot = join(projectRoot, 'statusless-migration');
+    enableV13(migrationRoot);
     const migrationLegacy = parseEnvelope(invoke([
       'run', 'create', 'release-execution', '--session', 'release-migrate',
       '--intent', 'migration source', '--json', '--workflow-root', migrationRoot,
@@ -950,6 +967,7 @@ async function main() {
 
     const planRoot = join(projectRoot, 'execution-plan-publish');
     writePlanPublishFixture(planRoot);
+    enableV13(planRoot);
     const planStore = new SessionStore(planRoot);
     const planCreated = createChainSession(planRoot, 'release-plan-execution', {
       intent: 'release Plan publication',
@@ -1250,6 +1268,7 @@ async function main() {
 
     const legacyPlanRoot = join(projectRoot, 'legacy-plan-publish');
     writePlanPublishFixture(legacyPlanRoot);
+    enableV13(legacyPlanRoot);
     const legacyPlanStore = new SessionStore(legacyPlanRoot);
     legacyPlanStore.createSession('release-plan-legacy', 'legacy Plan publication');
     const legacyPlanSource = join(legacyPlanRoot, 'approved-plan.md');
@@ -1285,6 +1304,7 @@ async function main() {
     recordProof(proofs, 'session-seal-execution-alias-applied-replayed-conflict');
 
     const legacySessionSealRoot = join(projectRoot, 'session-seal-legacy');
+    enableV13(legacySessionSealRoot);
     const legacySessionSealStore = new SessionStore(legacySessionSealRoot);
     proveLegacySealAlias(
       legacySessionSealRoot, legacySessionSealStore, ['session', 'seal'], 'release-session-seal-legacy',
@@ -1308,6 +1328,7 @@ async function main() {
     recordProof(proofs, 'run-seal-session-execution-alias-applied-replayed-conflict');
 
     const legacyRunSealRoot = join(projectRoot, 'run-seal-session-legacy');
+    enableV13(legacyRunSealRoot);
     const legacyRunSealStore = new SessionStore(legacyRunSealRoot);
     proveLegacySealAlias(
       legacyRunSealRoot, legacyRunSealStore, ['run', 'seal-session'], 'release-run-seal-session-legacy',

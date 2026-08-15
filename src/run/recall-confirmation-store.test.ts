@@ -104,6 +104,7 @@ function sealedSource(projectRoot: string, linkName: string | null) {
 function writeLinkedConfig(projectRoot: string, name: string, linkedRoot: string): void {
   mkdirSync(join(projectRoot, '.workflow'), { recursive: true });
   writeFileSync(join(projectRoot, '.workflow', 'config.json'), JSON.stringify({
+    session_schema: { schema_version: 'session-schema-selection/1.0', writer: 'session/1.3', features: { session_statusless: false } },
     workspaces: { linked: [{ name, path: linkedRoot, share: ['session'] }] },
   }, null, 2));
 }

@@ -36,6 +36,9 @@ function fixture(): { root: string; chain: string } {
 
 describe('built-bin run-response/1.0', () => {
   it('marks legacy mutation and recovery commands deprecated admin-only in help', () => {
+    const root = mkdtempSync(join(tmpdir(), 'maestro-run-machine-help-'));
+    roots.push(root);
+    v2Workspace(root);
     const commands = [
       ['run', 'recall-confirm'],
       ['run', 'fork'],
@@ -44,7 +47,7 @@ describe('built-bin run-response/1.0', () => {
       ['run', 'rebind'],
     ];
     for (const command of commands) {
-      const result = spawnSync(process.execPath, [resolve('bin/maestro.js'), ...command, '--help'], { encoding: 'utf8', cwd: resolve('.') });
+      const result = spawnSync(process.execPath, [resolve('bin/maestro.js'), ...command, '--help', '--workflow-root', root], { encoding: 'utf8', cwd: resolve('.') });
       expect(result.status, `${command.join(' ')}: ${result.stderr}`).toBe(0);
       const help = result.stdout.replace(/\s+/g, ' ');
       expect(help, command.join(' ')).toContain('[DEPRECATED, ADMIN-ONLY]');
@@ -53,7 +56,7 @@ describe('built-bin run-response/1.0', () => {
       expect(help, command.join(' ')).toMatch(/(?:not a force operation|no force bypass)/);
     }
 
-    const rebind = spawnSync(process.execPath, [resolve('bin/maestro.js'), 'run', 'rebind', '--help'], { encoding: 'utf8', cwd: resolve('.') });
+    const rebind = spawnSync(process.execPath, [resolve('bin/maestro.js'), 'run', 'rebind', '--help', '--workflow-root', root], { encoding: 'utf8', cwd: resolve('.') });
     const rebindHelp = rebind.stdout.replace(/\s+/g, ' ');
     expect(rebindHelp).toContain('strictly validates gate and produce compatibility');
     expect(rebindHelp).toContain('--reason is required and recorded in command-rebind.json');

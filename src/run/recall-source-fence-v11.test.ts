@@ -237,7 +237,6 @@ describe('receipt-backed source-fence/1.1', () => {
     const sourceRoot = root();
     const source = sealedSource(sourceRoot);
     const projectRoot = mkdtempSync(join(tmpdir(), 'maestro-recall-v11-target-'));
-
     v2Workspace(projectRoot);
     roots.push(projectRoot);
     const commandDir = join(projectRoot, '.claude', 'commands');
@@ -245,6 +244,7 @@ describe('receipt-backed source-fence/1.1', () => {
     writeFileSync(join(commandDir, 'produce.md'), '<contract>\nconsumes: []\nproduces: []\ngates: { entry: [], exit: [] }\n</contract>\n');
     mkdirSync(join(projectRoot, '.workflow'), { recursive: true });
     writeFileSync(join(projectRoot, '.workflow', 'config.json'), JSON.stringify({
+      session_schema: { schema_version: 'session-schema-selection/1.0', writer: 'session/1.3', features: { session_statusless: false } },
       workspaces: { linked: [{ name: 'source-v2', path: sourceRoot, share: ['session'] }] },
     }, null, 2));
     const request = {

@@ -29,6 +29,12 @@ describe('v3 CLI downgrade guard', () => {
   it('returns SESSION_SCHEMA_UNSUPPORTED before a legacy mutation can rewrite v3 state', () => {
     const root = mkdtempSync(join(tmpdir(), 'maestro-v3-placeholder-'));
     roots.push(root);
+    // Legacy writer: `run next` must route through the v2 CLI guard and fail
+    // closed on the v3 state instead of dispatching the v3 engine.
+    mkdirSync(join(root, '.workflow'), { recursive: true });
+    writeFileSync(join(root, '.workflow', 'config.json'), JSON.stringify({
+      session_schema: { schema_version: 'session-schema-selection/1.0', writer: 'session/1.3', features: { session_statusless: false } },
+    }));
     const sessionDir = join(root, '.workflow', 'sessions', 's-v3');
     mkdirSync(sessionDir, { recursive: true });
     const session = {
