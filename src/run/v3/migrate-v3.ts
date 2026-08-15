@@ -929,9 +929,9 @@ export function projectLegacySessionToV30(
     if (step.run_id !== null && !runById.has(step.run_id)) {
       fail('MIGRATION_REFERENCE_INTEGRITY', `chain step ${step.step_id} references missing Run ${step.run_id}`);
     }
-    if (step.status === 'running' && step.run_id === null) {
-      fail('MIGRATION_RUNNING_RUN', `chain step ${step.step_id} is running without a Run snapshot`);
-    }
+    // An orphaned running step (no Run snapshot) is projected to pending
+    // instead of being rejected — rejecting it deadlocked under the v3 default
+    // writer where no command can repair the legacy step.
   }
   const sourceStepIds = new Set(sourceChain.map(step => step.step_id));
   const stepForRun = new Map<string, string>();
@@ -1051,13 +1051,21 @@ export function projectLegacySessionToV30(
     const sanitizedStepArgs = step.args === undefined
       ? sanitizeArgs(fallbackArgs, discard, `chain step ${step.step_id}`)
       : sanitizeOptionalText(step.args, discard, `chain step ${step.step_id} args`);
+    // A running/failed step WITHOUT a Run snapshot is an orphaned legacy
+    // marker (non-atomic crash residue). It must not block the migration:
+    // project it to pending so the v3 surface can re-dispatch it (run next).
+    const stepStatus = (step.status === 'running' || step.status === 'failed')
+      && step.run_id === null
+      && matchingRuns.length === 0
+      ? 'pending' as const
+      : mapStepStatus(step.status);
     return {
       step_id: step.step_id,
       command: step.command,
       args: step.args === undefined
         ? sanitizedStepArgs as string[]
         : sanitizedStepArgs === step.args ? [step.args] : [],
-      status: mapStepStatus(step.status),
+      status: stepStatus,
       run_ids: matchingRuns.map(run => run.run_id),
       goal_ref: step.goal_ref ?? null,
       decision_ref: null,

@@ -26,6 +26,12 @@ function selectExecution(
   const explicitId = session.schema_version === 'session/2.0'
     ? session.current_execution_id ?? session.latest_execution_id
     : null;
+  // An open (nonsealed) Execution is the live authority: when exactly one
+  // exists it wins over a stale current/latest pointer that may reference a
+  // sealed Execution (a sealed pointer would project a terminal Session while
+  // the real work continues in the open one).
+  const nonsealed = executions.filter(item => item.status !== 'sealed');
+  if (nonsealed.length === 1) return nonsealed[0];
   if (explicitId) {
     const selected = executions.find(item => item.execution_id === explicitId);
     if (!selected) throw new Error(`Session references missing Execution ${explicitId}`);

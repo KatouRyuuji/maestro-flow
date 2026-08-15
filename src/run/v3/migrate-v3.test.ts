@@ -640,6 +640,39 @@ describe('v2 to v3 pure migration projection', () => {
     expect(result.session.status).toBe(expected);
   });
 
+  it('projects orphaned running/failed chain steps (no Run snapshot) to pending so migration cannot deadlock', () => {
+    // Crash residue: a chain step marked running/failed without any Run
+    // snapshot. Rejecting it would deadlock under the v3 default writer
+    // (nothing can repair the legacy step); it must project to pending.
+    for (const orphanStatus of ['running', 'failed'] as const) {
+      const exec = execution('active');
+      exec.chain = [{
+        step_id: 'step-1',
+        command: 'implement',
+        status: orphanStatus,
+        run_id: null,
+        inserted_by: 'legacy',
+        decision_ref: null,
+        args: '--orphan',
+        stage: null,
+        goal_ref: null,
+        retry: { count: 0, max: 2 },
+      }];
+      exec.decision_points = [];
+      const input: LegacyV3MigrationInput = {
+        session: { ...v20Session(), latest_completed_run_id: null },
+        execution: exec,
+        runs: [],
+        gates: createGateRegistry(),
+        artifacts: createArtifactRegistry(),
+        evidence: createEvidenceStore(),
+      };
+      const projected = projectLegacySessionToV30(input, { recorded_at: RECORDED_AT });
+      expect(projected.session.chain[0]).toMatchObject({ step_id: 'step-1', status: 'pending' });
+      expect(projected.session.active_run_ids).toEqual([]);
+    }
+  });
+
   it('migrates a running Run as running (deadlock escape under the v3 default writer) and rejects every dangling reference fail closed', () => {
     // A legacy running Run must migrate as running: rejecting it made
     // `session migrate` demand a Run completion that the v3 surface refused
