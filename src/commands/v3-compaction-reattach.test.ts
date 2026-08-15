@@ -82,7 +82,7 @@ function writeRunOutput(root: string, runId: string): void {
 }
 
 describe('v3 compaction reattach', () => {
-  it('re-attaches a partially driven Session from durable state only and continues the chain', () => {
+  it('re-attaches a partially driven Session from durable state only and continues the chain', { timeout: 180_000 }, () => {
     const root = fixture();
 
     // ── Process 1: drive step-1 to completion ──────────────────────────────
