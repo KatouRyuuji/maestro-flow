@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 
-import { artifactRepublishReceiptSchema, type TransitionReceiptV20 } from '../protocol-schemas.js';
+import { artifactRepublishReceiptSchema, guidanceSnapshotSchema, type GuidanceSnapshot, type TransitionReceiptV20 } from '../protocol-schemas.js';
 import {
   applyAutomaticKnowledgeSuppression,
   knowledgeReconciliationSchema,
@@ -37,7 +37,7 @@ import {
   validateStrictArtifactContract,
   type DiscoveredArtifact,
 } from '../artifacts.js';
-import { hashCommandContract, resolveCommandSource } from '../contract.js';
+import { hashCommandContract, resolveCommandSource, resolveStepContent } from '../contract.js';
 import { readReportFrontmatter, type ReportFrontmatter } from '../report.js';
 import { createRevisionConflictError, V3StructuredError } from './errors.js';
 import {
@@ -852,9 +852,84 @@ export function createRunningRunV3(store: SessionStore, input: CreateRunningRunV
       targetType: 'orchestration', targetId: identity.sessionId,
       revisionBefore: session.orchestration_revision,
       revisionAfter: nextSession.orchestration_revision,
-      result: { run_id: nextRun.run_id, status: nextRun.status, revision: nextRun.revision },
+      result: v3BirthPacket(store, nextSession, nextRun, artifacts),
     });
   });
+}
+
+/**
+ * v3 birth packet — the executor-facing payload emitted by `run next`/`run create`.
+ * Mirrors the v2 NextResult essentials (run_dir/upstream/guidance/knowledge/brief)
+ * so a v3 executor can execute without an extra round trip; replaying the same
+ * request-id returns the identical packet via the persisted receipt.
+ */
+export interface V3BirthPacket {
+  run_id: string;
+  run_dir: string;
+  step_id: string;
+  status: RunStatus;
+  revision: number;
+  /** Consumed artifacts resolved from the Session artifact registry (by id). */
+  upstream: Record<string, { artifact_id: string; path: string; kind: string; status: 'sealed' | 'draft' }>;
+  /** Command guidance snapshot (prepare/workflow/run-mode hashes); null when no source resolves. */
+  guidance: GuidanceSnapshot | null;
+  /** Knowledge delta handle; candidates are staged by `run complete`, so this may be empty at birth. */
+  knowledge_context: { path: string; revision: number; candidate_count: number } | null;
+  brief: { command: string };
+  /** Explicit invariant preventing executors from allocating a duplicate Run. */
+  run_already_created: true;
+}
+
+function v3Sha256(value: string): string {
+  return `sha256:${createHash('sha256').update(value).digest('hex')}`;
+}
+
+export function buildV3GuidanceSnapshot(store: SessionStore, command: string): GuidanceSnapshot | null {
+  const source = resolveCommandSource(store.projectRoot, command);
+  const guidance = resolveStepContent(store.projectRoot, command);
+  if (!guidance.prepare && !guidance.workflow && !guidance.runMode) return null;
+  return guidanceSnapshotSchema.parse({
+    schema_version: 'guidance-snapshot/1.0',
+    source_path: source.relativePath,
+    content_hash: v3Sha256(source.raw),
+    resolved_prompt_hash: v3Sha256(source.raw),
+    prepare_hash: guidance.prepare ? v3Sha256(guidance.prepare.raw) : null,
+    workflow_hash: guidance.workflow ? v3Sha256(guidance.workflow.raw) : null,
+    run_mode_hash: guidance.runMode ? v3Sha256(guidance.runMode.raw) : null,
+  });
+}
+
+export function v3BirthPacket(store: SessionStore, session: SessionStateV30, run: RunV30, artifacts: ArtifactRegistry): V3BirthPacket {
+  const upstream: V3BirthPacket['upstream'] = {};
+  for (const artifactId of run.input_refs) {
+    const artifact = artifacts.artifacts[artifactId];
+    if (!artifact) continue;
+    upstream[artifactId] = {
+      artifact_id: artifactId,
+      path: artifact.relative_path,
+      kind: artifact.media_type,
+      status: artifact.status === 'sealed' ? 'sealed' : 'draft',
+    };
+  }
+  const delta = readRunKnowledgeDelta(store, session.session_id, run.run_id, false);
+  return {
+    run_id: run.run_id,
+    run_dir: store.runDir(session.session_id, run.run_id),
+    step_id: run.step_id,
+    status: run.status,
+    revision: run.revision,
+    upstream,
+    guidance: buildV3GuidanceSnapshot(store, run.command),
+    knowledge_context: delta
+      ? {
+          path: runKnowledgeDeltaPath(store, session.session_id, run.run_id),
+          revision: delta.revision,
+          candidate_count: delta.candidates.length,
+        }
+      : null,
+    brief: { command: `maestro run brief ${run.run_id} --session ${session.session_id}` },
+    run_already_created: true,
+  };
 }
 
 /**

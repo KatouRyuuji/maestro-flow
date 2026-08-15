@@ -61,15 +61,20 @@ describe('maestro capabilities session_schema_writes', () => {
     expect(result.execution_schema_writes).toEqual([]);
   });
 
-  it('declares only session/1.3 as writable for the default session/1.3 workspace', async () => {
-    // No .workflow/config.json → DEFAULT_SESSION_SCHEMA_SELECTION writer 1.3.
+  it('declares only session/3.0 as writable for the default session/3.0 workspace', async () => {
+    // No .workflow/config.json → DEFAULT_SESSION_SCHEMA_SELECTION writer 3.0.
     const result = await capabilities(root);
-    expect(result.session_schema_writes).toEqual(['session/1.3']);
+    expect(result.session_schema_writes).toEqual(['session/3.0']);
     expect(result.features).toMatchObject({
-      execution_generation: true,
-      session_run_minimal_v3: false,
+      execution_generation: false,
+      session_run_minimal_v3: true,
+      entity_revision_cas: true,
+      participant_identity: true,
+      request_receipts_v2: true,
+      execution_lease: false,
+      operation_registry: false,
     });
-    expect(result.execution_schema_writes).toEqual(['execution/1.0']);
+    expect(result.execution_schema_writes).toEqual([]);
   });
 
   it('declares session/1.3 and session/2.0 as writable for a session/2.0 workspace', async () => {

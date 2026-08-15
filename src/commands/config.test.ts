@@ -123,8 +123,8 @@ describe('maestro config session-schema set', () => {
 });
 
 describe('maestro config session-schema show', () => {
-  it('prints the default session/1.3 when no config exists', async () => {
-    expect(await showWriter()).toBe('session/1.3');
+  it('prints the default session/3.0 when no config exists', async () => {
+    expect(await showWriter()).toBe('session/3.0');
     expect(existsSync(configPath())).toBe(false);
   });
 

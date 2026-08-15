@@ -174,6 +174,26 @@ describe('v3 Run shell', () => {
       'run', 'next', '--run', 'run-next', ...mutationFlags(root, '--expected-orchestration-revision'),
     ]);
     expect(response).toMatchObject({ operation: 'next', ok: true, result: { run_id: 'run-next', status: 'running' } });
+    const birth = response.result as Record<string, unknown>;
+    expect(birth.run_dir).toBe(join(root, '.workflow', 'sessions', 's-v3', 'runs', 'run-next'));
+    expect(birth.step_id).toBe('step-1');
+    expect(birth.run_already_created).toBe(true);
+    expect((birth.brief as { command: string }).command).toBe('maestro run brief run-next --session s-v3');
+    expect(typeof (birth.guidance as { content_hash?: string } | null)?.content_hash).toBe('string');
+    const brief = await invoke(registerRunV3Command, [
+      'run', 'brief', 'run-next', '--session', 's-v3', '--json', '--workflow-root', root,
+    ]);
+    expect(brief).toMatchObject({
+      operation: 'brief', ok: true,
+      result: {
+        schema_version: 'brief-result/3.0',
+        session: { session_id: 's-v3', status: 'open', orchestration_revision: 1 },
+        run: { run_id: 'run-next', status: 'running' },
+      },
+    });
+    const briefResult = brief.result as Record<string, unknown>;
+    expect((briefResult.knowledge_context as { path?: string } | null)?.path).toBeTruthy();
+    expect((briefResult.next as { command: string }).command).toBe('maestro run complete run-next --advance');
     const runDir = join(root, '.workflow', 'sessions', 's-v3', 'runs', 'run-next');
     for (const name of ['outputs', 'evidence', 'work']) {
       expect(existsSync(join(runDir, name))).toBe(true);

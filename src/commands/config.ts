@@ -466,7 +466,7 @@ export function registerConfigCommand(program: Command): void {
     });
 
   sessionSchema.command('show')
-    .description('Show the current Session schema writer (defaults to session/1.3)')
+    .description('Show the current Session schema writer (defaults to session/3.0)')
     .action(() => {
       const writer = new SessionStore(resolve(sessionSchema.opts().workflowRoot)).sessionSchemaSelection().writer;
       console.log(writer);

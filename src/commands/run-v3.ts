@@ -1,13 +1,17 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { Command } from 'commander';
 
+import { resolve } from 'node:path';
+
 import type { RunV30 } from '../run/schemas.js';
+import { artifactRegistrySchema, type ArtifactRegistry } from '../run/schemas.js';
 import { buildRetryMetadata } from '../run/v3/run-machine.js';
 import {
   completeRunAndAdvance,
   createRunningRunV3,
   mutateRunV3,
   recoverSealRunV3,
+  v3BirthPacket,
 } from '../run/v3/mutation-engine.js';
 import {
   decideV3,
@@ -285,12 +289,51 @@ export function registerRunV3Command(program: Command): void {
       }
     });
 
-  addV3ReadOptions(run.command('brief <run-id>').description('Read a Run brief'))
+  addV3ReadOptions(run.command('brief <run-id>').description('Return the v3 Resume Packet for a Run'))
     .action((runId: string, options: { session?: string; workflowRoot: string }) => {
       try {
         const { store, options: resolved } = resolveV3Options(options);
         const value = store.readRunV30(resolved.session, runId);
-        emitV3Success({ operation: 'brief', sessionId: resolved.session, runId, result: value });
+        const sessionState = store.readSessionV30(resolved.session);
+        const artifactsPath = resolve(store.sessionDir(resolved.session), sessionState.artifacts_ref);
+        const registry = store.readJsonFileReadOnly<ArtifactRegistry>(
+          artifactsPath,
+          artifactRegistrySchema,
+          { schema_version: 'artifacts/1.0', revision: 0, artifacts: {}, aliases: {} },
+        );
+        const packet = v3BirthPacket(store, sessionState, value, registry);
+        const pendingStep = sessionState.chain.find(item => item.status === 'pending');
+        emitV3Success({
+          operation: 'brief',
+          sessionId: resolved.session,
+          runId,
+          result: {
+            schema_version: 'brief-result/3.0',
+            session: {
+              session_id: sessionState.session_id,
+              status: sessionState.status,
+              orchestration_revision: sessionState.orchestration_revision,
+              objective: sessionState.objective,
+              definition_of_done: sessionState.definition_of_done,
+              active_run_ids: sessionState.active_run_ids,
+            },
+            run: value,
+            ...packet,
+            next: {
+              suggest_only: true,
+              command: value.status === 'running'
+                ? `maestro run complete ${runId} --advance`
+                : pendingStep
+                  ? 'maestro run next'
+                  : 'maestro session complete',
+              reason: value.status === 'running'
+                ? 'Run running — execute and complete it with run complete --advance'
+                : pendingStep
+                  ? 'Run not running — dispatch the next pending step with run next'
+                  : 'Chain complete — seal the Session with session complete',
+            },
+          },
+        });
       } catch (error) {
         emitV3Error('brief', error, { session: options.session, runId });
       }

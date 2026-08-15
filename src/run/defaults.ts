@@ -11,7 +11,7 @@ import type { IntentIdentity, SessionProvenance, TopicIdentityProtocol } from '.
 
 export const DEFAULT_SESSION_SCHEMA_SELECTION: SessionSchemaSelection = {
   schema_version: 'session-schema-selection/1.0',
-  writer: 'session/1.3',
+  writer: 'session/3.0',
   features: { session_statusless: false },
 };
 
