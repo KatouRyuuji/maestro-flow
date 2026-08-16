@@ -1,10 +1,78 @@
 import { readFile, open, readdir } from 'node:fs/promises';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import YAML from 'yaml';
 
 import type { GraphNode, GraphEdge, Layer, TourStep, KnowledgeGraph } from '../../../../src/graph/types.js';
 import type { WikiEntry, WikiStatus } from './wiki-types.js';
+
+/**
+ * Lightweight YAML-subset parser for report.md frontmatter handoff fields
+ * (verdict/summary/constraints/decisions/concerns). Deliberately does not load
+ * the `yaml` package: the built search-ranking adapter certifies its module
+ * graph statically, and the yaml CJS entry executes internal require() edges
+ * the certifier would flag as undeclared. The dashboard already keeps
+ * frontmatter parsing yaml-free (frontmatter-util.ts); this extends that
+ * convention to the handoff projection. Supported item shapes mirror
+ * report.ts: `- text: <text>` + `status: <status>`, single-line
+ * `- <status>: <text>`, and plain `- <text>` strings.
+ */
+function parseReportFrontmatter(yamlBlock: string): Record<string, unknown> {
+  const HANDOFF_STATUS_KEYS = new Set(['proposed', 'accepted', 'rejected', 'locked', 'open', 'deferred']);
+  const result: Record<string, unknown> = {};
+  let arrayItems: Array<{ text: string; status?: string } | string> | null = null;
+  let objectItem: { text: string; status?: string } | null = null;
+  const unquote = (value: string) => value.trim().replace(/^['"]|['"]$/g, '');
+  const flushObjectItem = () => {
+    if (!objectItem) return;
+    const text = objectItem.text.trim();
+    if (text) arrayItems?.push({ text, status: objectItem.status ?? undefined });
+    objectItem = null;
+  };
+
+  for (const line of yamlBlock.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('- ')) {
+      flushObjectItem();
+      const item = unquote(trimmed.slice(2));
+      const colonIdx = item.indexOf(':');
+      if (colonIdx !== -1) {
+        const itemKey = item.slice(0, colonIdx).trim();
+        const itemValue = item.slice(colonIdx + 1);
+        if (itemKey === 'text') {
+          objectItem = { text: unquote(itemValue) };
+        } else if (HANDOFF_STATUS_KEYS.has(itemKey)) {
+          objectItem = { text: unquote(itemValue), status: itemKey };
+        } else {
+          arrayItems?.push(item);
+        }
+      } else {
+        arrayItems?.push(item);
+      }
+      continue;
+    }
+    const colonIdx = trimmed.indexOf(':');
+    if (colonIdx === -1) continue;
+    const key = trimmed.slice(0, colonIdx).trim();
+    const value = unquote(trimmed.slice(colonIdx + 1));
+    if (key === 'text' && objectItem) {
+      objectItem.text = value;
+      continue;
+    }
+    if (key === 'status' && objectItem) {
+      objectItem.status = value;
+      continue;
+    }
+    flushObjectItem();
+    if (key === 'constraints' || key === 'decisions' || key === 'concerns') {
+      arrayItems = [];
+      result[key] = arrayItems;
+    } else if (key === 'verdict' || key === 'summary') {
+      result[key] = value;
+    }
+  }
+  flushObjectItem();
+  return result;
+}
 
 function slugify(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
@@ -809,35 +877,27 @@ function extractReportSummary(raw: string): string {
 function reportHandoff(raw: string): RunModeRun['handoff'] {
   const frontmatter = raw.match(/^---\s*\r?\n([\s\S]*?)\r?\n---/);
   if (!frontmatter) return null;
-  try {
-    const parsed = YAML.parse(frontmatter[1]) as Record<string, unknown> | null;
-    if (!parsed || typeof parsed !== 'object') return null;
-    const items = (key: 'constraints' | 'decisions'): RunModeHandoffItem[] => {
-      const value = parsed[key];
-      if (!Array.isArray(value)) return [];
-      return value.flatMap(item => {
-        if (typeof item === 'string') return [{ text: item }];
-        if (!item || typeof item !== 'object') return [];
-        const record = item as Record<string, unknown>;
-        return typeof record.text === 'string'
-          ? [{ text: record.text, status: typeof record.status === 'string' ? record.status : undefined }]
-          : [];
-      });
-    };
-    const concerns = Array.isArray(parsed.concerns)
-      ? parsed.concerns.filter((item): item is string => typeof item === 'string')
-      : [];
-    return {
-      verdict: typeof parsed.verdict === 'string' ? parsed.verdict : undefined,
-      summary: typeof parsed.summary === 'string' ? parsed.summary : undefined,
-      constraints: items('constraints'),
-      decisions: items('decisions'),
-      concerns,
-      artifact_refs: [],
-    };
-  } catch {
-    return null;
-  }
+  const parsed = parseReportFrontmatter(frontmatter[1]);
+  if (!parsed || typeof parsed !== 'object') return null;
+  const items = (key: 'constraints' | 'decisions'): RunModeHandoffItem[] => {
+    const value = parsed[key];
+    if (!Array.isArray(value)) return [];
+    return value.flatMap(item => {
+      if (typeof item === 'string') return item ? [{ text: item }] : [];
+      return [{ text: item.text, status: item.status }];
+    });
+  };
+  const concerns = Array.isArray(parsed.concerns)
+    ? parsed.concerns.filter((item): item is string => typeof item === 'string')
+    : [];
+  return {
+    verdict: typeof parsed.verdict === 'string' ? parsed.verdict : undefined,
+    summary: typeof parsed.summary === 'string' ? parsed.summary : undefined,
+    constraints: items('constraints'),
+    decisions: items('decisions'),
+    concerns,
+    artifact_refs: [],
+  };
 }
 
 function reportMarkdownBody(raw: string): string {
