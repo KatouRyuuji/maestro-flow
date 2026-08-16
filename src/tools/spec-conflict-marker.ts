@@ -17,7 +17,10 @@ import { parseSpecEntries, generateSid, type SpecEntryParsed, type ConfidenceLev
 import { TEAM_SPECS_DIR } from './spec-loader.js';
 import { stripFrontmatter } from '../utils/frontmatter.js';
 import { computeDecayFactor } from '../graph/kg/credibility.js';
-import { updateFileAtomic } from '../utils/atomic-write.js';
+import {
+  acquireKnowledgeCorpusNamespaceLockSync,
+  updateFileAtomic,
+} from '../utils/atomic-write.js';
 
 // ============================================================================
 // Types
@@ -330,6 +333,19 @@ export interface EvolutionLink {
  * drift (unlike the line-based conflict marker).
  */
 export function supersedeEntry(
+  projectPath: string,
+  oldSid: string,
+  newSid: string,
+): MarkResult {
+  const releaseCorpusNamespace = acquireKnowledgeCorpusNamespaceLockSync(projectPath);
+  try {
+    return supersedeEntryUnlocked(projectPath, oldSid, newSid);
+  } finally {
+    releaseCorpusNamespace();
+  }
+}
+
+function supersedeEntryUnlocked(
   projectPath: string,
   oldSid: string,
   newSid: string,

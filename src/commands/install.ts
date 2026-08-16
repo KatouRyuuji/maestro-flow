@@ -676,8 +676,13 @@ async function forceInstall(
   if (result.dirsCreated > 0) parts.push(`${result.dirsCreated} dirs`);
   if (result.filesSkipped > 0) parts.push(`${result.filesSkipped} preserved`);
   if (result.obsoleteFilesRemoved > 0) parts.push(`${result.obsoleteFilesRemoved} obsolete removed`);
+  if (result.obsoleteFilesPreserved > 0) parts.push(`${result.obsoleteFilesPreserved} user files preserved`);
   if (result.obsoleteFileErrors > 0) parts.push(`${result.obsoleteFileErrors} cleanup errors`);
   console.error(t.install.forceResult.replace('{summary}', parts.join(', ')));
+
+  if (result.pruneBackupPath) {
+    console.error(`  ✓ Prune backup: ${result.pruneBackupPath}`);
+  }
 
   if (result.migrationWarnings.length > 0) {
     console.error('');

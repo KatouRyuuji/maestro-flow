@@ -888,7 +888,7 @@ export function registerKnowledgeCommand(program: Command): void {
         const projectRoot = resolve(opts.workflowRoot);
         const store = new SessionStore(projectRoot);
         const active = opts.run
-          ? { sessionId: store.findRun(opts.run, opts.session).sessionId, runId: opts.run }
+          ? { sessionId: store.findRunRecord(opts.run, opts.session).sessionId, runId: opts.run }
           : store.findUniqueActiveRun();
         if (!active) {
           throw new Error(
@@ -1085,8 +1085,21 @@ export function registerKnowledgeCommand(program: Command): void {
         }
         let view = buildKnowledgeSessionView(projectRoot, sessionId);
         if (opts.refresh) {
+          const store = new SessionStore(projectRoot);
+          const expectedCorpusFingerprint = currentKnowledgeCorpusFingerprint(projectRoot);
           for (const runId of uniqueRunIds(view.candidates)) {
-            const receipt = await reconcileRunKnowledge(projectRoot, sessionId, runId);
+            const frontmatter = readReportFrontmatter(store.runDir(sessionId, runId));
+            const existing = readKnowledgeReconciliation(store, sessionId, runId, true);
+            const receipt = existing && isKnowledgeReconciliationFresh(
+              projectRoot,
+              sessionId,
+              runId,
+              existing,
+              frontmatter,
+              expectedCorpusFingerprint,
+            )
+              ? existing
+              : await reconcileRunKnowledge(projectRoot, sessionId, runId);
             persistKnowledgeReconciliation(projectRoot, receipt);
           }
           if (view.candidates.some(candidate => (candidate.origin ?? 'run') === 'session')) {

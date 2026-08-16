@@ -85,6 +85,41 @@ describe('synthetic knowledge session (K2)', () => {
     const store = new SessionStore(projectRoot);
     expect(store.sessionExists(first.sessionId)).toBe(true);
   });
+
+  it('creates a canonical synthetic session/3.0 authority in a fresh v3 workspace', () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'maestro-session-knowledge-v3-synthetic-'));
+    roots.push(projectRoot);
+    mkdirSync(join(projectRoot, '.workflow'), { recursive: true });
+    writeFileSync(join(projectRoot, '.workflow', 'config.json'), JSON.stringify({
+      session_schema: {
+        schema_version: 'session-schema-selection/1.0',
+        writer: 'session/3.0',
+        features: { session_statusless: false },
+      },
+    }));
+    const srcDir = join(projectRoot, 'src');
+    mkdirSync(srcDir, { recursive: true });
+    writeFileSync(join(srcDir, 'evidence.ts'), '// v3 synthetic evidence\n', 'utf8');
+
+    const first = ensureSyntheticKnowledgeSession(projectRoot, 'pi-v3-host');
+    const second = ensureSyntheticKnowledgeSession(projectRoot, 'pi-v3-host');
+    const store = new SessionStore(projectRoot);
+    expect(first.created).toBe(true);
+    expect(second).toEqual({ sessionId: first.sessionId, created: false });
+    expect(store.readSessionRecordReadOnly(first.sessionId)).toMatchObject({
+      schema_version: 'session/3.0', status: 'open', objective: 'knowledge-sedimentation',
+    });
+    expect(existsSync(join(store.sessionDir(first.sessionId), 'artifacts.json'))).toBe(true);
+    expect(existsSync(join(store.sessionDir(first.sessionId), 'evidence.json'))).toBe(true);
+
+    const staged = stageSessionKnowledgeCandidate(projectRoot, first.sessionId, {
+      target: 'knowhow',
+      title: 'Synthetic v3 insight',
+      content: 'Synthetic v3 insight content',
+      evidenceRefs: ['src/evidence.ts:1'],
+    });
+    expect(staged.origin).toBe('session');
+  });
 });
 
 describe('session knowledge ledger (K1)', () => {

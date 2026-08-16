@@ -19,6 +19,7 @@ import {
   readFileSync,
   writeFileSync,
 } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { dirname } from 'node:path';
 import {
   addFile,
@@ -306,6 +307,10 @@ export function injectDocFile(
 
   writeFileSync(dest, result.content, 'utf-8');
   stats.files++;
-  addFile(manifest, dest);
+  addFile(manifest, dest, { hash: sha256(result.content) });
   return result;
+}
+
+function sha256(text: string): string {
+  return createHash('sha256').update(text).digest('hex');
 }

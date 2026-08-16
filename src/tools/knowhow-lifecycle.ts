@@ -13,6 +13,7 @@ import {
   knowhowFileToWikiId,
   parseFrontmatter,
 } from '../utils/frontmatter.js';
+import { acquireKnowledgeCorpusNamespaceLockSync } from '../utils/atomic-write.js';
 import {
   acquireLifecycleLockBound,
   compareReleaseLifecycleLock,
@@ -486,12 +487,19 @@ function withLifecycleLock<T>(
   options?: LifecycleFaultOptions,
 ): T {
   const knowhowDir = join(getKnowhowDir(projectRoot));
-  return withLifecyclePathLock(
-    projectRoot,
-    join(knowhowDir, LIFECYCLE_LOCK),
-    action,
-    options,
-  );
+  return withVerifiedLifecycleFsHelper(() => {
+    const releaseCorpusNamespace = acquireKnowledgeCorpusNamespaceLockSync(projectRoot);
+    try {
+      return withLifecyclePathLockVerified(
+        projectRoot,
+        join(knowhowDir, LIFECYCLE_LOCK),
+        action,
+        options,
+      );
+    } finally {
+      releaseCorpusNamespace();
+    }
+  });
 }
 
 function withTargetWriterLock<T>(
@@ -648,7 +656,7 @@ function yamlValue(value: string): string {
   return JSON.stringify(value);
 }
 
-function setFrontmatterValues(
+export function setFrontmatterValues(
   raw: string,
   values: Record<string, string | string[]>,
 ): string {

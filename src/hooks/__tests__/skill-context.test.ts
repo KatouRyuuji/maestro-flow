@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'vitest';
 import assert from 'node:assert';
-import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseSkillInvocation, evaluateSkillContext } from '../skill-context.js';
@@ -44,7 +44,14 @@ function cleanup(): void {
 }
 
 function setupCanonicalManualWorkflow(autoMode = false): string {
-  mkdirSync(TEST_DIR, { recursive: true });
+  mkdirSync(join(TEST_DIR, '.workflow'), { recursive: true });
+  writeFileSync(join(TEST_DIR, '.workflow', 'config.json'), JSON.stringify({
+    session_schema: {
+      schema_version: 'session-schema-selection/1.0',
+      writer: 'session/1.3',
+      features: { session_statusless: false },
+    },
+  }));
   const created = createChainSession(TEST_DIR, 'manual-resume', {
     intent: 'Continue a manual Session',
     engine: 'manual',
@@ -57,6 +64,42 @@ function setupCanonicalManualWorkflow(autoMode = false): string {
     sessions: [{ session_id: created.sessionId, intent: 'Continue a manual Session', status: 'running' }],
   }));
   return created.sessionId;
+}
+
+function writeV30Session(
+  sessionId: string,
+  status: 'open' | 'completed',
+  objective: string,
+  activeRunIds: string[],
+): string {
+  const sessionDir = join(TEST_DIR, '.workflow', 'sessions', sessionId);
+  mkdirSync(sessionDir, { recursive: true });
+  const sessionPath = join(sessionDir, 'session.json');
+  writeFileSync(sessionPath, `${JSON.stringify({
+    schema_version: 'session/3.0',
+    session_id: sessionId,
+    objective,
+    definition_of_done: 'hook context is schema-aware and read-only',
+    status,
+    orchestration_revision: 0,
+    activity_revision: 0,
+    chain: [],
+    decisions: [],
+    active_run_ids: activeRunIds,
+    artifacts_ref: 'artifacts.json',
+    evidence_ref: 'evidence.json',
+    created_at: '2026-08-16T00:00:00.000Z',
+    updated_at: '2026-08-16T00:00:00.000Z',
+    completed_at: status === 'completed' ? '2026-08-16T01:00:00.000Z' : null,
+    archived_at: null,
+  }, null, 2)}\n`, 'utf8');
+  writeFileSync(join(sessionDir, 'artifacts.json'), `${JSON.stringify({
+    schema_version: 'artifacts/1.0',
+    revision: 0,
+    artifacts: {},
+    aliases: {},
+  }, null, 2)}\n`, 'utf8');
+  return sessionPath;
 }
 
 // ---------------------------------------------------------------------------
@@ -128,6 +171,35 @@ describe('evaluateSkillContext', () => {
     assert.ok(ctx.includes('20260713-auth-refactor'));
     assert.ok(ctx.includes('20260713-002-execute'));
     assert.ok(ctx.includes('search/injection=exposure-only'));
+  });
+
+  it('selects and renders session/3.0 without mutating canonical workflow files', async () => {
+    mkdirSync(TEST_DIR, { recursive: true });
+    writeV30Session('v3-completed', 'completed', 'Ignore completed context', []);
+    const sessionPath = writeV30Session(
+      'v3-open',
+      'open',
+      'Deliver schema-aware hook context',
+      ['run-z', 'run-a', 'run-z'],
+    );
+    const statePath = join(TEST_DIR, '.workflow', 'state.json');
+    writeFileSync(statePath, JSON.stringify({
+      version: '3.0',
+      active_session_id: 'v3-open',
+      sessions: [{ session_id: 'v3-open', status: 'open' }],
+    }), 'utf8');
+    const beforeSession = readFileSync(sessionPath, 'utf8');
+    const beforeState = readFileSync(statePath, 'utf8');
+
+    const result = await evaluateSkillContext({ user_prompt: '/maestro-next', cwd: TEST_DIR });
+
+    assert.ok(result);
+    const ctx = result.hookSpecificOutput.additionalContext;
+    assert.ok(ctx.includes('Session: v3-open | open | Deliver schema-aware hook context'));
+    assert.ok(ctx.includes('Active Runs: run-a, run-z'));
+    assert.ok(!ctx.includes('Ignore completed context'));
+    assert.strictEqual(readFileSync(sessionPath, 'utf8'), beforeSession);
+    assert.strictEqual(readFileSync(statePath, 'utf8'), beforeState);
   });
 
   it('returns sealed artifact aliases', async () => {

@@ -20,6 +20,7 @@ import {
   copyRecursive,
   injectDocFile,
   createTargetBackup,
+  createBackup,
   writeCodexSkillDedupeConfig,
   removeCodexSkillDedupeConfig,
   configureCodexMultiAgentV2,
@@ -81,8 +82,11 @@ export interface InstallResult {
   backupPath: string | null;
   migrationWarnings: string[];
   obsoleteFilesRemoved: number;
+  obsoleteFilesPreserved: number;
   obsoleteFilesSkipped: number;
   obsoleteFileErrors: number;
+  /** Backup of the files that were about to be pruned (restore point). */
+  pruneBackupPath: string | null;
 }
 
 export type StepName =
@@ -128,8 +132,10 @@ export async function executeInstallPipeline(opts: ExecutorOptions): Promise<Ins
   let backupPath: string | null = null;
   const warnings: string[] = [];
   let obsoleteFilesRemoved = 0;
+  let obsoleteFilesPreserved = 0;
   let obsoleteFilesSkipped = 0;
   let obsoleteFileErrors = 0;
+  let pruneBackupPath: string | null = null;
 
   // Pre-scan components once (shared by backup + component-install phases).
   // Keep the full catalog so upgrade logic can later distinguish genuinely
@@ -450,11 +456,15 @@ export async function executeInstallPipeline(opts: ExecutorOptions): Promise<Ins
     const currentManifests = sharedManifest ? [manifest, sharedManifest] : [manifest];
     const pruneResult = pruneObsoletePriorEntries(prior, currentManifests);
     obsoleteFilesRemoved = pruneResult.removed;
+    obsoleteFilesPreserved = pruneResult.preserved;
     obsoleteFilesSkipped = pruneResult.skipped;
     obsoleteFileErrors = pruneResult.errors;
-    const detail = obsoleteFileErrors > 0
-      ? `${obsoleteFilesRemoved} obsolete removed, ${obsoleteFileErrors} errors`
-      : `${obsoleteFilesRemoved} obsolete removed`;
+    pruneBackupPath = pruneResult.backupPath;
+    const detailParts: string[] = [];
+    if (obsoleteFilesRemoved > 0) detailParts.push(`${obsoleteFilesRemoved} obsolete removed`);
+    if (obsoleteFilesPreserved > 0) detailParts.push(`${obsoleteFilesPreserved} user files preserved`);
+    if (obsoleteFileErrors > 0) detailParts.push(`${obsoleteFileErrors} errors`);
+    const detail = detailParts.length > 0 ? detailParts.join(', ') : 'nothing to prune';
     progress('cleanup', obsoleteFileErrors > 0 ? 'error' : 'done', detail);
   }
 
@@ -466,14 +476,18 @@ export async function executeInstallPipeline(opts: ExecutorOptions): Promise<Ins
     extraMcpRegistered, extraMcpFailed,
     manifestPath,
     statuslineInstalled, backupPath, migrationWarnings: warnings,
-    obsoleteFilesRemoved, obsoleteFilesSkipped, obsoleteFileErrors,
+    obsoleteFilesRemoved, obsoleteFilesPreserved, obsoleteFilesSkipped, obsoleteFileErrors,
+    pruneBackupPath,
   };
 }
 
 interface PruneResult {
   removed: number;
+  preserved: number;
   skipped: number;
   errors: number;
+  /** Backup directory containing the files that were about to be pruned. */
+  backupPath: string | null;
 }
 
 function pruneObsoletePriorEntries(prior: Manifest, currentManifests: Manifest[]): PruneResult {
@@ -485,10 +499,16 @@ function pruneObsoletePriorEntries(prior: Manifest, currentManifests: Manifest[]
   );
 
   if (obsoleteEntries.length === 0) {
-    return { removed: 0, skipped: 0, errors: 0 };
+    return { removed: 0, preserved: 0, skipped: 0, errors: 0, backupPath: null };
   }
 
-  return cleanManifestFiles({ ...prior, entries: obsoleteEntries });
+  // Back up every file about to be pruned before cleanup can modify or delete
+  // it. The pre-install backup only covers components selected in THIS run, so
+  // deselected targets would otherwise have no restore point.
+  const backupPath = createBackup({ ...prior, entries: obsoleteEntries.filter((e) => e.type === 'file') });
+
+  const result = cleanManifestFiles({ ...prior, entries: obsoleteEntries });
+  return { ...result, backupPath };
 }
 
 function dedupeEntries(entries: Manifest['entries']): Manifest['entries'] {

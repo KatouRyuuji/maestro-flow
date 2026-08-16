@@ -1,12 +1,13 @@
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { z } from 'zod';
 
 import { artifactRegistrySchema, type ArtifactRegistry, type CommandRun, type ReportFrontmatter, type SessionStateV30 } from './schemas.js';
 import {
   SessionStore,
   type ExecutionRunSidecarAuthority,
+  type SessionV30KnowledgeStoreTransaction,
   type StoreTransaction,
 } from './store.js';
 import { formatNewEntry, parseSpecEntries } from '../tools/spec-entry-parser.js';
@@ -14,20 +15,23 @@ import { appendSpecEntry } from '../tools/spec-writer.js';
 import { CATEGORY_MAP, resolveSpecDir, type SpecCategory } from '../tools/spec-loader.js';
 import { executeAdd } from '../tools/store-knowhow.js';
 import { supersedeEntry } from '../tools/spec-conflict-marker.js';
-import { supersedeKnowhowEntry } from '../tools/knowhow-lifecycle.js';
+import { supersedeKnowhowEntry, setFrontmatterValues as setKnowhowFrontmatterValues } from '../tools/knowhow-lifecycle.js';
 import { findSeedByFilename, renderSeedContent } from '../tools/spec-seeds.js';
 import {
   escapeYamlValue,
   generateKnowhowFilename,
+  knowhowFileToWikiId,
   normalizeKnowhowBody,
   parseFrontmatter,
 } from '../utils/frontmatter.js';
 import { hashDirectory, readVerifiedContainedFile } from './artifacts.js';
+import { readReportFrontmatter } from './report.js';
 import {
   parseTranscriptUri,
   quoteSha256,
   transcriptEvidenceSnapshotSchema,
 } from './transcript-evidence.js';
+import { currentKnowledgeCorpusFingerprint } from '../knowledge/reconcile.js';
 import {
   knowledgeReconciliationSchema,
   type KnowledgeCandidateReconciliation,
@@ -763,6 +767,56 @@ export function reportKnowledgeCandidateDrafts(
   return drafts;
 }
 
+function normalizedKnowledgeSnapshotText(value: string): string {
+  return value
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[“”‘’"'`]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Stable Run candidate fingerprint shared by reconciliation and v3 promotion
+ * recovery. Frontmatter candidates shadow no already-staged candidate with the
+ * same deterministic ID, matching the review projection exactly.
+ */
+export function runKnowledgeCandidateSnapshotHash(
+  delta: RunKnowledgeDelta,
+  frontmatter: ReportFrontmatter,
+  runId: string,
+): string {
+  const byId = new Map<string, KnowledgeCandidateDraft>();
+  for (const candidate of delta.candidates) {
+    if (candidate.status === 'promoted') continue;
+    byId.set(candidate.candidate_id, {
+      candidate_id: candidate.candidate_id,
+      target: candidate.target,
+      action: candidate.action,
+      title: candidate.title,
+      content: candidate.content,
+      category: candidate.category,
+      source_kind: candidate.source_kind,
+      evidence_refs: [...candidate.evidence_refs],
+    });
+  }
+  for (const draft of reportKnowledgeCandidateDrafts(frontmatter, runId)) {
+    if (!byId.has(draft.candidate_id)) byId.set(draft.candidate_id, draft);
+  }
+  const views = [...byId.values()]
+    .sort((left, right) => left.candidate_id.localeCompare(right.candidate_id))
+    .map(candidate => ({
+      candidate_id: candidate.candidate_id,
+      target: candidate.target,
+      action: candidate.action,
+      title: normalizedKnowledgeSnapshotText(candidate.title),
+      content: normalizedKnowledgeSnapshotText(candidate.content),
+      category: candidate.category,
+      source_kind: candidate.source_kind,
+    }));
+  return createHash('sha256').update(JSON.stringify(views)).digest('hex');
+}
+
 export function readRunKnowledgeDelta(
   store: SessionStore,
   sessionId: string,
@@ -833,7 +887,8 @@ export function recordRunKnowledgeInputs(
   const ids = [...new Set(knowledgeIds.map(id => id.trim()).filter(Boolean))];
   if (ids.length === 0) throw new Error('At least one knowledge ID is required');
   const store = new SessionStore(projectRoot);
-  const located = store.findRun(runId, sessionId);
+  const located = store.findRunRecord(runId, sessionId);
+  const v3Run = located.run.schema_version === 'run/3.0';
   const now = nowIso();
   const path = runKnowledgeDeltaPath(store, located.sessionId, runId);
   const mutate = (draft: RunKnowledgeDelta) => {
@@ -842,7 +897,7 @@ export function recordRunKnowledgeInputs(
     draft.updated_at = now;
     return { session_id: located.sessionId, run_id: runId, recorded: ids.length };
   };
-  if (store.readOpenExecution(located.sessionId)) {
+  if (!v3Run && store.readOpenExecution(located.sessionId)) {
     if (!executionAuthority) throw executionKnowledgeAuthorityRequired(runId);
     return store.updateActiveExecutionRunSidecar({
       sessionId: located.sessionId,
@@ -893,7 +948,8 @@ export function stageRunKnowledgeCandidate(
   const content = input.content.trim();
   if (!title || !content) throw new Error('Knowledge candidate title and content are required');
   const store = new SessionStore(projectRoot);
-  const located = store.findRun(runId, sessionId);
+  const located = store.findRunRecord(runId, sessionId);
+  const v3Run = located.run.schema_version === 'run/3.0';
   const candidateId = knowledgeCandidateId(input.target, content);
   const prior = summarizeSessionKnowledge(projectRoot, located.sessionId, {
     readOnly: true,
@@ -926,7 +982,7 @@ export function stageRunKnowledgeCandidate(
     draft.updated_at = now;
     return { session_id: located.sessionId, run_id: runId, candidate_id: candidateId, reused };
   };
-  if (store.readOpenExecution(located.sessionId)) {
+  if (!v3Run && store.readOpenExecution(located.sessionId)) {
     if (!executionAuthority) throw executionKnowledgeAuthorityRequired(runId);
     return store.updateActiveExecutionRunSidecar({
       sessionId: located.sessionId,
@@ -1364,13 +1420,23 @@ function atomicSpecFilename(category: SpecCategory): string {
   return filename;
 }
 
+type KnowledgeCorpusTransaction =
+  | Pick<StoreTransaction, 'writeText' | 'pendingText'>
+  | Pick<SessionV30KnowledgeStoreTransaction, 'readText' | 'writeText' | 'pendingText'>;
+
+function readPromotionText(tx: KnowledgeCorpusTransaction, path: string): string | null {
+  if ('readText' in tx) return tx.readText(path);
+  return tx.pendingText(path) ?? (existsSync(path) ? readFileSync(path, 'utf8') : null);
+}
+
 function stageAtomicSessionCorpusPromotion(
   projectRoot: string,
   sessionId: string,
-  tx: StoreTransaction,
+  tx: KnowledgeCorpusTransaction,
   candidate: KnowledgeCandidate,
   promotedId: string,
   promotedAt: string,
+  supersessionTarget: string | null = null,
 ): { promoted_id: string; outcome: 'created' | 'reaffirmed' } {
   if (candidate.target === 'spec') {
     const content = safeSpecContent(candidate.content);
@@ -1382,7 +1448,7 @@ function stageAtomicSessionCorpusPromotion(
       return { promoted_id: promotedId, outcome: 'reaffirmed' };
     }
     const existing = findExistingSpec(projectRoot, candidate.title);
-    if (existing) {
+    if (existing && existing.id !== supersessionTarget) {
       if (normalizedText(existing.content) !== normalizedText(content)) {
         throw new Error(`Candidate ${candidate.candidate_id} conflicts with existing spec title "${candidate.title}"`);
       }
@@ -1395,9 +1461,8 @@ function stageAtomicSessionCorpusPromotion(
     const filename = atomicSpecFilename(category);
     const path = join(resolveSpecDir(projectRoot, 'project'), filename);
     const seed = findSeedByFilename(filename);
-    const current = tx.pendingText(path) ?? (existsSync(path)
-      ? readFileSync(path, 'utf8')
-      : seed ? renderSeedContent(seed) : '');
+    const current = readPromotionText(tx, path)
+      ?? (seed ? renderSeedContent(seed) : '');
     const entry = formatNewEntry(
       category,
       ['session-knowledge', candidate.source_kind],
@@ -1418,8 +1483,9 @@ function stageAtomicSessionCorpusPromotion(
 
   const generated = generateKnowhowFilename('tip', candidate.title, promotedId);
   const path = join(projectRoot, '.workflow', 'knowhow', generated.filename);
-  if (existsSync(path)) {
-    const parsed = parseFrontmatter(readFileSync(path, 'utf8'));
+  const existingDocument = readPromotionText(tx, path);
+  if (existingDocument !== null) {
+    const parsed = parseFrontmatter(existingDocument);
     const existingBody = normalizeKnowhowBody(parsed.body);
     if (parsed.data.title !== candidate.title
       || parsed.data.type !== 'tip'
@@ -1520,12 +1586,461 @@ function hasConfirmedHumanResolution(policies: KnowledgeCandidateReconciliation[
 function confirmedSupersessionTarget(
   policies: KnowledgeCandidateReconciliation[],
 ): string | null {
-  return policies.find(policy =>
+  const eligible = policies.filter(policy => policy.promotion_eligibility === 'eligible');
+  const supersessionPolicies = eligible.filter(policy =>
     policy.disposition === 'supersede_candidate'
-    && policy.promotion_eligibility === 'eligible'
     && policy.resolution?.status === 'confirmed'
     && policy.canonical_id
-  )?.canonical_id ?? null;
+  );
+  if (supersessionPolicies.length === 0) return null;
+  if (eligible.some(policy => policy.disposition !== 'supersede_candidate')) {
+    throw new Error('Candidate origins disagree between supersession and non-supersession promotion policy');
+  }
+  const targets = [...new Set(supersessionPolicies.map(policy => policy.canonical_id!))];
+  if (targets.length !== 1 || supersessionPolicies.length !== eligible.length) {
+    throw new Error('Candidate origins have incomplete or conflicting confirmed supersession targets');
+  }
+  return targets[0];
+}
+
+function reconciliationPolicySnapshot(policies: KnowledgeCandidateReconciliation[]): string {
+  return JSON.stringify(policies.map(policy => JSON.stringify(policy)).sort());
+}
+
+type PromotionCandidate = SessionKnowledgeSummary['candidates'][number];
+
+interface KnowledgePromotionPlanItem {
+  candidate: PromotionCandidate;
+  promotedId: string;
+  supersessionTarget: string | null;
+  policySnapshot: string;
+}
+
+function promotionCorpusPaths(
+  projectRoot: string,
+  candidate: PromotionCandidate,
+  promotedId: string,
+  supersessionTarget: string | null = null,
+): string[] {
+  if (candidate.target === 'spec') {
+    const specDir = resolveSpecDir(projectRoot, 'project');
+    const paths = Object.keys(CATEGORY_MAP).map(filename => join(specDir, filename));
+    if (existsSync(specDir)) {
+      paths.push(...readdirSync(specDir)
+        .filter(filename => filename.toLowerCase().endsWith('.md'))
+        .map(filename => join(specDir, filename)));
+    }
+    return [...new Set(paths)];
+  }
+  const knowhowDir = join(projectRoot, '.workflow', 'knowhow');
+  const paths = [join(
+    knowhowDir,
+    generateKnowhowFilename('tip', candidate.title, promotedId).filename,
+  )];
+  if (supersessionTarget && existsSync(knowhowDir)) {
+    paths.push(...readdirSync(knowhowDir)
+      .filter(filename => filename.toLowerCase().endsWith('.md'))
+      .map(filename => join(knowhowDir, filename)));
+  }
+  return [...new Set(paths)];
+}
+
+function xmlAttribute(line: string, name: string): string | null {
+  return line.match(new RegExp(`\\b${name}="([^"]*)"`))?.[1] ?? null;
+}
+
+function upsertXmlAttribute(line: string, name: string, value: string): string {
+  const pattern = new RegExp(`\\s${name}="[^"]*"`);
+  if (pattern.test(line)) return line.replace(pattern, ` ${name}="${value}"`);
+  return line.replace(/>\s*$/, ` ${name}="${value}">`);
+}
+
+function stageAtomicSpecSupersession(
+  projectRoot: string,
+  tx: KnowledgeCorpusTransaction,
+  paths: string[],
+  oldId: string,
+  newId: string,
+): void {
+  if (oldId === newId) throw new Error(`Cannot supersede a sid with itself: ${oldId}`);
+  let oldFound = false;
+  let newFound = false;
+  const specDir = resolveSpecDir(projectRoot, 'project');
+  for (const path of paths) {
+    const relativePath = relative(specDir, path);
+    if (!relativePath
+      || relativePath.startsWith('..')
+      || isAbsolute(relativePath)
+      || relativePath.includes('/')
+      || relativePath.includes('\\')
+      || !relativePath.toLowerCase().endsWith('.md')) continue;
+    const current = readPromotionText(tx, path);
+    if (current === null) continue;
+    const lines = current.split('\n');
+    let changed = false;
+    for (let index = 0; index < lines.length; index++) {
+      const line = lines[index];
+      if (!line.includes('<spec-entry')) continue;
+      if (xmlAttribute(line, 'sid') === oldId) {
+        const existing = xmlAttribute(line, 'superseded-by');
+        if (existing && existing !== newId) {
+          throw new Error(`${oldId} is already superseded by ${existing}`);
+        }
+        lines[index] = upsertXmlAttribute(
+          upsertXmlAttribute(line, 'status', 'deprecated'),
+          'superseded-by',
+          newId,
+        );
+        oldFound = true;
+        changed = true;
+      } else if (xmlAttribute(line, 'sid') === newId) {
+        const predecessors = (xmlAttribute(line, 'supersedes') ?? '')
+          .split(',')
+          .map(value => value.trim())
+          .filter(Boolean);
+        lines[index] = upsertXmlAttribute(
+          line,
+          'supersedes',
+          [...new Set([...predecessors, oldId])].join(','),
+        );
+        newFound = true;
+        changed = true;
+      }
+    }
+    if (changed) tx.writeText(path, lines.join('\n'));
+  }
+  if (!oldFound) throw new Error(`sid not found: ${oldId}`);
+  if (!newFound) throw new Error(`sid not found: ${newId}`);
+}
+
+function knowledgeStringList(value: unknown): string[] {
+  const values = Array.isArray(value) ? value : typeof value === 'string' ? value.split(',') : [];
+  return [...new Set(values.map(String).map(item => item.trim()).filter(Boolean))];
+}
+
+function stageAtomicKnowhowSupersession(
+  tx: KnowledgeCorpusTransaction,
+  paths: string[],
+  oldId: string,
+  newId: string,
+): void {
+  if (oldId === newId) throw new Error(`Cannot supersede a knowhow id with itself: ${oldId}`);
+  const nodes = new Map<string, { path: string; raw: string; data: Record<string, unknown> }>();
+  for (const path of paths) {
+    if (!path.toLowerCase().endsWith('.md')) continue;
+    const raw = readPromotionText(tx, path);
+    if (raw === null) continue;
+    const id = knowhowFileToWikiId(basename(path));
+    const data = parseFrontmatter(raw).data;
+    if (nodes.has(id)) throw new Error(`Duplicate knowhow id: ${id}`);
+    nodes.set(id, { path, raw, data });
+  }
+  const findNode = (id: string) => [...nodes.entries()].find(([wikiId, node]) =>
+    wikiId === id || node.data.explicitId === id
+  );
+  const oldEntry = findNode(oldId);
+  const newEntry = findNode(newId);
+  if (!oldEntry) throw new Error(`Knowhow id not found: ${oldId}`);
+  if (!newEntry) throw new Error(`Knowhow id not found: ${newId}`);
+
+  const successors = new Map<string, string>();
+  for (const [id, node] of nodes) {
+    const direct = typeof node.data.supersededBy === 'string' ? node.data.supersededBy : null;
+    if (direct) successors.set(id, direct);
+    for (const predecessor of knowledgeStringList(node.data.supersedes)) {
+      const existing = successors.get(predecessor);
+      if (existing && existing !== id) {
+        throw new Error(`${predecessor} has conflicting successors: ${existing}, ${id}`);
+      }
+      successors.set(predecessor, id);
+    }
+  }
+  const existingSuccessor = successors.get(oldEntry[0]) ?? successors.get(oldId);
+  if (existingSuccessor && existingSuccessor !== newEntry[0] && existingSuccessor !== newId) {
+    throw new Error(`${oldId} is already superseded by ${existingSuccessor}`);
+  }
+  const seen = new Set<string>();
+  let current: string | undefined = newEntry[0];
+  while (current && !seen.has(current)) {
+    if (current === oldEntry[0] || current === oldId) {
+      throw new Error(`Superseding ${oldId} by ${newId} would create a cycle`);
+    }
+    seen.add(current);
+    current = successors.get(current);
+  }
+
+  const predecessors = knowledgeStringList(newEntry[1].data.supersedes);
+  tx.writeText(oldEntry[1].path, setKnowhowFrontmatterValues(oldEntry[1].raw, {
+    status: 'deprecated',
+    supersededBy: newEntry[0],
+  }));
+  tx.writeText(newEntry[1].path, setKnowhowFrontmatterValues(newEntry[1].raw, {
+    supersedes: [...new Set([...predecessors, oldEntry[0]])].sort(),
+  }));
+}
+
+function sourceRunIsSealed(store: SessionStore, sessionId: string, runId: string): boolean {
+  const record = store.readRunRecordReadOnly(sessionId, runId);
+  return record.schema_version === 'run/3.0'
+    ? record.status === 'sealed'
+    : store.readRun(sessionId, runId).status === 'sealed';
+}
+
+function persistedPromotionMatches(
+  projectRoot: string,
+  candidate: KnowledgeCandidate,
+  plannedId: string,
+): boolean {
+  if (candidate.target === 'spec') {
+    const existing = findSpecById(projectRoot, plannedId);
+    return existing !== null
+      && normalizedText(existing.content) === normalizedText(safeSpecContent(candidate.content));
+  }
+  const generated = generateKnowhowFilename('tip', candidate.title, plannedId);
+  const path = join(projectRoot, '.workflow', 'knowhow', generated.filename);
+  if (!existsSync(path)) return false;
+  const parsed = parseFrontmatter(readFileSync(path, 'utf8'));
+  return parsed.data.title === candidate.title
+    && parsed.data.type === 'tip'
+    && parsed.data.explicitId === plannedId
+    && normalizeKnowhowBody(parsed.body) === normalizeKnowhowBody(candidate.content);
+}
+
+function samePromotionCandidate(left: PromotionCandidate, right: PromotionCandidate): boolean {
+  return left.candidate_id === right.candidate_id
+    && (left.origin ?? 'run') === (right.origin ?? 'run')
+    && left.target === right.target
+    && left.action === right.action
+    && left.title === right.title
+    && left.content === right.content
+    && left.category === right.category
+    && left.source_kind === right.source_kind
+    && JSON.stringify(left.evidence_refs) === JSON.stringify(right.evidence_refs)
+    && JSON.stringify(left.source_snapshot) === JSON.stringify(right.source_snapshot);
+}
+
+function assertV30RecoveryCandidateFences(
+  projectRoot: string,
+  store: SessionStore,
+  sessionId: string,
+  candidates: PromotionCandidate[],
+): void {
+  const currentCorpusFingerprint = currentKnowledgeCorpusFingerprint(projectRoot);
+  for (const candidate of candidates) {
+    const policies = candidateReconciliationPolicies(store, sessionId, candidate);
+    if (policies.length === 0 || blockingCandidatePolicy(policies)) {
+      throw new Error(
+        `Candidate ${candidate.candidate_id} cannot recover promotion without an eligible reconciliation`,
+      );
+    }
+    if (isTranscriptOnlyEvidenceRefs(candidate.evidence_refs)
+      && !hasConfirmedHumanResolution(policies)) {
+      throw new Error(
+        `Candidate ${candidate.candidate_id} cannot recover promotion without confirmed review`,
+      );
+    }
+    if ((candidate.origin ?? 'run') === 'session') {
+      const delta = readSessionKnowledgeDelta(store, sessionId, true);
+      const receipt = readSessionKnowledgeReconciliation(store, sessionId, true);
+      if (!receipt?.session_source
+        || receipt.corpus_fingerprint !== currentCorpusFingerprint
+        || receipt.candidate_snapshot_hash !== sessionKnowledgeSnapshotHash(delta)
+        || !receipt.candidates.some(item => item.candidate_id === candidate.candidate_id)) {
+        throw new Error(
+          `Session-source candidate ${candidate.candidate_id} changed before promotion recovery`,
+        );
+      }
+      revalidateSessionKnowledgeCandidateSource(projectRoot, store, candidate, sessionId);
+      continue;
+    }
+    for (const runId of candidate.run_ids) {
+      const receiptPath = join(store.runDir(sessionId, runId), 'knowledge-reconciliation.json');
+      if (!existsSync(receiptPath)) {
+        throw new Error(`Run ${runId} has no reconciliation for promotion recovery`);
+      }
+      const receipt = store.readJsonFileReadOnly(
+        receiptPath,
+        knowledgeReconciliationSchema,
+      );
+      const delta = readRunKnowledgeDelta(store, sessionId, runId, true);
+      const frontmatter = readReportFrontmatter(store.runDir(sessionId, runId));
+      if (receipt.corpus_fingerprint !== currentCorpusFingerprint
+        || receipt.candidate_snapshot_hash !== runKnowledgeCandidateSnapshotHash(delta, frontmatter, runId)
+        || !receipt.candidates.some(item => item.candidate_id === candidate.candidate_id)) {
+        throw new Error(`Run ${runId} candidate fingerprint changed before promotion recovery`);
+      }
+    }
+  }
+}
+
+function applyV30PromotionResults(
+  store: SessionStore,
+  tx: SessionV30KnowledgeStoreTransaction,
+  sessionId: string,
+  summary: SessionKnowledgeSummary,
+  promoted: KnowledgePromotionResult['promoted'],
+  promotedAt: string,
+): void {
+  const promotedById = new Map(promoted.map(item => [item.candidate_id, item]));
+  const runIds = new Set(summary.candidates
+    .filter(candidate => promotedById.has(candidate.candidate_id))
+    .flatMap(candidate => candidate.run_ids));
+  for (const runId of runIds) {
+    const path = runKnowledgeDeltaPath(store, sessionId, runId);
+    const delta = structuredClone(tx.readJson(path, runKnowledgeDeltaSchema));
+    let changed = false;
+    for (const candidate of delta.candidates) {
+      const result = promotedById.get(candidate.candidate_id);
+      if (!result) continue;
+      candidate.status = 'promoted';
+      candidate.promoted_id = result.promoted_id;
+      candidate.promotion_receipt = {
+        outcome: result.outcome,
+        promoted_at: promotedAt,
+        content_hash: contentHash(candidate.content),
+      };
+      changed = true;
+    }
+    if (!changed) continue;
+    delta.revision++;
+    delta.updated_at = promotedAt;
+    tx.writeJson(path, delta, runKnowledgeDeltaSchema);
+  }
+
+  const sessionPath = sessionKnowledgeDeltaPath(store, sessionId);
+  if (!existsSync(sessionPath)) return;
+  const delta = structuredClone(tx.readJson(sessionPath, sessionKnowledgeDeltaSchema));
+  let changed = false;
+  for (const candidate of delta.candidates) {
+    const result = promotedById.get(candidate.candidate_id);
+    if (!result) continue;
+    candidate.status = 'promoted';
+    candidate.promoted_id = result.promoted_id;
+    candidate.promotion_receipt = {
+      outcome: result.outcome,
+      promoted_at: promotedAt,
+      content_hash: contentHash(candidate.content),
+    };
+    changed = true;
+  }
+  if (!changed) return;
+  delta.revision++;
+  delta.updated_at = promotedAt;
+  tx.writeJson(sessionPath, delta, sessionKnowledgeDeltaSchema);
+}
+
+function promoteV30KnowledgeAtomically(
+  projectRoot: string,
+  store: SessionStore,
+  sessionId: string,
+  initialSummary: SessionKnowledgeSummary,
+  plan: KnowledgePromotionPlanItem[],
+  options: PromoteSessionKnowledgeOptions,
+): KnowledgePromotionResult['promoted'] {
+  const selectedIds = new Set(plan.map(item => item.candidate.candidate_id));
+  const promotedAt = nowIso();
+  return store.withV30KnowledgeTransaction(sessionId, tx => {
+    const corpusPaths = [...new Set(plan.flatMap(item =>
+      promotionCorpusPaths(
+        projectRoot,
+        item.candidate,
+        item.promotedId,
+        item.supersessionTarget,
+      ),
+    ))];
+    tx.lockCorpusPaths(corpusPaths);
+    options._beforeFinalSessionValidation?.();
+    const currentSummary = summarizeSessionKnowledge(projectRoot, sessionId, {
+      readOnly: true,
+      strict: true,
+    });
+    const currentPoliciesByCandidate = new Map<string, KnowledgeCandidateReconciliation[]>();
+    for (const candidate of currentSummary.candidates) {
+      const policies = currentPoliciesByCandidate.get(candidate.candidate_id) ?? [];
+      policies.push(...candidateReconciliationPolicies(store, sessionId, candidate));
+      currentPoliciesByCandidate.set(candidate.candidate_id, policies);
+    }
+    for (const item of plan) {
+      const currentPolicies = currentPoliciesByCandidate.get(item.candidate.candidate_id) ?? [];
+      if (reconciliationPolicySnapshot(currentPolicies) !== item.policySnapshot
+        || confirmedSupersessionTarget(currentPolicies) !== item.supersessionTarget) {
+        throw new Error(
+          `Candidate ${item.candidate.candidate_id} reconciliation policy changed before v3 promotion commit`,
+        );
+      }
+    }
+    const currentCandidates = currentSummary.candidates.filter(candidate =>
+      selectedIds.has(candidate.candidate_id)
+    );
+    for (const current of currentCandidates) {
+      const initial = initialSummary.candidates.find(candidate =>
+        candidate.candidate_id === current.candidate_id
+        && (candidate.origin ?? 'run') === (current.origin ?? 'run')
+      );
+      if (!initial || !samePromotionCandidate(initial, current)
+        || (current.status !== 'pending' && current.status !== 'promoting')) {
+        throw new Error(`Candidate ${current.candidate_id} changed before v3 promotion commit`);
+      }
+      for (const runId of current.run_ids) {
+        if (tx.readRun(runId).status !== 'sealed') {
+          throw new Error(`Run ${runId} is no longer sealed at v3 promotion commit`);
+        }
+      }
+    }
+    if (currentCandidates.length < plan.length) {
+      throw new Error('A selected candidate disappeared before v3 promotion commit');
+    }
+
+    if (options._finalSessionValidation) {
+      options._finalSessionValidation(store);
+    } else {
+      if (!currentCandidates.every(candidate => candidate.status === 'promoting')) {
+        throw new Error('v3 knowledge promotion requires reconciled final validation');
+      }
+      assertV30RecoveryCandidateFences(projectRoot, store, sessionId, currentCandidates);
+    }
+
+    const promoted = plan.map(item => {
+      const result = stageAtomicSessionCorpusPromotion(
+        projectRoot,
+        sessionId,
+        tx,
+        item.candidate,
+        item.promotedId,
+        promotedAt,
+        item.supersessionTarget,
+      );
+      return {
+        candidate_id: item.candidate.candidate_id,
+        target: item.candidate.target,
+        promoted_id: result.promoted_id,
+        outcome: result.outcome,
+      };
+    });
+    for (const item of plan) {
+      if (!item.supersessionTarget) continue;
+      const result = promoted.find(entry => entry.candidate_id === item.candidate.candidate_id);
+      if (!result) throw new Error(`Missing promotion result for ${item.candidate.candidate_id}`);
+      if (item.candidate.target === 'spec') {
+        stageAtomicSpecSupersession(
+          projectRoot,
+          tx,
+          corpusPaths,
+          item.supersessionTarget,
+          result.promoted_id,
+        );
+      } else {
+        stageAtomicKnowhowSupersession(
+          tx,
+          corpusPaths,
+          item.supersessionTarget,
+          result.promoted_id,
+        );
+      }
+    }
+    applyV30PromotionResults(store, tx, sessionId, currentSummary, promoted, promotedAt);
+    return promoted;
+  });
 }
 
 /**
@@ -1553,10 +2068,12 @@ export function promoteSessionKnowledge(
     throw new Error(`Unknown candidate IDs: ${unknown.join(', ')}; list candidates with: maestro knowledge review <session-id>`);
   }
 
-  const policyByCandidate = new Map(summary.candidates.map(candidate => [
-    candidate.candidate_id,
-    candidateReconciliationPolicies(store, sessionId, candidate),
-  ]));
+  const policyByCandidate = new Map<string, KnowledgeCandidateReconciliation[]>();
+  for (const candidate of summary.candidates) {
+    const policies = policyByCandidate.get(candidate.candidate_id) ?? [];
+    policies.push(...candidateReconciliationPolicies(store, sessionId, candidate));
+    policyByCandidate.set(candidate.candidate_id, policies);
+  }
   if (!options.all) {
     const blocked = summary.candidates
       .filter(candidate => requested.has(candidate.candidate_id))
@@ -1646,7 +2163,7 @@ export function promoteSessionKnowledge(
     : [];
   const unsealedSources = selected.flatMap(candidate =>
     candidate.run_ids
-      .filter(runId => store.readRun(sessionId, runId).status !== 'sealed')
+      .filter(runId => !sourceRunIsSealed(store, sessionId, runId))
       .map(runId => `${candidate.candidate_id}:${runId}`)
   );
   if (unsealedSources.length > 0) {
@@ -1711,6 +2228,17 @@ export function promoteSessionKnowledge(
     }
     throw new Error('No pending candidates selected');
   }
+  if (selected.length === 0) {
+    return {
+      schema_version: 'knowledge-promotion-result/1.0',
+      session_id: sessionId,
+      promoted: [],
+      already_promoted: alreadyPromoted,
+      skipped_observed: skippedObserved,
+      skipped_review_required: skippedReviewRequired,
+      skipped_suppressed: skippedSuppressed,
+    };
+  }
 
   // Preflight every selected spec before recording the promotion intent.
   // This also catches two candidates whose truncated titles collide.
@@ -1738,18 +2266,43 @@ export function promoteSessionKnowledge(
     }
   }
 
-  const plan = selected.map(candidate => {
+  const plan: KnowledgePromotionPlanItem[] = selected.map(candidate => {
     const existing = candidate.target === 'spec'
       ? findExistingSpec(projectRoot, candidate.title)
       : null;
-    const supersessionTarget = confirmedSupersessionTarget(
-      policyByCandidate.get(candidate.candidate_id) ?? [],
-    );
+    const policies = policyByCandidate.get(candidate.candidate_id) ?? [];
+    const supersessionTarget = confirmedSupersessionTarget(policies);
     const promotedId = candidate.promoted_id
       ?? (existing && !supersessionTarget ? existing.id : null)
       ?? (candidate.target === 'spec' ? plannedSpecId(candidate) : plannedKnowhowId(candidate));
-    return { candidate, promotedId, supersessionTarget };
+    return {
+      candidate,
+      promotedId,
+      supersessionTarget,
+      policySnapshot: reconciliationPolicySnapshot(policies),
+    };
   });
+
+  const v3Session = store.readSessionRecordReadOnly(sessionId).schema_version === 'session/3.0';
+  if (v3Session) {
+    const promoted = promoteV30KnowledgeAtomically(
+      projectRoot,
+      store,
+      sessionId,
+      summary,
+      plan,
+      options,
+    );
+    return {
+      schema_version: 'knowledge-promotion-result/1.0',
+      session_id: sessionId,
+      promoted,
+      already_promoted: alreadyPromoted,
+      skipped_observed: skippedObserved,
+      skipped_review_required: skippedReviewRequired,
+      skipped_suppressed: skippedSuppressed,
+    };
+  }
 
   const atomicSessionPlan = plan.length > 0
     && plan.every(item => (item.candidate.origin ?? 'run') === 'session' && !item.supersessionTarget);
@@ -1889,6 +2442,71 @@ export function promoteSessionKnowledge(
         }
       },
     );
+  } else if (v3Session) {
+    store.withV30KnowledgeTransaction(sessionId, tx => {
+      options._beforeFinalSessionValidation?.();
+      const currentSummary = summarizeSessionKnowledge(projectRoot, sessionId, {
+        readOnly: true,
+        strict: true,
+      });
+      const selectedIds = new Set(plan.map(item => item.candidate.candidate_id));
+      const currentCandidates = currentSummary.candidates.filter(candidate =>
+        selectedIds.has(candidate.candidate_id)
+      );
+      for (const current of currentCandidates) {
+        const initial = summary.candidates.find(candidate =>
+          candidate.candidate_id === current.candidate_id
+          && (candidate.origin ?? 'run') === (current.origin ?? 'run')
+        );
+        if (!initial || !samePromotionCandidate(initial, current)
+          || (current.status !== 'pending' && current.status !== 'promoting')) {
+          throw new Error(`Candidate ${current.candidate_id} changed before v3 promotion intent`);
+        }
+      }
+      if (options._finalSessionValidation) {
+        options._finalSessionValidation(store);
+      } else {
+        if (!currentCandidates.every(candidate => candidate.status === 'promoting')) {
+          throw new Error('v3 knowledge promotion requires reconciled final validation');
+        }
+        assertV30RecoveryCandidateFences(projectRoot, store, sessionId, currentCandidates);
+      }
+
+      for (const runId of new Set(currentCandidates.flatMap(candidate => candidate.run_ids))) {
+        const path = runKnowledgeDeltaPath(store, sessionId, runId);
+        const delta = structuredClone(tx.readJson(path, runKnowledgeDeltaSchema));
+        let changed = false;
+        for (const candidate of delta.candidates) {
+          const item = plan.find(entry => entry.candidate.candidate_id === candidate.candidate_id);
+          if (!item || candidate.status === 'promoted') continue;
+          candidate.status = 'promoting';
+          candidate.promoted_id = item.promotedId;
+          changed = true;
+        }
+        if (changed) {
+          delta.revision++;
+          delta.updated_at = intentAt;
+          tx.writeJson(path, delta, runKnowledgeDeltaSchema);
+        }
+      }
+      if (currentCandidates.some(candidate => (candidate.origin ?? 'run') === 'session')) {
+        const path = sessionKnowledgeDeltaPath(store, sessionId);
+        const delta = structuredClone(tx.readJson(path, sessionKnowledgeDeltaSchema));
+        let changed = false;
+        for (const candidate of delta.candidates) {
+          const item = plan.find(entry => entry.candidate.candidate_id === candidate.candidate_id);
+          if (!item || candidate.status === 'promoted') continue;
+          candidate.status = 'promoting';
+          candidate.promoted_id = item.promotedId;
+          changed = true;
+        }
+        if (changed) {
+          delta.revision++;
+          delta.updated_at = intentAt;
+          tx.writeJson(path, delta, sessionKnowledgeDeltaSchema);
+        }
+      }
+    });
   } else {
     store.updateKnowledgeLifecycle(sessionId, (_lifecycle, tx) => {
       for (const runId of new Set(plan.flatMap(item => item.candidate.run_ids))) {
@@ -1976,6 +2594,34 @@ export function promoteSessionKnowledge(
         }
       },
     );
+  } else if (v3Session) {
+    store.withV30KnowledgeTransaction(sessionId, tx => {
+      const currentSummary = summarizeSessionKnowledge(projectRoot, sessionId, {
+        readOnly: true,
+        strict: true,
+      });
+      const promotedIds = new Set(promoted.map(item => item.candidate_id));
+      const currentCandidates = currentSummary.candidates.filter(candidate =>
+        promotedIds.has(candidate.candidate_id)
+      );
+      for (const current of currentCandidates) {
+        const initial = summary.candidates.find(candidate =>
+          candidate.candidate_id === current.candidate_id
+          && (candidate.origin ?? 'run') === (current.origin ?? 'run')
+        );
+        const item = plan.find(entry => entry.candidate.candidate_id === current.candidate_id);
+        if (!initial || !item || !samePromotionCandidate(initial, current)
+          || current.status !== 'promoting'
+          || current.promoted_id !== item.promotedId
+          || !persistedPromotionMatches(projectRoot, item.candidate, item.promotedId)) {
+          throw new Error(`Candidate ${current.candidate_id} changed before v3 promotion write-back`);
+        }
+      }
+      if (currentCandidates.length < plan.length) {
+        throw new Error('A selected candidate disappeared before v3 promotion write-back');
+      }
+      applyV30PromotionResults(store, tx, sessionId, currentSummary, promoted, promotedAt);
+    });
   } else {
     store.updateKnowledgeLifecycle(sessionId, (lifecycle, tx) => {
       for (const item of promoted) {

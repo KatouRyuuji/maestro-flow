@@ -15,7 +15,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { truncate, extractSnippet } from '../utils/cli-format.js';
-import { findEntry } from './load.js';
+import { findEntry, recordLoadedKnowledge } from './load.js';
 import type { WikiIndexer } from '#maestro-dashboard/wiki/wiki-indexer.js';
 import type { WikiWriter } from '#maestro-dashboard/wiki/writer.js';
 import type { WikiEntry, WikiFilters, WikiNodeType } from '#maestro-dashboard/wiki/wiki-types.js';
@@ -196,19 +196,7 @@ export function registerWikiCommand(program: Command): void {
         return;
       }
 
-      try {
-        const { recordKnowledgeConsumptionsDetailed } = await import('../graph/kg/knowledge-usage.js');
-        const result = recordKnowledgeConsumptionsDetailed(
-          process.cwd(),
-          entries.map(entry => ({ id: entry.id, sourceRef: entry.sourceRef })),
-        );
-        if (result.nodeIds.length > 0) {
-          const { recordActiveRunKnowledgeInputs } = await import('../run/knowledge.js');
-          recordActiveRunKnowledgeInputs(process.cwd(), result.nodeIds);
-        }
-      } catch {
-        // Usage analytics must never block knowledge loading.
-      }
+      await recordLoadedKnowledge(entries);
 
       if (opts.json) {
         console.log(JSON.stringify({

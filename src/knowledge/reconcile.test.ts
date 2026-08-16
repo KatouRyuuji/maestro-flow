@@ -22,6 +22,15 @@ const roots: string[] = [];
 function root(): string {
   const path = mkdtempSync(join(tmpdir(), 'maestro-reconcile-'));
   roots.push(path);
+  const workflowDir = join(path, '.workflow');
+  mkdirSync(workflowDir, { recursive: true });
+  writeFileSync(join(workflowDir, 'config.json'), JSON.stringify({
+    session_schema: {
+      schema_version: 'session-schema-selection/1.0',
+      writer: 'session/1.3',
+      features: { session_statusless: false },
+    },
+  }));
   const commandDir = join(path, '.claude', 'commands');
   mkdirSync(commandDir, { recursive: true });
   writeFileSync(

@@ -98,6 +98,8 @@ describe('Session Run contract parity release gate', () => {
     expect(result.stdout).toContain('PASS writer.command-run.execution-explicit');
     expect(result.stdout).toContain('PASS runtime.command-run.writer-split');
     expect(result.stdout).toContain('PASS reader.session.compatibility');
+    expect(result.stdout).toContain('PASS reader.session.v3');
+    expect(result.stdout).toContain('PASS reader.run.v3');
     expect(result.stdout).toContain('PASS cache.search.version');
     expect(result.stdout).toContain('PASS response.operations.legacy');
     expect(result.stdout).toContain('PASS response.operations.execution-additive');
@@ -127,24 +129,24 @@ describe('Session Run contract parity release gate', () => {
         },
       },
       {
-        dimension: 'prompt-lite-execution-seal',
+        dimension: 'prompt-lite-session-complete',
         id: 'prompt.execution.lite',
         mutate(root) {
-          replacePattern(root, 'workflows/run-mode-lite.md', /maestro execution seal/g, 'maestro legacy seal');
+          replacePattern(root, 'workflows/run-mode-lite.md', /maestro session complete/g, 'maestro legacy complete');
         },
       },
       {
         dimension: 'prompt-orchestrator-revision-fence',
         id: 'prompt.execution.orchestrator',
         mutate(root) {
-          replacePattern(root, 'workflows/orchestrator-run-loop.md', /--expected-execution-revision/g, '--expected-session-revision');
+          replacePattern(root, 'workflows/orchestrator-run-loop.md', /--expected-orchestration-revision/g, '--expected-session-revision');
         },
       },
       {
-        dimension: 'prompt-ralph-core-lease',
+        dimension: 'prompt-ralph-v3-capability',
         id: 'prompt.execution.ralph',
         mutate(root) {
-          replacePattern(root, 'prepare/ralph.md', /core_execution_lease/g, 'host_only_lease');
+          replacePattern(root, 'prepare/ralph.md', /session_run_minimal_v3/g, 'legacy_session_runtime');
         },
       },
       {
@@ -160,14 +162,14 @@ describe('Session Run contract parity release gate', () => {
         },
       },
       {
-        dimension: 'prompt-session-source-seal-regression',
+        dimension: 'prompt-lite-request-receipts',
         id: 'prompt.execution.lite',
         mutate(root) {
-          replaceOnce(
+          replacePattern(
             root,
             'workflows/run-mode-lite.md',
-            'does **not** require Session seal',
-            'requires Session seal',
+            /request_receipts_v2/g,
+            'legacy_request_receipts',
           );
         },
       },
@@ -189,7 +191,7 @@ describe('Session Run contract parity release gate', () => {
         dimension: 'session-writer-default-inversion',
         id: 'writer.session.selection-default',
         mutate(root) {
-          replaceOnce(root, 'src/run/defaults.ts', "writer: 'session/1.3',", "writer: 'session/2.0',");
+          replaceOnce(root, 'src/run/defaults.ts', "writer: 'session/3.0',", "writer: 'session/2.0',");
         },
       },
       {
@@ -245,10 +247,34 @@ describe('Session Run contract parity release gate', () => {
         },
       },
       {
+        dimension: 'reader-v3-session',
+        id: 'reader.session.v3',
+        mutate(root) {
+          replaceOnce(
+            root,
+            'dashboard/src/server/wiki/virtual-wiki-adapters.ts',
+            "raw.schema_version === 'session/3.0'",
+            "raw.schema_version === 'session/9.9'",
+          );
+        },
+      },
+      {
+        dimension: 'reader-v3-run',
+        id: 'reader.run.v3',
+        mutate(root) {
+          replaceOnce(
+            root,
+            'dashboard/src/server/wiki/virtual-wiki-adapters.ts',
+            "raw.schema_version === 'run/3.0'",
+            "raw.schema_version === 'run/9.9'",
+          );
+        },
+      },
+      {
         dimension: 'cache',
         id: 'cache.search.version',
         mutate(root) {
-          replaceOnce(root, 'dashboard/src/server/wiki/wiki-indexer.ts', 'const SEARCH_CACHE_VERSION = 5;', 'const SEARCH_CACHE_VERSION = 4;');
+          replaceOnce(root, 'dashboard/src/server/wiki/wiki-indexer.ts', 'const SEARCH_CACHE_VERSION = 6;', 'const SEARCH_CACHE_VERSION = 5;');
         },
       },
       {
@@ -322,8 +348,8 @@ describe('Session Run contract parity release gate', () => {
           replaceOnce(
             root,
             'src/commands/capabilities.ts',
-            "session_schema_writes: ['session/1.3', 'session/2.0', 'session/3.0'],",
-            "session_schema_writes: ['session/1.3', 'session/2.0'],",
+            "? ['session/3.0']",
+            "? ['session/9.9']",
           );
         },
       },

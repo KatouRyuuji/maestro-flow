@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { spawn as spawnChild, spawnSync } from 'node:child_process';
 import {
   closeSync,
   constants as fsConstants,
@@ -206,6 +206,20 @@ function childFailure(label, result) {
   });
 }
 
+function npmChildTrace(label, invocation, cwd, result) {
+  return {
+    label,
+    command: invocation.command,
+    args: invocation.args,
+    cwd,
+    shell: false,
+    status: result.status,
+    signal: result.signal ?? null,
+    stdoutBytes: Buffer.byteLength(result.stdout ?? '', 'utf8'),
+    stderrBytes: Buffer.byteLength(result.stderr ?? '', 'utf8'),
+  };
+}
+
 export function runNpmChild(
   label,
   npmArgs,
@@ -219,17 +233,51 @@ export function runNpmChild(
     encoding: 'utf8',
   });
   if (result.error || result.status !== 0) childFailure(label, result);
-  return {
-    label,
-    command: invocation.command,
-    args: invocation.args,
-    cwd,
-    shell: false,
-    status: result.status,
-    signal: result.signal ?? null,
-    stdoutBytes: Buffer.byteLength(result.stdout ?? '', 'utf8'),
-    stderrBytes: Buffer.byteLength(result.stderr ?? '', 'utf8'),
-  };
+  return npmChildTrace(label, invocation, cwd, result);
+}
+
+export async function runNpmChildAsync(
+  label,
+  npmArgs,
+  cwd,
+  { npmCliOverride, spawn = spawnChild } = {},
+) {
+  const invocation = resolveNpmInvocation(npmArgs, { npmCliOverride });
+  let child;
+  try {
+    child = spawn(invocation.command, invocation.args, {
+      shell: false,
+      cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (error) {
+    childFailure(label, { error });
+  }
+
+  if (Object.hasOwn(child, 'status')) {
+    if (child.error || child.status !== 0) childFailure(label, child);
+    return npmChildTrace(label, invocation, cwd, child);
+  }
+
+  return new Promise((resolveChild, rejectChild) => {
+    let stdout = '';
+    let stderr = '';
+    let spawnError;
+    child.stdout?.setEncoding('utf8');
+    child.stderr?.setEncoding('utf8');
+    child.stdout?.on('data', chunk => { stdout += chunk; });
+    child.stderr?.on('data', chunk => { stderr += chunk; });
+    child.once('error', error => { spawnError = error; });
+    child.once('close', (status, signal) => {
+      const result = { status, signal, stdout, stderr, error: spawnError };
+      try {
+        if (result.error || result.status !== 0) childFailure(label, result);
+        resolveChild(npmChildTrace(label, invocation, cwd, result));
+      } catch (error) {
+        rejectChild(error);
+      }
+    });
+  });
 }
 
 function normalizedReportedPath(path, cwd) {
@@ -304,7 +352,7 @@ export function parseVitestReport(reportPath, {
   return { label, cwd, collectedFiles, tests, failures, files };
 }
 
-export function runSourcePhase({ npmCliOverride, spawn = spawnSync, tempRoot } = {}) {
+export async function runSourcePhase({ npmCliOverride, spawn = spawnChild, tempRoot } = {}) {
   const ownedTempRoot = tempRoot ?? mkdtempSync(join(tmpdir(), 'maestro-search-ranking-source-'));
   const shouldCleanup = tempRoot === undefined;
   const rootReport = join(ownedTempRoot, 'root-vitest.json');
@@ -314,7 +362,7 @@ export function runSourcePhase({ npmCliOverride, spawn = spawnSync, tempRoot } =
       'test',
       '--',
       '--reporter=json',
-      '--maxWorkers=1',
+      '--maxWorkers=6',
       '--testTimeout=15000',
       '--outputFile',
       rootReport,
@@ -324,7 +372,7 @@ export function runSourcePhase({ npmCliOverride, spawn = spawnSync, tempRoot } =
       'test',
       '--',
       '--reporter=json',
-      '--maxWorkers=1',
+      '--maxWorkers=2',
       '--testTimeout=15000',
       '--outputFile',
       dashboardReport,
@@ -334,25 +382,23 @@ export function runSourcePhase({ npmCliOverride, spawn = spawnSync, tempRoot } =
       fail('DASHBOARD_PATH_PREFIX', 'dashboard test arguments must be relative to dashboard root');
     }
 
-    const rootTrace = runNpmChild(
-      'source-tests:root',
-      rootArgs,
-      repoRoot,
-      { npmCliOverride, spawn },
-    );
+    const traces = await Promise.allSettled([
+      runNpmChildAsync('source-tests:root', rootArgs, repoRoot, { npmCliOverride, spawn }),
+      runNpmChildAsync('source-tests:dashboard', dashboardArgs, dashboardRoot, {
+        npmCliOverride,
+        spawn,
+      }),
+    ]);
+    const failedTrace = traces.find(result => result.status === 'rejected');
+    if (failedTrace) throw failedTrace.reason;
+    const [rootTrace, dashboardTrace] = traces.map(result => result.value);
+
     const root = parseVitestReport(rootReport, {
       label: 'source-tests:root',
       cwd: repoRoot,
       expectedFiles: ROOT_TEST_PATHS,
       exactCollectedFiles: ROOT_TEST_PATHS.length,
     });
-
-    const dashboardTrace = runNpmChild(
-      'source-tests:dashboard',
-      dashboardArgs,
-      dashboardRoot,
-      { npmCliOverride, spawn },
-    );
     const dashboard = parseVitestReport(dashboardReport, {
       label: 'source-tests:dashboard',
       cwd: dashboardRoot,
@@ -2775,7 +2821,10 @@ export async function runReleaseMachine({
     validatePackageWiring(parseArtifactJson(initialPackageHandle.initial));
 
     const phases = await runPhases(mode, {
-      'source-tests': () => runSourcePhase({ npmCliOverride, spawn }),
+      'source-tests': () => runSourcePhase({
+        npmCliOverride,
+        spawn: spawn === spawnSync ? spawnChild : spawn,
+      }),
       build: () => runBuildPhase({ npmCliOverride, spawn }),
       'built-bin': async () => {
         if (!certificateContext.full) certificateContext.captureFull();

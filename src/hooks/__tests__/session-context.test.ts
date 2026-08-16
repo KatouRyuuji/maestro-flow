@@ -202,7 +202,14 @@ describe('evaluateSessionContext', () => {
   });
 
   it('advertises but does not auto-resume a unique manual Session on startup', () => {
-    mkdirSync(TEST_DIR, { recursive: true });
+    mkdirSync(join(TEST_DIR, '.workflow'), { recursive: true });
+    writeFileSync(join(TEST_DIR, '.workflow', 'config.json'), JSON.stringify({
+      session_schema: {
+        schema_version: 'session-schema-selection/1.0',
+        writer: 'session/1.3',
+        features: { session_statusless: false },
+      },
+    }));
     const created = createChainSession(TEST_DIR, 'manual-startup', {
       intent: 'Continue after restart',
       engine: 'manual',

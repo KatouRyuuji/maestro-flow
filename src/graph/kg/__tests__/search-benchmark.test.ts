@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { resolve } from 'node:path';
-import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { MaestroGraph } from '../engine.js';
 import { getKgDatabasePath } from '../db/connection.js';
+import type { Language, UnifiedNode, UnifiedNodeKind } from '../db/types.js';
 import {
   dfs, getTypeHierarchy, findUsages, getAncestors, getChildren,
   getCallGraph, getNodeContext, getFileDependencies, getFileDependents,
@@ -150,26 +152,68 @@ const CASES: SearchCase[] = [
   { id: 100, category: 'regression', query: 'search', expectCodeGraph: 'results', expectMaestroGraph: 'any', description: 'Meta search term' },
 ];
 
+function benchmarkKnowledgeNode(): UnifiedNode {
+  const body = [
+    '搜索 知识 图谱 规范 索引 工具 委托 文档 知识图谱 全文搜索',
+    '编码规范 统一知识索引引擎 质量标准 可复用知识 决策记录 BM25 搜索',
+    'coding conventions file lock backup protected data store spec entry validation delegate',
+  ].join(' ');
+  return {
+    id: 'knowhow:search-benchmark-fixture',
+    kind: 'knowhow_entry' as UnifiedNodeKind,
+    name: 'delegate',
+    qualifiedName: 'delegate',
+    filePath: '.workflow/knowhow/search-benchmark-fixture.md',
+    language: 'markdown' as Language,
+    startLine: 1,
+    endLine: 3,
+    startColumn: 1,
+    endColumn: 1,
+    docstring: '',
+    signature: '',
+    visibility: '',
+    isExported: false,
+    isAsync: false,
+    isStatic: false,
+    isAbstract: false,
+    decorators: [],
+    typeParameters: [],
+    sourceType: 'knowhow',
+    definition: body,
+    aliases: [],
+    keywords: ['search', 'knowledge', 'benchmark'],
+    category: 'reference',
+    roles: [],
+    priority: '',
+    status: 'active',
+    body,
+    metadata: {},
+    updatedAt: Date.now(),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Test Suite
 // ---------------------------------------------------------------------------
 
-const hasMaestroGraphFixture = existsSync(getKgDatabasePath('.'));
-
-describe.skipIf(!hasMaestroGraphFixture)('CodeGraph vs MaestroGraph — 100 Boundary Search Cases', () => {
+describe('CodeGraph vs MaestroGraph — 100 Boundary Search Cases', () => {
   let mg: MaestroGraph | null = null;
   let cgAdapter: any = null;
+  let benchmarkRoot = '';
 
   beforeAll(async () => {
-    const dbPath = getKgDatabasePath('.');
-    if (!existsSync(dbPath)) throw new Error(`MaestroGraph benchmark fixture missing: ${dbPath}`);
-    mg = await MaestroGraph.open('.');
+    benchmarkRoot = mkdtempSync(join(tmpdir(), 'maestro-search-benchmark-'));
+    mg = await MaestroGraph.init(benchmarkRoot);
+    mg.getConnection().transaction(() => {
+      mg!.getQueryBuilder().insertNodes([benchmarkKnowledgeNode()]);
+    });
     cgAdapter = await getCodeGraphAdapter();
   });
 
   afterAll(() => {
     mg?.close();
     cgAdapter?.close?.();
+    if (benchmarkRoot) rmSync(benchmarkRoot, { recursive: true, force: true });
   });
 
   // ── Stability: No crashes on any input ─────────────────────────────

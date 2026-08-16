@@ -1091,7 +1091,168 @@ describe('virtual adapters: run-mode sessions', () => {
     expect(run.ext.gateSummary).toEqual({ total: 1, waived: 1, failed: 0, blocked: 0 });
 
     await new Promise(resolve => setTimeout(resolve, 25));
-    expect(JSON.parse(await readFile(join(tmpRoot, 'search-cache.json'), 'utf-8')).version).toBe(5);
+    expect(JSON.parse(await readFile(join(tmpRoot, 'search-cache.json'), 'utf-8')).version).toBe(6);
+  });
+
+  it('projects terminal session/3.0 and sealed run/3.0 history with promotion backlinks', async () => {
+    const sessionId = '20260816-v3-wiki';
+    const runId = 'run-v3-wiki';
+    await write('specs/v3-index-rule.md', [
+      '# V3 index rule',
+      '',
+      '<spec-entry category="arch" sid="S-v3-index-rule" title="V3 index rule">',
+      'Index terminal v3 Session and Run history.',
+      '</spec-entry>',
+    ].join('\n'));
+    await write(`sessions/${sessionId}/session.json`, JSON.stringify({
+      schema_version: 'session/3.0', session_id: sessionId,
+      objective: 'Index terminal v3 knowledge history', definition_of_done: 'Wiki projection is searchable',
+      status: 'completed', orchestration_revision: 3, activity_revision: 3,
+      chain: [], decisions: [], active_run_ids: [], artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
+      created_at: '2026-08-16T01:00:00.000Z', updated_at: '2026-08-16T02:00:00.000Z',
+      completed_at: '2026-08-16T02:00:00.000Z', archived_at: null,
+    }));
+    await write(`sessions/${sessionId}/artifacts.json`, JSON.stringify({
+      schema_version: 'artifacts/1.0', revision: 1,
+      artifacts: {
+        'ART-V3': {
+          artifact_id: 'ART-V3', kind: 'verification', media_type: 'application/json', role: 'primary',
+          status: 'sealed', producer_run_id: runId, relative_path: `runs/${runId}/outputs/verification.json`,
+        },
+      },
+      aliases: { 'latest-verification': 'ART-V3' },
+    }));
+    await write(`sessions/${sessionId}/runs/${runId}/run.json`, JSON.stringify({
+      schema_version: 'run/3.0', run_id: runId, session_id: sessionId, step_id: 'step-v3',
+      parent_run_id: null, retry_of_run_id: null, attempt: 1, command: 'verify', args: [], goal: null,
+      status: 'sealed', revision: 2, actor_id: 'tester', input_refs: [], output_refs: ['ART-V3'],
+      primary_artifact_id: 'ART-V3', verdict: 'done_with_concerns', summary: 'Verified v3 index projection',
+      created_at: '2026-08-16T01:00:00.000Z', started_at: '2026-08-16T01:10:00.000Z',
+      ended_at: '2026-08-16T01:50:00.000Z', sealed_at: '2026-08-16T01:51:00.000Z',
+    }));
+    await write(`sessions/${sessionId}/runs/${runId}/report.md`, [
+      '---',
+      'verdict: done_with_concerns',
+      'summary: Verified v3 index projection',
+      'constraints:',
+      '  - text: Preserve v3 authority',
+      '    status: locked',
+      'decisions:',
+      '  - text: Project v3 history through Wiki',
+      '    status: accepted',
+      'concerns: []',
+      'next: []',
+      '---',
+      '## Verification',
+      'The v3 projection body remains loadable.',
+    ].join('\n'));
+    await write(`sessions/${sessionId}/runs/${runId}/outputs/verification.json`, JSON.stringify({
+      summary: 'Verified v3 index projection', verdict: 'PASS',
+    }));
+    await write(`sessions/${sessionId}/runs/${runId}/knowledge-delta.json`, JSON.stringify({
+      schema_version: 'run-knowledge-delta/1.0', session_id: sessionId, run_id: runId,
+      revision: 1, updated_at: '2026-08-16T01:59:00.000Z', inputs: [],
+      candidates: [{ status: 'pending', target: 'spec', promoted_id: null }],
+    }));
+
+    const indexer = new WikiIndexer({ workflowRoot: tmpRoot });
+    const beforePromotion = await indexer.get();
+    const promotedSpecBefore = beforePromotion.entries.find(entry => entry.ext?.sid === 'S-v3-index-rule');
+    expect(promotedSpecBefore).toBeDefined();
+    expect(beforePromotion.byId[`session-${sessionId}`].related).not.toContain(promotedSpecBefore!.id);
+
+    await new Promise(resolve => setTimeout(resolve, 25));
+    await write(`sessions/${sessionId}/runs/${runId}/knowledge-delta.json`, JSON.stringify({
+      schema_version: 'run-knowledge-delta/1.0', session_id: sessionId, run_id: runId,
+      revision: 2, updated_at: '2026-08-16T02:00:00.000Z', inputs: [],
+      candidates: [{ status: 'promoted', target: 'spec', promoted_id: 'S-v3-index-rule' }],
+    }));
+
+    const index = await indexer.get();
+    const session = index.byId[`session-${sessionId}`];
+    const run = index.byId[`session-run-${sessionId}-${runId}`];
+    expect(session).toMatchObject({
+      title: 'Index terminal v3 knowledge history', status: 'completed',
+      ext: expect.objectContaining({ runCount: 1, lifecycleStatus: 'completed' }),
+    });
+    expect(run).toMatchObject({
+      title: `verify ${runId}`, status: 'completed',
+      ext: expect.objectContaining({ artifactIds: ['ART-V3'] }),
+    });
+    expect(run.summary).toContain('Verified v3 index projection');
+    expect(run.tags).toContain('constraint');
+    expect(run.body).toContain('Project v3 history through Wiki');
+    expect(run.body).toContain('The v3 projection body remains loadable.');
+    const promotedSpec = index.entries.find(entry => entry.ext?.sid === 'S-v3-index-rule');
+    expect(promotedSpec).toBeDefined();
+    expect(session.related).toContain(promotedSpec!.id);
+    expect(promotedSpec!.related).toContain(`session-${sessionId}`);
+  });
+
+  it('selects the latest sealed v3 Run by terminal timestamp instead of directory order', async () => {
+    const sessionId = 'v3-latest-run-order';
+    await write(`sessions/${sessionId}/session.json`, JSON.stringify({
+      schema_version: 'session/3.0', session_id: sessionId,
+      objective: 'Select latest Run by terminal timestamp', definition_of_done: 'newest terminal Run wins',
+      status: 'completed', orchestration_revision: 2, activity_revision: 2,
+      chain: [], decisions: [], active_run_ids: [], artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
+      created_at: '2026-08-16T00:00:00.000Z', updated_at: '2026-08-16T03:00:00.000Z',
+      completed_at: '2026-08-16T03:00:00.000Z', archived_at: null,
+    }));
+    await write(`sessions/${sessionId}/artifacts.json`, JSON.stringify({
+      schema_version: 'artifacts/1.0', revision: 0, artifacts: {}, aliases: {},
+    }));
+    const writeRun = async (runId: string, summary: string, endedAt: string) => {
+      await write(`sessions/${sessionId}/runs/${runId}/run.json`, JSON.stringify({
+        schema_version: 'run/3.0', run_id: runId, session_id: sessionId, step_id: 'step-v3',
+        parent_run_id: null, retry_of_run_id: null, attempt: 1, command: 'verify', args: [], goal: null,
+        status: 'sealed', revision: 1, actor_id: 'tester', input_refs: [], output_refs: [],
+        primary_artifact_id: null, verdict: 'done', summary,
+        created_at: '2026-08-16T00:00:00.000Z', started_at: '2026-08-16T00:10:00.000Z',
+        ended_at: endedAt, sealed_at: endedAt,
+      }));
+      await write(`sessions/${sessionId}/runs/${runId}/report.md`, `# ${summary}\n\n${summary}\n`);
+    };
+    await writeRun('z-old-by-name', 'Older terminal Run', '2026-08-16T01:00:00.000Z');
+    await writeRun('a-new-by-time', 'Newest terminal Run', '2026-08-16T02:00:00.000Z');
+
+    const index = await new WikiIndexer({ workflowRoot: tmpRoot, persistence: 'memory-only' }).get();
+    expect(index.byId[`session-${sessionId}`]).toMatchObject({
+      summary: 'Newest terminal Run',
+      body: expect.stringContaining('Newest terminal Run'),
+    });
+  });
+
+  it('maps terminal v3 Session states and excludes open Sessions and unsealed Runs', async () => {
+    for (const [status, expected] of [
+      ['completed', 'completed'], ['archived', 'archived'], ['failed', 'blocked'],
+    ] as const) {
+      const sessionId = `v3-${status}`;
+      await write(`sessions/${sessionId}/session.json`, JSON.stringify({
+        schema_version: 'session/3.0', session_id: sessionId, objective: `${status} v3 Session`,
+        status, created_at: '2026-08-16T00:00:00.000Z', updated_at: '2026-08-16T01:00:00.000Z',
+        completed_at: status === 'completed' ? '2026-08-16T01:00:00.000Z' : null,
+        archived_at: status === 'archived' ? '2026-08-16T01:00:00.000Z' : null,
+      }));
+      await write(`sessions/${sessionId}/artifacts.json`, JSON.stringify({
+        schema_version: 'artifacts/1.0', revision: 0, artifacts: {}, aliases: {},
+      }));
+      const index = await new WikiIndexer({ workflowRoot: tmpRoot, persistence: 'memory-only' }).get();
+      expect(index.byId[`session-${sessionId}`]?.status).toBe(expected);
+    }
+    await write('sessions/v3-open/session.json', JSON.stringify({
+      schema_version: 'session/3.0', session_id: 'v3-open', objective: 'open v3 Session', status: 'open',
+    }));
+    await write('sessions/v3-open/artifacts.json', JSON.stringify({
+      schema_version: 'artifacts/1.0', revision: 0, artifacts: {}, aliases: {},
+    }));
+    await write('sessions/v3-completed/runs/unsealed/run.json', JSON.stringify({
+      schema_version: 'run/3.0', run_id: 'unsealed', session_id: 'v3-completed',
+      command: 'analyze', status: 'completed',
+    }));
+    const index = await new WikiIndexer({ workflowRoot: tmpRoot, persistence: 'memory-only' }).get();
+    expect(index.byId['session-v3-open']).toBeUndefined();
+    expect(index.entries.some(entry => entry.sourceRef === 'unsealed')).toBe(false);
   });
 
   it('indexes session and command-run schemas 1.0 through 1.3', async () => {
@@ -1176,7 +1337,7 @@ describe('virtual adapters: run-mode sessions', () => {
     expect(run.related).toContain(`session-${fixture.sessionId}`);
   });
 
-  it('invalidates v2 search cache and persists v5', async () => {
+  it('invalidates v2 search cache and persists v6', async () => {
     await write('specs/cache-v3.md', '---\ntitle: Cache v3\n---\n# Cache v3\nProjection cache sentinel.');
     await write('search-cache.json', JSON.stringify({
       version: 2, generatedAt: 1, mtimeSnapshot: [], entries: [],
@@ -1187,7 +1348,7 @@ describe('virtual adapters: run-mode sessions', () => {
     await expect.poll(async () => {
       try { return JSON.parse(await readFile(join(tmpRoot, 'search-cache.json'), 'utf-8')).version; }
       catch { return null; }
-    }).toBe(5);
+    }).toBe(6);
   });
 
   it('indexes v1.1 sealed Runs with structured handoff, kinds, provenance, aref edges, and waivers', async () => {

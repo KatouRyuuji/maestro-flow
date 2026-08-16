@@ -5,13 +5,13 @@
  * Uses spec-entry-parser for formatting and spec-loader for directory resolution.
  */
 
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { join } from 'node:path';
 import { formatNewEntry, parseSpecEntries, generateSid } from './spec-entry-parser.js';
 import { resolveSpecDir, CATEGORY_MAP, type SpecCategory, type SpecScope } from './spec-loader.js';
 import { ensureSpecFile } from './spec-init.js';
-import { slugify } from '../utils/frontmatter.js';
+import { parseFrontmatter, slugify } from '../utils/frontmatter.js';
 import { updateFileAtomic } from '../utils/atomic-write.js';
 
 // ============================================================================
@@ -117,7 +117,13 @@ function redirectToKnowhow(
   }
   fmLines.push('---', '', content);
 
-  writeFileSync(join(knowhowDir, filename), fmLines.join('\n'), 'utf-8');
+  const filePath = join(knowhowDir, filename);
+  updateFileAtomic(filePath, current => {
+    if (current === null) return fmLines.join('\n');
+    const parsed = parseFrontmatter(current);
+    if (parsed.data.title === title && parsed.body.trim() === content.trim()) return current;
+    throw new Error(`Knowhow redirect already exists with different content: ${filename}`);
+  });
 
   return `knowhow/${filename}`;
 }

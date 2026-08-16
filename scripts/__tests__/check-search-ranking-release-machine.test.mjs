@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import {
   copyFileSync,
   mkdtempSync,
@@ -15,6 +16,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { PassThrough } from 'node:stream';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import test from 'node:test';
@@ -146,7 +148,7 @@ function certificateFixtureGraph({
   receiptHashes = [],
   extraEdges = [],
 }) {
-  const inlineNodes = [0, 1].map(index => ({
+  const inlineNodes = [0, 1, 2].map(index => ({
     id: `virtual:build-inline:${index}`,
     kind: 'node-inline-program',
     owner: 'package.json#scripts.build',
@@ -614,12 +616,14 @@ test('resolveNpmInvocation fails closed and permits only an explicit valid fallb
   );
 });
 
-test('source phase owns exact root/dashboard suites with shell false and explicit cwd', () => {
+test('source phase owns exact root/dashboard suites with shell false and explicit cwd', async () => {
   const tempRoot = temporaryRoot('source');
   const npmCli = join(tempRoot, 'npm cli.js');
   write(npmCli, '// fixture\n');
   process.env.npm_execpath = npmCli;
   const calls = [];
+  let activeChildren = 0;
+  let maxActiveChildren = 0;
 
   const spawn = (command, args, options) => {
     calls.push({ command, args, options });
@@ -627,11 +631,20 @@ test('source phase owns exact root/dashboard suites with shell false and explici
     assert.notEqual(outputIndex, -1);
     const reportPath = args[outputIndex + 1];
     const files = args.slice(outputIndex + 2).map(path => resolve(options.cwd, path));
-    write(reportPath, JSON.stringify(report(files, files.length + 3)));
-    return { status: 0, signal: null, stdout: 'ok', stderr: '' };
+    const child = new EventEmitter();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    activeChildren += 1;
+    maxActiveChildren = Math.max(maxActiveChildren, activeChildren);
+    setImmediate(() => {
+      write(reportPath, JSON.stringify(report(files, files.length + 3)));
+      activeChildren -= 1;
+      child.emit('close', 0, null);
+    });
+    return child;
   };
 
-  const result = runSourcePhase({ spawn, tempRoot });
+  const result = await runSourcePhase({ spawn, tempRoot });
 
   assert.equal(result.runners[0].cwd, repoRoot);
   assert.equal(result.runners[0].collectedFiles, ROOT_TEST_PATHS.length);
@@ -639,14 +652,17 @@ test('source phase owns exact root/dashboard suites with shell false and explici
   assert.equal(result.runners[1].collectedFiles, 2);
   assert.deepEqual(result.runners[1].files, [...DASHBOARD_TEST_PATHS].sort());
   assert.equal(calls.length, 2);
+  assert.equal(maxActiveChildren, 2);
   for (const call of calls) {
     assert.equal(call.command, process.execPath);
     assert.equal(call.args[0], npmCli);
     assert.equal(call.options.shell, false);
-    assert.equal(call.options.encoding, 'utf8');
+    assert.deepEqual(call.options.stdio, ['ignore', 'pipe', 'pipe']);
   }
   assert.equal(calls[0].options.cwd, repoRoot);
   assert.equal(calls[1].options.cwd, dashboardRoot);
+  assert.notEqual(calls[0].args.indexOf('--maxWorkers=6'), -1);
+  assert.notEqual(calls[1].args.indexOf('--maxWorkers=2'), -1);
   assert.deepEqual(
     calls[1].args.slice(calls[1].args.indexOf('--outputFile') + 2),
     DASHBOARD_TEST_PATHS,
@@ -949,7 +965,7 @@ test('derives current package build direct-control graph', () => {
   const inlineNodes = first.virtual_command_nodes.filter(
     node => node.kind === 'node-inline-program',
   );
-  assert.equal(inlineNodes.length, 2);
+  assert.equal(inlineNodes.length, 3);
   for (const node of inlineNodes) {
     assert.match(node.sha256, /^[a-f0-9]{64}$/);
     assert.equal(node.owner.startsWith('package.json#scripts.build'), true);

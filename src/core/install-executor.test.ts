@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { InstallFlowConfig } from '../tui/install-ui/types.js';
@@ -204,6 +204,67 @@ describe('executeInstallPipeline additive semantics', () => {
     expect(ownedPaths).not.toContain(staleFile);
     expect(current?.selectedComponentIds).toEqual(['commands']);
     expect(current?.hooks?.codex?.installed).toEqual(['session-context']);
+  });
+
+  it('preserves marker-free user content-managed files during upgrade prune', async () => {
+    const agentsPath = join(projectPath, '.codex', 'AGENTS.md');
+    mkdirSync(join(projectPath, '.codex'), { recursive: true });
+    writeFileSync(agentsPath, '# My own instructions\n');
+
+    const prior = manifestApi.createManifest('project', projectPath, {
+      selectedComponentIds: ['commands', 'codex-agents-md'],
+      knownComponentIds: ['commands', 'codex-agents-md'],
+    });
+    manifestApi.addFile(prior, agentsPath);
+    manifestApi.saveManifest(prior);
+
+    const result = await executor.executeInstallPipeline({
+      config: { ...config(['commands']), pruneObsoleteOwnedFiles: true },
+      pkgRoot: packageRoot,
+      version: 'test',
+    });
+
+    expect(existsSync(agentsPath)).toBe(true);
+    expect(readFileSync(agentsPath, 'utf8')).toBe('# My own instructions\n');
+    expect(result.obsoleteFilesPreserved).toBe(1);
+    expect(result.obsoleteFilesRemoved).toBe(0);
+    expect(result.pruneBackupPath).not.toBeNull();
+    // The backup must contain the file that was about to be pruned. Non-home
+    // paths are stored with a mangled flat name (drive/separators replaced),
+    // so match by suffix.
+    const backupEntries = readdirSync(result.pruneBackupPath!, { withFileTypes: true });
+    expect(backupEntries.some((e) => e.isFile() && e.name.endsWith('AGENTS.md'))).toBe(true);
+  });
+
+  it('records a content hash at install and preserves a user-replaced inject file on prune', async () => {
+    mkdirSync(join(packageRoot, 'workflows'), { recursive: true });
+    writeFileSync(join(packageRoot, 'workflows', 'codex-instructions.md'), '# Maestro instructions\n');
+
+    await executor.executeInstallPipeline({
+      config: config(['codex-agents-md']),
+      pkgRoot: packageRoot,
+      version: 'test',
+    });
+
+    const agentsPath = join(projectPath, '.codex', 'AGENTS.md');
+    expect(existsSync(agentsPath)).toBe(true);
+    expect(readFileSync(agentsPath, 'utf8')).toContain('maestro:start');
+    const installed = manifestApi.findManifest('project', projectPath);
+    const installedEntry = installed?.entries.find((e) => e.path === agentsPath);
+    expect(installedEntry?.hash).toBeTruthy();
+
+    // User replaces the injected file with marker-free content.
+    writeFileSync(agentsPath, '# user file\n');
+
+    const result = await executor.executeInstallPipeline({
+      config: { ...config([]), pruneObsoleteOwnedFiles: true },
+      pkgRoot: packageRoot,
+      version: 'test',
+    });
+
+    expect(existsSync(agentsPath)).toBe(true);
+    expect(readFileSync(agentsPath, 'utf8')).toBe('# user file\n');
+    expect(result.obsoleteFilesPreserved).toBe(1);
   });
 
   it('clears explicitly disabled config while preserving additive component ownership', async () => {

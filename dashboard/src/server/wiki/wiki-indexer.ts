@@ -36,8 +36,8 @@ import type {
 } from './wiki-types.js';
 import { recallSnapshotSchema, type RecallSnapshot } from './wiki-types.js';
 
-// v5: issue/codebase/legacy-kg wiki entries carry composed full bodies.
-const SEARCH_CACHE_VERSION = 5;
+// v6: session/3.0 + run/3.0 terminal history is projected into Wiki entries.
+const SEARCH_CACHE_VERSION = 6;
 const SEARCH_PARENT_CAP = 2;
 
 export interface WikiSearchOptions {
@@ -333,7 +333,7 @@ export class WikiIndexer {
         let st;
         try { st = statSync(path); } catch { continue; }
         if (st.isDirectory()) { visit(path); continue; }
-        if (name === 'session.json' || name === 'artifacts.json' || name === 'gates.json' || name === 'run.json' || name === 'report.md' || dir.includes(`${sep}outputs`)) {
+        if (name === 'session.json' || name === 'artifacts.json' || name === 'gates.json' || name === 'run.json' || name === 'report.md' || name === 'knowledge-delta.json' || dir.includes(`${sep}outputs`)) {
           out.set(path, Number(st.mtimeMs));
         }
       }
@@ -512,7 +512,10 @@ export class WikiIndexer {
             && entry.source.workspace === owner.source.workspace
             && entry.ext?.virtualKind !== 'session'
             && entry.ext?.virtualKind !== 'session-run'
-            && (entry.sourceRef === payload || entry.id === payload));
+            && (entry.sourceRef === payload
+              || entry.id === payload
+              || entry.ext?.sid === payload
+              || entry.ext?.explicitId === payload));
           if (candidates.length > 0) {
             const sameSource = candidates.find(candidate => candidate.source.path === owner.source.path);
             return sameSource ?? candidates[0];

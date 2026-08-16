@@ -7,6 +7,8 @@
 
 | 项 | 状态 | 落地内容 |
 |---|---|---|
+| H1 run/3.0 解析 | ✅ | `workflow.rs::parse_run` 增加 run/3.0 分支：顶层 `verdict`/`command`（字符串）/`summary`/`actor_id`/`ended_at` 归一化到 RunSummary；command-run/1.x 路径不变；4 个 v3 单测（含 running 无时长、sealed 取 ended_at） |
+| H2 session/3.0 解析 | ✅ | `scan_sessions_impl`/`scan_session_detail` 归一化：`objective`→intent、`open`→active/`archived`→sealed（effective_status）、`active_run_ids[0]`→active_run_id、`chain[]`→orchestration（步骤补 `run_id=run_ids[0]`、engine=chain-v3）、objective/DoD→boundary_contract、`completed_at`/`archived_at`→lifecycle 封存时间；前端零改动 |
 | F2 会话详情 project 回填 | ✅ | `workflow.rs` 从 state.json 回填；单测 `scan_session_detail_backfills_project` |
 | F1 Markdown 预览 | ✅ | 新建共享 `src/md.js`（esc/inline/renderMd），editor.js 复用；app.js「预览 Markdown」改为详情页内渲染 modal（原 `open_md_preview` 未注册的坏按钮已移除） |
 | B1 Token 统计 | ✅ | `activity.rs` 解析 token_usage（详情已完成调用全量统计）；`AgentCall.inputTokens/outputTokens`；调用详情 meta 行 + 全部调用页聚合卡（总计/按工具，k 格式化） |

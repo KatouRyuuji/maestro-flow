@@ -288,6 +288,32 @@ function formatChannelListing(channels: KnowledgeChannelRecord[]): string {
     .join('\n');
 }
 
+interface KnowledgeSessionAuthorityView {
+  mutable: boolean;
+  activeRunIds: string[];
+}
+
+function knowledgeSessionAuthorityView(
+  store: SessionStore,
+  sessionId: string,
+): KnowledgeSessionAuthorityView {
+  const record = store.readSessionRecordReadOnly(sessionId);
+  if (record.schema_version === 'session/3.0') {
+    const session = store.readSessionV30(sessionId);
+    return {
+      mutable: session.status === 'open',
+      activeRunIds: [...new Set(session.active_run_ids)],
+    };
+  }
+  const session = store.readBundle(sessionId).session;
+  return {
+    mutable: session.status === 'running' || session.status === 'paused',
+    activeRunIds: session.status === 'running' && session.active_run_id
+      ? [session.active_run_id]
+      : [],
+  };
+}
+
 /**
  * Resolve where a knowledge write belongs. Tier order per MVP K3:
  * explicit → env channel → Pi host lease → single live channel → narrowed
@@ -300,7 +326,7 @@ export function resolveWriteAuthority(input: ResolveWriteAuthorityInput): WriteA
 
   // Tier A: explicit parameters.
   if (input.explicitRun) {
-    const located = store.findRun(input.explicitRun, input.explicitSession);
+    const located = store.findRunRecord(input.explicitRun, input.explicitSession);
     return { kind: 'run', sessionId: located.sessionId, runId: input.explicitRun, via: 'explicit' };
   }
   if (input.explicitSession) {
@@ -341,11 +367,19 @@ export function resolveWriteAuthority(input: ResolveWriteAuthorityInput): WriteA
   if (hostSessionId) {
     const lease = findLeaseForHost(projectRoot, hostSessionId, nowMs);
     if (lease && store.sessionExists(lease.sessionId)) {
-      const session = store.readBundle(lease.sessionId).session;
-      if (session.status === 'running' && session.active_run_id) {
-        return { kind: 'run', sessionId: lease.sessionId, runId: session.active_run_id, via: 'lease' };
+      const session = knowledgeSessionAuthorityView(store, lease.sessionId);
+      if (session.mutable && session.activeRunIds.length === 1) {
+        return { kind: 'run', sessionId: lease.sessionId, runId: session.activeRunIds[0], via: 'lease' };
       }
-      return { kind: 'session', sessionId: lease.sessionId, via: 'lease', synthetic: false };
+      if (session.mutable && session.activeRunIds.length > 1) {
+        throw new Error(
+          `Session ${lease.sessionId} has multiple active Runs; lease-bound knowledge authority is ambiguous. `
+          + 'Pass --run explicitly.',
+        );
+      }
+      if (session.mutable) {
+        return { kind: 'session', sessionId: lease.sessionId, via: 'lease', synthetic: false };
+      }
     }
   }
 
@@ -356,24 +390,37 @@ export function resolveWriteAuthority(input: ResolveWriteAuthorityInput): WriteA
   const hookChannels = liveChannels.filter(ch => ch.host_kind !== 'manual');
   const boundSessions = [...new Set(hookChannels.map(ch => ch.context!.session_id))];
   if (boundSessions.length === 1 && store.sessionExists(boundSessions[0])) {
-    const session = store.readBundle(boundSessions[0]).session;
-    const runChannel = hookChannels.find(ch => ch.context!.kind === 'run' && ch.context!.run_id);
-    if (session.status === 'running' && runChannel
-      && session.active_run_id === runChannel.context!.run_id) {
+    const sessionId = boundSessions[0];
+    const session = knowledgeSessionAuthorityView(store, sessionId);
+    const runChannels = hookChannels.filter(ch =>
+      ch.context!.kind === 'run'
+      && ch.context!.run_id
+      && session.activeRunIds.includes(ch.context!.run_id),
+    );
+    const boundRunIds = [...new Set(runChannels.map(ch => ch.context!.run_id!))];
+    if (session.mutable && boundRunIds.length === 1) {
+      const runChannel = runChannels.find(ch => ch.context!.run_id === boundRunIds[0])!;
       return {
         kind: 'run',
-        sessionId: boundSessions[0],
-        runId: runChannel.context!.run_id!,
+        sessionId,
+        runId: boundRunIds[0],
         via: 'channel',
         identity: runChannel.identity,
       };
     }
-    if (session.status === 'running' || session.status === 'paused') {
+    if (session.mutable && boundRunIds.length > 1) {
+      throw new Error(
+        `Multiple live knowledge channels claim different active Runs in Session ${sessionId}; `
+        + 'write authority is ambiguous. Pass --run/--channel explicitly.\nLive channels:\n'
+        + formatChannelListing(liveChannels),
+      );
+    }
+    if (session.mutable) {
       return {
         kind: 'session',
-        sessionId: boundSessions[0],
+        sessionId,
         via: 'channel',
-        synthetic: boundSessions[0].startsWith('ksyn-'),
+        synthetic: sessionId.startsWith('ksyn-'),
         identity: hookChannels[0].identity,
       };
     }
@@ -392,18 +439,25 @@ export function resolveWriteAuthority(input: ResolveWriteAuthorityInput): WriteA
   // channels. Binds the active Run when present, otherwise the Session itself
   // (session-source attribution); always warned.
   if (hookChannels.length === 0) {
-    if (running.length === 1 && running[0].activeRunId) {
-      return {
-        kind: 'run',
-        sessionId: running[0].sessionId,
-        runId: running[0].activeRunId,
-        via: 'narrowed-scan',
-        warning:
-          `No caller identity found; attributed to the unique running Session `
-          + `${running[0].sessionId}. Pass --run/--session/--channel to bind explicitly.`,
-      };
-    }
-    if (running.length === 1 && !running[0].activeRunId) {
+    if (running.length === 1) {
+      const authority = knowledgeSessionAuthorityView(store, running[0].sessionId);
+      if (authority.activeRunIds.length > 1) {
+        throw new Error(
+          `Session ${running[0].sessionId} has multiple active Runs; narrowed knowledge authority is ambiguous. `
+          + 'Pass --run explicitly.',
+        );
+      }
+      if (authority.activeRunIds.length === 1) {
+        return {
+          kind: 'run',
+          sessionId: running[0].sessionId,
+          runId: authority.activeRunIds[0],
+          via: 'narrowed-scan',
+          warning:
+            `No caller identity found; attributed to the unique running Session `
+            + `${running[0].sessionId}. Pass --run/--session/--channel to bind explicitly.`,
+        };
+      }
       return {
         kind: 'session',
         sessionId: running[0].sessionId,
@@ -442,9 +496,66 @@ export function resolveWriteAuthority(input: ResolveWriteAuthorityInput): WriteA
   );
 }
 
+export type KnowledgeAttributionAuthority =
+  | { kind: 'run'; sessionId: string; runId: string }
+  | { kind: 'session'; sessionId: string };
+
 /**
- * Read-only Session attribution target for best-effort load attribution:
- * host env lease or exactly one live bound channel. Never creates Sessions.
+ * Resolve best-effort load attribution without creating authority. Exact Run
+ * channel bindings are retained; divergent channels and multi-Run leases fail
+ * closed by returning null.
+ */
+export function findKnowledgeAttributionAuthority(
+  projectRoot: string,
+  store: SessionStore,
+  env: Record<string, string | undefined> = process.env,
+  nowMs: number = Date.now(),
+): KnowledgeAttributionAuthority | null {
+  const hostSessionId = env[PI_HOST_SESSION_ENV]?.trim();
+  if (hostSessionId) {
+    const lease = findLeaseForHost(projectRoot, hostSessionId, nowMs);
+    if (lease && store.sessionExists(lease.sessionId)) {
+      const session = knowledgeSessionAuthorityView(store, lease.sessionId);
+      if (session.mutable && session.activeRunIds.length === 1) {
+        return { kind: 'run', sessionId: lease.sessionId, runId: session.activeRunIds[0] };
+      }
+      if (session.mutable && session.activeRunIds.length === 0) {
+        return { kind: 'session', sessionId: lease.sessionId };
+      }
+      return null;
+    }
+  }
+
+  const liveHookChannels = listLiveChannels(projectRoot, nowMs)
+    .filter(channel => channel.host_kind !== 'manual');
+  const authorities = liveHookChannels
+    .map(channel => bindChannelContextToAuthority(store, channel))
+    .filter((authority): authority is WriteAuthority => authority !== null)
+    .map(authority => authority.kind === 'run'
+      ? { kind: 'run' as const, sessionId: authority.sessionId, runId: authority.runId }
+      : { kind: 'session' as const, sessionId: authority.sessionId });
+  const unique = new Map(authorities.map(authority => [
+    authority.kind === 'run'
+      ? `run:${authority.sessionId}:${authority.runId}`
+      : `session:${authority.sessionId}`,
+    authority,
+  ]));
+  if (unique.size === 1) return [...unique.values()][0];
+  if (unique.size > 1 || liveHookChannels.length > 0) return null;
+
+  const running = store.listRunningSessions();
+  if (running.length !== 1) return null;
+  const session = knowledgeSessionAuthorityView(store, running[0].sessionId);
+  if (!session.mutable || session.activeRunIds.length > 1) return null;
+  return session.activeRunIds.length === 1
+    ? { kind: 'run', sessionId: running[0].sessionId, runId: session.activeRunIds[0] }
+    : { kind: 'session', sessionId: running[0].sessionId };
+}
+
+/**
+ * Read-only Session ID projection of best-effort attribution authority.
+ * Exact Run authority is retained by findKnowledgeAttributionAuthority;
+ * this compatibility helper returns only its owning Session. Never creates Sessions.
  */
 export function findSessionAttributionTarget(
   projectRoot: string,
@@ -452,17 +563,8 @@ export function findSessionAttributionTarget(
   env: Record<string, string | undefined> = process.env,
   nowMs: number = Date.now(),
 ): string | null {
-  const hostSessionId = env[PI_HOST_SESSION_ENV]?.trim();
-  if (hostSessionId) {
-    const lease = findLeaseForHost(projectRoot, hostSessionId, nowMs);
-    if (lease && store.sessionExists(lease.sessionId)) return lease.sessionId;
-  }
-  // Hook channels only: manual channels belong to explicit --channel callers
-  // and must not capture attribution from unidentified loads.
-  const live = listLiveChannels(projectRoot, nowMs).filter(ch => ch.host_kind !== 'manual');
-  const bound = [...new Set(live.map(ch => ch.context!.session_id))];
-  if (bound.length === 1 && store.sessionExists(bound[0])) return bound[0];
-  return null;
+  const authority = findKnowledgeAttributionAuthority(projectRoot, store, env, nowMs);
+  return authority?.sessionId ?? null;
 }
 
 /** Map a channel's bound context back to an authority, if still valid. */
@@ -472,12 +574,12 @@ function bindChannelContextToAuthority(
 ): WriteAuthority | null {
   const context = channel.context;
   if (!context || !store.sessionExists(context.session_id)) return null;
-  const session = store.readBundle(context.session_id).session;
+  const session = knowledgeSessionAuthorityView(store, context.session_id);
   if (context.kind === 'run' && context.run_id
-    && session.status === 'running' && session.active_run_id === context.run_id) {
+    && session.mutable && session.activeRunIds.includes(context.run_id)) {
     return { kind: 'run', sessionId: context.session_id, runId: context.run_id, via: 'channel' };
   }
-  if (session.status === 'running' || session.status === 'paused') {
+  if (session.mutable) {
     return {
       kind: 'session',
       sessionId: context.session_id,

@@ -6,8 +6,9 @@
  * YAML frontmatter block by prepending the seed's frontmatter (body preserved).
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { updateFileAtomic } from '../utils/atomic-write.js';
 import { type SpecScope, resolveSpecDir } from './spec-loader.js';
 import {
   SPEC_SEED_DOCS,
@@ -71,8 +72,14 @@ export function initSpecSystem(projectPath: string, scope: SpecScope = 'project'
       continue;
     }
 
-    writeFileSync(filePath, renderSeedContent(doc), 'utf-8');
-    result.created.push(filePath);
+    let created = false;
+    updateFileAtomic(filePath, current => {
+      if (current !== null) return current;
+      created = true;
+      return renderSeedContent(doc);
+    });
+    if (created) result.created.push(filePath);
+    else result.skipped.push(filePath);
   }
 
   return result;
@@ -96,8 +103,13 @@ export function ensureSpecFile(specsDir: string, filename: string): boolean {
 
   const filePath = join(specsDir, filename);
   if (!existsSync(filePath)) {
-    writeFileSync(filePath, renderSeedContent(doc), 'utf-8');
-    return true;
+    let created = false;
+    updateFileAtomic(filePath, current => {
+      if (current !== null) return current;
+      created = true;
+      return renderSeedContent(doc);
+    });
+    if (created) return true;
   }
 
   return migrateMissingFrontmatter(filePath, doc);
@@ -114,12 +126,12 @@ export function ensureSpecFile(specsDir: string, filename: string): boolean {
  * Returns true when content was rewritten; false when no change was needed.
  */
 function migrateMissingFrontmatter(filePath: string, doc: SpecSeedDoc): boolean {
-  const raw = readFileSync(filePath, 'utf-8');
-  if (hasFrontmatter(raw)) return false;
-
-  const fm = formatSeedFrontmatter(doc.frontmatter);
-  // Keep the existing body verbatim, just prepend frontmatter + blank line.
-  const merged = `${fm}\n\n${raw.replace(/^\s+/, '')}`;
-  writeFileSync(filePath, merged, 'utf-8');
-  return true;
+  let migrated = false;
+  updateFileAtomic(filePath, raw => {
+    if (raw === null || hasFrontmatter(raw)) return raw;
+    const fm = formatSeedFrontmatter(doc.frontmatter);
+    migrated = true;
+    return `${fm}\n\n${raw.replace(/^\s+/, '')}`;
+  });
+  return migrated;
 }

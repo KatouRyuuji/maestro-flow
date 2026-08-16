@@ -1033,7 +1033,8 @@ export function uninstallManifest(
   // --- Files ---
   const fileResult = cleanManifestFiles(manifest, { skipContentManaged: opts.skipContentManaged });
   result.filesRemoved = fileResult.removed;
-  result.filesSkipped = fileResult.skipped;
+  // Preserved (user-owned) files count as skipped — they were left untouched.
+  result.filesSkipped = fileResult.skipped + fileResult.preserved;
 
   // --- Overlays ---
   const targetBase = manifest.scope === 'global' ? homedir() : manifest.targetPath;
@@ -1148,7 +1149,7 @@ function legacyCleanup(manifest: Manifest, result: UninstallResult): void {
 const FALLBACK_PRESERVE = new Set(['settings.json', 'settings.local.json']);
 
 /** Content-managed doc files: remove maestro sections, don't delete entirely. */
-const FALLBACK_CONTENT_MANAGED = new Set(['CLAUDE.md', 'AGENTS.md', 'GEMINI.md']);
+const FALLBACK_CONTENT_MANAGED = new Set(['CLAUDE.md', 'AGENTS.md', 'GEMINI.md', 'copilot-instructions.md']);
 
 export interface FallbackScanResult {
   /** Unique target directories that contain files. */
@@ -1322,8 +1323,10 @@ function cleanContentManagedFile(filePath: string): boolean {
   try {
     const content = readFileSync(filePath, 'utf-8');
     if (!hasAnyMarkers(content)) {
-      unlinkSync(filePath);
-      return true;
+      // No markers — user-owned (or legacy pre-marker) file. Never guess
+      // ownership from the absence of markers; deleting would lose user data.
+      console.warn(`  [warn] Preserved ${filePath}: no Maestro markers — user-owned file left untouched.`);
+      return false;
     }
     const cleaned = removeAllSections(content);
     if (!cleaned || cleaned.trim() === '') {

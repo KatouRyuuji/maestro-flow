@@ -144,27 +144,42 @@ export async function recordLoadedKnowledge(entries: WikiEntry[]): Promise<void>
       entries.map(entry => ({ id: entry.id, sourceRef: entry.sourceRef })),
     );
     if (result.nodeIds.length === 0) return;
-    const { recordActiveRunKnowledgeInputs } = await import('../run/knowledge.js');
-    const runAttribution = recordActiveRunKnowledgeInputs(process.cwd(), result.nodeIds);
-    if (runAttribution) return;
-    // No unique active Run: try an unambiguous Session identity (lease or a
-    // single live channel). Never creates Sessions for attribution purposes.
+    // Resolve exact read-only authority before writing attribution. A live Run
+    // channel must not be collapsed to its Session when several Runs are active.
     try {
       const { SessionStore } = await import('../run/store.js');
-      const { findSessionAttributionTarget } = await import('../run/knowledge-identity.js');
+      const { findKnowledgeAttributionAuthority } = await import('../run/knowledge-identity.js');
       const store = new SessionStore(process.cwd());
-      const sessionId = findSessionAttributionTarget(process.cwd(), store);
-      if (sessionId) {
+      const authority = findKnowledgeAttributionAuthority(process.cwd(), store);
+      if (authority?.kind === 'run') {
+        const { recordRunKnowledgeInputs } = await import('../run/knowledge.js');
+        recordRunKnowledgeInputs(
+          process.cwd(),
+          authority.runId,
+          result.nodeIds,
+          'consumed',
+          'load',
+          authority.sessionId,
+        );
+        return;
+      }
+      if (authority?.kind === 'session') {
         const { recordSessionKnowledgeInputs } = await import('../run/session-knowledge.js');
-        recordSessionKnowledgeInputs(process.cwd(), sessionId, result.nodeIds, 'consumed', 'load');
+        recordSessionKnowledgeInputs(
+          process.cwd(),
+          authority.sessionId,
+          result.nodeIds,
+          'consumed',
+          'load',
+        );
         return;
       }
     } catch {
-      // Session attribution is best-effort; fall through to the warning.
+      // Attribution is best-effort; fall through to the ambiguity warning.
     }
     console.error(
       'Warning: knowledge consumption recorded in the global ledger, but run/session '
-      + 'attribution was skipped (no resolvable write authority).',
+      + 'attribution was skipped (write authority is absent or ambiguous).',
     );
   } catch {
     // Usage analytics must never block knowledge loading.

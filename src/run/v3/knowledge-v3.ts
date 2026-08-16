@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 import {
   knowledgeReconciliationSchema,
+  persistKnowledgeReconciliation,
   reconcileRunKnowledgeSync,
   reconciliationPath,
   reconciliationSummary,
@@ -37,11 +38,9 @@ export function generateV3RunKnowledgeReconciliation(
 }
 
 /**
- * Legacy v3 seal-time knowledge reconciliation hook: generate + plain write
- * outside any mutation transaction. Retained for compatibility/fallback
- * (idempotent, non-CAS, never touches mutation authority); the canonical v3
- * complete path uses generateV3RunKnowledgeReconciliation and commits the
- * receipt inside the mutation transaction instead.
+ * Compatibility v3 reconciliation hook. Generation remains pure; persistence
+ * uses the fenced v3 knowledge transaction (and the legacy lifecycle writer
+ * for older schema generations).
  */
 export function reconcileV3RunKnowledge(
   projectRoot: string,
@@ -51,14 +50,7 @@ export function reconcileV3RunKnowledge(
   try {
     const receipt = generateV3RunKnowledgeReconciliation(projectRoot, sessionId, runId);
     if (!receipt) return null;
-    const store = new SessionStore(projectRoot);
-    const runDir = store.runDir(sessionId, runId);
-    mkdirSync(runDir, { recursive: true });
-    writeFileSync(
-      reconciliationPath(store, sessionId, runId),
-      `${JSON.stringify(receipt, null, 2)}\n`,
-      'utf8',
-    );
+    persistKnowledgeReconciliation(projectRoot, receipt);
     return receipt;
   } catch {
     return null;

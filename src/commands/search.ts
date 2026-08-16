@@ -126,6 +126,8 @@ export interface UnifiedSearchOptions {
   type?: string;
   category?: string;
   tag?: string;
+  /** Artifact kind projected by Session/Run virtual entries. */
+  kind?: string;
   keyword?: string;
   workspace?: string;
   limit: number;
@@ -149,7 +151,10 @@ export interface UnifiedSearchOptions {
 
 // ── Lazy offline client ────────────────────────────────────────────────
 
-let _indexer: InstanceType<typeof import('#maestro-dashboard/wiki/wiki-indexer.js').WikiIndexer> | null = null;
+let _indexer: {
+  workflowRoot: string;
+  indexer: InstanceType<typeof import('#maestro-dashboard/wiki/wiki-indexer.js').WikiIndexer>;
+} | null = null;
 let _probeIndexer: {
   workflowRoot: string;
   indexer: InstanceType<typeof import('#maestro-dashboard/wiki/wiki-indexer.js').WikiIndexer>;
@@ -177,7 +182,7 @@ async function getIndexer(executionMode: SearchExecutionMode = 'default'): Promi
     }
     return _probeIndexer.indexer;
   }
-  if (!_indexer) {
+  if (!_indexer || _indexer.workflowRoot !== workflowRoot) {
     const { WikiIndexer: Cls } = await import('#maestro-dashboard/wiki/wiki-indexer.js');
     const projectPath = process.cwd();
     const wsConfig = loadWorkspaceConfig(projectPath);
@@ -185,9 +190,9 @@ async function getIndexer(executionMode: SearchExecutionMode = 'default'): Promi
     const linkedWorkspaces = resolved
       .filter(lw => lw.valid)
       .map(lw => ({ name: lw.name, workflowRoot: lw.workflowRoot, shareTypes: lw.share }));
-    _indexer = new Cls({ workflowRoot, linkedWorkspaces });
+    _indexer = { workflowRoot, indexer: new Cls({ workflowRoot, linkedWorkspaces }) };
   }
-  return _indexer;
+  return _indexer.indexer;
 }
 
 /**
@@ -476,6 +481,11 @@ export async function runUnifiedSearch(q: string, opts: UnifiedSearchOptions & {
   if (tag) {
     filtered = filtered.filter(r => r.entry.tags.includes(tag));
   }
+  if (opts.kind) {
+    filtered = filtered.filter(r =>
+      Array.isArray(r.entry.ext?.kinds) && r.entry.ext.kinds.includes(opts.kind),
+    );
+  }
   if (opts.keyword) {
     const kw = opts.keyword.toLowerCase();
     filtered = filtered.filter(r =>
@@ -492,7 +502,7 @@ export async function runUnifiedSearch(q: string, opts: UnifiedSearchOptions & {
   }
 
   // CATEGORY_CAPS only when user didn't explicitly select a wiki facet.
-  const applyCaps = !opts.type && !opts.category && !opts.tag && !opts.keyword;
+  const applyCaps = !opts.type && !opts.category && !opts.tag && !opts.kind && !opts.keyword;
   let impressions: Map<string, number> | undefined;
   const explorationLimit = Math.min(limit, opts.explorationLimit ?? limit);
   const explorationPossible = explorationLimit >= 4

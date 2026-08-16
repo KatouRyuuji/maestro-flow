@@ -20,6 +20,10 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
 import { safeRename } from '../utils/state-schema.js';
+import {
+  acquireFileLocksSync,
+  knowledgeCorpusNamespaceTarget,
+} from '../utils/atomic-write.js';
 import { hashDirectory } from './artifacts.js';
 import {
   assertExecutionLease,
@@ -277,6 +281,11 @@ export interface SessionListResult {
   exclusions: SessionListExclusion[];
 }
 
+export interface LocatedRunRecord {
+  sessionId: string;
+  run: RunRead;
+}
+
 export type SessionStoreReserveRecallResult = ReserveRecallConfirmationResult & {
   validated_source: ValidatedRecallSource | null;
 };
@@ -287,6 +296,85 @@ interface JsonWrite {
   raw?: string;
   schema?: z.ZodType;
   mode?: number;
+}
+
+const V30_KNOWLEDGE_SIDECAR_NAMES = new Set([
+  'knowledge-delta.json',
+  'knowledge-reconciliation.json',
+]);
+
+function relativePathSegments(rootPath: string, targetPath: string): string[] | null {
+  const root = resolve(rootPath);
+  const target = resolve(targetPath);
+  const rel = relative(root, target);
+  if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return null;
+  return rel.split(/[\\/]+/).filter(Boolean);
+}
+
+function assertV30KnowledgeSidecarPath(
+  store: SessionStore,
+  sessionId: string,
+  path: string,
+): string {
+  const target = resolve(path);
+  const segments = relativePathSegments(store.sessionDir(sessionId), target);
+  const sessionSidecar = segments?.length === 1
+    && V30_KNOWLEDGE_SIDECAR_NAMES.has(segments[0]);
+  const runSidecar = segments?.length === 3
+    && segments[0] === 'runs'
+    && V30_KNOWLEDGE_SIDECAR_NAMES.has(segments[2]);
+  if (!sessionSidecar && !runSidecar) {
+    throw new Error(
+      `v3 knowledge transaction JSON writes are limited to Session/Run knowledge sidecars: ${path}`,
+    );
+  }
+  if (runSidecar) assertSafePathSegment(segments![1], 'run ID');
+  return target;
+}
+
+function assertV30RunKnowledgeSidecarPath(
+  store: SessionStore,
+  sessionId: string,
+  runId: string,
+  path: string,
+): string {
+  const target = assertV30KnowledgeSidecarPath(store, sessionId, path);
+  const segments = relativePathSegments(store.runDir(sessionId, runId), target);
+  if (segments?.length !== 1 || !V30_KNOWLEDGE_SIDECAR_NAMES.has(segments[0])) {
+    throw new Error(`v3 knowledge sidecar path is not owned by Run ${runId}: ${path}`);
+  }
+  return target;
+}
+
+function assertV30KnowledgeCorpusPath(store: SessionStore, path: string): string {
+  const target = resolve(path);
+  const segments = relativePathSegments(store.workflowRoot, target);
+  if (segments?.length !== 2
+    || (segments[0] !== 'specs' && segments[0] !== 'knowhow')
+    || !segments[1].endsWith('.md')) {
+    throw new Error(
+      `v3 knowledge transaction text writes are limited to top-level Markdown corpus files: ${path}`,
+    );
+  }
+  const root = resolve(store.workflowRoot);
+  if (existsSync(root)) {
+    const rootDetails = lstatSync(root);
+    if (rootDetails.isSymbolicLink() || !rootDetails.isDirectory()) {
+      throw new Error(`Unsafe v3 knowledge corpus root: ${root}`);
+    }
+  }
+  let cursor = root;
+  for (let index = 0; index < segments.length; index++) {
+    cursor = join(cursor, segments[index]);
+    if (!existsSync(cursor)) continue;
+    const details = lstatSync(cursor);
+    const terminal = index === segments.length - 1;
+    if (details.isSymbolicLink()
+      || (terminal ? !details.isFile() : !details.isDirectory())) {
+      throw new Error(`Unsafe v3 knowledge corpus path: ${cursor}`);
+    }
+  }
+  return target;
 }
 
 export interface SessionStoreLockTiming {
@@ -973,6 +1061,34 @@ export class SessionStore {
       const writes = tx.pendingWrites();
       if (writes.length > 0) this.writeBatchUnlocked(writes);
       return result;
+    });
+  }
+
+  /**
+   * Commit v3 knowledge sidecars and project corpus files without exposing
+   * Session, Run, or immutable receipt writers to the callback.
+   */
+  withV30KnowledgeTransaction<T>(
+    sessionId: string,
+    builder: (tx: SessionV30KnowledgeStoreTransaction) => T,
+  ): T {
+    return this.withLock(() => {
+      if (this.sessionSchemaSelection().writer !== 'session/3.0') {
+        throw new Error('v3 knowledge transactions require the explicit session/3.0 writer selection');
+      }
+      const session = this.readSessionRecordUnlocked(sessionId);
+      if (session.schema_version !== 'session/3.0') {
+        throw new Error(`Session ${sessionId} uses ${session.schema_version}; session/3.0 is required`);
+      }
+      const tx = new SessionV30KnowledgeStoreTransaction(this, sessionId);
+      try {
+        const result = builder(tx);
+        const writes = tx.pendingWrites();
+        if (writes.length > 0) this.writeBatchUnlocked(writes);
+        return result;
+      } finally {
+        tx.releaseCorpusLocks();
+      }
     });
   }
 
@@ -1802,6 +1918,55 @@ export class SessionStore {
     });
   }
 
+  private assertActiveRunSidecarMutationUnlocked(
+    sessionId: string,
+    runId: string,
+    path: string,
+  ): void {
+    const record = this.readSessionRecordUnlocked(sessionId);
+    if (record.schema_version === 'session/3.0') {
+      if (this.sessionSchemaSelection().writer !== 'session/3.0') {
+        throw new Error('v3 Run sidecar writes require the explicit session/3.0 writer selection');
+      }
+      assertV30RunKnowledgeSidecarPath(this, sessionId, runId, path);
+      const session = sessionStateV30ReadSchema.parse(record);
+      if ((session.status !== 'open' && session.status !== 'paused')
+        || !session.active_run_ids.includes(runId)) {
+        throw new Error(
+          `Run ${runId} is not an active Run for Session ${sessionId} `
+          + '(completed/archived Sessions and inactive Runs cannot mutate knowledge sidecars)',
+        );
+      }
+      const runRecord = this.readRunRecordUnlocked(sessionId, runId);
+      if (runRecord.schema_version !== 'run/3.0') {
+        throw new Error(`Run ${runId} uses ${runRecord.schema_version}; run/3.0 is required`);
+      }
+      const run = runV30ReadSchema.parse(runRecord);
+      if (!['pending', 'running', 'blocked'].includes(run.status)) {
+        throw new Error(`Run ${runId} is ${run.status} and cannot mutate Run sidecars`);
+      }
+      return;
+    }
+
+    const bundle = this.readBundleUnlocked(sessionId);
+    const openExecution = this.readOpenExecutionUnlocked(sessionId);
+    if (openExecution) {
+      throw new Error(
+        `Session ${sessionId} has open Execution ${openExecution.execution_id}; explicit Execution sidecar authority is required`,
+      );
+    }
+    if (bundle.session.status !== 'running' || bundle.session.active_run_id !== runId) {
+      throw new Error(
+        `Run ${runId} is not the active Run for Session ${sessionId} `
+        + '(completed/sealed runs are immutable; stage/record must happen before the Run completes)',
+      );
+    }
+    const run = this.readRunUnlocked(sessionId, runId);
+    if (run.status === 'sealed' || run.status === 'completed') {
+      throw new Error(`Run ${runId} is ${run.status} and cannot mutate Run sidecars`);
+    }
+  }
+
   /**
    * Mutate one Run-owned sidecar only while that Run remains the canonical
    * active Run. This avoids rewriting the coordinated Session bundle for
@@ -1817,23 +1982,7 @@ export class SessionStore {
   ): R {
     const safePath = this.assertWorkflowPath(path);
     return this.withLock(() => {
-      const bundle = this.readBundleUnlocked(sessionId);
-      const openExecution = this.readOpenExecutionUnlocked(sessionId);
-      if (openExecution) {
-        throw new Error(
-          `Session ${sessionId} has open Execution ${openExecution.execution_id}; explicit Execution sidecar authority is required`,
-        );
-      }
-      if (bundle.session.status !== 'running' || bundle.session.active_run_id !== runId) {
-        throw new Error(
-          `Run ${runId} is not the active Run for Session ${sessionId} `
-          + '(completed/sealed runs are immutable; stage/record must happen before the Run completes)',
-        );
-      }
-      const run = this.readRunUnlocked(sessionId, runId);
-      if (run.status === 'sealed' || run.status === 'completed') {
-        throw new Error(`Run ${runId} is ${run.status} and cannot mutate Run sidecars`);
-      }
+      this.assertActiveRunSidecarMutationUnlocked(sessionId, runId, safePath);
       const current = existsSync(safePath)
         ? this.readValidated(safePath, schema)
         : schema.parse(initial);
@@ -2011,29 +2160,13 @@ export class SessionStore {
   ): void {
     const safePath = this.assertWorkflowPath(path);
     this.withLock(() => {
-      const bundle = this.readBundleUnlocked(sessionId);
-      const openExecution = this.readOpenExecutionUnlocked(sessionId);
-      if (openExecution) {
-        throw new Error(
-          `Session ${sessionId} has open Execution ${openExecution.execution_id}; explicit Execution sidecar authority is required`,
-        );
-      }
-      if (bundle.session.status !== 'running' || bundle.session.active_run_id !== runId) {
-        throw new Error(
-          `Run ${runId} is not the active Run for Session ${sessionId} `
-          + '(completed/sealed runs are immutable; stage/record must happen before the Run completes)',
-        );
-      }
-      const run = this.readRunUnlocked(sessionId, runId);
-      if (run.status === 'sealed' || run.status === 'completed') {
-        throw new Error(`Run ${runId} is ${run.status} and cannot mutate Run sidecars`);
-      }
+      this.assertActiveRunSidecarMutationUnlocked(sessionId, runId, safePath);
       schema.parse(value);
       this.writeBatchUnlocked([{ path: safePath, value, schema }]);
     });
   }
 
-  findRun(runId: string, sessionId?: string): { sessionId: string; run: CommandRun } {
+  private locateRunSessionId(runId: string, sessionId?: string): string {
     if (sessionId) {
       if (!this.sessionExists(sessionId)) {
         throw new Error(
@@ -2047,7 +2180,7 @@ export class SessionStore {
           + `check the run id with: maestro run list --session ${sessionId}`,
         );
       }
-      return { sessionId, run: this.readRun(sessionId, runId) };
+      return sessionId;
     }
     if (!existsSync(this.sessionsRoot)) throw new Error(`Run not found: ${runId}`);
     const matches: string[] = [];
@@ -2056,7 +2189,24 @@ export class SessionStore {
     }
     if (matches.length === 0) throw new Error(`Run not found: ${runId}`);
     if (matches.length > 1) throw new Error(`Run ID is ambiguous; pass --session: ${runId}`);
-    return { sessionId: matches[0], run: this.readRun(matches[0], runId) };
+    return matches[0];
+  }
+
+  /** Locate and strictly read a Run without normalizing across schema generations. */
+  findRunRecord(runId: string, sessionId?: string): LocatedRunRecord {
+    const locatedSessionId = this.locateRunSessionId(runId, sessionId);
+    return {
+      sessionId: locatedSessionId,
+      run: this.readRunRecord(locatedSessionId, runId),
+    };
+  }
+
+  findRun(runId: string, sessionId?: string): { sessionId: string; run: CommandRun } {
+    const locatedSessionId = this.locateRunSessionId(runId, sessionId);
+    return {
+      sessionId: locatedSessionId,
+      run: this.readRun(locatedSessionId, runId),
+    };
   }
 
   /** Enumerate canonical Session files only; state.json is never consulted. */
@@ -2128,10 +2278,23 @@ export class SessionStore {
       const sessionPath = join(this.sessionsRoot, sessionId, 'session.json');
       if (!existsSync(sessionPath)) continue;
       try {
-        const session = this.readValidated(sessionPath, sessionStateSchema);
-        if (session.status !== 'running' || !session.active_run_id) continue;
-        if (active) return null;
-        active = { sessionId, runId: session.active_run_id };
+        const record = this.readValidated(sessionPath, sessionStateReadSchema);
+        let activeRunIds: string[];
+        if (record.schema_version === 'session/3.0') {
+          const session = sessionStateV30ReadSchema.parse(record);
+          if (session.status !== 'open' && session.status !== 'paused') continue;
+          activeRunIds = [...new Set(session.active_run_ids)];
+        } else if (record.schema_version === 'session/2.0') {
+          continue;
+        } else {
+          const parsed = sessionStateSchema.safeParse(record);
+          if (!parsed.success || parsed.data.status !== 'running' || !parsed.data.active_run_id) continue;
+          activeRunIds = [parsed.data.active_run_id];
+        }
+        for (const runId of activeRunIds) {
+          if (active) return null;
+          active = { sessionId, runId };
+        }
       } catch {
         // Corrupt sessions cannot be authoritative active-run candidates.
       }
@@ -2151,7 +2314,19 @@ export class SessionStore {
       const sessionPath = join(this.sessionsRoot, sessionId, 'session.json');
       if (!existsSync(sessionPath)) continue;
       try {
-        const session = this.readValidated(sessionPath, sessionStateSchema);
+        const record = this.readValidated(sessionPath, sessionStateReadSchema);
+        if (record.schema_version === 'session/3.0') {
+          const session = sessionStateV30ReadSchema.parse(record);
+          if (session.status !== 'open' && session.status !== 'paused') continue;
+          const activeRunIds = [...new Set(session.active_run_ids)];
+          running.push({
+            sessionId,
+            activeRunId: activeRunIds.length === 1 ? activeRunIds[0] : null,
+          });
+          continue;
+        }
+        if (record.schema_version === 'session/2.0') continue;
+        const session = sessionStateSchema.parse(record);
         if (session.status !== 'running') continue;
         running.push({ sessionId, activeRunId: session.active_run_id ?? null });
       } catch {
@@ -3536,13 +3711,28 @@ export class SessionStore {
     } catch (error) {
       throw new Error(`SessionStore recovery required: invalid transaction intent at ${intentPath}: ${(error as Error).message}`);
     }
+    const corpusPaths = intent.writes.flatMap(entry => {
+      const path = this.assertWorkflowPath(join(this.workflowRoot, entry.path));
+      const segments = relativePathSegments(this.workflowRoot, path);
+      return segments?.length === 2
+        && (segments[0] === 'specs' || segments[0] === 'knowhow')
+        && segments[1].endsWith('.md')
+        ? [assertV30KnowledgeCorpusPath(this, path)]
+        : [];
+    });
+    const releaseCorpusLocks = corpusPaths.length > 0
+      ? acquireFileLocksSync([
+        knowledgeCorpusNamespaceTarget(this.projectRoot),
+        ...corpusPaths,
+      ])
+      : () => {};
     try {
       for (const entry of intent.writes) {
         const path = this.assertWorkflowPath(join(this.workflowRoot, entry.path));
         const tmpPath = this.assertWorkflowPath(join(this.workflowRoot, entry.tmp_path));
         const current = existsSync(path) ? readFileSync(path) : null;
         const currentHash = current ? sha256Hex(current) : null;
-        if (currentHash !== entry.original_sha256) {
+        if (currentHash === entry.next_sha256) {
           if (entry.original_base64 === null) {
             rmSync(path, { force: true });
           } else {
@@ -3557,6 +3747,8 @@ export class SessionStore {
       this.clearCache();
     } catch (error) {
       throw new Error(`SessionStore recovery required for ${intent.transaction_id}: ${(error as Error).message}`);
+    } finally {
+      releaseCorpusLocks();
     }
   }
 
@@ -3872,6 +4064,88 @@ export class SessionStore {
     for (const old of backups.slice(MAX_BACKUPS)) {
       try { unlinkSync(join(backupDir, old)); } catch { /* ignore */ }
     }
+  }
+}
+
+export class SessionV30KnowledgeStoreTransaction {
+  private readonly writes: JsonWrite[] = [];
+  private lockedCorpusPaths = new Set<string>();
+  private releaseLockedCorpus: (() => void) | null = null;
+
+  constructor(private readonly store: SessionStore, private readonly sessionId: string) {}
+
+  pendingWrites(): JsonWrite[] {
+    return [...this.writes];
+  }
+
+  lockCorpusNamespace(): void {
+    if (this.releaseLockedCorpus) return;
+    this.releaseLockedCorpus = acquireFileLocksSync([
+      knowledgeCorpusNamespaceTarget(this.store.projectRoot),
+    ]);
+  }
+
+  lockCorpusPaths(paths: readonly string[]): void {
+    const safePaths = [...new Set(paths.map(path => assertV30KnowledgeCorpusPath(this.store, path)))].sort();
+    if (safePaths.length === 0) return;
+    if (this.releaseLockedCorpus) {
+      if (safePaths.every(path => this.lockedCorpusPaths.has(path))) return;
+      throw new Error('v3 knowledge corpus paths must be declared together before reading or writing');
+    }
+    this.releaseLockedCorpus = acquireFileLocksSync([
+      knowledgeCorpusNamespaceTarget(this.store.projectRoot),
+      ...safePaths,
+    ]);
+    this.lockedCorpusPaths = new Set(safePaths);
+  }
+
+  releaseCorpusLocks(): void {
+    this.releaseLockedCorpus?.();
+    this.releaseLockedCorpus = null;
+    this.lockedCorpusPaths.clear();
+  }
+
+  readSession(): SessionStateV30 {
+    return this.store.readSessionV30(this.sessionId);
+  }
+
+  readRun(runId: string): RunV30 {
+    return this.store.readRunV30(this.sessionId, runId);
+  }
+
+  readRunRecord(runId: string): RunRead {
+    return this.store.readRunRecordReadOnly(this.sessionId, runId);
+  }
+
+  readJson<T>(path: string, schema: z.ZodType<T>, fallback?: T): T {
+    return this.store.readJsonFileReadOnly(path, schema, fallback);
+  }
+
+  writeJson<T>(path: string, value: T, schema: z.ZodType<T>, mode?: number): void {
+    const safePath = assertV30KnowledgeSidecarPath(this.store, this.sessionId, path);
+    this.writes.push({ path: safePath, value, schema, mode });
+  }
+
+  readText(path: string): string | null {
+    const safePath = assertV30KnowledgeCorpusPath(this.store, path);
+    this.lockCorpusPaths([safePath]);
+    const pending = [...this.writes].reverse()
+      .find(write => write.path === safePath && write.raw !== undefined);
+    if (pending?.raw !== undefined) return pending.raw;
+    return existsSync(safePath) ? readFileSync(safePath, 'utf8') : null;
+  }
+
+  writeText(path: string, content: string, mode?: number): void {
+    const safePath = assertV30KnowledgeCorpusPath(this.store, path);
+    this.lockCorpusPaths([safePath]);
+    this.writes.push({ path: safePath, raw: content, mode });
+  }
+
+  pendingText(path: string): string | null {
+    const safePath = assertV30KnowledgeCorpusPath(this.store, path);
+    const pending = [...this.writes].reverse()
+      .find(write => write.path === safePath && write.raw !== undefined);
+    return pending?.raw ?? null;
   }
 }
 

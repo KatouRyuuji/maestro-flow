@@ -16,6 +16,7 @@
  *   the target) — retried with a tiny backoff.
  */
 
+import { randomUUID } from 'node:crypto';
 import {
   closeSync,
   existsSync,
@@ -28,7 +29,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 
 const LOCK_TIMEOUT_MS = 10_000;
 const LOCK_RETRY_MS = 50;
@@ -40,34 +41,93 @@ function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-function acquireLockSync(lockPath: string): void {
+interface FileLockOwner {
+  pid: number;
+  token: string;
+  createdAt: number;
+}
+
+const heldLocks = new Map<string, { token: string; count: number }>();
+
+function readLockOwner(lockPath: string): FileLockOwner | null {
+  try {
+    const value = JSON.parse(readFileSync(lockPath, 'utf8')) as Partial<FileLockOwner>;
+    return Number.isInteger(value.pid) && (value.pid ?? 0) > 0
+      && typeof value.token === 'string' && value.token.length > 0
+      && typeof value.createdAt === 'number'
+      ? value as FileLockOwner
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ESRCH';
+  }
+}
+
+function acquirePhysicalLockSync(lockPath: string): string {
   const startedAt = Date.now();
+  const token = randomUUID();
   mkdirSync(dirname(lockPath), { recursive: true });
   for (;;) {
     try {
       const fd = openSync(lockPath, 'wx');
       try {
-        writeFileSync(fd, JSON.stringify({ pid: process.pid, createdAt: Date.now() }), 'utf-8');
+        writeFileSync(fd, JSON.stringify({ pid: process.pid, token, createdAt: Date.now() }), 'utf-8');
       } finally {
         closeSync(fd);
       }
-      return;
+      return token;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
     }
-    // Reclaim locks left behind by crashed processes.
     try {
-      if (Date.now() - statSync(lockPath).mtimeMs > LOCK_STALE_MS) {
-        rmSync(lockPath, { force: true });
+      const owner = readLockOwner(lockPath);
+      const staleInvalid = !owner && Date.now() - statSync(lockPath).mtimeMs > LOCK_STALE_MS;
+      const deadOwner = owner !== null && !processIsAlive(owner.pid);
+      if (staleInvalid || deadOwner) {
+        const verified = readLockOwner(lockPath);
+        if ((owner === null && verified === null)
+          || (owner !== null && verified?.pid === owner.pid && verified.token === owner.token)) {
+          rmSync(lockPath, { force: true });
+          continue;
+        }
       }
     } catch {
-      // Lost the race with another process — just retry.
+      // Lost the race with another process; retry until the bounded deadline.
     }
     if (Date.now() - startedAt >= LOCK_TIMEOUT_MS) {
       throw new Error(`Timed out acquiring lock: ${lockPath}`);
     }
     sleepSync(LOCK_RETRY_MS);
   }
+}
+
+function retainLockSync(lockPath: string): void {
+  const held = heldLocks.get(lockPath);
+  if (held) {
+    held.count++;
+    return;
+  }
+  heldLocks.set(lockPath, { token: acquirePhysicalLockSync(lockPath), count: 1 });
+}
+
+function releaseRetainedLockSync(lockPath: string): void {
+  const held = heldLocks.get(lockPath);
+  if (!held) return;
+  held.count--;
+  if (held.count > 0) return;
+  heldLocks.delete(lockPath);
+  try {
+    const owner = readLockOwner(lockPath);
+    if (owner?.pid === process.pid && owner.token === held.token) unlinkSync(lockPath);
+  } catch { /* a dead-owner reclaimer or cleanup already removed it */ }
 }
 
 function renameWithRetry(from: string, to: string): void {
@@ -84,6 +144,43 @@ function renameWithRetry(from: string, to: string): void {
   }
 }
 
+export function knowledgeCorpusNamespaceTarget(projectRoot: string): string {
+  return join(resolve(projectRoot), '.workflow', '.knowledge-corpus.namespace');
+}
+
+function corpusNamespaceTargetForFile(filePath: string): string | null {
+  const corpusDir = dirname(resolve(filePath));
+  const workflowRoot = dirname(corpusDir);
+  const corpusName = basename(corpusDir).toLowerCase();
+  if ((corpusName !== 'specs' && corpusName !== 'knowhow')
+    || basename(workflowRoot).toLowerCase() !== '.workflow') return null;
+  return join(workflowRoot, '.knowledge-corpus.namespace');
+}
+
+export function acquireFileLocksSync(filePaths: readonly string[]): () => void {
+  const lockPaths = [...new Set(filePaths.map(filePath => `${resolve(filePath)}.lock`))].sort();
+  const acquired: string[] = [];
+  try {
+    for (const lockPath of lockPaths) {
+      retainLockSync(lockPath);
+      acquired.push(lockPath);
+    }
+  } catch (error) {
+    for (const lockPath of acquired.reverse()) releaseRetainedLockSync(lockPath);
+    throw error;
+  }
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    for (const lockPath of acquired.reverse()) releaseRetainedLockSync(lockPath);
+  };
+}
+
+export function acquireKnowledgeCorpusNamespaceLockSync(projectRoot: string): () => void {
+  return acquireFileLocksSync([knowledgeCorpusNamespaceTarget(projectRoot)]);
+}
+
 /**
  * Read-modify-write `filePath` atomically under a cross-process lock.
  *
@@ -95,8 +192,11 @@ export function updateFileAtomic(
   filePath: string,
   update: (current: string | null) => string | null,
 ): string | null {
-  const lockPath = `${filePath}.lock`;
-  acquireLockSync(lockPath);
+  const namespaceTarget = corpusNamespaceTargetForFile(filePath);
+  const release = acquireFileLocksSync([
+    ...(namespaceTarget ? [namespaceTarget] : []),
+    filePath,
+  ]);
   try {
     const current = existsSync(filePath) ? readFileSync(filePath, 'utf-8') : null;
     const next = update(current);
@@ -106,10 +206,6 @@ export function updateFileAtomic(
     renameWithRetry(tmpPath, filePath);
     return next;
   } finally {
-    try {
-      unlinkSync(lockPath);
-    } catch {
-      // Best-effort release — stale reclaim covers the crash case.
-    }
+    release();
   }
 }

@@ -4,7 +4,11 @@ import { resolve } from 'node:path';
 import { artifactRepublishReceiptSchema, guidanceSnapshotSchema, type GuidanceSnapshot, type TransitionReceiptV20 } from '../protocol-schemas.js';
 import {
   applyAutomaticKnowledgeSuppression,
+  currentKnowledgeCorpusFingerprint,
+  isKnowledgeReconciliationFresh,
   knowledgeReconciliationSchema,
+  readKnowledgeReconciliation,
+  reconcileRunKnowledgeSync,
   reconciliationPath,
   reconciliationSummary,
   type KnowledgeReconciliation,
@@ -12,6 +16,7 @@ import {
 import {
   addCandidate,
   readRunKnowledgeDelta,
+  reportKnowledgeCandidateDrafts,
   runKnowledgeDeltaPath,
   runKnowledgeDeltaSchema,
   type RunKnowledgeDelta,
@@ -89,11 +94,10 @@ export interface CompleteRunAndAdvanceInput extends V3MutationIdentity {
   summary?: string | null;
   verdict: Extract<NonNullable<RunV30['verdict']>, 'done' | 'done_with_concerns'>;
   /**
-   * Knowledge reconciliation receipt generated OUTSIDE the transaction (pure
-   * computation, run-v3.ts). Committed atomically here together with the
-   * staged knowledge delta, so reconciliation and staging can never diverge.
-   * Deliberately NOT part of the canonical payload (derived data, not caller
-   * intent) — replays keep the original receipt semantics.
+   * Optional preflight receipt derived by the CLI. Completion revalidates it
+   * under the v3 store lock and regenerates it there when it is stale.
+   * Deliberately NOT part of the canonical payload: replay returns the original
+   * receipt before any derived knowledge work runs.
    */
   knowledgeReconciliation?: KnowledgeReconciliation | null;
 }
@@ -1052,18 +1056,56 @@ export function completeRunAndAdvance(
     }, identity.recordedAt, session.orchestration_revision + 1);
 
     // ── knowledge staging + reconciliation receipt (atomic with the seal) ──
+    const frontmatterCandidates = reportKnowledgeCandidateDrafts(frontmatter, runId);
     let knowledgeReceipt: KnowledgeReconciliation | null = null;
-    if (input.knowledgeReconciliation) {
+    try {
+      const corpusFingerprint = currentKnowledgeCorpusFingerprint(store.projectRoot);
+      const persisted = readKnowledgeReconciliation(store, identity.sessionId, runId, true);
+      const supplied = input.knowledgeReconciliation;
+      const freshReceipt = [persisted, supplied].find(receipt => receipt && isKnowledgeReconciliationFresh(
+        store.projectRoot,
+        identity.sessionId,
+        runId,
+        receipt,
+        frontmatter,
+        corpusFingerprint,
+      )) ?? null;
+      knowledgeReceipt = freshReceipt
+        ?? reconcileRunKnowledgeSync(store.projectRoot, identity.sessionId, runId, frontmatter);
+      if (!isKnowledgeReconciliationFresh(
+        store.projectRoot,
+        identity.sessionId,
+        runId,
+        knowledgeReceipt,
+        frontmatter,
+        corpusFingerprint,
+      )) {
+        throw new Error('reconciliation changed while completing the Run');
+      }
+    } catch (error) {
+      if (frontmatterCandidates.length > 0) {
+        throw new V3StructuredError(
+          'INVALID_STATE_TRANSITION',
+          `Run ${runId} has candidate-bearing report frontmatter that cannot be reconciled`,
+          {
+            details: { cause: error instanceof Error ? error.message : String(error) },
+            next_actions: [`maestro knowledge review ${identity.sessionId} --refresh`],
+          },
+        );
+      }
+      knowledgeReceipt = null;
+    }
+
+    if (knowledgeReceipt) {
       stageV3RunKnowledgeCandidates({
         store, tx, sessionId: identity.sessionId, runId, frontmatter,
-        reconciliation: input.knowledgeReconciliation,
+        reconciliation: knowledgeReceipt,
       });
       tx.writeJson(
         reconciliationPath(store, identity.sessionId, runId),
-        input.knowledgeReconciliation,
+        knowledgeReceipt,
         knowledgeReconciliationSchema,
       );
-      knowledgeReceipt = input.knowledgeReconciliation;
     }
 
     return stageApplied({

@@ -15,7 +15,7 @@
  * write operations so knowledge.ts stays free of synthetic-session policy.
  */
 import { createHash } from 'node:crypto';
-import { basename, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 
 import {
   addCandidate,
@@ -31,6 +31,7 @@ import {
   type KnowledgeInputSource,
   type SessionKnowledgeDelta,
 } from './knowledge.js';
+import { artifactRegistrySchema, evidenceStoreSchema, sessionStateV30Schema } from './schemas.js';
 import { SessionStore } from './store.js';
 
 function nowIso(): string {
@@ -54,6 +55,31 @@ export function updateSessionKnowledgeSidecar<T>(
   const store = new SessionStore(projectRoot);
   if (!store.sessionExists(sessionId)) throw new Error(`Session not found: ${sessionId}`);
   const path = sessionKnowledgeDeltaPath(store, sessionId);
+  const sessionRecord = store.readSessionRecordReadOnly(sessionId);
+  if (sessionRecord.schema_version === 'session/3.0') {
+    return store.withV30KnowledgeTransaction(sessionId, tx => {
+      const session = tx.readSession();
+      if (session.status !== 'open') {
+        throw new Error(`Session ${sessionId} is ${session.status} and cannot mutate knowledge sidecars`);
+      }
+      if (!Number.isSafeInteger(session.activity_revision) || session.activity_revision < 0) {
+        throw new Error(`Session ${sessionId} has no valid activity revision for knowledge staging`);
+      }
+      const draft = structuredClone(tx.readJson(
+        path,
+        sessionKnowledgeDeltaSchema,
+        createSessionDelta(sessionId, nowIso()),
+      ));
+      const result = mutator(draft, {
+        schemaVersion: session.schema_version,
+        activityRevision: session.activity_revision,
+        store,
+      });
+      tx.writeJson(path, draft, sessionKnowledgeDeltaSchema);
+      return result;
+    });
+  }
+
   let result: T | undefined;
   store.updateJsonFile(
     path,
@@ -126,7 +152,41 @@ export function ensureSyntheticKnowledgeSession(
   const store = new SessionStore(projectRoot);
   const sessionId = syntheticKnowledgeSessionId(host, projectRoot);
   const existed = store.sessionExists(sessionId);
-  store.createSession(sessionId, SYNTHETIC_SESSION_INTENT, { ifExists: 'reuse' });
+  if (store.sessionSchemaSelection().writer === 'session/3.0') {
+    if (!existed) {
+      const now = nowIso();
+      const session = sessionStateV30Schema.parse({
+        schema_version: 'session/3.0',
+        session_id: sessionId,
+        objective: SYNTHETIC_SESSION_INTENT,
+        definition_of_done: 'Capture explicitly attributed knowledge for this host and day',
+        status: 'open',
+        orchestration_revision: 1,
+        activity_revision: 1,
+        chain: [],
+        decisions: [],
+        active_run_ids: [],
+        artifacts_ref: 'artifacts.json',
+        evidence_ref: 'evidence.json',
+        created_at: now,
+        updated_at: now,
+        completed_at: null,
+        archived_at: null,
+      });
+      store.withV30Transaction(sessionId, tx => {
+        if (tx.sessionExists()) return;
+        tx.writeSession(session);
+        tx.writeJson(join(store.sessionDir(sessionId), session.artifacts_ref), {
+          schema_version: 'artifacts/1.0', revision: 0, artifacts: {}, aliases: {},
+        }, artifactRegistrySchema);
+        tx.writeJson(join(store.sessionDir(sessionId), session.evidence_ref), {
+          schema_version: 'evidence/1.0', revision: 0, records: {},
+        }, evidenceStoreSchema);
+      });
+    }
+  } else {
+    store.createSession(sessionId, SYNTHETIC_SESSION_INTENT, { ifExists: 'reuse' });
+  }
   return { sessionId, created: !existed };
 }
 

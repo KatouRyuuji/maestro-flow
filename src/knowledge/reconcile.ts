@@ -13,6 +13,7 @@ import {
   readSessionKnowledgeDelta,
   readSessionKnowledgeReconciliation,
   reportKnowledgeCandidateDrafts,
+  runKnowledgeCandidateSnapshotHash,
   runKnowledgeDeltaPath,
   runKnowledgeDeltaSchema,
   SESSION_RECONCILIATION_RUN_ID,
@@ -287,15 +288,7 @@ export function knowledgeCandidateSnapshotHash(
   frontmatter: ReportFrontmatter,
   runId: string,
 ): string {
-  return sha256(JSON.stringify(candidateViews(delta, frontmatter, runId).map(candidate => ({
-    candidate_id: candidate.candidate_id,
-    target: candidate.target,
-    action: candidate.action,
-    title: normalized(candidate.title),
-    content: normalized(candidate.content),
-    category: candidate.category,
-    source_kind: candidate.source_kind,
-  }))));
+  return runKnowledgeCandidateSnapshotHash(delta, frontmatter, runId);
 }
 
 function tokens(value: string): Set<string> {
@@ -819,6 +812,10 @@ export function persistActiveKnowledgeReconciliation(
   receipt: KnowledgeReconciliation,
 ): void {
   const store = new SessionStore(projectRoot);
+  if (store.readSessionRecordReadOnly(receipt.session_id).schema_version === 'session/3.0') {
+    persistKnowledgeReconciliation(projectRoot, receipt);
+    return;
+  }
   store.writeActiveRunSidecar(
     receipt.session_id,
     receipt.run_id,
@@ -833,6 +830,32 @@ export function persistKnowledgeReconciliation(
   receipt: KnowledgeReconciliation,
 ): void {
   const store = new SessionStore(projectRoot);
+  const session = store.readSessionRecordReadOnly(receipt.session_id);
+  if (session.schema_version === 'session/3.0') {
+    store.withV30KnowledgeTransaction(receipt.session_id, tx => {
+      tx.lockCorpusNamespace();
+      const frontmatter = readReportFrontmatter(store.runDir(receipt.session_id, receipt.run_id));
+      const expectedCorpusFingerprint = currentKnowledgeCorpusFingerprint(projectRoot);
+      if (!isKnowledgeReconciliationFresh(
+        projectRoot,
+        receipt.session_id,
+        receipt.run_id,
+        receipt,
+        frontmatter,
+        expectedCorpusFingerprint,
+      )) {
+        throw new Error(
+          `Run ${receipt.run_id} knowledge reconciliation changed before v3 receipt commit; refresh again`,
+        );
+      }
+      tx.writeJson(
+        reconciliationPath(store, receipt.session_id, receipt.run_id),
+        receipt,
+        knowledgeReconciliationSchema,
+      );
+    });
+    return;
+  }
   store.readRun(receipt.session_id, receipt.run_id);
   store.updateKnowledgeLifecycle(receipt.session_id, (_lifecycle, tx) => {
     writeKnowledgeReconciliation(store, tx, receipt);
@@ -1018,7 +1041,31 @@ export function persistSessionKnowledgeReconciliation(
   receipt: KnowledgeReconciliation,
 ): void {
   const store = new SessionStore(projectRoot);
-  if (store.readSessionRecordReadOnly(receipt.session_id).schema_version === 'session/2.0') {
+  const session = store.readSessionRecordReadOnly(receipt.session_id);
+  if (session.schema_version === 'session/3.0') {
+    store.withV30KnowledgeTransaction(receipt.session_id, tx => {
+      tx.lockCorpusNamespace();
+      const expectedCorpusFingerprint = currentKnowledgeCorpusFingerprint(projectRoot);
+      if (!isSessionKnowledgeReconciliationFresh(
+        projectRoot,
+        receipt.session_id,
+        receipt,
+        expectedCorpusFingerprint,
+        store,
+      )) {
+        throw new Error(
+          `Session ${receipt.session_id} knowledge reconciliation changed before v3 receipt commit; refresh again`,
+        );
+      }
+      tx.writeJson(
+        sessionReconciliationPath(store, receipt.session_id),
+        receipt,
+        knowledgeReconciliationSchema,
+      );
+    });
+    return;
+  }
+  if (session.schema_version === 'session/2.0') {
     store.updateJsonFile(
       sessionReconciliationPath(store, receipt.session_id),
       knowledgeReconciliationSchema,
@@ -1117,22 +1164,45 @@ export function promoteReconciledSessionKnowledge(
       );
     }
   }
+  const needsFinalValidation = needsSessionFence
+    || store.readSessionRecordReadOnly(sessionId).schema_version === 'session/3.0';
   return promoteSessionKnowledge(projectRoot, sessionId, {
     ...options,
-    ...(needsSessionFence ? {
+    ...(needsFinalValidation ? {
       _finalSessionValidation: (lockedStore: SessionStore) => {
-        const lockedReceipt = readSessionKnowledgeReconciliation(lockedStore, sessionId, true);
         const lockedCorpusFingerprint = currentKnowledgeCorpusFingerprint(projectRoot);
-        if (!lockedReceipt || !isSessionKnowledgeReconciliationFresh(
-          projectRoot,
-          sessionId,
-          lockedReceipt,
-          lockedCorpusFingerprint,
-          lockedStore,
-        )) {
-          throw new Error(
-            `Session ${sessionId} has a stale session knowledge reconciliation receipt at final commit`,
-          );
+        for (const candidate of candidatesToRefresh) {
+          if ((candidate.origin ?? 'run') === 'session') {
+            const lockedReceipt = readSessionKnowledgeReconciliation(lockedStore, sessionId, true);
+            if (!lockedReceipt || !isSessionKnowledgeReconciliationFresh(
+              projectRoot,
+              sessionId,
+              lockedReceipt,
+              lockedCorpusFingerprint,
+              lockedStore,
+            )) {
+              throw new Error(
+                `Session ${sessionId} has a stale session knowledge reconciliation receipt at final commit`,
+              );
+            }
+            continue;
+          }
+          for (const runId of candidate.run_ids) {
+            const lockedReceipt = readKnowledgeReconciliation(lockedStore, sessionId, runId, true);
+            const frontmatter = readReportFrontmatter(lockedStore.runDir(sessionId, runId));
+            if (!lockedReceipt || !isKnowledgeReconciliationFresh(
+              projectRoot,
+              sessionId,
+              runId,
+              lockedReceipt,
+              frontmatter,
+              lockedCorpusFingerprint,
+            )) {
+              throw new Error(
+                `Run ${runId} has a stale knowledge reconciliation receipt at final commit`,
+              );
+            }
+          }
         }
       },
     } : {}),
@@ -1307,40 +1377,91 @@ export function resolveKnowledgeCandidate(
   const state = resolutionState(choice);
   const resolvedAt = new Date().toISOString();
   const nextCorpusFingerprint = corpusFingerprint(loadCorpus(projectRoot));
-  store.updateKnowledgeLifecycle(sessionId, (_lifecycle, tx) => {
-    for (const item of existingCandidates) {
-      const receipt = structuredClone(item.receipt);
-      const entry = receipt.candidates.find(value => value.candidate_id === candidateId)!;
-      entry.disposition = state.disposition;
-      entry.promotion_eligibility = state.promotionEligibility;
-      entry.canonical_id = targetId;
-      entry.resolution = {
-        status: 'confirmed',
-        reason,
-        resolved_at: resolvedAt,
-      };
-      receipt.corpus_fingerprint = nextCorpusFingerprint;
-      receipt.counts = countReceipt(receipt.candidates);
-      writeKnowledgeReconciliation(store, tx, receipt);
-
-      const delta = readRunKnowledgeDelta(store, sessionId, item.runId);
-      const ledgerCandidate = delta.candidates.find(value => value.candidate_id === candidateId);
-      if (ledgerCandidate) {
-        if (state.rejectCandidate && ledgerCandidate.status === 'pending') {
-          ledgerCandidate.status = 'rejected';
-        } else if (!state.rejectCandidate && ledgerCandidate.status === 'rejected') {
-          ledgerCandidate.status = 'pending';
-        }
-        delta.revision++;
-        delta.updated_at = resolvedAt;
-        tx.writeJson(
-          runKnowledgeDeltaPath(store, sessionId, item.runId),
-          delta,
-          runKnowledgeDeltaSchema,
-        );
+  if (store.readSessionRecordReadOnly(sessionId).schema_version === 'session/3.0') {
+    store.withV30KnowledgeTransaction(sessionId, tx => {
+      if (currentKnowledgeCorpusFingerprint(projectRoot) !== nextCorpusFingerprint) {
+        throw new Error(`Knowledge corpus changed before resolving ${candidateId}`);
       }
-    }
-  });
+      for (const item of existingCandidates) {
+        const receiptPath = reconciliationPath(store, sessionId, item.runId);
+        const currentReceipt = tx.readJson(receiptPath, knowledgeReconciliationSchema);
+        const frontmatter = readReportFrontmatter(store.runDir(sessionId, item.runId));
+        if (JSON.stringify(currentReceipt) !== JSON.stringify(item.receipt)
+          || !isKnowledgeReconciliationFresh(
+            projectRoot,
+            sessionId,
+            item.runId,
+            currentReceipt,
+            frontmatter,
+            expectedCorpusFingerprint,
+          )) {
+          throw new Error(`Candidate ${candidateId} reconciliation changed before v3 resolution commit`);
+        }
+        const nextReceipt = structuredClone(currentReceipt);
+        const entry = nextReceipt.candidates.find(value => value.candidate_id === candidateId);
+        if (!entry) throw new Error(`Candidate ${candidateId} is missing from Run ${item.runId} reconciliation`);
+        entry.disposition = state.disposition;
+        entry.promotion_eligibility = state.promotionEligibility;
+        entry.canonical_id = targetId;
+        entry.resolution = { status: 'confirmed', reason, resolved_at: resolvedAt };
+        nextReceipt.corpus_fingerprint = nextCorpusFingerprint;
+        nextReceipt.counts = countReceipt(nextReceipt.candidates);
+        tx.writeJson(receiptPath, nextReceipt, knowledgeReconciliationSchema);
+
+        const deltaPath = runKnowledgeDeltaPath(store, sessionId, item.runId);
+        const delta = structuredClone(tx.readJson(
+          deltaPath,
+          runKnowledgeDeltaSchema,
+        ));
+        const ledgerCandidate = delta.candidates.find(value => value.candidate_id === candidateId);
+        if (ledgerCandidate) {
+          if (state.rejectCandidate && ledgerCandidate.status === 'pending') {
+            ledgerCandidate.status = 'rejected';
+          } else if (!state.rejectCandidate && ledgerCandidate.status === 'rejected') {
+            ledgerCandidate.status = 'pending';
+          }
+          delta.revision++;
+          delta.updated_at = resolvedAt;
+          tx.writeJson(deltaPath, delta, runKnowledgeDeltaSchema);
+        }
+      }
+    });
+  } else {
+    store.updateKnowledgeLifecycle(sessionId, (_lifecycle, tx) => {
+      for (const item of existingCandidates) {
+        const receipt = structuredClone(item.receipt);
+        const entry = receipt.candidates.find(value => value.candidate_id === candidateId)!;
+        entry.disposition = state.disposition;
+        entry.promotion_eligibility = state.promotionEligibility;
+        entry.canonical_id = targetId;
+        entry.resolution = {
+          status: 'confirmed',
+          reason,
+          resolved_at: resolvedAt,
+        };
+        receipt.corpus_fingerprint = nextCorpusFingerprint;
+        receipt.counts = countReceipt(receipt.candidates);
+        writeKnowledgeReconciliation(store, tx, receipt);
+
+        const delta = readRunKnowledgeDelta(store, sessionId, item.runId);
+        const ledgerCandidate = delta.candidates.find(value => value.candidate_id === candidateId);
+        if (ledgerCandidate) {
+          if (state.rejectCandidate && ledgerCandidate.status === 'pending') {
+            ledgerCandidate.status = 'rejected';
+          } else if (!state.rejectCandidate && ledgerCandidate.status === 'rejected') {
+            ledgerCandidate.status = 'pending';
+          }
+          delta.revision++;
+          delta.updated_at = resolvedAt;
+          tx.writeJson(
+            runKnowledgeDeltaPath(store, sessionId, item.runId),
+            delta,
+            runKnowledgeDeltaSchema,
+          );
+        }
+      }
+    });
+  }
 
   return {
     schema_version: 'knowledge-resolution-result/1.0',
@@ -1375,7 +1496,13 @@ function resolveSessionKnowledgeCandidate(
       + `run "maestro knowledge review ${sessionId} --refresh" first`,
     );
   }
-  if (!isSessionKnowledgeReconciliationFresh(projectRoot, sessionId, receipt)) {
+  const expectedCorpusFingerprint = currentKnowledgeCorpusFingerprint(projectRoot);
+  if (!isSessionKnowledgeReconciliationFresh(
+    projectRoot,
+    sessionId,
+    receipt,
+    expectedCorpusFingerprint,
+  )) {
     throw new Error(
       `Candidate ${candidate.candidate_id} has a stale session reconciliation receipt; `
       + `run "maestro knowledge review ${sessionId} --refresh" before resolving`,
@@ -1439,7 +1566,33 @@ function resolveSessionKnowledgeCandidate(
     delta.revision++;
     delta.updated_at = resolvedAt;
   };
-  if (store.readSessionRecordReadOnly(sessionId).schema_version === 'session/2.0') {
+  const sessionRecord = store.readSessionRecordReadOnly(sessionId);
+  if (sessionRecord.schema_version === 'session/3.0') {
+    store.withV30KnowledgeTransaction(sessionId, tx => {
+      if (currentKnowledgeCorpusFingerprint(projectRoot) !== nextCorpusFingerprint) {
+        throw new Error(`Knowledge corpus changed before resolving ${candidate.candidate_id}`);
+      }
+      const receiptPath = sessionReconciliationPath(store, sessionId);
+      const currentReceipt = tx.readJson(receiptPath, knowledgeReconciliationSchema);
+      if (JSON.stringify(currentReceipt) !== JSON.stringify(receipt)
+        || !isSessionKnowledgeReconciliationFresh(
+          projectRoot,
+          sessionId,
+          currentReceipt,
+          expectedCorpusFingerprint,
+          store,
+        )) {
+        throw new Error(
+          `Candidate ${candidate.candidate_id} reconciliation changed before v3 resolution commit`,
+        );
+      }
+      tx.writeJson(receiptPath, next, knowledgeReconciliationSchema);
+      const deltaPath = sessionKnowledgeDeltaPath(store, sessionId);
+      const delta = structuredClone(tx.readJson(deltaPath, sessionKnowledgeDeltaSchema));
+      updateLedgerCandidate(delta);
+      tx.writeJson(deltaPath, delta, sessionKnowledgeDeltaSchema);
+    });
+  } else if (sessionRecord.schema_version === 'session/2.0') {
     store.updateJsonFile(
       sessionReconciliationPath(store, sessionId),
       knowledgeReconciliationSchema,

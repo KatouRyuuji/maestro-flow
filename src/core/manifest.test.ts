@@ -3,7 +3,8 @@
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -128,5 +129,153 @@ describe('manifest save/load round-trip', () => {
     manifestApi.getAllManifests();
 
     expect(existsSync(overlayPath)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// cleanManifestFiles — content-managed cleanup safety (issue #24)
+// ---------------------------------------------------------------------------
+
+describe('cleanManifestFiles content-managed safety', () => {
+  const dirs: string[] = [];
+
+  function tempDir(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'maestro-clean-'));
+    dirs.push(dir);
+    return dir;
+  }
+
+  afterAll(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function cleanupManifest(entries: Array<{ path: string; type: 'file' | 'dir'; hash?: string }>) {
+    const m = manifestApi.createManifest('project', tempDir(), {});
+    m.entries = entries;
+    return manifestApi.cleanManifestFiles(m);
+  }
+
+  const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
+
+  it('preserves a marker-free user file instead of deleting it', () => {
+    const dir = tempDir();
+    const fp = join(dir, 'AGENTS.md');
+    writeFileSync(fp, '# My own instructions\n');
+
+    const result = cleanupManifest([{ path: fp, type: 'file' }]);
+
+    expect(result.preserved).toBe(1);
+    expect(result.removed).toBe(0);
+    expect(existsSync(fp)).toBe(true);
+    expect(readFileSync(fp, 'utf8')).toBe('# My own instructions\n');
+  });
+
+  it('removes only Maestro sections from a mixed user file', () => {
+    const dir = tempDir();
+    const fp = join(dir, 'AGENTS.md');
+    writeFileSync(fp, [
+      '# User section',
+      '',
+      '<!-- maestro:start section="core" -->',
+      '# Maestro content',
+      '<!-- maestro:end section="core" -->',
+      '',
+    ].join('\n'));
+
+    const result = cleanupManifest([{ path: fp, type: 'file' }]);
+
+    expect(result.removed).toBe(1);
+    expect(existsSync(fp)).toBe(true);
+    const after = readFileSync(fp, 'utf8');
+    expect(after).toContain('# User section');
+    expect(after).not.toContain('maestro:start');
+    expect(after).not.toContain('maestro:end');
+  });
+
+  it('deletes a file containing only Maestro sections', () => {
+    const dir = tempDir();
+    const fp = join(dir, 'AGENTS.md');
+    writeFileSync(fp, [
+      '<!-- maestro:start section="core" -->',
+      '# Maestro content',
+      '<!-- maestro:end section="core" -->',
+      '',
+    ].join('\n'));
+
+    const result = cleanupManifest([{ path: fp, type: 'file' }]);
+
+    expect(result.removed).toBe(1);
+    expect(existsSync(fp)).toBe(false);
+  });
+
+  it('preserves a file whose content changed since install (hash mismatch)', () => {
+    const dir = tempDir();
+    const fp = join(dir, 'AGENTS.md');
+    const original = '<!-- maestro:start section="core" -->\n# Maestro\n<!-- maestro:end section="core" -->\n';
+    writeFileSync(fp, '# user replaced this file\n');
+
+    const result = cleanupManifest([{ path: fp, type: 'file', hash: sha256(original) }]);
+
+    expect(result.preserved).toBe(1);
+    expect(result.removed).toBe(0);
+    expect(existsSync(fp)).toBe(true);
+    expect(readFileSync(fp, 'utf8')).toBe('# user replaced this file\n');
+  });
+
+  it('treats copilot-instructions.md as content-managed (not hard-deleted)', () => {
+    const dir = tempDir();
+    const fp = join(dir, 'copilot-instructions.md');
+    writeFileSync(fp, [
+      'user note',
+      '',
+      '<!-- maestro:start section="core" -->',
+      '# Maestro',
+      '<!-- maestro:end section="core" -->',
+      '',
+    ].join('\n'));
+
+    const result = cleanupManifest([{ path: fp, type: 'file' }]);
+
+    expect(result.removed).toBe(1);
+    expect(existsSync(fp)).toBe(true);
+    expect(readFileSync(fp, 'utf8')).toContain('user note');
+    expect(readFileSync(fp, 'utf8')).not.toContain('maestro:start');
+  });
+
+  it('preserves a marker-free copilot-instructions.md', () => {
+    const dir = tempDir();
+    const fp = join(dir, 'copilot-instructions.md');
+    writeFileSync(fp, '# user file\n');
+
+    const result = cleanupManifest([{ path: fp, type: 'file' }]);
+
+    expect(result.preserved).toBe(1);
+    expect(existsSync(fp)).toBe(true);
+  });
+
+  it('is safe across repeated cleanups of the same stale manifest', () => {
+    const dir = tempDir();
+    const fp = join(dir, 'AGENTS.md');
+    writeFileSync(fp, [
+      '# User section',
+      '',
+      '<!-- maestro:start section="core" -->',
+      '# Maestro content',
+      '<!-- maestro:end section="core" -->',
+      '',
+    ].join('\n'));
+    const m = manifestApi.createManifest('project', dir, {});
+    m.entries = [{ path: fp, type: 'file' }];
+
+    const first = manifestApi.cleanManifestFiles(m);
+    expect(first.removed).toBe(1);
+    expect(existsSync(fp)).toBe(true);
+
+    // A second cleanup of the same (now stale) manifest must never delete the
+    // remaining user content.
+    const second = manifestApi.cleanManifestFiles(m);
+    expect(existsSync(fp)).toBe(true);
+    expect(readFileSync(fp, 'utf8')).toContain('# User section');
+    expect(second.preserved).toBeGreaterThan(0);
   });
 });

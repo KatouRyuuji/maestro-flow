@@ -480,6 +480,12 @@ function comparedVersions(text, functionName, prefix) {
     .filter(version => version.startsWith(prefix));
 }
 
+function explicitlyHandlesVersion(text, functionName, version) {
+  const source = block(text, `function ${functionName}`, '\nfunction ');
+  return source.includes(`raw.schema_version === '${version}'`)
+    || source.includes(`raw.schema_version === "${version}"`);
+}
+
 function enumLiterals(text, declaration, end) {
   return [...block(text, declaration, end).matchAll(/['"]([^'"]+)['"]/g)].map(match => match[1]);
 }
@@ -648,9 +654,24 @@ addCheck(
   sameValues(runReaderVersions, expectedRunReaderVersions),
 );
 
+const v3SessionReader = explicitlyHandlesVersion(wikiReader, 'normalizeRunModeSession', 'session/3.0');
+const v3RunReader = explicitlyHandlesVersion(wikiReader, 'normalizeRunModeRun', 'run/3.0');
+addCheck(
+  'reader.session.v3',
+  v3SessionReader,
+  true,
+  v3SessionReader,
+);
+addCheck(
+  'reader.run.v3',
+  v3RunReader,
+  true,
+  v3RunReader,
+);
+
 const wikiIndexer = read('dashboard/src/server/wiki/wiki-indexer.ts');
 const cacheVersion = Number(wikiIndexer?.match(/const\s+SEARCH_CACHE_VERSION\s*=\s*(\d+)\s*;/)?.[1] ?? Number.NaN);
-addCheck('cache.search.version', Number.isNaN(cacheVersion) ? null : cacheVersion, 5, cacheVersion === 5);
+addCheck('cache.search.version', Number.isNaN(cacheVersion) ? null : cacheVersion, 6, cacheVersion === 6);
 
 const protocolPath = 'src/run/protocol-schemas.ts';
 const legacyOperations = zodEnumMembers(protocolPath, 'runOperationSchema');

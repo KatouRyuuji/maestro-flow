@@ -1,6 +1,7 @@
 import { readFile, open, readdir } from 'node:fs/promises';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import YAML from 'yaml';
 
 import type { GraphNode, GraphEdge, Layer, TourStep, KnowledgeGraph } from '../../../../src/graph/types.js';
 import type { WikiEntry, WikiStatus } from './wiki-types.js';
@@ -701,9 +702,12 @@ const RUN_COMMAND_CATEGORY: Record<string, string> = {
 
 interface RunModeSession {
   schema_version?: 'session/1.3';
+  source_schema_version?: string;
   session_id?: string;
   intent?: string;
   status?: string;
+  created_at?: string;
+  updated_at?: string;
   lifecycle?: {
     sealed_at?: string | null;
     seal_summary?: string | null;
@@ -742,6 +746,7 @@ interface RunModeGate {
 
 interface RunModeRun {
   schema_version?: 'run/1.1';
+  source_schema_version?: string;
   run_id?: string;
   command?: string;
   status?: string;
@@ -759,12 +764,28 @@ interface RunModeRun {
   ended_at?: string | null;
 }
 
-function isIndexedLifecycle(status: string | undefined): boolean {
-  return status === 'sealed' || status === 'archived';
+function isIndexedSessionLifecycle(session: RunModeSession): boolean {
+  return session.source_schema_version === 'session/3.0'
+    ? session.status === 'completed' || session.status === 'archived' || session.status === 'failed'
+    : session.status === 'sealed' || session.status === 'archived';
 }
 
-function runModeStatus(status: string | undefined): WikiStatus {
-  return status === 'archived' ? 'archived' : 'completed';
+function isIndexedRunLifecycle(run: RunModeRun): boolean {
+  return run.source_schema_version === 'run/3.0'
+    ? run.status === 'sealed'
+    : run.status === 'sealed' || run.status === 'archived';
+}
+
+function sessionWikiStatus(session: RunModeSession): WikiStatus {
+  if (session.status === 'archived') return 'archived';
+  if (session.status === 'failed') return 'blocked';
+  return 'completed';
+}
+
+function runWikiStatus(run: RunModeRun): WikiStatus {
+  if (run.status === 'archived') return 'archived';
+  if (run.handoff?.verdict === 'blocked' || run.handoff?.verdict === 'needs_retry') return 'blocked';
+  return 'completed';
 }
 
 function extractArtifactSummary(value: unknown): string {
@@ -783,6 +804,44 @@ function extractReportSummary(raw: string): string {
   if (summary) return summary.replace(/^['"]|['"]$/g, '').slice(0, 500);
   const section = raw.match(/^##\s+(?:摘要|Summary)\s*\r?\n+([^#][\s\S]*?)(?=\r?\n##\s|$)/mi)?.[1];
   return section?.replace(/\s+/g, ' ').trim().slice(0, 500) ?? '';
+}
+
+function reportHandoff(raw: string): RunModeRun['handoff'] {
+  const frontmatter = raw.match(/^---\s*\r?\n([\s\S]*?)\r?\n---/);
+  if (!frontmatter) return null;
+  try {
+    const parsed = YAML.parse(frontmatter[1]) as Record<string, unknown> | null;
+    if (!parsed || typeof parsed !== 'object') return null;
+    const items = (key: 'constraints' | 'decisions'): RunModeHandoffItem[] => {
+      const value = parsed[key];
+      if (!Array.isArray(value)) return [];
+      return value.flatMap(item => {
+        if (typeof item === 'string') return [{ text: item }];
+        if (!item || typeof item !== 'object') return [];
+        const record = item as Record<string, unknown>;
+        return typeof record.text === 'string'
+          ? [{ text: record.text, status: typeof record.status === 'string' ? record.status : undefined }]
+          : [];
+      });
+    };
+    const concerns = Array.isArray(parsed.concerns)
+      ? parsed.concerns.filter((item): item is string => typeof item === 'string')
+      : [];
+    return {
+      verdict: typeof parsed.verdict === 'string' ? parsed.verdict : undefined,
+      summary: typeof parsed.summary === 'string' ? parsed.summary : undefined,
+      constraints: items('constraints'),
+      decisions: items('decisions'),
+      concerns,
+      artifact_refs: [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+function reportMarkdownBody(raw: string): string {
+  return raw.replace(/^---\s*\r?\n[\s\S]*?\r?\n---\s*/, '').trim().slice(0, 50_000);
 }
 
 function runDirectorySequence(name: string): number {
@@ -872,7 +931,14 @@ async function readRunKnowledge(
     summary = extractReportSummary(report);
   }
   if (!summary) summary = run.handoff?.summary?.trim().slice(0, 500) ?? '';
-  const structured = structuredHandoffBody(run);
+  const projectedRun = run.source_schema_version === 'run/3.0'
+    ? { ...run, handoff: reportHandoff(report) ?? run.handoff }
+    : run;
+  if (run.source_schema_version === 'run/3.0') {
+    const markdownBody = reportMarkdownBody(report);
+    if (markdownBody) bodies.unshift(markdownBody);
+  }
+  const structured = structuredHandoffBody(projectedRun);
   if (structured.firstDecision && !summary.includes(structured.firstDecision)) {
     summary = [summary, `决策：${structured.firstDecision}`].filter(Boolean).join('；').slice(0, 500);
   }
@@ -887,9 +953,10 @@ async function readRunKnowledge(
 }
 
 // ── Session/Run persistence normalization ───────────────────────────────
-// Runtime writes session/1.3 + command-run/1.3 and keeps compatible readers
-// for 1.0-1.2. Mirror that read boundary here without importing runtime code
-// into the dashboard production bundle. Unknown versions stay fail-closed.
+// Runtime writes session/3.0 + run/3.0 while retaining compatible legacy
+// readers for session/1.0-1.3 and command-run/1.0-1.3. Mirror that boundary
+// here without importing runtime code into the dashboard production bundle.
+// Unknown versions stay fail-closed.
 
 interface LegacyRunModeGate {
   id?: string;
@@ -900,6 +967,22 @@ interface LegacyRunModeGate {
 }
 
 function normalizeRunModeSession(raw: Record<string, unknown>): RunModeSession | null {
+  if (raw.schema_version === 'session/3.0') {
+    return {
+      schema_version: 'session/1.3',
+      source_schema_version: 'session/3.0',
+      session_id: asString(raw.session_id),
+      intent: asString(raw.objective),
+      status: asString(raw.status),
+      created_at: asString(raw.created_at),
+      updated_at: asString(raw.archived_at) || asString(raw.completed_at) || asString(raw.updated_at),
+      lifecycle: {
+        sealed_at: asString(raw.archived_at) || asString(raw.completed_at) || asString(raw.updated_at) || null,
+        seal_summary: null,
+        promoted: [],
+      },
+    };
+  }
   if (
     raw.schema_version !== 'session/1.0'
     && raw.schema_version !== 'session/1.1'
@@ -915,6 +998,7 @@ function normalizeRunModeSession(raw: Record<string, unknown>): RunModeSession |
   ];
   return {
     schema_version: 'session/1.3',
+    source_schema_version: asString(raw.schema_version),
     session_id: session.session_id,
     intent: session.intent,
     status: session.status,
@@ -965,6 +1049,30 @@ interface PersistedRunModeRun {
 }
 
 function normalizeRunModeRun(raw: Record<string, unknown>, legacyGates: LegacyRunModeGate[]): RunModeRun | null {
+  if (raw.schema_version === 'run/3.0') {
+    const outputRefs = Array.isArray(raw.output_refs)
+      ? raw.output_refs.filter((item): item is string => typeof item === 'string')
+      : [];
+    return {
+      schema_version: 'run/1.1',
+      source_schema_version: 'run/3.0',
+      run_id: asString(raw.run_id),
+      command: asString(raw.command),
+      status: asString(raw.status),
+      primary: asString(raw.primary_artifact_id) || null,
+      gates: [],
+      handoff: {
+        verdict: asString(raw.verdict),
+        summary: asString(raw.summary),
+        constraints: [],
+        decisions: [],
+        concerns: [],
+        artifact_refs: outputRefs,
+      },
+      started_at: asString(raw.started_at) || asString(raw.created_at),
+      ended_at: asString(raw.sealed_at) || asString(raw.ended_at) || null,
+    };
+  }
   if (raw.schema_version === 'run/1.1') return raw as RunModeRun;
   if (
     raw.schema_version !== 'command-run/1.0'
@@ -977,6 +1085,7 @@ function normalizeRunModeRun(raw: Record<string, unknown>, legacyGates: LegacyRu
   const gateIds = new Set(persisted.gate_ids ?? []);
   return {
     schema_version: 'run/1.1',
+    source_schema_version: asString(raw.schema_version),
     run_id: runId,
     command: persisted.command?.name,
     status: persisted.status,
@@ -1004,6 +1113,28 @@ async function readLegacySessionGates(sessionDir: string): Promise<LegacyRunMode
   } catch { return []; }
 }
 
+async function readPromotedKnowledgeRefs(sessionDir: string, runNames: string[]): Promise<string[]> {
+  const paths = [
+    join(sessionDir, 'knowledge-delta.json'),
+    ...runNames.map(runName => join(sessionDir, 'runs', runName, 'knowledge-delta.json')),
+  ];
+  const refs: string[] = [];
+  for (const path of paths) {
+    try {
+      const delta = JSON.parse(await readFile(path, 'utf-8')) as {
+        candidates?: Array<{ status?: string; target?: string; promoted_id?: string | null }>;
+      };
+      for (const candidate of delta.candidates ?? []) {
+        if (candidate.status !== 'promoted' || !candidate.promoted_id) continue;
+        if (candidate.target === 'spec' || candidate.target === 'knowhow') {
+          refs.push(`${candidate.target}:${candidate.promoted_id}`);
+        }
+      }
+    } catch { /* missing or malformed optional knowledge projection */ }
+  }
+  return [...new Set(refs)];
+}
+
 /** Load a run-mode session and its sealed runs without indexing draft projections. */
 export async function loadRunModeSessionEntries(
   sessionAbsPath: string,
@@ -1017,7 +1148,7 @@ export async function loadRunModeSessionEntries(
     }
     return [];
   }
-  if (!isIndexedLifecycle(session.status)) return [];
+  if (!isIndexedSessionLifecycle(session)) return [];
 
   const sessionDir = dirname(sessionAbsPath);
   const sessionId = session.session_id ?? basename(sessionDir);
@@ -1047,7 +1178,7 @@ export async function loadRunModeSessionEntries(
       }
       continue;
     }
-    if (!isIndexedLifecycle(run.status)) continue;
+    if (!isIndexedRunLifecycle(run)) continue;
     const runId = run.run_id ?? runName;
     const command = run.command?.trim() || 'run';
     const knowledge = await readRunKnowledge(sessionDir, runDir, run, registry);
@@ -1066,7 +1197,7 @@ export async function loadRunModeSessionEntries(
       title: `${command} ${runId}`,
       summary: knowledge.summary,
       tags: ['session', 'run', run.status!, command, ...verdictTag, ...constraintTag, ...gateTags, ...knowledge.kinds],
-      status: runModeStatus(run.status),
+      status: runWikiStatus(run),
       created: toIso(run.started_at),
       updated: toIso(run.ended_at ?? run.started_at),
       related: [`session-${sessionSlug}`, ...arefRunEntries],
@@ -1092,18 +1223,28 @@ export async function loadRunModeSessionEntries(
     });
   }
 
+  runEntries.sort((left, right) => {
+    const leftEnded = Date.parse(left.updated);
+    const rightEnded = Date.parse(right.updated);
+    const byEnded = (Number.isFinite(leftEnded) ? leftEnded : 0)
+      - (Number.isFinite(rightEnded) ? rightEnded : 0);
+    return byEnded || (left.sourceRef ?? left.id).localeCompare(right.sourceRef ?? right.id);
+  });
   const latest = runEntries.at(-1);
   const summary = latest?.summary || session.lifecycle?.seal_summary || session.intent || '';
-  const promotedRefs = [...new Set((session.lifecycle?.promoted ?? []).map(ref => ref.trim()).filter(Boolean))];
+  const promotedRefs = [...new Set([
+    ...(session.lifecycle?.promoted ?? []).map(ref => ref.trim()).filter(Boolean),
+    ...(await readPromotedKnowledgeRefs(sessionDir, runNames)),
+  ])];
   const sessionEntry: WikiEntry = {
     id: `session-${sessionSlug}`,
     type: 'knowhow',
     title: session.intent || `Session ${sessionId}`,
     summary,
     tags: ['session', session.status!],
-    status: runModeStatus(session.status),
-    created: toIso(session.lifecycle?.sealed_at),
-    updated: toIso(session.lifecycle?.sealed_at),
+    status: sessionWikiStatus(session),
+    created: toIso(session.created_at ?? session.lifecycle?.sealed_at),
+    updated: toIso(session.updated_at ?? session.lifecycle?.sealed_at),
     related: runEntries.map(e => e.id),
     source: { kind: 'virtual', path: sessionRelPath },
     body: latest?.body ?? '',

@@ -20,7 +20,7 @@ import {
   unlinkSync,
   rmSync,
 } from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { paths } from '../config/paths.js';
 import { hasAnyMarkers, removeAllSections } from './tag-injector.js';
 
@@ -31,6 +31,8 @@ import { hasAnyMarkers, removeAllSections } from './tag-injector.js';
 export interface ManifestEntry {
   path: string;
   type: 'file' | 'dir';
+  /** sha256 of the file content as last written by Maestro (inject-managed doc files). */
+  hash?: string;
 }
 
 /** Claude Code / Codex / Antigravity hook installation record. */
@@ -178,10 +180,14 @@ function releaseManifestLock(): void {
   } catch { /* lock expires and can be reclaimed if cleanup is interrupted */ }
 }
 
-export function addFile(manifest: Manifest, filePath: string): void {
-  if (!manifest.entries.some((entry) => entry.type === 'file' && entry.path === filePath)) {
-    manifest.entries.push({ path: filePath, type: 'file' });
+export function addFile(manifest: Manifest, filePath: string, meta?: { hash?: string }): void {
+  const existing = manifest.entries.find((entry) => entry.type === 'file' && entry.path === filePath);
+  if (existing) {
+    // Keep the recorded content fingerprint fresh on every write (inject updates).
+    if (meta?.hash) existing.hash = meta.hash;
+    return;
   }
+  manifest.entries.push({ path: filePath, type: 'file', ...(meta?.hash ? { hash: meta.hash } : {}) });
 }
 
 export function addDir(manifest: Manifest, dirPath: string): void {
@@ -338,35 +344,49 @@ export function deleteManifest(manifest: Manifest): void {
 const PRESERVE = new Set(['settings.json', 'settings.local.json']);
 
 /** Files that should have maestro content removed via tag injection instead of being deleted entirely. */
-const CONTENT_MANAGED = new Set(['CLAUDE.md', 'AGENTS.md', 'GEMINI.md']);
+const CONTENT_MANAGED = new Set(['CLAUDE.md', 'AGENTS.md', 'GEMINI.md', 'copilot-instructions.md']);
 
 /**
  * Remove maestro-injected content from a doc file using `<!-- maestro:start/end -->` markers.
  *
- * - If the file has markers, removes only the marked section.
- * - If nothing remains after removal, deletes the file entirely.
- * - Returns true if any content was removed.
+ * Safety rules:
+ * - Marker-free files are treated as user-owned and preserved — ownership
+ *   cannot be proven from markers, so they are never deleted.
+ * - When a content hash was recorded at install time and the on-disk file no
+ *   longer matches it, the file is preserved (the user may have edited it).
+ * - With markers, removes all Maestro sections; deletes the file only when
+ *   nothing but Maestro content remains.
  */
-function cleanInjectedDoc(filePath: string): boolean {
-  if (!existsSync(filePath)) return false;
+function cleanInjectedDoc(filePath: string, entry?: ManifestEntry): 'removed' | 'preserved' | 'none' {
+  if (!existsSync(filePath)) return 'none';
 
   const content = readFileSync(filePath, 'utf-8');
+  if (entry?.hash && sha256(content) !== entry.hash) {
+    console.warn(`  [warn] Preserved ${filePath}: content changed since Maestro installed it — left untouched.`);
+    return 'preserved';
+  }
+
   if (!hasAnyMarkers(content)) {
-    // No markers — this is a legacy install or user-only file, delete entirely
-    unlinkSync(filePath);
-    return true;
+    // No markers — the file was replaced with user content (or is a legacy
+    // pre-marker install). Deleting it would destroy user data.
+    console.warn(`  [warn] Preserved ${filePath}: no Maestro markers — user-owned file left untouched.`);
+    return 'preserved';
   }
 
   const cleaned = removeAllSections(content);
   if (!cleaned || cleaned.trim() === '') {
     // Nothing left after removing all maestro sections — delete the file
     unlinkSync(filePath);
-    return true;
+    return 'removed';
   }
 
   // User content remains — write back without maestro sections
   writeFileSync(filePath, cleaned, 'utf-8');
-  return true;
+  return 'removed';
+}
+
+function sha256(text: string): string {
+  return createHash('sha256').update(text).digest('hex');
 }
 
 /**
@@ -377,8 +397,9 @@ function cleanInjectedDoc(filePath: string): boolean {
 export function cleanManifestFiles(
   manifest: Manifest,
   opts?: { skipContentManaged?: boolean },
-): { removed: number; skipped: number; errors: number } {
+): { removed: number; preserved: number; skipped: number; errors: number } {
   let removed = 0;
+  let preserved = 0;
   let skipped = 0;
   let errors = 0;
 
@@ -391,11 +412,15 @@ export function cleanManifestFiles(
     const name = entry.path.split(/[\\/]/).pop() ?? '';
     if (PRESERVE.has(name)) { skipped++; continue; }
 
-    // Content-managed files: skip during re-install, clean during uninstall
-    if (CONTENT_MANAGED.has(name)) {
+    // Content-managed files: skip during re-install, clean during uninstall.
+    // Entries with a recorded hash are inject-managed even when the basename
+    // is not in the known set (custom context file names).
+    if (CONTENT_MANAGED.has(name) || !!entry.hash) {
       if (opts?.skipContentManaged) { skipped++; continue; }
       try {
-        if (cleanInjectedDoc(entry.path)) removed++;
+        const action = cleanInjectedDoc(entry.path, entry);
+        if (action === 'removed') removed++;
+        else if (action === 'preserved') preserved++;
       } catch (err) {
         errors++;
         console.error(`  [warn] Failed to clean ${entry.path}: ${err instanceof Error ? err.message : err}`);
@@ -434,5 +459,5 @@ export function cleanManifestFiles(
     }
   }
 
-  return { removed, skipped, errors };
+  return { removed, preserved, skipped, errors };
 }

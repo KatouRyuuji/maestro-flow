@@ -10,7 +10,7 @@
  * Formal artifacts are read only from each canonical Session `artifacts.json`.
  */
 
-import { readFileSync, existsSync, readdirSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { resolveWorkspace } from './workspace.js';
@@ -75,6 +75,20 @@ interface ArtifactEntry {
   created_at?: string;
   completed_at?: string | null;
 }
+
+interface ArtifactRegistryView {
+  artifacts?: Record<string, {
+    kind?: string;
+    role?: string;
+    status?: string;
+    relative_path?: string;
+  }>;
+  aliases?: Record<string, string>;
+}
+
+const KNOWLEDGE_POLICY =
+  'Knowledge policy: search/injection=exposure-only | explicit-load=consumed | '
+  + 'record=explicit-attribution | completion=stage-candidates | promotion=explicit-review';
 
 export interface SkillContextInput {
   user_prompt?: string;
@@ -211,7 +225,7 @@ function buildParamInjectionSection(
  * Returns null if no skill invocation detected.
  *
  * Two independent concern layers:
- * 1. Workflow context (state, artifacts, outcomes) — requires workflow state.json
+ * 1. Workflow context (state, artifacts, outcomes) — uses canonical Sessions
  * 2. Skill config param injection — works for ANY /command, no workflow required
  */
 export async function evaluateSkillContext(data: SkillContextInput): Promise<HookOutput | null> {
@@ -228,14 +242,21 @@ export async function evaluateSkillContext(data: SkillContextInput): Promise<Hoo
       : null);
   if (skill && cwd) {
     const statePath = join(cwd, '.workflow', 'state.json');
-    if (existsSync(statePath)) {
+    const sessionsPath = join(cwd, '.workflow', 'sessions');
+    if (existsSync(statePath) || existsSync(sessionsPath)) {
+      let state: WorkflowState = {};
+      if (existsSync(statePath)) {
+        try {
+          state = JSON.parse(readFileSync(statePath, 'utf8')) as WorkflowState;
+        } catch {
+          // A canonical v3 Session can still be selected without state.json.
+        }
+      }
       try {
-        const state: WorkflowState = JSON.parse(readFileSync(statePath, 'utf8'));
-
         const sessionSection = await buildCanonicalSessionSection(cwd, state, skill);
         if (sessionSection) sections.push(sessionSection);
       } catch {
-        // state.json unreadable — skip workflow context
+        // Canonical Session context is best-effort for prompt injection.
       }
     }
   }
@@ -262,56 +283,96 @@ export async function evaluateSkillContext(data: SkillContextInput): Promise<Hoo
  * `/command` invocations against a live Session ever reach them.
  */
 async function buildCanonicalSessionSection(cwd: string, state: WorkflowState, skill: SkillMatch): Promise<string | null> {
+  const { SessionStore } = await import('../run/store.js');
+  const store = new SessionStore(cwd);
+  const { resolveSessionContextFromStore } = await import('../run/v3/resolve-context-store.js');
+  const v3Resolution = resolveSessionContextFromStore(store);
+  if (v3Resolution.ok) {
+    const record = store.readSessionRecordReadOnly(v3Resolution.session_id);
+    const { sessionStateV30ReadSchema } = await import('../run/schemas.js');
+    const parsed = sessionStateV30ReadSchema.safeParse(record);
+    if (parsed.success) return buildV30SessionSection(cwd, parsed.data, skill);
+  }
+
   let sessionId = state.active_session_id;
-  if (!sessionId) {
+  if (sessionId) {
     try {
-      const { SessionStore } = await import('../run/store.js');
-      const candidates = new SessionStore(cwd)
-        .listSessions({ statuses: ['running', 'paused'] })
-        .candidates;
-      if (candidates.length === 1) sessionId = candidates[0].sessionId;
+      // A v3 binding that failed resolution must stay fail-closed; legacy
+      // rendering remains tolerant of pre-schema canonical Session fixtures.
+      const raw = JSON.parse(readFileSync(
+        join(cwd, '.workflow', 'sessions', sessionId, 'session.json'),
+        'utf8',
+      )) as { schema_version?: string };
+      if (raw.schema_version === 'session/3.0') return null;
     } catch {
       return null;
     }
+  } else {
+    if (!v3Resolution.ok && v3Resolution.error.code !== 'SESSION_CONTEXT_UNRESOLVED') return null;
+    const candidates = store
+      .listSessionsReadOnly({ statuses: ['running', 'paused'] })
+      .candidates;
+    if (candidates.length === 1) sessionId = candidates[0].sessionId;
   }
   if (!sessionId) return null;
+
+  return buildLegacySessionSection(cwd, sessionId, skill);
+}
+
+async function buildV30SessionSection(
+  cwd: string,
+  session: {
+    schema_version: 'session/3.0';
+    session_id: string;
+    objective: string;
+    status: 'open' | 'paused' | 'completed' | 'archived' | 'failed';
+    active_run_ids: string[];
+    artifacts_ref: string;
+  },
+  skill: SkillMatch,
+): Promise<string> {
+  const status = session.status === 'paused' ? 'open' : session.status;
+  const activeRunIds = [...new Set(session.active_run_ids)].sort();
+  const lines = [
+    `## Session Context for ${skill.skill}`,
+    `Session: ${session.session_id} | ${status} | ${session.objective}`,
+    `Active Runs: ${activeRunIds.length > 0 ? activeRunIds.join(', ') : '-'}`,
+    KNOWLEDGE_POLICY,
+  ];
+
+  try {
+    const { artifactRegistrySchema } = await import('../run/schemas.js');
+    const registry = artifactRegistrySchema.parse(JSON.parse(readFileSync(
+      join(cwd, '.workflow', 'sessions', session.session_id, session.artifacts_ref),
+      'utf8',
+    ))) as ArtifactRegistryView;
+    appendArtifactAliases(lines, registry);
+  } catch {
+    // A partial v3 Session still contributes its canonical objective and Runs.
+  }
+  await appendKnowledgeBacklog(lines, cwd, session.session_id);
+  return lines.join('\n');
+}
+
+async function buildLegacySessionSection(
+  cwd: string,
+  sessionId: string,
+  skill: SkillMatch,
+): Promise<string | null> {
   const sessionDir = join(cwd, '.workflow', 'sessions', sessionId);
   try {
     const session = JSON.parse(readFileSync(join(sessionDir, 'session.json'), 'utf8')) as {
       intent?: string; status?: string; active_run_id?: string | null; latest_completed_run_id?: string | null;
     };
-    const registry = JSON.parse(readFileSync(join(sessionDir, 'artifacts.json'), 'utf8')) as {
-      artifacts?: Record<string, { kind?: string; role?: string; status?: string; relative_path?: string }>;
-      aliases?: Record<string, string>;
-    };
+    const registry = JSON.parse(readFileSync(join(sessionDir, 'artifacts.json'), 'utf8')) as ArtifactRegistryView;
     const lines = [
       `## Session Context for ${skill.skill}`,
       `Session: ${sessionId} | ${session.status ?? 'unknown'} | ${session.intent ?? ''}`,
       `Run: ${session.active_run_id ?? session.latest_completed_run_id ?? '-'}`,
-      'Knowledge policy: search/injection=exposure-only | explicit-load=consumed | record=explicit-attribution | completion=stage-candidates | promotion=explicit-review',
+      KNOWLEDGE_POLICY,
     ];
-    const aliases = Object.entries(registry.aliases ?? {});
-    if (aliases.length > 0) {
-      lines.push('Artifacts:');
-      for (const [alias, id] of aliases.slice(0, 12)) {
-        const artifact = registry.artifacts?.[id];
-        if (!artifact) continue;
-        lines.push(`- ${alias} → ${id} | ${artifact.kind ?? 'artifact'} | ${artifact.status ?? 'unknown'} | ${artifact.relative_path ?? ''}`);
-      }
-    }
-    try {
-      const { summarizeSessionKnowledge } = await import('../run/knowledge.js');
-      const knowledge = summarizeSessionKnowledge(cwd, sessionId, { readOnly: true });
-      const pending = knowledge.candidates.filter(candidate => candidate.status === 'pending');
-      const promoting = knowledge.candidates.filter(candidate => candidate.status === 'promoting');
-      lines.push(
-        `Knowledge backlog: ${pending.length} pending | `
-        + `${pending.filter(candidate => candidate.stage === 'corroborated').length} corroborated | `
-        + `${promoting.length} promoting | review: maestro knowledge review ${sessionId}`,
-      );
-    } catch {
-      // Legacy/partial Session: policy remains visible even when no valid ledger summary exists.
-    }
+    appendArtifactAliases(lines, registry);
+    await appendKnowledgeBacklog(lines, cwd, sessionId);
     try {
       const { inspectSessionContinuation, renderContinuationCard } = await import('../run/continuation.js');
       lines.push('', renderContinuationCard(inspectSessionContinuation(cwd, sessionId)));
@@ -321,5 +382,32 @@ async function buildCanonicalSessionSection(cwd: string, state: WorkflowState, s
     return lines.join('\n');
   } catch {
     return null;
+  }
+}
+
+function appendArtifactAliases(lines: string[], registry: ArtifactRegistryView): void {
+  const aliases = Object.entries(registry.aliases ?? {});
+  if (aliases.length === 0) return;
+  lines.push('Artifacts:');
+  for (const [alias, id] of aliases.slice(0, 12)) {
+    const artifact = registry.artifacts?.[id];
+    if (!artifact) continue;
+    lines.push(`- ${alias} → ${id} | ${artifact.kind ?? 'artifact'} | ${artifact.status ?? 'unknown'} | ${artifact.relative_path ?? ''}`);
+  }
+}
+
+async function appendKnowledgeBacklog(lines: string[], cwd: string, sessionId: string): Promise<void> {
+  try {
+    const { summarizeSessionKnowledge } = await import('../run/knowledge.js');
+    const knowledge = summarizeSessionKnowledge(cwd, sessionId, { readOnly: true });
+    const pending = knowledge.candidates.filter(candidate => candidate.status === 'pending');
+    const promoting = knowledge.candidates.filter(candidate => candidate.status === 'promoting');
+    lines.push(
+      `Knowledge backlog: ${pending.length} pending | `
+      + `${pending.filter(candidate => candidate.stage === 'corroborated').length} corroborated | `
+      + `${promoting.length} promoting | review: maestro knowledge review ${sessionId}`,
+    );
+  } catch {
+    // Partial Sessions still expose their canonical identity and knowledge policy.
   }
 }
