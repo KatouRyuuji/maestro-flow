@@ -17,6 +17,19 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    version: '0.5.75',
+    date: '2026-08',
+    changes: [
+      { type: 'feat', text_en: 'Knowledge candidate fingerprints: run complete candidates get a stable Run-scoped identity (runKnowledgeCandidateSnapshotHash) shared by reconciliation and v3 promotion recovery — frontmatter candidates shadow no already-staged candidate with the same deterministic ID, exactly matching the review projection; SessionV30KnowledgeStoreTransaction exposes v3 knowledge mutations through the store transaction surface', text_zh: '知识候选指纹：run complete 候选获得稳定的 Run 域身份（runKnowledgeCandidateSnapshotHash），由 reconciliation 与 v3 promotion recovery 共享——frontmatter 候选不再遮蔽带相同确定性 ID 的已 stage 候选，与 review 投影完全一致；SessionV30KnowledgeStoreTransaction 在 store 事务面上暴露 v3 知识变更' },
+      { type: 'feat', text_en: 'Knowledge attribution authority: run knowledge-identity resolves the explicit attribution authority (findKnowledgeAttributionAuthority / findSessionAttributionTarget) for manual sources and search attribution on the active Run', text_zh: '知识归属权威：run knowledge-identity 解析显式归属权威（findKnowledgeAttributionAuthority / findSessionAttributionTarget），支持 manual source 与 active Run 的 search attribution' },
+      { type: 'feat', text_en: 'Skill context exposes the formal knowledge-governance policy surface: search/injection = exposure-only, explicit-load = consumed, record = explicit-attribution, completion = stage-candidates, promotion = explicit-review', text_zh: 'skill 上下文暴露正式知识治理策略面：search/injection = exposure-only、explicit-load = consumed、record = explicit-attribution、completion = stage-candidates、promotion = explicit-review' },
+      { type: 'feat', text_en: 'Installer prune restore-point: files an upgrade reinstall would remove are first preserved to a backup (pruneBackupPath / obsoleteFilesPreserved) so obsolete pruning is reversible; manifest and tag-injector hardened', text_zh: '安装器剪枝还原点：升级重装前先将待移除文件备份（pruneBackupPath / obsoleteFilesPreserved），使废弃剪枝可回滚；manifest 与 tag-injector 加固' },
+      { type: 'feat', text_en: 'Dashboard wiki adapters map Session/Run records into wiki status entries for the virtual wiki surface; wiki-indexer fixes; maestro-sidebar workflow.rs integration updated', text_zh: '仪表盘 wiki 适配器将 Session/Run 记录映射为虚拟 wiki 面的状态条目；wiki-indexer 修复；maestro-sidebar workflow.rs 集成更新' },
+      { type: 'refactor', text_en: 'Release-machine source-phase certifier gains async npm child spawn (runNpmChildAsync) for streaming runners with bounded concurrency; session-run contract parity expectations updated to the new runner shape', text_zh: 'release-machine source 阶段认证器新增异步 npm 子进程（runNpmChildAsync），支持有界并发的流式 runner；session-run 合同对等期望同步新 runner 形态' },
+      { type: 'refactor', text_en: 'reconcile.ts and atomic-write hardened for fingerprint-stable candidate content: NFKC-normalized snapshot text, deterministic candidate identity, sha256-stable atomic writes', text_zh: 'reconcile.ts 与 atomic-write 为指纹稳定的候选内容加固：NFKC 归一化快照文本、确定性候选身份、sha256 稳定原子写' },
+    ],
+  },
+  {
     version: '0.5.74',
     date: '2026-08',
     changes: [
