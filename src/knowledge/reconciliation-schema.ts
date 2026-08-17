@@ -72,7 +72,7 @@ export const knowledgeCandidateReconciliationSchema = z.object({
   resolution: knowledgeResolutionSchema.nullable(),
 }).strict();
 
-export const sessionKnowledgeReceiptCandidateSchema = z.object({
+const sessionKnowledgeReceiptOkCandidateSchema = z.object({
   candidate_id: z.string().regex(/^KDC-[a-f0-9]{16}$/),
   candidate_version: z.literal(1),
   observed_activity_revision: z.number().int().nonnegative(),
@@ -80,7 +80,26 @@ export const sessionKnowledgeReceiptCandidateSchema = z.object({
   evidence_root_hash: sha256Schema,
   /** Additive typed content addresses; absent on legacy receipts. */
   evidence_root_descriptors: z.array(sessionKnowledgeEvidenceRootSchema).min(1).optional(),
+  /** Present only on freshly written receipts; absent means ok (legacy). */
+  status: z.literal('ok').optional(),
 }).strict();
+
+/**
+ * A session candidate that fails immutable-source revalidation (missing
+ * source snapshot, drifted evidence, …) is recorded as blocked instead of
+ * failing the whole session receipt: it must not block promotion of
+ * unrelated session candidates (per-candidate fence).
+ */
+const sessionKnowledgeReceiptBlockedCandidateSchema = z.object({
+  candidate_id: z.string().regex(/^KDC-[a-f0-9]{16}$/),
+  status: z.literal('blocked'),
+  block_reason: nonEmptyString,
+}).strict();
+
+export const sessionKnowledgeReceiptCandidateSchema = z.union([
+  sessionKnowledgeReceiptOkCandidateSchema,
+  sessionKnowledgeReceiptBlockedCandidateSchema,
+]);
 
 export const sessionKnowledgeReceiptSourceSchema = z.object({
   schema_version: z.literal('session-knowledge-reconciliation-source/1.0'),

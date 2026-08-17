@@ -16,6 +16,7 @@ import {
   sealSession,
 } from '../run/runtime.js';
 import { readRunKnowledgeDelta, summarizeSessionKnowledge } from '../run/knowledge.js';
+import type { RunV30, SessionStateV30 } from '../run/schemas.js';
 import { SessionStore } from '../run/store.js';
 
 function v2Workspace(root: string): void {
@@ -107,6 +108,74 @@ function createExecutionKnowledgeRun(sessionId: string) {
     revision: store.readExecution(sessionId, started.execution.execution_id).revision,
     claim: started.lease_claim,
   };
+}
+
+function createV3RunWithRetainedExecution(): { store: SessionStore; sessionId: string; runId: string } {
+  const sessionId = 'v3-retained-execution';
+  const runId = 'run-v3';
+  writeFileSync(join(projectRoot, '.workflow', 'config.json'), JSON.stringify({
+    session_schema: {
+      schema_version: 'session-schema-selection/1.0',
+      writer: 'session/3.0',
+      features: { session_statusless: false },
+    },
+  }), 'utf8');
+  const store = new SessionStore(projectRoot);
+  const session: SessionStateV30 = {
+    schema_version: 'session/3.0',
+    session_id: sessionId,
+    objective: 'v3 retained Execution knowledge test',
+    definition_of_done: 'stage and record use Run v3 authority',
+    status: 'open',
+    orchestration_revision: 0,
+    activity_revision: 0,
+    chain: [{
+      step_id: 'step-1', command: 'knowledge-cli', args: [], status: 'running', run_ids: [runId],
+      goal_ref: null, decision_refs: [],
+    }],
+    decisions: [],
+    active_run_ids: [runId],
+    artifacts_ref: 'artifacts.json',
+    evidence_ref: 'evidence.json',
+    created_at: '2026-08-18T00:00:00.000Z',
+    updated_at: '2026-08-18T00:00:00.000Z',
+    completed_at: null,
+    archived_at: null,
+  };
+  const run: RunV30 = {
+    schema_version: 'run/3.0',
+    run_id: runId,
+    session_id: sessionId,
+    step_id: 'step-1',
+    parent_run_id: null,
+    retry_of_run_id: null,
+    attempt: 1,
+    command: 'knowledge-cli',
+    args: [],
+    goal: null,
+    status: 'running',
+    revision: 0,
+    actor_id: 'knowledge-test',
+    input_refs: [],
+    output_refs: [],
+    primary_artifact_id: null,
+    verdict: null,
+    summary: null,
+    legacy_execution_generation: null,
+    created_at: '2026-08-18T00:00:00.000Z',
+    started_at: '2026-08-18T00:00:01.000Z',
+    ended_at: null,
+    sealed_at: null,
+  };
+  store.writeSessionV30(session);
+  store.writeRunV30(run);
+  writeFileSync(join(store.sessionDir(sessionId), 'artifacts.json'), `${JSON.stringify({
+    schema_version: 'artifacts/1.0', revision: 0, artifacts: {}, aliases: {},
+  }, null, 2)}\n`, 'utf8');
+  const executionDir = join(store.sessionDir(sessionId), 'executions', 'execution-retained');
+  mkdirSync(executionDir, { recursive: true });
+  writeFileSync(join(executionDir, 'execution.json'), '{"retained":true}\n', 'utf8');
+  return { store, sessionId, runId };
 }
 
 function executionAuthorityArgs(
@@ -380,6 +449,25 @@ describe('maestro knowledge Run lifecycle CLI', () => {
     expect(errors).toEqual([]);
   });
 
+  it('stages and records on a v3 Run without reading retained legacy Executions', async () => {
+    const context = createV3RunWithRetainedExecution();
+
+    await run(
+      'stage', 'knowhow', 'V3 retained execution rule', 'Use the canonical Run v3 sidecar.',
+      '--run', context.runId, '--session', context.sessionId, '--json',
+    );
+    expect(process.exitCode ?? 0).toBe(0);
+    expect(JSON.parse(logs.at(-1)!)).toMatchObject({ run_id: context.runId });
+
+    await run(
+      'record', 'spec:v3-authority', '--signal', 'validated', '--source', 'manual',
+      '--run', context.runId, '--session', context.sessionId, '--allow-unknown', '--json',
+    );
+    expect(process.exitCode ?? 0).toBe(0);
+    expect(JSON.parse(logs.at(-1)!)).toMatchObject({ run_id: context.runId, recorded: 1 });
+    expect(errors).toEqual([]);
+  });
+
   it('rejects invalid transcript locator fields before writing snapshot or candidate', async () => {
     const created = createRun({
       projectRoot,
@@ -522,6 +610,21 @@ Use one SessionStore transaction.
         },
       }],
     });
+
+    // Make the reviewed corpus stale before using the deprecated resolve path.
+    // The command must refresh the receipt through the same fence as promote.
+    writeFileSync(join(specsDir, 'unrelated.md'), `---
+category: coding
+---
+
+<spec-entry category="coding" keywords="freshness" date="2026-07-29" sid="S-freshness" title="Freshness marker">
+
+### Freshness marker
+
+Keep corpus freshness explicit.
+
+</spec-entry>
+`, 'utf8');
 
     await run(
       'review',

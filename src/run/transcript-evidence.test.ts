@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   existsSync,
   mkdirSync,
@@ -18,6 +18,7 @@ import {
   quoteSha256,
   renderTranscriptEvidence,
   storeTranscriptEvidence,
+  transcriptEvidenceSnapshotSchema,
   TRANSCRIPT_EVIDENCE_HARD_CAP_BYTES,
   TRANSCRIPT_EVIDENCE_MAX_BYTES,
 } from './transcript-evidence.js';
@@ -35,6 +36,7 @@ import {
   reconcileSessionKnowledgeSync,
 } from '../knowledge/reconcile.js';
 import { sealSession } from './runtime.js';
+import type { SessionStateV30 } from './schemas.js';
 import { SessionStore } from './store.js';
 
 function v2Workspace(root: string): void {
@@ -42,6 +44,48 @@ function v2Workspace(root: string): void {
   writeFileSync(join(root, ".workflow", "config.json"), JSON.stringify({
     session_schema: { schema_version: "session-schema-selection/1.0", writer: "session/1.3", features: { session_statusless: false } },
   }));
+}
+
+function v3Workspace(root: string): void {
+  mkdirSync(join(root, '.workflow'), { recursive: true });
+  writeFileSync(join(root, '.workflow', 'config.json'), JSON.stringify({
+    session_schema: {
+      schema_version: 'session-schema-selection/1.0',
+      writer: 'session/3.0',
+      features: { session_statusless: false },
+    },
+  }));
+}
+
+function v3Session(sessionId: string, status: SessionStateV30['status'] = 'open'): SessionStateV30 {
+  return {
+    schema_version: 'session/3.0',
+    session_id: sessionId,
+    objective: 'transcript evidence v3 test',
+    definition_of_done: 'snapshot writes are transaction-bound',
+    status,
+    orchestration_revision: 0,
+    activity_revision: 0,
+    chain: [{
+      step_id: 'step-1', command: 'knowledge', args: [], status: 'running', run_ids: [],
+      goal_ref: null, decision_ref: null, decision_refs: [],
+    }],
+    decisions: [],
+    active_run_ids: [],
+    artifacts_ref: 'artifacts.json',
+    evidence_ref: 'evidence.json',
+    created_at: '2026-08-18T00:00:00.000Z',
+    updated_at: '2026-08-18T00:00:00.000Z',
+    completed_at: status === 'completed' ? '2026-08-18T00:01:00.000Z' : null,
+    archived_at: status === 'archived' ? '2026-08-18T00:02:00.000Z' : null,
+  };
+}
+
+function v3Root(): string {
+  const path = mkdtempSync(join(tmpdir(), 'maestro-transcript-evidence-v3-'));
+  v3Workspace(path);
+  roots.push(path);
+  return path;
 }
 
 const roots: string[] = [];
@@ -74,6 +118,7 @@ function immutableTranscriptRef(projectRoot: string, sessionId: string): string 
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const path of roots.splice(0)) rmSync(path, { recursive: true, force: true });
 });
 
@@ -172,12 +217,43 @@ describe('content-addressed snapshot store (K13)', () => {
       .toThrow(/cannot write transcript evidence snapshots/);
   });
 
+  it('uses the restricted v3 knowledge transaction without legacy bundle/lifecycle calls', () => {
+    const projectRoot = v3Root();
+    const store = new SessionStore(projectRoot);
+    store.writeSessionV30(v3Session('v3-open'));
+    const readBundle = vi.spyOn(SessionStore.prototype, 'readBundle');
+    const updateKnowledgeLifecycle = vi.spyOn(SessionStore.prototype, 'updateKnowledgeLifecycle');
+
+    const stored = storeTranscriptEvidence(projectRoot, 'v3-open', 'v3 transaction quote', HOST);
+    const replay = storeTranscriptEvidence(projectRoot, 'v3-open', 'v3 transaction quote', HOST);
+
+    expect(stored.reused).toBe(false);
+    expect(replay).toMatchObject({ sha256: stored.sha256, path: stored.path, reused: true });
+    expect(stored.path.startsWith(join(store.sessionDir('v3-open'), 'transcript-evidence'))).toBe(true);
+    expect(basename(stored.path)).toMatch(new RegExp(`^${stored.sha256}-[a-f0-9]{16}\\.json$`));
+    expect(readBundle).not.toHaveBeenCalled();
+    expect(updateKnowledgeLifecycle).not.toHaveBeenCalled();
+  });
+
+  it('fails closed for completed, archived, and failed v3 Sessions', () => {
+    const projectRoot = v3Root();
+    const store = new SessionStore(projectRoot);
+    for (const status of ['completed', 'archived', 'failed'] as const) {
+      const sessionId = `v3-${status}`;
+      store.writeSessionV30(v3Session(sessionId, status));
+      expect(() => storeTranscriptEvidence(projectRoot, sessionId, `${status} quote`, HOST))
+        .toThrow(new RegExp(`Session ${sessionId} is ${status}`));
+      expect(existsSync(evidenceDir(projectRoot, sessionId))).toBe(false);
+    }
+  });
+
   it('fails closed on an unknown Session', () => {
     const projectRoot = root();
     expect(() => storeTranscriptEvidence(projectRoot, 'no-such-session', 'quote', HOST))
       .toThrow(/Session not found/);
   });
 });
+
 
 describe('K12 anchor URI', () => {
   it('builds and parses the transcript URI with the sha256[:16] tail', () => {

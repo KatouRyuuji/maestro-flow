@@ -166,6 +166,25 @@ afterEach(() => {
 });
 
 describe('SessionStore v3 knowledge primitives', () => {
+  it('fails closed on retained legacy Executions after v3 migration without changing canonical authority', () => {
+    const store = setupV30();
+    const executionId = 'execution-legacy-g1';
+    const executionDir = join(store.sessionDir('s-v3'), 'executions', executionId);
+    mkdirSync(executionDir, { recursive: true });
+    writeFileSync(join(executionDir, 'execution.json'), `${JSON.stringify({
+      schema_version: 'execution/1.0', execution_id: executionId, session_id: 's-v3',
+      generation: 1, status: 'sealed', revision: 1, active_run_id: null,
+      chain: [], decision_points: [], gates_ref: 'gates.json', artifacts_ref: 'artifacts.json',
+      evidence_ref: 'evidence.json', lease: null, started_at: '2026-08-16T00:00:00.000Z',
+      sealed_at: '2026-08-16T00:01:00.000Z', seal_summary: 'legacy', final_outcome: 'done',
+    }, null, 2)}\n`);
+    const authorityBefore = authorityBytes(store, 's-v3', 'run-v3');
+
+    expect(() => store.listExecutions('s-v3')).toThrow(/retained legacy Execution storage is not a v3 authority/);
+    expect(() => store.readExecution('s-v3', executionId)).toThrow(/retained legacy Execution storage is not a v3 authority/);
+    expect(authorityBytes(store, 's-v3', 'run-v3')).toEqual(authorityBefore);
+  });
+
   it('locates strict Run records across generations without changing legacy findRun', () => {
     const v3 = setupV30();
     expect(v3.findRunRecord('run-v3')).toEqual({

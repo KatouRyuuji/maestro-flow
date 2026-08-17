@@ -289,12 +289,26 @@ function buildKnowledgeSessionView(projectRoot: string, sessionId: string) {
       const policy = sessionReceipt?.candidates.find(
         item => item.candidate_id === candidate.candidate_id,
       ) ?? null;
-      const freshness = !policy
-        ? 'missing' as const
-        : sessionFresh ? 'fresh' as const : 'stale' as const;
-      const reconcileCommands = !policy || !sessionFresh
-        ? [`maestro knowledge review ${sessionId} --refresh`]
-        : [];
+      // Per-candidate fence: the session receipt's source list records
+      // candidates that failed immutable-source revalidation as blocked.
+      // They stay visible but are excluded from promotion (and no refresh
+      // can repair them — the fix is a source-side restage).
+      const sessionSourceEntry = sessionReceipt?.session_source?.candidates.find(
+        item => item.candidate_id === candidate.candidate_id,
+      ) ?? null;
+      const blockedReason = sessionSourceEntry?.status === 'blocked'
+        ? sessionSourceEntry.block_reason
+        : null;
+      const freshness = blockedReason
+        ? 'blocked' as const
+        : !policy
+          ? 'missing' as const
+          : sessionFresh ? 'fresh' as const : 'stale' as const;
+      const reconcileCommands = blockedReason
+        ? []
+        : !policy || !sessionFresh
+          ? [`maestro knowledge review ${sessionId} --refresh`]
+          : [];
       return {
         ...candidate,
         reconciliation: policy ? { ...policy, freshness } : null,
@@ -304,6 +318,7 @@ function buildKnowledgeSessionView(projectRoot: string, sessionId: string) {
           resolution_commands: policy
             ? resolutionChoices(candidate.candidate_id, sessionId, policy)
             : [],
+          ...(blockedReason ? { blocked_reason: blockedReason } : {}),
         },
       };
     }
@@ -364,6 +379,7 @@ function printKnowledgeReview(view: KnowledgeSessionView, projectRoot: string): 
     `${view.candidates.length} candidate(s) · `
     + `${view.candidates.filter(candidate => candidate.review.freshness === 'missing').length} missing · `
     + `${view.candidates.filter(candidate => candidate.review.freshness === 'stale').length} stale · `
+    + `${view.candidates.filter(candidate => candidate.review.freshness === 'blocked').length} blocked · `
     + `${view.candidates.filter(candidate =>
       candidate.reconciliation?.promotion_eligibility === 'review_required'
     ).length} review required`,
@@ -391,6 +407,9 @@ function printKnowledgeReview(view: KnowledgeSessionView, projectRoot: string): 
       `  reconciliation: ${policy?.disposition ?? 'missing'}/`
       + `${policy?.promotion_eligibility ?? 'unavailable'} · ${candidate.review.freshness}`,
     );
+    if (candidate.review.blocked_reason) {
+      console.log(`  blocked: ${candidate.review.blocked_reason}`);
+    }
     for (const match of policy?.matches.slice(0, 3) ?? []) {
       console.log(
         `  match: ${match.knowledge_id} [${match.relation}] `
@@ -400,7 +419,9 @@ function printKnowledgeReview(view: KnowledgeSessionView, projectRoot: string): 
     }
     for (const command of candidate.review.reconcile_commands) console.log(`  next: ${command}`);
     for (const command of candidate.review.resolution_commands) console.log(`  resolve: ${command}`);
-    if (policy?.promotion_eligibility === 'eligible' && candidate.status === 'pending') {
+    if (!candidate.review.blocked_reason
+      && policy?.promotion_eligibility === 'eligible'
+      && candidate.status === 'pending') {
       console.log(
         `  promote: maestro knowledge promote ${view.session_id} --candidate ${candidate.candidate_id}`,
       );
@@ -598,11 +619,14 @@ export function registerKnowledgeCommand(program: Command): void {
         if (authority.warning) console.error(`Warning: ${authority.warning}`);
         let executionAuthority: KnowledgeExecutionAuthority | undefined;
         if (authority.kind === 'run') {
+          const sessionSchema = store.readSessionRecordReadOnly(authority.sessionId).schema_version;
+          const hasOpenExecution = sessionSchema !== 'session/3.0'
+            && store.readOpenExecution(authority.sessionId) !== null;
           executionAuthority = resolveKnowledgeExecutionAuthority(
             projectRoot,
             opts,
             { sessionId: authority.sessionId, runId: authority.runId },
-            store.readOpenExecution(authority.sessionId) !== null,
+            hasOpenExecution,
           );
         } else if (opts.executionAuthority
           || process.env[EXECUTION_AUTHORITY_FILE_ENV]
@@ -745,11 +769,14 @@ export function registerKnowledgeCommand(program: Command): void {
             );
           }
         }
+        const reviewTiming = executionAuthority
+          ? 'after the Execution is sealed'
+          : 'after completion';
         console.log(
           `Staged ${result.candidate_id} on ${where}`
           + ('reused' in result && result.reused ? ' (identical content already staged; existing candidate kept — title/evidence unchanged)' : '')
           + (signalResult ? `; recorded ${signalResult.recorded} signal(s) as ${opts.signal}` : '')
-          + `; review after completion with "maestro knowledge review ${result.session_id}".`,
+          + `; review ${reviewTiming} with "maestro knowledge review ${result.session_id}".`,
         );
       } catch (error) {
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
@@ -812,11 +839,14 @@ export function registerKnowledgeCommand(program: Command): void {
         if (authority.warning) console.error(`Warning: ${authority.warning}`);
         let executionAuthority: KnowledgeExecutionAuthority | undefined;
         if (authority.kind === 'run') {
+          const sessionSchema = store.readSessionRecordReadOnly(authority.sessionId).schema_version;
+          const hasOpenExecution = sessionSchema !== 'session/3.0'
+            && store.readOpenExecution(authority.sessionId) !== null;
           executionAuthority = resolveKnowledgeExecutionAuthority(
             projectRoot,
             opts,
             { sessionId: authority.sessionId, runId: authority.runId },
-            store.readOpenExecution(authority.sessionId) !== null,
+            hasOpenExecution,
           );
         } else if (opts.executionAuthority
           || process.env[EXECUTION_AUTHORITY_FILE_ENV]
@@ -1024,6 +1054,9 @@ export function registerKnowledgeCommand(program: Command): void {
         if (result.skipped_suppressed.length > 0) {
           console.log(`Skipped ${result.skipped_suppressed.length} suppressed candidate(s).`);
         }
+        if (result.skipped_blocked.length > 0) {
+          console.log(`Skipped ${result.skipped_blocked.length} blocked candidate(s).`);
+        }
       } catch (error) {
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
         process.exitCode = 1;
@@ -1068,6 +1101,9 @@ export function registerKnowledgeCommand(program: Command): void {
           if (!KNOWLEDGE_RESOLUTIONS.includes(opts.as as KnowledgeResolutionChoice)) {
             throw new Error(`--as must be one of ${KNOWLEDGE_RESOLUTIONS.join(', ')}`);
           }
+          // Deprecated review resolution keeps the same TOCTOU/freshness fence
+          // as promote --resolve before writing the human decision.
+          refreshResolutionReceipts(projectRoot, sessionId, [opts.resolve]);
           const resolved = resolveKnowledgeCandidate(
             projectRoot,
             sessionId,

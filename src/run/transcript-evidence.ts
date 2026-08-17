@@ -9,7 +9,7 @@
  *   K12 — anchor URI string: `transcript:<hostKind>:<hostSessionId>:<entryId>:<sha256[:16]>`
  *         parsed only for display.
  *   K13 — stage-time fragment snapshot: sha256 over the raw quote bytes, then a
- *         content-addressed write to sessions/<sid>/transcript-evidence/<sha256>.json
+ *         content-addressed write to sessions/<sid>/transcript-evidence/<sha256>-<locator>.json
  *         under the SessionStore transaction with the S8 sealed refusal
  *         (mirrors updateSessionKnowledgeSidecar's in-lock status check).
  *         Fragment limit 32 KiB / hard cap 64 KiB — over-limit throws, never
@@ -51,7 +51,7 @@ export const transcriptQuoteInputSchema = z.object({
   quote: z.string().min(1),
 }).strict();
 
-/** Snapshot sidecar under sessions/<sid>/transcript-evidence/<sha256>.json. */
+/** Snapshot sidecar under sessions/<sid>/transcript-evidence/<sha256>-<locator>.json. */
 export const transcriptEvidenceSnapshotSchema = z.object({
   schema_version: z.literal('transcript-evidence/1.0'),
   /** Content address: sha256 over the raw quote bytes (K13). */
@@ -128,6 +128,41 @@ function transcriptSnapshotStem(sha256: string, host: TranscriptQuoteHost): stri
   return `${sha256}-${transcriptLocatorHash(host)}`;
 }
 
+function reuseOrWriteTranscriptSnapshot(
+  path: string,
+  expectedSha256: string,
+  normalizedQuote: string,
+  host: TranscriptQuoteHost,
+  snapshot: TranscriptEvidenceSnapshot,
+  readExisting: () => TranscriptEvidenceSnapshot,
+  writeSnapshot: () => void,
+): TranscriptEvidenceStoreResult {
+  if (existsSync(path)) {
+    // Idempotent reuse; verify the full content binding, not just the file
+    // name: re-hashing the stored normalized quote must reproduce the
+    // recorded normalized_sha256, and the requested quote must be the same
+    // fragment (same raw hash) with compatible host metadata.
+    const existing = readExisting();
+    if (existing.sha256 !== expectedSha256) {
+      throw new Error(`Transcript evidence snapshot hash mismatch at ${path}`);
+    }
+    if (quoteSha256(existing.quote) !== existing.normalized_sha256) {
+      throw new Error(`Transcript evidence snapshot integrity check failed at ${path}`);
+    }
+    if (quoteSha256(normalizedQuote) !== existing.normalized_sha256) {
+      throw new Error('Transcript evidence snapshot content mismatch on reuse');
+    }
+    if (existing.host_kind !== host.host_kind
+      || existing.host_session_id !== host.host_session_id
+      || existing.entry_id !== host.entry_id) {
+      throw new Error('Transcript evidence snapshot host metadata mismatch on reuse');
+    }
+    return { sha256: expectedSha256, path, reused: true };
+  }
+  writeSnapshot();
+  return { sha256: expectedSha256, path, reused: false };
+}
+
 /**
  * K13 — content-addressed snapshot write under the SessionStore transaction.
  * Quote hash identifies the content; a locator hash suffix separates identical
@@ -149,47 +184,53 @@ export function storeTranscriptEvidence(
   if (!store.sessionExists(sessionId)) throw new Error(`Session not found: ${sessionId}`);
   const dir = join(store.sessionDir(sessionId), 'transcript-evidence');
   const path = join(dir, `${transcriptSnapshotStem(sha256, host)}.json`);
+  const snapshot: TranscriptEvidenceSnapshot = {
+    schema_version: 'transcript-evidence/1.0',
+    sha256,
+    normalized_sha256: normalizedSha256,
+    host_kind: host.host_kind,
+    host_session_id: host.host_session_id,
+    entry_id: host.entry_id,
+    captured_at: new Date().toISOString(),
+    quote: normalized,
+  };
+  const sessionRecord = store.readSessionRecordReadOnly(sessionId);
+  if (sessionRecord.schema_version === 'session/3.0') {
+    return store.withV30KnowledgeTransaction(sessionId, tx => {
+      const session = tx.readSession();
+      if (session.status !== 'open') {
+        throw new Error(
+          `Session ${sessionId} is ${session.status} and cannot write transcript evidence snapshots`,
+        );
+      }
+      return reuseOrWriteTranscriptSnapshot(
+        path,
+        sha256,
+        normalized,
+        host,
+        snapshot,
+        () => tx.readJson(path, transcriptEvidenceSnapshotSchema),
+        () => tx.writeTranscriptEvidenceSnapshot(path, snapshot, transcriptEvidenceSnapshotSchema),
+      );
+    });
+  }
   return store.updateKnowledgeLifecycle(sessionId, (_lifecycle, tx) => {
-    // Re-check under the lock (readBundle is re-entrancy safe via isHeld).
+    // Legacy Sessions retain their existing running/paused lifecycle guard.
     const status = store.readBundle(sessionId).session.status;
     if (status !== 'running' && status !== 'paused') {
       throw new Error(
         `Session ${sessionId} is ${status} and cannot write transcript evidence snapshots`,
       );
     }
-    if (existsSync(path)) {
-      // Idempotent reuse; verify the full content binding, not just the file
-      // name: re-hashing the stored normalized quote must reproduce the
-      // recorded normalized_sha256, and the requested quote must be the same
-      // fragment (same raw hash) with compatible host metadata.
-      const existing = store.readJsonFileReadOnly(path, transcriptEvidenceSnapshotSchema);
-      if (existing.sha256 !== sha256) {
-        throw new Error(`Transcript evidence snapshot hash mismatch at ${path}`);
-      }
-      if (quoteSha256(existing.quote) !== existing.normalized_sha256) {
-        throw new Error(`Transcript evidence snapshot integrity check failed at ${path}`);
-      }
-      if (quoteSha256(normalizeQuote(quote)) !== existing.normalized_sha256) {
-        throw new Error('Transcript evidence snapshot content mismatch on reuse');
-      }
-      if (existing.host_kind !== host.host_kind
-        || existing.host_session_id !== host.host_session_id
-        || existing.entry_id !== host.entry_id) {
-        throw new Error('Transcript evidence snapshot host metadata mismatch on reuse');
-      }
-      return { sha256, path, reused: true };
-    }
-    tx.writeJson(path, {
-      schema_version: 'transcript-evidence/1.0',
+    return reuseOrWriteTranscriptSnapshot(
+      path,
       sha256,
-      normalized_sha256: normalizedSha256,
-      host_kind: host.host_kind,
-      host_session_id: host.host_session_id,
-      entry_id: host.entry_id,
-      captured_at: new Date().toISOString(),
-      quote: normalized,
-    }, transcriptEvidenceSnapshotSchema);
-    return { sha256, path, reused: false };
+      normalized,
+      host,
+      snapshot,
+      () => tx.readJson(path, transcriptEvidenceSnapshotSchema),
+      () => tx.writeJson(path, snapshot, transcriptEvidenceSnapshotSchema),
+    );
   });
 }
 

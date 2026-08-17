@@ -231,6 +231,7 @@ export interface KnowledgePromotionResult {
   skipped_observed: string[];
   skipped_review_required: string[];
   skipped_suppressed: string[];
+  skipped_blocked: string[];
 }
 
 export interface KnowledgeReconciliationCard {
@@ -2141,7 +2142,19 @@ export function promoteSessionKnowledge(
       )?.promotion_eligibility === 'suppressed')
       .map(candidate => candidate.candidate_id)
     : [];
-  const blockedForAll = new Set([...skippedReviewRequired, ...skippedSuppressed]);
+  // Per-candidate fence: session candidates recorded as blocked in the
+  // session receipt's source list (missing immutable snapshot / drifted
+  // evidence) are excluded from --all instead of failing the batch.
+  const sessionReceipt = readSessionKnowledgeReconciliation(store, sessionId, true);
+  const blockedById = new Set<string>();
+  for (const entry of sessionReceipt?.session_source?.candidates ?? []) {
+    if (entry.status === 'blocked') blockedById.add(entry.candidate_id);
+  }
+  const skippedBlocked = options.all
+    ? pending.filter(candidate => blockedById.has(candidate.candidate_id))
+      .map(candidate => candidate.candidate_id)
+    : [];
+  const blockedForAll = new Set([...skippedReviewRequired, ...skippedSuppressed, ...skippedBlocked]);
   const eligibleSelected = eligiblePending.filter(candidate => !blockedForAll.has(candidate.candidate_id));
   // Cross-origin same-ID candidates carry identical content but divergent
   // evidence metadata; the corpus write happens once (run-origin copy as the
@@ -2194,14 +2207,19 @@ export function promoteSessionKnowledge(
       );
     }
     for (const candidate of sessionSourceSelected) {
+      const bound = sessionReceipt.session_source.candidates.find(item =>
+        item.candidate_id === candidate.candidate_id
+      );
+      if (bound?.status === 'blocked') {
+        throw new Error(
+          `Session-source candidate ${candidate.candidate_id} is blocked: ${bound.block_reason}`,
+        );
+      }
       const source = revalidateSessionKnowledgeCandidateSource(
         projectRoot,
         store,
         candidate,
         sessionId,
-      );
-      const bound = sessionReceipt.session_source.candidates.find(item =>
-        item.candidate_id === candidate.candidate_id
       );
       if (!bound
         || bound.candidate_version !== source.candidate_version
@@ -2224,6 +2242,7 @@ export function promoteSessionKnowledge(
         skipped_observed: [],
         skipped_review_required: skippedReviewRequired,
         skipped_suppressed: skippedSuppressed,
+        skipped_blocked: skippedBlocked,
       };
     }
     throw new Error('No pending candidates selected');
@@ -2237,6 +2256,7 @@ export function promoteSessionKnowledge(
       skipped_observed: skippedObserved,
       skipped_review_required: skippedReviewRequired,
       skipped_suppressed: skippedSuppressed,
+      skipped_blocked: skippedBlocked,
     };
   }
 
@@ -2283,7 +2303,9 @@ export function promoteSessionKnowledge(
     };
   });
 
-  const v3Session = store.readSessionRecordReadOnly(sessionId).schema_version === 'session/3.0';
+  const sessionSchema = store.readSessionRecordReadOnly(sessionId).schema_version;
+  const v3Session = sessionSchema === 'session/3.0';
+  const canonicalSessionV20 = sessionSchema === 'session/2.0';
   if (v3Session) {
     const promoted = promoteV30KnowledgeAtomically(
       projectRoot,
@@ -2301,6 +2323,7 @@ export function promoteSessionKnowledge(
       skipped_observed: skippedObserved,
       skipped_review_required: skippedReviewRequired,
       skipped_suppressed: skippedSuppressed,
+      skipped_blocked: skippedBlocked,
     };
   }
 
@@ -2339,14 +2362,19 @@ export function promoteSessionKnowledge(
           || JSON.stringify(lockedCandidate.source_snapshot) !== JSON.stringify(item.candidate.source_snapshot)) {
           throw new Error(`Session-source candidate ${item.candidate.candidate_id} changed before final commit`);
         }
+        const bound = lockedReceipt.session_source.candidates.find(candidate =>
+          candidate.candidate_id === lockedCandidate.candidate_id
+        );
+        if (bound?.status === 'blocked') {
+          throw new Error(
+            `Session-source candidate ${lockedCandidate.candidate_id} is blocked: ${bound.block_reason}`,
+          );
+        }
         const source = revalidateSessionKnowledgeCandidateSource(
           projectRoot,
           store,
           lockedCandidate,
           sessionId,
-        );
-        const bound = lockedReceipt.session_source.candidates.find(candidate =>
-          candidate.candidate_id === lockedCandidate.candidate_id
         );
         if (!bound
           || bound.candidate_version !== source.candidate_version
@@ -2414,22 +2442,28 @@ export function promoteSessionKnowledge(
       skipped_observed: skippedObserved,
       skipped_review_required: skippedReviewRequired,
       skipped_suppressed: skippedSuppressed,
+      skipped_blocked: skippedBlocked,
     };
   }
 
   // Phase 1: persist deterministic promotion intents before any project write.
   // A crash after this point is resumable because `promoting` candidates remain selectable.
   const intentAt = nowIso();
-  const canonicalSessionV20 = store.readSessionRecordReadOnly(sessionId).schema_version === 'session/2.0';
-  const sessionOnlyPlan = plan.every(item => (item.candidate.origin ?? 'run') === 'session');
-  if (canonicalSessionV20 && sessionOnlyPlan) {
-    store.updateJsonFile(
-      sessionKnowledgeDeltaPath(store, sessionId),
-      sessionKnowledgeDeltaSchema,
-      createSessionDelta(sessionId, intentAt),
-      sessionDelta => {
+  if (!v3Session && !canonicalSessionV20 && store.readOpenExecution(sessionId)) {
+    const openExecution = store.readOpenExecution(sessionId)!;
+    throw new Error(
+      `Session ${sessionId} has open Execution ${openExecution.execution_id}; `
+      + 'legacy knowledge promotion cannot run while the Execution is open; '
+      + 'complete and seal its Runs, seal the Execution, then retry',
+    );
+  }
+  if (canonicalSessionV20) {
+    store.updateKnowledgeTransaction(sessionId, tx => {
+      for (const runId of new Set(plan.flatMap(item => item.candidate.run_ids))) {
+        const path = runKnowledgeDeltaPath(store, sessionId, runId);
+        const delta = structuredClone(tx.readJson(path, runKnowledgeDeltaSchema));
         let changed = false;
-        for (const candidate of sessionDelta.candidates) {
+        for (const candidate of delta.candidates) {
           const item = plan.find(entry => entry.candidate.candidate_id === candidate.candidate_id);
           if (!item || candidate.status === 'promoted') continue;
           candidate.status = 'promoting';
@@ -2437,11 +2471,33 @@ export function promoteSessionKnowledge(
           changed = true;
         }
         if (changed) {
-          sessionDelta.revision++;
-          sessionDelta.updated_at = intentAt;
+          delta.revision++;
+          delta.updated_at = intentAt;
+          tx.writeJson(path, delta, runKnowledgeDeltaSchema);
         }
-      },
-    );
+      }
+      if (plan.some(item => (item.candidate.origin ?? 'run') === 'session')) {
+        const path = sessionKnowledgeDeltaPath(store, sessionId);
+        const delta = structuredClone(tx.readJson(
+          path,
+          sessionKnowledgeDeltaSchema,
+          createSessionDelta(sessionId, intentAt),
+        ));
+        let changed = false;
+        for (const candidate of delta.candidates) {
+          const item = plan.find(entry => entry.candidate.candidate_id === candidate.candidate_id);
+          if (!item || candidate.status === 'promoted') continue;
+          candidate.status = 'promoting';
+          candidate.promoted_id = item.promotedId;
+          changed = true;
+        }
+        if (changed) {
+          delta.revision++;
+          delta.updated_at = intentAt;
+          tx.writeJson(path, delta, sessionKnowledgeDeltaSchema);
+        }
+      }
+    });
   } else if (v3Session) {
     store.withV30KnowledgeTransaction(sessionId, tx => {
       options._beforeFinalSessionValidation?.();
@@ -2508,6 +2564,14 @@ export function promoteSessionKnowledge(
       }
     });
   } else {
+    const openExecution = store.readOpenExecution(sessionId);
+    if (openExecution) {
+      throw new Error(
+        `Session ${sessionId} has open Execution ${openExecution.execution_id}; `
+        + 'legacy knowledge promotion cannot run while the Execution is open; '
+        + 'complete and seal its Runs, seal the Execution, then retry',
+      );
+    }
     store.updateKnowledgeLifecycle(sessionId, (_lifecycle, tx) => {
       for (const runId of new Set(plan.flatMap(item => item.candidate.run_ids))) {
         const delta = readRunKnowledgeDelta(store, sessionId, runId);
@@ -2569,14 +2633,13 @@ export function promoteSessionKnowledge(
   });
 
   const promotedAt = nowIso();
-  if (canonicalSessionV20 && sessionOnlyPlan) {
-    store.updateJsonFile(
-      sessionKnowledgeDeltaPath(store, sessionId),
-      sessionKnowledgeDeltaSchema,
-      createSessionDelta(sessionId, promotedAt),
-      sessionDelta => {
+  if (canonicalSessionV20) {
+    store.updateKnowledgeTransaction(sessionId, tx => {
+      for (const runId of new Set(summary.candidates.flatMap(candidate => candidate.run_ids))) {
+        const path = runKnowledgeDeltaPath(store, sessionId, runId);
+        const delta = structuredClone(tx.readJson(path, runKnowledgeDeltaSchema));
         let changed = false;
-        for (const candidate of sessionDelta.candidates) {
+        for (const candidate of delta.candidates) {
           const item = promoted.find(entry => entry.candidate_id === candidate.candidate_id);
           if (!item) continue;
           candidate.status = 'promoted';
@@ -2589,11 +2652,38 @@ export function promoteSessionKnowledge(
           changed = true;
         }
         if (changed) {
-          sessionDelta.revision++;
-          sessionDelta.updated_at = promotedAt;
+          delta.revision++;
+          delta.updated_at = promotedAt;
+          tx.writeJson(path, delta, runKnowledgeDeltaSchema);
         }
-      },
-    );
+      }
+      if (summary.candidates.some(candidate => (candidate.origin ?? 'run') === 'session')) {
+        const path = sessionKnowledgeDeltaPath(store, sessionId);
+        const delta = structuredClone(tx.readJson(
+          path,
+          sessionKnowledgeDeltaSchema,
+          createSessionDelta(sessionId, promotedAt),
+        ));
+        let changed = false;
+        for (const candidate of delta.candidates) {
+          const item = promoted.find(entry => entry.candidate_id === candidate.candidate_id);
+          if (!item) continue;
+          candidate.status = 'promoted';
+          candidate.promoted_id = item.promoted_id;
+          candidate.promotion_receipt = {
+            outcome: item.outcome,
+            promoted_at: promotedAt,
+            content_hash: contentHash(candidate.content),
+          };
+          changed = true;
+        }
+        if (changed) {
+          delta.revision++;
+          delta.updated_at = promotedAt;
+          tx.writeJson(path, delta, sessionKnowledgeDeltaSchema);
+        }
+      }
+    });
   } else if (v3Session) {
     store.withV30KnowledgeTransaction(sessionId, tx => {
       const currentSummary = summarizeSessionKnowledge(projectRoot, sessionId, {
@@ -2623,6 +2713,14 @@ export function promoteSessionKnowledge(
       applyV30PromotionResults(store, tx, sessionId, currentSummary, promoted, promotedAt);
     });
   } else {
+    const openExecution = store.readOpenExecution(sessionId);
+    if (openExecution) {
+      throw new Error(
+        `Session ${sessionId} has open Execution ${openExecution.execution_id}; `
+        + 'legacy knowledge promotion cannot run while the Execution is open; '
+        + 'complete and seal its Runs, seal the Execution, then retry',
+      );
+    }
     store.updateKnowledgeLifecycle(sessionId, (lifecycle, tx) => {
       for (const item of promoted) {
         const target = item.target === 'spec'
@@ -2684,5 +2782,6 @@ export function promoteSessionKnowledge(
     skipped_observed: skippedObserved,
     skipped_review_required: skippedReviewRequired,
     skipped_suppressed: skippedSuppressed,
+    skipped_blocked: skippedBlocked,
   };
 }

@@ -15,22 +15,27 @@ import {
   readSessionKnowledgeDelta,
   sessionKnowledgeDeltaPath,
   sessionReconciliationPath,
+  addCandidate,
   stageRunKnowledgeCandidate,
   summarizeSessionKnowledge,
 } from './knowledge.js';
 import {
   ensureSyntheticKnowledgeSession,
   stageSessionKnowledgeCandidate,
+  updateSessionKnowledgeSidecar,
 } from './session-knowledge.js';
 import {
   ensureSessionKnowledgeReconciliation,
   isSessionKnowledgeReconciliationFresh,
   persistSessionKnowledgeReconciliation,
+  persistKnowledgeReconciliation,
   promoteReconciledSessionKnowledge,
+  reconcileRunKnowledge,
   resolveKnowledgeCandidate,
 } from '../knowledge/reconcile.js';
 import { migrateSession } from './migrate.js';
 import { completeRun, createRun, sealSession } from './runtime.js';
+import { startExecution } from './execution.js';
 import { SessionStore } from './store.js';
 import { buildTranscriptUri, storeTranscriptEvidence } from './transcript-evidence.js';
 
@@ -445,5 +450,234 @@ describe('mixed-origin accounting (K7)', () => {
     // Both copies share one corpus entry: outcomes are created + reaffirmed.
     const outcomes = result.promoted.map(item => item.outcome).sort();
     expect(outcomes).toContain('created');
+  });
+});
+
+describe('statusless Run-origin promotion routing', () => {
+  it('reconciles, reviews, and promotes a v2 Run-origin candidate without rewriting session authority', async () => {
+    const projectRoot = root();
+    installCommand(projectRoot);
+    const created = createRun({
+      projectRoot,
+      command: 'knowledge-demo',
+      sessionId: 'v20-run-origin-host',
+      intent: 'v2 run-origin promotion',
+    });
+    const staged = stageRunKnowledgeCandidate(projectRoot, created.run_id, {
+      target: 'knowhow',
+      title: 'V2 Run-origin candidate',
+      content: 'V2 Run-origin candidate content',
+      evidenceRefs: ['src/v20-promotion.ts:3'],
+    }, created.session_id);
+    completeRun(projectRoot, created.run_id, created.session_id);
+    sealSession(projectRoot, created.session_id, 'seal before statusless migration');
+    writeFileSync(join(projectRoot, '.workflow', 'config.json'), JSON.stringify({
+      session_schema: {
+        schema_version: 'session-schema-selection/1.0',
+        writer: 'session/2.0',
+        features: { session_statusless: true },
+      },
+    }, null, 2), 'utf8');
+    migrateSession(projectRoot, created.session_id);
+
+    const store = new SessionStore(projectRoot);
+    const sessionPath = join(store.sessionDir(created.session_id), 'session.json');
+    const sessionBefore = readFileSync(sessionPath, 'utf8');
+    const receipt = await reconcileRunKnowledge(projectRoot, created.session_id, created.run_id);
+    persistKnowledgeReconciliation(projectRoot, receipt);
+    // review --refresh uses the same post-hoc persist path.
+    persistKnowledgeReconciliation(
+      projectRoot,
+      await reconcileRunKnowledge(projectRoot, created.session_id, created.run_id),
+    );
+    expect(readFileSync(sessionPath, 'utf8')).toBe(sessionBefore);
+
+    const result = promoteReconciledSessionKnowledge(projectRoot, created.session_id, {
+      candidateIds: [staged.candidate_id],
+    });
+    expect(result.promoted.map(item => item.candidate_id)).toContain(staged.candidate_id);
+    expect(readFileSync(sessionPath, 'utf8')).toBe(sessionBefore);
+    expect(readFileSync(
+      join(store.runDir(created.session_id, created.run_id), 'knowledge-delta.json'),
+      'utf8',
+    )).toContain('"status": "promoted"');
+  });
+
+  it('promotes a v2 mixed-origin candidate through Run and Session sidecars only', async () => {
+    const projectRoot = root();
+    installCommand(projectRoot);
+    const created = createRun({
+      projectRoot,
+      command: 'knowledge-demo',
+      sessionId: 'v20-mixed-origin-host',
+      intent: 'v2 mixed origin promotion',
+    });
+    const content = 'V2 mixed-origin candidate content';
+    const runStaged = stageRunKnowledgeCandidate(projectRoot, created.run_id, {
+      target: 'knowhow',
+      title: 'V2 mixed-origin candidate',
+      content,
+      evidenceRefs: ['src/v20-promotion.ts:3'],
+    }, created.session_id);
+    completeRun(projectRoot, created.run_id, created.session_id);
+    sealSession(projectRoot, created.session_id, 'seal mixed origin before migration');
+    writeFileSync(join(projectRoot, '.workflow', 'config.json'), JSON.stringify({
+      session_schema: {
+        schema_version: 'session-schema-selection/1.0',
+        writer: 'session/2.0',
+        features: { session_statusless: true },
+      },
+    }, null, 2), 'utf8');
+    migrateSession(projectRoot, created.session_id);
+    const sessionStaged = stageSessionKnowledgeCandidate(projectRoot, created.session_id, {
+      target: 'knowhow',
+      title: 'V2 mixed-origin candidate',
+      content,
+      evidenceRefs: ['src/shared.ts:3'],
+    });
+    expect(sessionStaged.candidate_id).toBe(runStaged.candidate_id);
+    reviewSessionKnowledge(projectRoot, created.session_id);
+    const runReceipt = await reconcileRunKnowledge(projectRoot, created.session_id, created.run_id);
+    persistKnowledgeReconciliation(projectRoot, runReceipt);
+
+    const store = new SessionStore(projectRoot);
+    const sessionPath = join(store.sessionDir(created.session_id), 'session.json');
+    const sessionBefore = readFileSync(sessionPath, 'utf8');
+    const result = promoteReconciledSessionKnowledge(projectRoot, created.session_id, {
+      candidateIds: [runStaged.candidate_id],
+    });
+    expect(result.promoted.map(item => item.candidate_id)).toContain(runStaged.candidate_id);
+    expect(readFileSync(sessionPath, 'utf8')).toBe(sessionBefore);
+    expect(readSessionKnowledgeDelta(store, created.session_id, true).candidates[0].status)
+      .toBe('promoted');
+  });
+});
+
+describe('legacy Execution fence for knowledge reconciliation', () => {
+  it('rejects v1 session reconciliation persistence while an Execution is open', () => {
+    const projectRoot = root();
+    const { sessionId } = ensureSyntheticKnowledgeSession(projectRoot, 'legacy-open-execution');
+    stageSessionKnowledgeCandidate(projectRoot, sessionId, {
+      target: 'knowhow',
+      title: 'Legacy open Execution candidate',
+      content: 'Legacy open Execution candidate content',
+      evidenceRefs: ['src/early.ts:1'],
+    });
+    const receipt = ensureSessionKnowledgeReconciliation(projectRoot, sessionId);
+    startExecution(projectRoot, sessionId, {
+      requestId: 'knowledge-open-execution',
+      ownerId: 'knowledge-test',
+      ownerKind: 'codex',
+    });
+    expect(() => persistSessionKnowledgeReconciliation(projectRoot, receipt))
+      .toThrow(/open Execution.*seal the Execution, then retry/);
+  });
+});
+
+/**
+ * Injects a session candidate that deliberately lacks the immutable
+ * source_snapshot — the exact defect class that previously failed the whole
+ * session receipt (missing snapshot) and blocked every promotion in the
+ * session (per-candidate fence regression).
+ */
+function stageBrokenCandidate(projectRoot: string, sessionId: string): string {
+  const now = new Date().toISOString();
+  let candidateId = '';
+  updateSessionKnowledgeSidecar(projectRoot, sessionId, (draft) => {
+    candidateId = addCandidate(draft, {
+      target: 'knowhow',
+      action: 'propose',
+      title: 'Broken candidate',
+      content: 'Broken candidate content without an immutable source snapshot',
+      category: null,
+      source_kind: 'manual',
+      evidence_refs: [`session:${sessionId}`, 'src/early.ts:1'],
+      // source_snapshot deliberately omitted.
+    }, now);
+    draft.revision++;
+    draft.updated_at = now;
+  });
+  return candidateId;
+}
+
+describe('per-candidate session fence (blocked candidate does not block promotion)', () => {
+  it('records a snapshot-less candidate as blocked while the session receipt stays fresh', () => {
+    const projectRoot = root();
+    const { sessionId } = ensureSyntheticKnowledgeSession(projectRoot, 'block-host');
+    const good = stageSessionKnowledgeCandidate(projectRoot, sessionId, {
+      target: 'knowhow',
+      title: 'Healthy candidate',
+      content: 'Healthy candidate content',
+      evidenceRefs: ['src/early.ts:1'],
+    });
+    const bad = stageBrokenCandidate(projectRoot, sessionId);
+
+    // Session-level refresh must succeed despite the broken candidate.
+    const receipt = ensureSessionKnowledgeReconciliation(projectRoot, sessionId);
+    const badEntry = receipt.session_source!.candidates.find(
+      entry => entry.candidate_id === bad,
+    );
+    expect(badEntry?.status).toBe('blocked');
+    expect(badEntry?.block_reason).toMatch(/no immutable source snapshot/);
+    const goodEntry = receipt.session_source!.candidates.find(
+      entry => entry.candidate_id === good.candidate_id,
+    );
+    expect(goodEntry?.status ?? 'ok').not.toBe('blocked');
+    expect(isSessionKnowledgeReconciliationFresh(projectRoot, sessionId, receipt)).toBe(true);
+    badEntry!.block_reason = 'platform-specific diagnostic wording changed';
+    expect(isSessionKnowledgeReconciliationFresh(projectRoot, sessionId, receipt)).toBe(true);
+  });
+
+  it('promote --all promotes the healthy candidate and skips the blocked one', () => {
+    const projectRoot = root();
+    const { sessionId } = ensureSyntheticKnowledgeSession(projectRoot, 'block-all-host');
+    const good = stageSessionKnowledgeCandidate(projectRoot, sessionId, {
+      target: 'knowhow',
+      title: 'Healthy candidate',
+      content: 'Healthy candidate content',
+      evidenceRefs: ['src/early.ts:1'],
+    });
+    const bad = stageBrokenCandidate(projectRoot, sessionId);
+    reviewSessionKnowledge(projectRoot, sessionId);
+
+    const result = promoteReconciledSessionKnowledge(projectRoot, sessionId, { all: true });
+    expect(result.promoted.map(item => item.candidate_id)).toContain(good.candidate_id);
+    expect(result.promoted.map(item => item.candidate_id)).not.toContain(bad);
+    expect(result.skipped_blocked).toContain(bad);
+  });
+
+  it('promote --candidate promotes a healthy candidate individually', () => {
+    const projectRoot = root();
+    const { sessionId } = ensureSyntheticKnowledgeSession(projectRoot, 'block-one-host');
+    const good = stageSessionKnowledgeCandidate(projectRoot, sessionId, {
+      target: 'knowhow',
+      title: 'Healthy candidate',
+      content: 'Healthy candidate content',
+      evidenceRefs: ['src/early.ts:1'],
+    });
+    stageBrokenCandidate(projectRoot, sessionId);
+    reviewSessionKnowledge(projectRoot, sessionId);
+
+    const result = promoteReconciledSessionKnowledge(projectRoot, sessionId, {
+      candidateIds: [good.candidate_id],
+    });
+    expect(result.promoted.map(item => item.candidate_id)).toEqual([good.candidate_id]);
+  });
+
+  it('explicitly selecting the blocked candidate fails with its block reason', () => {
+    const projectRoot = root();
+    const { sessionId } = ensureSyntheticKnowledgeSession(projectRoot, 'block-explicit-host');
+    stageSessionKnowledgeCandidate(projectRoot, sessionId, {
+      target: 'knowhow',
+      title: 'Healthy candidate',
+      content: 'Healthy candidate content',
+      evidenceRefs: ['src/early.ts:1'],
+    });
+    const bad = stageBrokenCandidate(projectRoot, sessionId);
+    reviewSessionKnowledge(projectRoot, sessionId);
+
+    expect(() => promoteReconciledSessionKnowledge(projectRoot, sessionId, {
+      candidateIds: [bad],
+    })).toThrow(/is blocked: .*no immutable source snapshot/);
   });
 });

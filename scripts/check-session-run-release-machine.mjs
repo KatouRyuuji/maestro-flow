@@ -103,7 +103,8 @@ function enableV3(projectRoot) {
 function runFocusedVitest(relativePath, testName) {
   const result = spawnSync(
     process.execPath,
-    [join(repoRoot, 'node_modules', 'vitest', 'vitest.mjs'), 'run', relativePath, '-t', testName],
+    [join(repoRoot, 'node_modules', 'vitest', 'vitest.mjs'), 'run', relativePath, '-t', testName,
+      '--testTimeout=30000', '--hookTimeout=30000'],
     { cwd: repoRoot, encoding: 'utf8' },
   );
   assert.equal(

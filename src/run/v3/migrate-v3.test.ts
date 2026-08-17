@@ -735,6 +735,8 @@ describe('v3 migration atomic publication', () => {
     expect(migrationReportV1Schema.parse(JSON.parse(readFileSync(applied.report_path, 'utf8'))))
       .toEqual(applied.report);
     expect(readFileSync(executionPath)).toEqual(legacyExecutionBytes);
+    expect(() => store.listExecutions('s')).toThrow(/retained legacy Execution storage is not a v3 authority/);
+    expect(() => store.readExecution('s', 'execution-7')).toThrow(/retained legacy Execution storage is not a v3 authority/);
     expect(applied.report.source_snapshots.find(snapshot => snapshot.kind === 'session')).toMatchObject({
       hash_basis: 'source-bytes',
       sha256: sha256Digest(legacySessionBytes),

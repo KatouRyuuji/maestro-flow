@@ -856,6 +856,43 @@ export function persistKnowledgeReconciliation(
     });
     return;
   }
+  if (session.schema_version === 'session/2.0') {
+    store.updateKnowledgeTransaction(receipt.session_id, tx => {
+      const frontmatter = readReportFrontmatter(store.runDir(receipt.session_id, receipt.run_id));
+      const expectedCorpusFingerprint = currentKnowledgeCorpusFingerprint(projectRoot);
+      const currentDelta = readRunKnowledgeDelta(store, receipt.session_id, receipt.run_id, true);
+      if (!isKnowledgeReconciliationFresh(
+        projectRoot,
+        receipt.session_id,
+        receipt.run_id,
+        receipt,
+        frontmatter,
+        expectedCorpusFingerprint,
+      ) || receipt.candidate_snapshot_hash !== knowledgeCandidateSnapshotHash(
+        currentDelta,
+        frontmatter,
+        receipt.run_id,
+      )) {
+        throw new Error(
+          `Run ${receipt.run_id} knowledge reconciliation changed before statusless receipt commit; refresh again`,
+        );
+      }
+      tx.writeJson(
+        reconciliationPath(store, receipt.session_id, receipt.run_id),
+        receipt,
+        knowledgeReconciliationSchema,
+      );
+    });
+    return;
+  }
+  const openExecution = store.readOpenExecution(receipt.session_id);
+  if (openExecution) {
+    throw new Error(
+      `Session ${receipt.session_id} has open Execution ${openExecution.execution_id}; `
+      + 'Run knowledge reconciliation cannot run while the Execution is open; '
+      + 'complete and seal its Runs, seal the Execution, then retry',
+    );
+  }
   store.readRun(receipt.session_id, receipt.run_id);
   store.updateKnowledgeLifecycle(receipt.session_id, (_lifecycle, tx) => {
     writeKnowledgeReconciliation(store, tx, receipt);
@@ -878,20 +915,33 @@ function sessionReceiptSource(
   const candidates = delta.candidates
     .filter(candidate => candidate.status !== 'promoted')
     .map(candidate => {
-      const source = revalidateSessionKnowledgeCandidateSource(
-        projectRoot,
-        store,
-        candidate,
-        sessionId,
-      );
-      return {
-        candidate_id: candidate.candidate_id,
-        candidate_version: source.candidate_version,
-        observed_activity_revision: source.observed_activity_revision,
-        content_hash: source.content_hash,
-        evidence_root_hash: source.evidence_root_hash,
-        evidence_root_descriptors: structuredClone(source.evidence_root_descriptors),
-      };
+      try {
+        const source = revalidateSessionKnowledgeCandidateSource(
+          projectRoot,
+          store,
+          candidate,
+          sessionId,
+        );
+        return {
+          candidate_id: candidate.candidate_id,
+          candidate_version: source.candidate_version,
+          observed_activity_revision: source.observed_activity_revision,
+          content_hash: source.content_hash,
+          evidence_root_hash: source.evidence_root_hash,
+          evidence_root_descriptors: structuredClone(source.evidence_root_descriptors),
+        };
+      } catch (error) {
+        // Per-candidate fence: a candidate that fails immutable-source
+        // revalidation is recorded as blocked rather than failing the whole
+        // session receipt, so one broken candidate never blocks promotion of
+        // unrelated session candidates. Blocked candidates stay visible in
+        // review and are excluded from promotion eligibility.
+        return {
+          candidate_id: candidate.candidate_id,
+          status: 'blocked' as const,
+          block_reason: error instanceof Error ? error.message : String(error),
+        };
+      }
     })
     .sort((left, right) => left.candidate_id.localeCompare(right.candidate_id));
   return {
@@ -899,7 +949,7 @@ function sessionReceiptSource(
     session_activity_revision: sessionActivityRevision,
     evidence_root_hash: sha256(JSON.stringify(candidates.map(candidate => ({
       candidate_id: candidate.candidate_id,
-      evidence_root_hash: candidate.evidence_root_hash,
+      evidence_root_hash: candidate.status === 'blocked' ? '' : candidate.evidence_root_hash,
     })))),
     candidates,
   };
@@ -919,6 +969,14 @@ function sessionCandidateViews(delta: SessionKnowledgeDelta): CandidateView[] {
       evidence_refs: [...candidate.evidence_refs],
     }))
     .sort((left, right) => left.candidate_id.localeCompare(right.candidate_id));
+}
+
+function sessionReceiptSourceFreshnessKey(
+  candidates: NonNullable<KnowledgeReconciliation['session_source']>['candidates'],
+): string {
+  return JSON.stringify(candidates.map(candidate => candidate.status === 'blocked'
+    ? { candidate_id: candidate.candidate_id, status: candidate.status }
+    : candidate));
 }
 
 export function reconcileSessionKnowledgeSync(
@@ -1004,7 +1062,10 @@ export function isSessionKnowledgeReconciliationFresh(
     && receipt.run_id === SESSION_RECONCILIATION_RUN_ID
     && receipt.candidate_snapshot_hash === sessionKnowledgeSnapshotHash(delta)
     && receipt.session_source.evidence_root_hash === currentSource.evidence_root_hash
-    && JSON.stringify(receipt.session_source.candidates) === JSON.stringify(currentSource.candidates)
+    // block_reason is operator-facing diagnostics, not an immutable source
+    // commitment. Platform/path wording drift must not stale healthy peers.
+    && sessionReceiptSourceFreshnessKey(receipt.session_source.candidates)
+      === sessionReceiptSourceFreshnessKey(currentSource.candidates)
     && receipt.corpus_fingerprint === expectedCorpusFingerprint;
 }
 
@@ -1073,6 +1134,14 @@ export function persistSessionKnowledgeReconciliation(
       draft => { Object.assign(draft, structuredClone(receipt)); },
     );
     return;
+  }
+  const openExecution = store.readOpenExecution(receipt.session_id);
+  if (openExecution) {
+    throw new Error(
+      `Session ${receipt.session_id} has open Execution ${openExecution.execution_id}; `
+      + 'Session knowledge reconciliation cannot run while the Execution is open; '
+      + 'complete and seal its Runs, seal the Execution, then retry',
+    );
   }
   store.updateKnowledgeLifecycle(receipt.session_id, (_lifecycle, tx) => {
     writeSessionKnowledgeReconciliation(store, tx, receipt);
@@ -1427,7 +1496,7 @@ export function resolveKnowledgeCandidate(
       }
     });
   } else {
-    store.updateKnowledgeLifecycle(sessionId, (_lifecycle, tx) => {
+    const mutateRunReceipts = (tx: StoreTransaction): void => {
       for (const item of existingCandidates) {
         const receipt = structuredClone(item.receipt);
         const entry = receipt.candidates.find(value => value.candidate_id === candidateId)!;
@@ -1460,7 +1529,22 @@ export function resolveKnowledgeCandidate(
           );
         }
       }
-    });
+    };
+    if (store.readSessionRecordReadOnly(sessionId).schema_version === 'session/2.0') {
+      store.updateKnowledgeTransaction(sessionId, mutateRunReceipts);
+    } else {
+      const openExecution = store.readOpenExecution(sessionId);
+      if (openExecution) {
+        throw new Error(
+          `Session ${sessionId} has open Execution ${openExecution.execution_id}; `
+          + 'Run knowledge resolution cannot run while the Execution is open; '
+          + 'complete and seal its Runs, seal the Execution, then retry',
+        );
+      }
+      store.updateKnowledgeLifecycle(sessionId, (_lifecycle, tx) => {
+        mutateRunReceipts(tx);
+      });
+    }
   }
 
   return {
@@ -1593,19 +1677,30 @@ function resolveSessionKnowledgeCandidate(
       tx.writeJson(deltaPath, delta, sessionKnowledgeDeltaSchema);
     });
   } else if (sessionRecord.schema_version === 'session/2.0') {
-    store.updateJsonFile(
-      sessionReconciliationPath(store, sessionId),
-      knowledgeReconciliationSchema,
-      next,
-      draft => { Object.assign(draft, structuredClone(next)); },
-    );
-    store.updateJsonFile(
-      sessionKnowledgeDeltaPath(store, sessionId),
-      sessionKnowledgeDeltaSchema,
-      createSessionDelta(sessionId, resolvedAt),
-      updateLedgerCandidate,
-    );
+    store.updateKnowledgeTransaction(sessionId, tx => {
+      tx.writeJson(
+        sessionReconciliationPath(store, sessionId),
+        next,
+        knowledgeReconciliationSchema,
+      );
+      const deltaPath = sessionKnowledgeDeltaPath(store, sessionId);
+      const delta = structuredClone(tx.readJson(
+        deltaPath,
+        sessionKnowledgeDeltaSchema,
+        createSessionDelta(sessionId, resolvedAt),
+      ));
+      updateLedgerCandidate(delta);
+      tx.writeJson(deltaPath, delta, sessionKnowledgeDeltaSchema);
+    });
   } else {
+    const openExecution = store.readOpenExecution(sessionId);
+    if (openExecution) {
+      throw new Error(
+        `Session ${sessionId} has open Execution ${openExecution.execution_id}; `
+        + 'Session knowledge resolution cannot run while the Execution is open; '
+        + 'complete and seal its Runs, seal the Execution, then retry',
+      );
+    }
     store.updateKnowledgeLifecycle(sessionId, (_lifecycle, tx) => {
       writeSessionKnowledgeReconciliation(store, tx, next);
       const delta = readSessionKnowledgeDelta(store, sessionId);

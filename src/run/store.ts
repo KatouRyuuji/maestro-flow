@@ -302,6 +302,8 @@ const V30_KNOWLEDGE_SIDECAR_NAMES = new Set([
   'knowledge-delta.json',
   'knowledge-reconciliation.json',
 ]);
+const V30_TRANSCRIPT_EVIDENCE_DIRECTORY = 'transcript-evidence';
+const V30_TRANSCRIPT_EVIDENCE_FILE_RE = /^[a-f0-9]{64}-[a-f0-9]{16}\.json$/;
 
 function relativePathSegments(rootPath: string, targetPath: string): string[] | null {
   const root = resolve(rootPath);
@@ -342,6 +344,23 @@ function assertV30RunKnowledgeSidecarPath(
   const segments = relativePathSegments(store.runDir(sessionId, runId), target);
   if (segments?.length !== 1 || !V30_KNOWLEDGE_SIDECAR_NAMES.has(segments[0])) {
     throw new Error(`v3 knowledge sidecar path is not owned by Run ${runId}: ${path}`);
+  }
+  return target;
+}
+
+function assertV30TranscriptEvidencePath(
+  store: SessionStore,
+  sessionId: string,
+  path: string,
+): string {
+  const target = resolve(path);
+  const segments = relativePathSegments(store.sessionDir(sessionId), target);
+  if (segments?.length !== 2
+    || segments[0] !== V30_TRANSCRIPT_EVIDENCE_DIRECTORY
+    || !V30_TRANSCRIPT_EVIDENCE_FILE_RE.test(segments[1])) {
+    throw new Error(
+      `v3 transcript evidence writes are limited to ${V30_TRANSCRIPT_EVIDENCE_DIRECTORY}/<sha256>-<locator>.json: ${path}`,
+    );
   }
   return target;
 }
@@ -394,8 +413,11 @@ export interface ExecutionAtomicOptions {
 export class SessionSchemaUnsupportedError extends Error {
   readonly code = 'SESSION_SCHEMA_UNSUPPORTED' as const;
 
-  constructor(readonly sessionId: string) {
-    super(`Session ${sessionId} uses session/3.0; legacy Session/Execution mutations are unsupported`);
+  constructor(
+    readonly sessionId: string,
+    detail = 'legacy Session/Execution mutations are unsupported',
+  ) {
+    super(`Session ${sessionId} uses session/3.0; ${detail}`);
     this.name = 'SessionSchemaUnsupportedError';
   }
 }
@@ -1133,7 +1155,22 @@ export class SessionStore {
     return this.readExecutionUnlocked(sessionId, executionId);
   }
 
+  private assertV3LegacyExecutionAuthorityRetiredUnlocked(sessionId: string): void {
+    const session = this.readSessionRecordUnlocked(sessionId);
+    if (session.schema_version !== 'session/3.0') return;
+    const executionsRoot = join(this.sessionDir(sessionId), 'executions');
+    if (!existsSync(executionsRoot)) return;
+    const stats = lstatSync(executionsRoot);
+    if (stats.isSymbolicLink() || !stats.isDirectory() || readdirSync(executionsRoot).length > 0) {
+      throw new SessionSchemaUnsupportedError(
+        sessionId,
+        'retained legacy Execution storage is not a v3 authority; use the canonical Session/Run state',
+      );
+    }
+  }
+
   private readExecutionUnlocked(sessionId: string, executionId: string): ExecutionState {
+    this.assertV3LegacyExecutionAuthorityRetiredUnlocked(sessionId);
     const execution = this.readValidated(this.executionPath(sessionId, executionId), executionStateSchema);
     if (execution.session_id !== sessionId || execution.execution_id !== executionId) {
       throw new Error(`Execution identity does not match its canonical path: ${sessionId}/${executionId}`);
@@ -1387,6 +1424,7 @@ export class SessionStore {
   }
 
   private listExecutionsUnlocked(sessionId: string): ExecutionState[] {
+    this.assertV3LegacyExecutionAuthorityRetiredUnlocked(sessionId);
     const root = join(this.sessionDir(sessionId), 'executions');
     if (!existsSync(root)) return [];
     const executions: ExecutionState[] = [];
@@ -4122,7 +4160,29 @@ export class SessionV30KnowledgeStoreTransaction {
   }
 
   writeJson<T>(path: string, value: T, schema: z.ZodType<T>, mode?: number): void {
+    const target = resolve(path);
+    const segments = relativePathSegments(this.store.sessionDir(this.sessionId), target);
+    if (segments?.length === 2 && segments[0] === V30_TRANSCRIPT_EVIDENCE_DIRECTORY) {
+      this.writeTranscriptEvidenceSnapshot(path, value, schema, mode);
+      return;
+    }
     const safePath = assertV30KnowledgeSidecarPath(this.store, this.sessionId, path);
+    this.writes.push({ path: safePath, value, schema, mode });
+  }
+
+  writeTranscriptEvidenceSnapshot<T>(
+    path: string,
+    value: T,
+    schema: z.ZodType<T>,
+    mode?: number,
+  ): void {
+    const session = this.readSession();
+    if (session.status !== 'open') {
+      throw new Error(
+        `Session ${this.sessionId} is ${session.status} and cannot write transcript evidence snapshots`,
+      );
+    }
+    const safePath = assertV30TranscriptEvidencePath(this.store, this.sessionId, path);
     this.writes.push({ path: safePath, value, schema, mode });
   }
 
