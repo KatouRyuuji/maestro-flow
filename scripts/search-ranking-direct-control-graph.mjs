@@ -119,6 +119,29 @@ function normalizedDeclaredPath(path, label) {
   return path;
 }
 
+function generatedSourceCounterpart(root, relativePath) {
+  const normalized = relativePath.replaceAll('\\', '/');
+  const prefixes = [
+    ['dist/src/', 'src/'],
+    ['dashboard/dist-server/dashboard/', 'dashboard/'],
+    ['dashboard/dist-server/', ''],
+  ];
+  const prefix = prefixes.find(([from]) => normalized.startsWith(from));
+  if (!prefix) return null;
+  const [, targetPrefix] = prefix;
+  const suffix = normalized.slice(prefix[0].length);
+  const extension = extname(suffix);
+  const stem = extension ? suffix.slice(0, -extension.length) : suffix;
+  const candidates = extension === '.js'
+    ? ['.ts', '.tsx', '.mts', '.cts', '.js']
+    : [extension];
+  for (const candidateExtension of candidates) {
+    const candidate = `${targetPrefix}${stem}${candidateExtension}`;
+    if (isRegularFile(resolve(root, candidate))) return candidate;
+  }
+  return null;
+}
+
 function isGeneratedBuildOutputPath(path) {
   const normalized = path.replaceAll('\\', '/');
   return normalized.startsWith('dist/')
@@ -897,8 +920,22 @@ function createGraphBuilder({ root, phase }) {
     queueCode = true,
   }) => {
     const relativePath = normalizedDeclaredPath(path.replaceAll('\\', '/'), 'derived path');
+    const effectiveEdgeClass = generated ? 'generated-output-source' : edgeClass;
+    const effectiveProvenance = generated
+      ? { ...provenance, role: 'output' }
+      : provenance;
     if ((generated || nativeByte) && phase === 'source') {
-      addEdge(edgeClass, from, relativePath, { ...provenance, phase: 'full' });
+      addEdge(effectiveEdgeClass, from, relativePath, { ...effectiveProvenance, phase: 'full' });
+      if (generated) {
+        const sourcePath = generatedSourceCounterpart(root, relativePath);
+        if (sourcePath) {
+          addFile(sourcePath, {
+            edgeClass: 'generated-output-source',
+            from: relativePath,
+            provenance: { role: 'source' },
+          });
+        }
+      }
       return relativePath;
     }
     const absolutePath = resolve(root, relativePath);
@@ -906,7 +943,17 @@ function createGraphBuilder({ root, phase }) {
       throw new DirectControlGraphError(`derived control file is missing: ${relativePath}`);
     }
     paths.add(relativePath);
-    addEdge(edgeClass, from, relativePath, provenance);
+    addEdge(effectiveEdgeClass, from, relativePath, effectiveProvenance);
+    if (generated && phase === 'full') {
+      const sourcePath = generatedSourceCounterpart(root, relativePath);
+      if (sourcePath) {
+        addFile(sourcePath, {
+          edgeClass: 'generated-output-source',
+          from: relativePath,
+          provenance: { role: 'source' },
+        });
+      }
+    }
     if (queueCode && CODE_EXTENSIONS.has(extname(relativePath)) && !queuedCode.has(relativePath)) {
       queuedCode.add(relativePath);
       codeQueue.push(relativePath);
