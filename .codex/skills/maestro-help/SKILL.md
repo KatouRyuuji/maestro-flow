@@ -9,7 +9,7 @@ allowed-tools:
   - Read
   - request_user_input
 session-mode: none
-version: 0.5.76
+version: 0.5.77
 ---
 
 # Maestro Help

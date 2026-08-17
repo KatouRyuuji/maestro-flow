@@ -17,6 +17,15 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    version: '0.5.77',
+    date: '2026-08',
+    changes: [
+      { type: 'refactor', text_en: 'Workflow entrypoints no longer create a Session or Run merely to load an execution document; issue, knowhow, knowledge, and spec commands now invoke their direct workflow documents while preserving explicit lifecycle commands where required', text_zh: 'Workflow 入口不再仅为加载执行文档创建 Session 或 Run；issue、knowhow、knowledge 与 spec 命令现在直接调用对应 workflow 文档，同时保留必须使用的显式生命周期命令' },
+      { type: 'fix', text_en: 'Remove retired session-mode and run-mode wrapper declarations from workflow documents, keeping command routing aligned with the current session/3.0 surface', text_zh: '移除 workflow 文档中已退役的 session-mode 与 run-mode 包装声明，使命令路由与当前 session/3.0 面保持一致' },
+      { type: 'docs', text_en: 'Synchronize Codex skill mirrors, command reference text, workflow guidance, and the brainstorm visualizer command with the direct-document invocation model', text_zh: '同步 Codex skill 镜像、命令参考文档、workflow 指引与 brainstorm 可视化命令，使其符合直接调用文档的模型' },
+    ],
+  },
+  {
     version: '0.5.76',
     date: '2026-08',
     changes: [
