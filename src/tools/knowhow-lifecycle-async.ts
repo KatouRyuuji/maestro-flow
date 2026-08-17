@@ -185,10 +185,43 @@ export class LifecycleWorkerScheduler {
 
 const lifecycleWorkerScheduler = new LifecycleWorkerScheduler();
 
-function defaultLifecycleWorkerUrl(): URL {
+function defaultLifecycleWorkerUrl(): URL | null {
   const colocated = new URL('./knowhow-lifecycle-worker.js', import.meta.url);
   if (existsSync(fileURLToPath(colocated))) return colocated;
+  const sourceWorker = new URL('./knowhow-lifecycle-worker.ts', import.meta.url);
+  if (existsSync(fileURLToPath(sourceWorker))) return null;
   return new URL('../../dist/src/tools/knowhow-lifecycle-worker.js', import.meta.url);
+}
+
+async function runSourceLifecycleDirect(
+  request: KnowhowLifecycleWorkerRequest,
+): Promise<KnowhowLifecycleWorkerResult> {
+  const lifecycle = await import('./knowhow-lifecycle.js');
+  switch (request.operation) {
+    case 'supersede':
+      return {
+        operation: request.operation,
+        result: lifecycle.supersedeKnowhowEntry(
+          request.projectRoot,
+          request.oldId,
+          request.newId,
+          { ownerGeneration: request.ownerGeneration },
+        ),
+      };
+    case 'history':
+      return {
+        operation: request.operation,
+        entries: lifecycle.getKnowhowEvolutionChain(request.projectRoot, request.id),
+      };
+    case 'recover':
+      return {
+        operation: request.operation,
+        result: lifecycle.recoverKnowhowLifecycleIntent(
+          request.projectRoot,
+          { ownerGeneration: request.ownerGeneration },
+        ),
+      };
+  }
 }
 
 function isMissingLifecycleFile(error: unknown): boolean {
@@ -296,6 +329,7 @@ async function runAdmittedWorker(
 ): Promise<KnowhowLifecycleWorkerResult> {
   const workerUrl = options.workerUrl ?? defaultLifecycleWorkerUrl();
   const timeoutMs = options.timeoutMs ?? LIFECYCLE_WORKER_TIMEOUT_MS;
+  if (!workerUrl) return runSourceLifecycleDirect(request);
   let worker: Worker;
   try {
     worker = new Worker(workerUrl, {
