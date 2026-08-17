@@ -68,6 +68,7 @@ import {
   parseArtifactJson,
   parseBuiltAdapterContract,
   parseVitestReport,
+  PRODUCTION_ARTIFACTS,
   readArtifact,
   recomputeBuiltAggregates,
   revalidateCertifiedArtifacts,
@@ -1018,6 +1019,15 @@ test('covers actual package shell and every direct-control edge class', () => {
   );
   assert.equal(nativeBytes.length, 5);
   assert.equal(nativeBytes.every(path => !source.expected_paths.includes(path)), true);
+  for (const path of PRODUCTION_ARTIFACTS) {
+    assert.equal(full.expected_paths.includes(path), true, `full production artifact: ${path}`);
+    assert.equal(source.expected_paths.includes(path), false, `source production artifact: ${path}`);
+    assert.equal(
+      source.edges.some(edge => edge.to === path && edge.provenance.phase === 'full'),
+      true,
+      `source full-phase edge: ${path}`,
+    );
+  }
   assert.equal(
     full.virtual_command_nodes.filter(node => node.kind === 'native-job-receipt').length,
     5,

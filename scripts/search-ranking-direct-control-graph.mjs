@@ -119,6 +119,12 @@ function normalizedDeclaredPath(path, label) {
   return path;
 }
 
+function isGeneratedBuildOutputPath(path) {
+  const normalized = path.replaceAll('\\', '/');
+  return normalized.startsWith('dist/')
+    || normalized.startsWith('dashboard/dist-server/');
+}
+
 function isRegularFile(path) {
   try {
     return statSync(path).isFile();
@@ -357,6 +363,7 @@ function resolveRepositoryModule({
   callerPath,
   root,
   packageJson,
+  phase = 'full',
 }) {
   if (BUILTINS.has(specifier)) return { external: `builtin:${specifier.replace(/^node:/, '')}` };
   let target;
@@ -374,6 +381,10 @@ function resolveRepositoryModule({
     target = fileURLToPath(specifier);
   } else {
     return { external: `package:${packageName(specifier)}` };
+  }
+  const normalizedTarget = normalizedRelative(root, target, 'resolved module');
+  if (phase === 'source' && isGeneratedBuildOutputPath(normalizedTarget)) {
+    return { path: normalizedTarget, absolutePath: target };
   }
   for (const candidate of candidatePaths(target)) {
     if (isRegularFile(candidate)) {
@@ -574,6 +585,7 @@ function extractLiteralTestPaths(source, sourcePath) {
           paths.push({
             name,
             path: name === 'DASHBOARD_TEST_PATHS' ? `dashboard/${value}` : value,
+            generated: name === 'PRODUCTION_ARTIFACTS',
           });
         }
       } else if (name?.endsWith('_PATH')
@@ -1355,6 +1367,7 @@ export function deriveSearchRankingDirectControlGraph({
         callerPath: absoluteCaller,
         root: absoluteRoot,
         packageJson,
+        phase,
       });
       if (resolved.external) {
         graph.addEdge(edge.class, caller, `external:${resolved.external}`, {
@@ -1366,12 +1379,19 @@ export function deriveSearchRankingDirectControlGraph({
           edgeClass: edge.class,
           from: caller,
           provenance: { specifier: edge.specifier },
+          generated: isGeneratedBuildOutputPath(resolved.path),
         });
       }
     }
-    for (const literal of extractLiteralTestPaths(parsed.source, caller)) {
+    const literalTestPaths = extractLiteralTestPaths(parsed.source, caller);
+    const generatedLiteralPaths = new Set(literalTestPaths
+      .filter(literal => literal.generated || isGeneratedBuildOutputPath(literal.path))
+      .map(literal => literal.path));
+    for (const literal of literalTestPaths) {
       const absoluteLiteral = resolve(absoluteRoot, literal.path);
-      if (!isRegularFile(absoluteLiteral)) {
+      const generated = literal.generated || isGeneratedBuildOutputPath(literal.path);
+      if (!isRegularFile(absoluteLiteral)
+          && !(phase === 'source' && generated)) {
         if (literal.name.endsWith('_PATH')) continue;
         throw new DirectControlGraphError(`literal control file is missing: ${literal.path}`);
       }
@@ -1379,6 +1399,7 @@ export function deriveSearchRankingDirectControlGraph({
         edgeClass: 'literal-test-command-array',
         from: caller,
         provenance: { array: literal.name },
+        generated,
         queueCode: false,
       });
     }
@@ -1389,6 +1410,8 @@ export function deriveSearchRankingDirectControlGraph({
         edgeClass: 'literal-test-command-array',
         from: caller,
         provenance: { array: 'bounded-literal-file-operand' },
+        generated: generatedLiteralPaths.has(operandPath)
+          || isGeneratedBuildOutputPath(operandPath),
         queueCode: false,
       });
     }

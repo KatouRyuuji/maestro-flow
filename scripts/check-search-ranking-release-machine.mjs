@@ -82,7 +82,7 @@ const ATTESTATION_BOOTSTRAP_PATH =
   'scripts/search-ranking-module-attestation.mjs';
 const DYNAMIC_EDGE_MANIFEST_PATH =
   'scripts/search-ranking-probe-dynamic-edges.json';
-const PRODUCTION_ARTIFACTS = Object.freeze([
+export const PRODUCTION_ARTIFACTS = Object.freeze([
   'dist/src/search/evaluation/built-search-adapter.js',
   'dist/src/commands/search.js',
   'dist/src/graph/kg/query/search.js',
