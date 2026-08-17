@@ -1,12 +1,8 @@
-<!-- session-mode: inherited -->
+<!-- session-mode: none -->
 ---
 name: spec-add
 alias: spec-add
 ---
-
-<required_reading>
-@~/.maestro/workflows/run-mode.md
-</required_reading>
 
 # Workflow: spec-add
 
@@ -49,7 +45,7 @@ content  -- free-text description of the entry
 ## Prerequisites
 
 - Target specs directory must exist:
-  - `project`: `.workflow/specs/` (run `maestro spec init`, or `maestro run skill specs-setup` to also scan the codebase)
+  - `project`: `.workflow/specs/` (run `maestro spec init`, or Read `~/.maestro/workflows/specs-setup.md` to also scan the codebase)
   - `global`: `~/.maestro/specs/` (run `maestro spec init --scope global`)
   - `team`: `.workflow/collab/specs/` (run `maestro spec init --scope team`)
   - `personal`: `.workflow/collab/specs/{uid}/` (run `maestro spec init --scope personal`)

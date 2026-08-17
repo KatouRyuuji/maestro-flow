@@ -1,12 +1,8 @@
-<!-- session-mode: inherited -->
+<!-- session-mode: none -->
 ---
 name: spec-setup
 alias: spec-setup
 ---
-
-<required_reading>
-@~/.maestro/workflows/run-mode.md
-</required_reading>
 
 # Workflow: spec-setup
 
@@ -15,7 +11,7 @@ System specs initialization -- scan project structure, detect tech stack, genera
 ## Trigger
 
 - First `/maestro-init` (automatic)
-- Manual `maestro run skill specs-setup` (CLI-only seeding, without the codebase scan: `maestro spec init`)
+- Manual `Read ~/.maestro/workflows/specs-setup.md` (codebase scan); skeleton-only initialization uses `maestro spec init`
 
 ## Prerequisites
 

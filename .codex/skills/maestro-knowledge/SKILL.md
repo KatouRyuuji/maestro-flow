@@ -30,25 +30,25 @@ version: 0.5.76
 <purpose>
 Intent-driven knowledge-store management. No fixed grammar — state your intent; the command classifies it and runs the matching workflow or direct lifecycle command. Explicit keywords still work as deterministic shortcuts.
 
-| Operation | Keywords | Step |
-|-----------|----------|------|
-| audit | `audit` / 审计 / 清理 / prune / 检查知识库 | `knowledge-audit` |
+| Operation | Keywords | Execution document or CLI |
+|-----------|----------|--------------------------|
+| audit | `audit` / 审计 / 清理 / prune / 检查知识库 | `~/.maestro/workflows/knowledge-audit.md` |
 | review | `review` / 审查 / 证据 / 下一步 / 匹配 / 去重 / 冲突检测 / 裁决 / 候选 / backlog | `maestro knowledge review <session-id> [--refresh] [--resolve <id> --as <choice> --reason "..."]` |
 | stage | `stage` / 暂存 / candidate / 沉淀候选 / cited / validated / contradicted / 记录命中关系 | `maestro knowledge stage ... [--signal <signal> --signal-ids <ids>]` |
 | promote | `promote` / 晋升 / 发布候选 | `maestro knowledge promote ... [--all]` |
-| harvest | `harvest` / 提取 / 收割 / 从工件 | `harvest` |
-| wiki | `wiki` / 知识图谱 / 连接 / 摘要 / 健康 | `wiki-manage` / `wiki-connect` / `wiki-digest` |
-| extractors | `extractors` / 抽取器 / 生成抽取规则 | `extractors` |
-| domain | `domain` / 领域术语 / 注册术语 / term | `domain-add` |
+| harvest | `harvest` / 提取 / 收割 / 从工件 | `~/.maestro/workflows/harvest.md` |
+| wiki | `wiki` / 知识图谱 / 连接 / 摘要 / 健康 | `~/.maestro/workflows/wiki-manage.md` / `~/.maestro/workflows/wiki-connect.md` / `~/.maestro/workflows/wiki-digest.md` |
+| extractors | `extractors` / 抽取器 / 生成抽取规则 | `~/.maestro/workflows/extractors.md` |
+| domain | `domain` / 领域术语 / 注册术语 / term | `~/.maestro/workflows/domain-add.md` |
 </purpose>
 
 <dispatch>
-Classify the intent in `$ARGUMENTS` into one operation, then execute the chosen step (or the direct `maestro knowledge` CLI) and follow it completely. Step-based operations run inside a v3 Session: open one with `maestro session open "<objective>" --id <slug> --chain <step> --participant {p} --actor {a} --request-id {r} --reason "<reason>" --json` and dispatch with fenced `maestro run next --session {session_id} ... --expected-orchestration-revision {rev} --json` (or self-start with `maestro run create <step> [args...] --session {session_id} ... --json`); read context read-only with `maestro session status` / `maestro session resume-view`, and `maestro run complete {run_id} ... --advance` publishes outputs and auto-stages knowledge candidates. (v2's `run skill` dispatcher is removed from the v3 surface.)
+Classify the intent in `$ARGUMENTS` into one operation. For an operation mapped to an execution document, read the path shown in the table directly and follow it; do not create a Session or Run merely to load instructions. For direct lifecycle operations, invoke the listed `maestro knowledge` CLI command.
 
-1. Explicit keyword present → use its step or direct CLI lifecycle command (deterministic shortcut).
+1. Explicit keyword present → use its execution document or direct CLI lifecycle command (deterministic shortcut).
 2. Otherwise infer from the intent (see the table above), e.g. "审计/清理知识库" → audit, "从工件/session 提取" → harvest, "知识图谱/wiki 健康" → wiki, "注册术语 X" → domain.
 3. `review` / `stage` / `promote` map directly to the corresponding `maestro knowledge` CLI. `review --refresh` includes reconciliation; `review --resolve` includes disposition resolution; `stage --signal --signal-ids` includes signal recording. Preserve stable knowledge IDs, graph aliases, Run ID, Session ID, signal, candidate ID, disposition, target, and reason exactly; do not translate these operations into direct spec/knowhow writes.
-4. For wiki, classify the sub-action: `connect`/连接 → `wiki-connect`; `digest`/摘要 → `wiki-digest`; `health`/`search`/`cleanup`/`stats`/健康/检查/_(none)_ → `wiki-manage`.
+4. For wiki, classify the sub-action: `connect`/连接 → `~/.maestro/workflows/wiki-connect.md`; `digest`/摘要 → `~/.maestro/workflows/wiki-digest.md`; `health`/`search`/`cleanup`/`stats`/健康/检查/_(none)_ → `~/.maestro/workflows/wiki-manage.md`.
 5. Ambiguous → display the operation table and ask the user to pick.
 
 ### Routing rules

@@ -1,8 +1,4 @@
-<!-- session-mode: inherited -->
-
-<required_reading>
-@~/.maestro/workflows/run-mode.md
-</required_reading>
+<!-- session-mode: none -->
 # KnowHow Workflow
 
 ## Dual Store Architecture
@@ -37,7 +33,7 @@ All types share `WikiNodeType = 'knowhow'`. The `type` field distinguishes subty
 
 ---
 
-## Part A: KnowHow Management (internal — via `maestro run skill knowhow`)
+## Part A: KnowHow Management (direct document invocation)
 
 Operations: list, search, view, edit, delete, prune across both stores.
 

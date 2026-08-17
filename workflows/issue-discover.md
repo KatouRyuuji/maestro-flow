@@ -1,8 +1,4 @@
-<!-- session-mode: inherited -->
-
-<required_reading>
-@~/.maestro/workflows/run-mode.md
-</required_reading>
+<!-- session-mode: none -->
 # Workflow: Issue Discovery
 
 Automated issue discovery via multi-perspective analysis or prompt-driven exploration.

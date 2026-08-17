@@ -1,8 +1,4 @@
-<!-- session-mode: inherited -->
-
-<required_reading>
-@~/.maestro/workflows/run-mode.md
-</required_reading>
+<!-- session-mode: none -->
 # Wiki Connect Workflow
 
 Knowledge graph link discovery and health improvement. Analyzes the unified wiki index to find orphaned entries, missing connections, and transitive link gaps, then suggests or auto-applies new `related` links.

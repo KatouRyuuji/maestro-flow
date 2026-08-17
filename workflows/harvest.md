@@ -1,8 +1,4 @@
-<!-- session-mode: inherited -->
-
-<required_reading>
-@~/.maestro/workflows/run-mode.md
-</required_reading>
+<!-- session-mode: none -->
 # Harvest Workflow
 
 ## Argument Shape

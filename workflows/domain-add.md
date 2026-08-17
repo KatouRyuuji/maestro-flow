@@ -1,12 +1,8 @@
-<!-- session-mode: inherited -->
+<!-- session-mode: none -->
 ---
 name: domain-add
 alias: domain-add
 ---
-
-<required_reading>
-@~/.maestro/workflows/run-mode.md
-</required_reading>
 
 # Workflow: domain-add
 
