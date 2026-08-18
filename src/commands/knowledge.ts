@@ -778,6 +778,23 @@ export function registerKnowledgeCommand(program: Command): void {
           + (signalResult ? `; recorded ${signalResult.recorded} signal(s) as ${opts.signal}` : '')
           + `; review ${reviewTiming} with "maestro knowledge review ${result.session_id}".`,
         );
+        if (authority.kind !== 'run') {
+          // Run-less (session-source) staging has no `run check` finish checklist;
+          // inject the next-step card here so the agent knows the review protocol,
+          // entry-maintenance channels, and the evidence-freshness timing rule.
+          console.log(
+            'Next: run the review, present each candidate to the user (title/summary/evidence/matches/recommended disposition), '
+            + 'collect decisions, then promote --resolve — never hand the raw command to the user as the whole task.',
+          );
+          console.log(
+            'Entry maintenance: replaced canonical rules → `maestro spec supersede <old-sid> --by <new-sid>`; '
+            + 'both stay valid → `maestro spec conflict mark <file> <line> --note "<reason>"`.',
+          );
+          console.log(
+            'Timing: stage after evidence files are finalized — later edits to evidence invalidate the candidate (stale) '
+            + 'and require re-staging.',
+          );
+        }
       } catch (error) {
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
         process.exitCode = 1;
@@ -1038,6 +1055,12 @@ export function registerKnowledgeCommand(program: Command): void {
           console.log(
             `  ${item.candidate_id} → ${item.promoted_id} `
             + `(${item.target}, ${item.outcome})`,
+          );
+        }
+        if (result.promoted.length > 0) {
+          console.log(
+            'If a promoted candidate replaces an existing entry, mark the evolution chain: '
+            + '`maestro spec supersede <old-sid> --by <promoted-id>` (or `spec conflict mark <file> <line> --note` when both stay valid).',
           );
         }
         if (result.already_promoted.length > 0) {

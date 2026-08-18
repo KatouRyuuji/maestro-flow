@@ -1423,7 +1423,11 @@ export function resolveKnowledgeCandidate(
       .find(match => match.knowledge_id === targetId)
     : null;
   if (targetId && !targetMatch) {
-    throw new Error(`Resolution target ${targetId} is not an evidence-backed match for ${candidateId}`);
+    throw new Error(
+      `Resolution target ${targetId} is not an evidence-backed match for ${candidateId}; `
+      + 'use --as unique to promote without a target, then mark the replaced entry via '
+      + '"maestro spec supersede <old-sid> --by <new-sid>"',
+    );
   }
   if (choice === 'supersede' && targetMatch?.target !== candidate.target) {
     throw new Error('Supersession requires candidate and target to use the same knowledge store');
@@ -1608,7 +1612,11 @@ function resolveSessionKnowledgeCandidate(
     ? entry.matches.find(match => match.knowledge_id === targetId)
     : null;
   if (targetId && !targetMatch) {
-    throw new Error(`Resolution target ${targetId} is not an evidence-backed match for ${candidate.candidate_id}`);
+    throw new Error(
+      `Resolution target ${targetId} is not an evidence-backed match for ${candidate.candidate_id}; `
+      + 'use --as unique to promote without a target, then mark the replaced entry via '
+      + '"maestro spec supersede <old-sid> --by <new-sid>"',
+    );
   }
   if (choice === 'supersede' && targetMatch?.target !== candidate.target) {
     throw new Error('Supersession requires candidate and target to use the same knowledge store');

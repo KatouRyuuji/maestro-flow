@@ -2097,6 +2097,7 @@ export function promoteSessionKnowledge(
         blocking
           ? `Candidate ${blocked.candidate.candidate_id} promotion is ${blocking.promotion_eligibility} `
             + `(${blocking.disposition}); resolve it with 'maestro knowledge promote <session-id> --resolve <candidate-id> --as <choice> [--target <knowledge-id>] --reason "<reason>"' (or the deprecated review --resolve) first`
+            + '; suppressed candidates may remain in the backlog (durable) — resolution is optional'
           : `Candidate ${blocked.candidate.candidate_id} is backed only by transcript evidence; `
             + `resolve it with 'maestro knowledge promote <session-id> --resolve <candidate-id> --as unique --reason "<reason>"' `
             + 'before promotion (untrusted quotes require human review)',

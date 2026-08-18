@@ -1171,6 +1171,33 @@ Full knowledge lifecycle verified.
     expect(candidate?.origin).toBe('session');
     expect(candidate?.run_ids).toEqual([]);
   });
+
+  it('prints the run-less next-step card on session-source staging', async () => {
+    const created = createRun({
+      projectRoot,
+      command: 'knowledge-cli',
+      sessionId: 'session-source-card',
+      intent: 'session-source staging next-step card',
+    });
+    const srcDir = join(projectRoot, 'src');
+    mkdirSync(srcDir, { recursive: true });
+    writeFileSync(join(srcDir, 'session-source-card.ts'), '// reviewed CLI evidence\n', 'utf8');
+    await run(
+      'stage',
+      'knowhow',
+      'Session-source card recipe',
+      'Staged without a run should show the next-step card.',
+      '--session',
+      created.session_id,
+      '--evidence',
+      'src/session-source-card.ts:9',
+    );
+    const output = logs.join('\n');
+    expect(output).toContain('review after completion with "maestro knowledge review');
+    expect(output).toContain('Next: run the review, present each candidate to the user');
+    expect(output).toContain('maestro spec supersede <old-sid> --by <new-sid>');
+    expect(output).toContain('stage after evidence files are finalized');
+  });
 });
 
 describe('maestro knowledge promote --resolve inline adjudication', () => {
@@ -1376,5 +1403,34 @@ Use independent file writes for coordinated state.
     );
     expect(process.exitCode).toBe(1);
     expect(errors.join('\n')).toContain('mutually exclusive');
+  });
+
+  it('hints the supersede fallback when the resolution target is not an evidence-backed match', async () => {
+    const { session_id, candidate_id } = await stageAndSealSpecCandidate({
+      sessionId: 'promote-resolve-target-miss',
+      intent: 'supersede resolution with a non-matching target must hint the fallback',
+      title: 'Supersede fallback rule',
+      content: 'A target outside the reconciliation matches cannot be superseded inline.',
+      action: 'supersede',
+      category: 'arch',
+    });
+
+    await run(
+      'promote',
+      session_id,
+      '--resolve',
+      candidate_id,
+      '--as',
+      'supersede',
+      '--target',
+      'spec:project:not-in-matches',
+      '--reason',
+      'unrelated target',
+      '--json',
+    );
+    expect(process.exitCode).toBe(1);
+    expect(errors.join('\n')).toContain('is not an evidence-backed match');
+    expect(errors.join('\n')).toContain('use --as unique to promote without a target');
+    expect(errors.join('\n')).toContain('maestro spec supersede <old-sid> --by <new-sid>');
   });
 });
