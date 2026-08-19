@@ -227,6 +227,7 @@ Dominant step = the step whose keyword appears first or carries the primary verb
 | spec / rule / constraint | `/maestro-spec "<intent>"` (retained command) | Suggest exact slash command; user invokes it |
 | init / project setup | `/maestro-init ...` (retained command) | Suggest exact slash command; user invokes it |
 | security / OWASP | `/maestro-odyssey "<scope>" --mode security` (odyssey campaign) | Output invocation; user invokes it |
+| defensive programming / exception swallowing / silent failure / fallback risk / 防御性编程 / 兜底风险 | `/maestro-odyssey "<scope>" --mode defensive` (odyssey campaign) | Output invocation; user invokes it |
 | learn / explore code / follow | `/maestro-learn follow|investigate|decompose|consult ...` (retained command) | Suggest exact slash command; user invokes it |
 | UI design / design system / polish / impeccable | `/maestro-impeccable "<intent>" ...` (retained command) | Suggest exact slash command; user invokes it |
 | harvest / extract knowledge | `/maestro-knowledge "<intent>"` (retained command) | Suggest exact slash command; user invokes it |

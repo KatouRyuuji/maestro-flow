@@ -100,7 +100,7 @@ brainstorm → blueprint(opt) → analyze → plan → execute → verify
 
 适合大型调试、深度重构、UI 优化等需要持续迭代的场景：
 
-统一入口 `/maestro-odyssey <intent> --mode <name>`，六种模式：
+统一入口 `/maestro-odyssey <intent> --mode <name>`，七种模式：
 
 | 模式 | 循环模式 |
 |------|---------|
@@ -109,6 +109,7 @@ brainstorm → blueprint(opt) → analyze → plan → execute → verify
 | `--mode improve` | 多维审计 → 深度诊断 → 定向修复 → 验证 → 泛化 |
 | `--mode review` | 多维审查 → 定向修复 → 测试 → 泛化 → 知识沉淀 |
 | `--mode security` | 分层安全审计（OWASP + 依赖 + 密钥 + STRIDE），只读 |
+| `--mode defensive` | 业务锚点 → 反向切片 → 8 类防御节点扫描 → 正向传播 → 风险评分，只读 |
 | `--mode ui` | 视觉巡检 → 多维审计 → 发散探索 → 修复 → 验证 |
 
 Odyssey 持续运行直到验收标准达成，中间自适应调整策略，发现的知识自动持久化。

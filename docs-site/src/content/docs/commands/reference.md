@@ -160,13 +160,13 @@ Intent-driven knowledge-store management — audit, harvest, wiki health, knowle
 
 ### `maestro-odyssey`
 
-**Usage:** `<intent> --mode debug|improve|planex|review|security|ui [--auto] [-y] [-c]`
+**Usage:** `<intent> --mode debug|improve|planex|review|security|defensive|ui [--auto] [-y] [-c]`
 
-Long-running iterative cycle — one entry, six modes. Shared archaeology/audit → fix → verify → generalize → discover → persist.
+Long-running iterative cycle — one entry, seven modes. Shared archaeology/audit → fix → verify → generalize → discover → persist.
 
 **Invocation:** Explicit routing or user slash command
 
-**Subcommands:** `debug`, `improve`, `planex`, `review`, `security`, `ui`
+**Subcommands:** `debug`, `improve`, `planex`, `review`, `security`, `defensive`, `ui`
 
 ---
 

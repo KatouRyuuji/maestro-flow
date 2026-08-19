@@ -182,9 +182,9 @@
       "name": "maestro-odyssey",
       "file": ".claude/commands/maestro-odyssey.md",
       "category": "odyssey",
-      "description": "Long-running iterative cycle — one entry, six modes. Shared archaeology/audit → fix → verify → generalize → discover → persist.",
-      "argumentHint": "<intent> --mode debug|improve|planex|review|security|ui [--auto] [-y] [-c]",
-      "subcommands": ["debug", "improve", "planex", "review", "security", "ui"]
+      "description": "Long-running iterative cycle — one entry, seven modes. Shared archaeology/audit → fix → verify → generalize → discover → persist.",
+      "argumentHint": "<intent> --mode debug|improve|planex|review|security|defensive|ui [--auto] [-y] [-c]",
+      "subcommands": ["debug", "improve", "planex", "review", "security", "defensive", "ui"]
     },
     {
       "name": "maestro-learn",

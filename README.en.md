@@ -100,7 +100,7 @@ Three quality modes control pipeline depth:
 
 For large-scale debugging, deep refactoring, and UI optimization that require sustained iteration:
 
-One entry, `/maestro-odyssey <intent> --mode <name>`, with six modes:
+One entry, `/maestro-odyssey <intent> --mode <name>`, with seven modes:
 
 | Mode | Loop pattern |
 |------|-------------|
@@ -109,6 +109,7 @@ One entry, `/maestro-odyssey <intent> --mode <name>`, with six modes:
 | `--mode improve` | multi-dimension audit → deep diagnosis → targeted fix → verify → generalize |
 | `--mode review` | multi-dimension review → targeted fix → test → generalize → persist |
 | `--mode security` | tiered security audit (OWASP + deps + secrets + STRIDE), read-only |
+| `--mode defensive` | business-anchor → backward-slice → 8-pattern defensive scan → forward-propagate → risk score, read-only |
 | `--mode ui` | visual survey → audit → divergent exploration → fix → verify |
 
 Odyssey runs until acceptance criteria are met, adapting strategy mid-loop and auto-persisting discoveries as knowledge.
