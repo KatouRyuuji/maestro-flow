@@ -13,6 +13,14 @@ import { randomUUID } from 'node:crypto';
 
 export const KG_SYNC_STATE_SCHEMA_VERSION = 'kg-sync-state/2.0' as const;
 
+// NOTE: This versioning axis is intentionally independent of the DB
+// schema_versions table (KG_SCHEMA_VERSION). The sync-state is a JSON sidecar
+// file (.workflow/kg/sync-state.json), not a DB table, and evolves on its own
+// cadence. A DB at schema v8 may carry a legacy v1 sync-state (no
+// schema_version field) — readSyncState bridges this via requiresRefresh=true,
+// forcing one v2 sync before freshness is trusted. Do NOT assume the two axes
+// move in lockstep.
+
 export interface KgSyncWatermark {
   head: string | null;
   manifestDigest: string | null;

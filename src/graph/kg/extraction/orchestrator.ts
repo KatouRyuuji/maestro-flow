@@ -1,5 +1,11 @@
 // src/graph/kg/extraction/orchestrator.ts — 统一编排: code + knowledge → 同一 DB
 // 参考: plan-maestrograph.md 第三节 Unified Extraction Pipeline
+//
+// CYCLE GUARD: MaestroGraph (../engine.js) is imported TYPE-ONLY here and
+// via dynamic import() for value access. Do NOT add a value import of
+// MaestroGraph — engine.ts statically imports this module's
+// syncKnowledgeGraph via dynamic import, and a static back-edge would
+// re-materialize a circular dependency that fails at runtime (TDZ).
 
 import { isAbsolute, relative, resolve } from 'node:path';
 import { existsSync, realpathSync } from 'node:fs';
@@ -455,7 +461,9 @@ async function syncKnowledgeGraphUnlocked(
       );
       upsertMeta.run('last_sync_at', String(now), now);
       upsertMeta.run('last_sync_head', getGitHead(projectPath) ?? '', now);
-      upsertMeta.run('schema_version', String(getSchemaVersion(mg.getConnection().raw)), now);
+      // schema_version is the authoritative source in the schema_versions table
+      // (read via conn.getSchemaVersion / getHealth). Do NOT mirror it into
+      // project_metadata — it is write-only there (no reader) and can drift.
       const stats = mg.getStats();
       if (stats.detectedFrameworks.length > 0) {
         upsertMeta.run('detected_frameworks', JSON.stringify(stats.detectedFrameworks), now);
@@ -537,13 +545,3 @@ function ensureFtsConsistency(db: import('node:sqlite').DatabaseSync): void {
   `);
 }
 
-function getSchemaVersion(db: import('node:sqlite').DatabaseSync): number {
-  try {
-    const row = db.prepare(
-      "SELECT version FROM schema_versions ORDER BY version DESC LIMIT 1"
-    ).get() as { version?: number } | undefined;
-    return row?.version ?? 0;
-  } catch {
-    return 0;
-  }
-}

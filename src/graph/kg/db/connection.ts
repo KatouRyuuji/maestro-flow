@@ -2,10 +2,9 @@
 // D1.4: WAL + busy_timeout 5000 + FileLock 保护写操作
 
 import { DatabaseSync } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { readFileSync, existsSync, mkdirSync, statSync, realpathSync } from 'node:fs';
+import { resolve, dirname, relative, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { existsSync, mkdirSync, statSync } from 'node:fs';
 import type { Language, SourceType } from './types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -42,6 +41,9 @@ export class KgDatabaseConnection {
     this.transaction(() => {
       this.loadSchema();
       // 保留 v2 baseline，让 fresh DB 与历史 DB 统一走可审计的 migration 链。
+      // 同时补记 v1 审计行：fresh DB 直接加载了完整 schema.sql (含 v1 结构)，
+      // 但若不记 v1，schema_versions 会缺失该行，使审计历史不完整。
+      this.setSchemaVersion(1, 'Initial CodeGraph-compatible schema');
       this.setSchemaVersion(2, 'MaestroGraph unified schema v2');
     });
   }
@@ -65,6 +67,9 @@ export class KgDatabaseConnection {
     this.dbPath = dbPath;
     this.db = new DatabaseSync(dbPath, { readOnly: true });
     this.readOnly = true;
+    // busy_timeout 让只读连接在写事务 (sync) 持锁时等待而非立即 SQLITE_BUSY。
+    // read-only 安全，不改变数据。
+    this.db.exec('PRAGMA busy_timeout = 5000');
   }
 
   close(): void {
@@ -114,22 +119,32 @@ export class KgDatabaseConnection {
   }
 
   private loadSchema(): void {
-    // 尝试多个可能路径: 源码目录、dist 目录、上级目录
+    // 尝试多个可能路径: 源码目录、dist 目录、上级目录。
+    // 所有候选必须解析到包内 (pkgRoot 之下),拒绝项目本地 schema.sql 覆盖
+    // (CWE-494: 防止项目树中的伪造 schema.sql 被 exec 为任意 DDL/DML)。
+    const pkgRoot = resolve(__dirname, '..', '..', '..', '..'); // .../maestro-flow
     const candidates = [
       resolve(__dirname, '..', 'schema.sql'),           // src/graph/kg/schema.sql (源码)
       resolve(__dirname, 'schema.sql'),                  // dist/src/graph/kg/db/schema.sql (dist)
       resolve(__dirname, '..', '..', '..', '..', 'src', 'graph', 'kg', 'schema.sql'),  // 相对源码
     ];
     let sql: string | null = null;
+    let usedCandidate: string | null = null;
     for (const candidate of candidates) {
-      if (existsSync(candidate)) {
-        sql = readFileSync(candidate, 'utf-8');
-        break;
-      }
+      if (!existsSync(candidate)) continue;
+      const real = realpathSync(candidate);
+      // Reject any candidate that escapes the package root — a project-local
+      // schema.sql planted at a resolved path must not be executed.
+      const rel = relative(pkgRoot, real);
+      if (rel.startsWith('..') || isAbsolute(rel)) continue;
+      sql = readFileSync(real, 'utf-8');
+      usedCandidate = real;
+      break;
     }
     if (!sql) {
-      throw new Error(`MaestroGraph schema file not found. Tried: ${candidates.join(', ')}`);
+      throw new Error(`MaestroGraph schema file not found in package. Tried: ${candidates.join(', ')}`);
     }
+    void usedCandidate;
     this.raw.exec(sql);
   }
 
