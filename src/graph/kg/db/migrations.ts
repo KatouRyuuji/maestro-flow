@@ -414,8 +414,32 @@ export function applyMigrations(conn: KgDatabaseConnection): void {
 
   // schema 版本只能表示逻辑迁移已执行，不能证明 FTS5 物理表和同步触发器仍完整。
   // 已 stamp v8 的库每次打开只做 sqlite_master/config 轻量检查，健康时不产生写入。
-  if (currentVersion === 8
-    && (needsInternalFtsStorageRepair(conn) || !hasExpectedInternalFtsTriggers(conn))) {
-    conn.transaction(() => ensureInternalFtsV8(conn));
+  //
+  // 进程级缓存：同一个 DB path 在同一进程内验证一次健康后不再重复探针，
+  // 避免 hot path 上每次 open() 都跑 5 次 sqlite_master 查询 + 3 次触发器 SQL 归一化
+  // (2-4 次 open/prompt)。任何写迁移或重建路径应调用 invalidateFtsV8Cache。
+  if (currentVersion === 8) {
+    const dbPath = conn.path;
+    if (dbPath && ftsV8VerifiedPaths.has(dbPath)) {
+      return;
+    }
+    if (needsInternalFtsStorageRepair(conn) || !hasExpectedInternalFtsTriggers(conn)) {
+      conn.transaction(() => ensureInternalFtsV8(conn));
+    }
+    if (dbPath) ftsV8VerifiedPaths.add(dbPath);
   }
+}
+
+/**
+ * 进程级缓存：记录当前进程已验证 FTS v8 完整的 DB path。
+ * 仅在 applyMigrations 内部使用；migrations 模块外不应直接读写。
+ */
+const ftsV8VerifiedPaths: Set<string> = new Set();
+
+/**
+ * 在 migrations 之外重建 FTS 后调用，使下次 applyMigrations 重新验证。
+ * (例如 orchestrator.ensureFtsConsistency 重建了 FTS 表。)
+ */
+export function invalidateFtsV8Cache(dbPath: string): void {
+  ftsV8VerifiedPaths.delete(dbPath);
 }

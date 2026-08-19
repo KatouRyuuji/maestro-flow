@@ -9,6 +9,7 @@
 import { execSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 export const KG_SYNC_STATE_SCHEMA_VERSION = 'kg-sync-state/2.0' as const;
 
@@ -225,9 +226,9 @@ export function isSyncStateFresh(
 function writeStateDocument(projectPath: string, data: PersistedKgSyncStateV2): void {
   const path = getSyncStatePath(projectPath);
   mkdirSync(dirname(path), { recursive: true });
-  const tempPath = `${path}.tmp-${process.pid}-${Date.now()}`;
+  const tempPath = `${path}.tmp-${process.pid}-${Date.now()}-${randomUUID()}`;
   try {
-    writeFileSync(tempPath, JSON.stringify(data), 'utf-8');
+    writeFileSync(tempPath, JSON.stringify(data), { encoding: 'utf-8', mode: 0o600, flag: 'wx' });
     renameSync(tempPath, path);
   } catch (error) {
     try { unlinkSync(tempPath); } catch { /* temp may not exist */ }

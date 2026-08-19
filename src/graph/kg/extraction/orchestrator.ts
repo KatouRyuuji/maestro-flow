@@ -439,6 +439,10 @@ async function syncKnowledgeGraphUnlocked(
     // 历史版本曾无过滤全表回填导致两表各含全部节点 (99.6% 为跨类空壳), 此处重建为过滤版。
     try {
       ensureFtsConsistency(mg.getConnection().raw);
+      // ensureFtsConsistency may DROP+recreate FTS tables; invalidate the
+      // process-level v8-verification cache so the next open() re-checks.
+      const { invalidateFtsV8Cache } = await import('../db/index.js');
+      invalidateFtsV8Cache(mg.getConnection().path);
     } catch (err) {
       process.stderr.write(`[MaestroGraph] FTS consistency check failed: ${err instanceof Error ? err.message : String(err)}\n`);
     }

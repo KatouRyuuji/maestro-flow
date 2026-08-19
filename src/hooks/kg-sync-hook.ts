@@ -250,6 +250,22 @@ async function runSyncWorker(
   }
 }
 
+/**
+ * Strip env vars that could inject arbitrary code into the detached worker
+ * process (NODE_OPTIONS --require, NODE_PATH module resolution). PATH is kept
+ * so `git` remains resolvable, but git is invoked with explicit args (no
+ * shell), limiting PATH-injection to a malicious git binary — a lower risk
+ * that a future hardening pass can address by resolving git absolutely.
+ */
+function sanitizeWorkerEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const sanitized = { ...env };
+  delete sanitized.NODE_OPTIONS;
+  delete sanitized.NODE_PATH;
+  delete sanitized.NODE_CHANNEL_FD;
+  delete sanitized.ELECTRON_RUN_AS_NODE;
+  return sanitized;
+}
+
 function spawnSyncWorker(projectRoot: string, sessionId: string): SpawnWorkerResult {
   const current = inspectKgSyncWorkerMarker(projectRoot);
   if (current.exists && current.live) {
@@ -265,11 +281,11 @@ function spawnSyncWorker(projectRoot: string, sessionId: string): SpawnWorkerRes
       [entry, 'hooks', 'run', 'kg-sync'],
       {
         cwd: projectRoot,
-        env: {
+        env: sanitizeWorkerEnv({
           ...process.env,
           [WORKER_ENV]: '1',
           [WORKER_TOKEN_ENV]: token,
-        },
+        }),
         detached: true,
         stdio: ['pipe', 'ignore', 'ignore'],
         windowsHide: true,

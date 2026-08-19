@@ -74,9 +74,12 @@ export class KgDatabaseConnection {
         try {
           db.exec('ROLLBACK');
         } catch { /* ignore if no active transaction */ }
+        // PASSIVE checkpoint lets readers continue and does not force a full
+        // WAL merge — TRUNCATE blocks writers for 50-500ms on medium DBs and
+        // runs on every close() (2-4x per prompt). Auto-checkpointing handles
+        // routine merging; explicit TRUNCATE is reserved for maintenance.
         try {
-          db.exec('PRAGMA mmap_size = 0');
-          db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+          db.exec('PRAGMA wal_checkpoint(PASSIVE)');
         } catch (err) {
           console.warn('[MaestroGraph] checkpoint failed on close:', (err as Error).message);
         }
@@ -96,7 +99,13 @@ export class KgDatabaseConnection {
     db.exec('PRAGMA foreign_keys = ON');
     db.exec('PRAGMA journal_mode = WAL');
     db.exec('PRAGMA synchronous = NORMAL');
-    db.exec('PRAGMA cache_size = -64000');
+    // 16MB page cache (was -64000 = 64MB). Each open() allocates a fresh
+    // DatabaseSync + page cache; with 2-3 concurrent opens per prompt
+    // (worker + derived-index builder) the 64MB default multiplied to
+    // 128-192MB of heap on top of tree-sitter WASM + embedding model memory.
+    // 16MB is sufficient for typical codegraph queries; auto-checkpoint
+    // keeps the WAL bounded. Revisit if query-heavy paths show cache misses.
+    db.exec('PRAGMA cache_size = -16000');
     db.exec('PRAGMA temp_store = MEMORY');
     // Windows 上 mmap 会锁定文件阻止扩容，导致 WAL checkpoint 失败 → DB 损坏
     if (process.platform !== 'win32') {
@@ -158,7 +167,15 @@ export class KgDatabaseConnection {
       this.raw.exec('COMMIT');
       return result;
     } catch (err) {
-      this.raw.exec('ROLLBACK');
+      // SQLite may auto-rollback on certain errors (SQLITE_FULL, SQLITE_IOERR,
+      // constraint failures); a bare ROLLBACK then throws 'no transaction is
+      // active', masking the original root cause. Guard the rollback so the
+      // original error propagates cleanly.
+      try {
+        this.raw.exec('ROLLBACK');
+      } catch {
+        /* transaction may have auto-rolled back; propagate original error */
+      }
       throw err;
     }
   }
@@ -216,7 +233,13 @@ export function sqliteTransaction<T>(db: DatabaseSync, fn: () => T): T {
     db.exec('COMMIT');
     return result;
   } catch (err) {
-    db.exec('ROLLBACK');
+    // Guard rollback so an auto-rolled-back transaction does not mask the
+    // original error with 'no transaction is active'.
+    try {
+      db.exec('ROLLBACK');
+    } catch {
+      /* transaction may have auto-rolled back; propagate original error */
+    }
     throw err;
   }
 }

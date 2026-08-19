@@ -1,7 +1,7 @@
 // src/graph/kg/engine.ts — MaestroGraph 主入口类
 // 参考: plan-maestrograph.md Gap C8 — CodeGraph Public Lifecycle API
 
-import { existsSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   KgDatabaseConnection,
@@ -128,10 +128,21 @@ export class MaestroGraph {
     const mg = new MaestroGraph(projectRoot);
     const dbPath = getKgDatabasePath(projectRoot);
     mg.conn = new KgDatabaseConnection();
-    mg.conn.initialize(dbPath);
-    applyMigrations(mg.conn);
-    mg.queries = new KgQueryBuilder(mg.conn);
-    return mg;
+    try {
+      mg.conn.initialize(dbPath);
+      applyMigrations(mg.conn);
+      mg.queries = new KgQueryBuilder(mg.conn);
+      return mg;
+    } catch (error) {
+      // initialize() has already created the DB file (and may have committed
+      // the v2 schema stamp) before applyMigrations threw. A half-created
+      // maestro.db would make isInitialized() return true via existsSync,
+      // permanently blocking future auto-init. Clean it up so the next attempt
+      // starts fresh, and close the leaked connection first.
+      mg.close();
+      await removePartialDatabase(dbPath);
+      throw error;
+    }
   }
 
   static async open(projectRoot: string): Promise<MaestroGraph> {
@@ -168,16 +179,33 @@ export class MaestroGraph {
   }
 
   static openSync(projectRoot: string): MaestroGraph | null {
+    const dbPath = getKgDatabasePath(resolve(projectRoot));
+    if (!existsSync(dbPath)) return null;
+    // DB exists but may be corrupt/unmigratable. Distinguish that from a simple
+    // 'not initialized' so callers do not silently degrade on a corrupt file.
     try {
-      const dbPath = getKgDatabasePath(resolve(projectRoot));
-      if (!existsSync(dbPath)) return null;
       const mg = new MaestroGraph(projectRoot);
       mg.conn = new KgDatabaseConnection();
       mg.conn.open(dbPath);
-      try { applyMigrations(mg.conn); } catch { /* best-effort */ }
+      try {
+        applyMigrations(mg.conn);
+      } catch (migrationError) {
+        // A migration failure leaves the DB partially migrated or FTS-corrupt;
+        // querying it would surface cryptic SQLite errors far from the cause.
+        // Close the connection and surface the failure as null (not-initialized)
+        // so callers fall back instead of operating on a broken graph.
+        mg.close();
+        process.stderr.write(
+          `[MaestroGraph] openSync migration failed, graph unavailable: ${migrationError instanceof Error ? migrationError.message : String(migrationError)}\n`,
+        );
+        return null;
+      }
       mg.queries = new KgQueryBuilder(mg.conn);
       return mg;
-    } catch {
+    } catch (error) {
+      process.stderr.write(
+        `[MaestroGraph] openSync failed: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
       return null;
     }
   }
@@ -663,4 +691,19 @@ function sortNodesById(nodes: UnifiedNode[]): UnifiedNode[] {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Remove a partially-created maestro.db and its WAL/SHM sidecars so a failed
+ * init does not leave a file that would make isInitialized() return true and
+ * permanently block auto-init. Best-effort: missing files are not an error.
+ */
+async function removePartialDatabase(dbPath: string): Promise<void> {
+  for (const path of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+    try {
+      await rmSync(path, { force: true });
+    } catch {
+      // Best-effort — a locked or missing file must not mask the original error.
+    }
+  }
 }
