@@ -149,3 +149,97 @@ describe('resolveCodeReferences', () => {
     expect(after.n).toBe(before.n);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Function-granularity reattribution: when nodes carry start_line/end_line,
+// a call edge's source is reattributed from the <file> node to the function
+// that lexically encloses the call line. This is what enables per-function
+// callers/callees/impact traversal (defensive-programming backward-slice +
+// forward-propagate). Falls back to file-node source when columns are absent
+// or no enclosing function spans the call line.
+// ---------------------------------------------------------------------------
+describe('resolveCodeReferences — function-granularity call reattribution', () => {
+  let rdb: DatabaseSync;
+  let rProjectRoot: string;
+  let simFile: string;
+
+  beforeAll(() => {
+    rProjectRoot = mkdtempSync(join(tmpdir(), 'kg-reattrib-'));
+    mkdirSync(join(rProjectRoot, 'src'), { recursive: true });
+    writeFileSync(join(rProjectRoot, 'src', 'simulation_adapter.py'), '');
+    simFile = join(rProjectRoot, 'src', 'simulation_adapter.py').replace(/\\/g, '/');
+
+    rdb = new DatabaseSync(':memory:');
+    rdb.exec(`
+      CREATE TABLE nodes (
+        id TEXT PRIMARY KEY, name TEXT, kind TEXT, file_path TEXT, source_type TEXT,
+        is_exported INTEGER DEFAULT 0, status TEXT DEFAULT 'active', definition TEXT, body TEXT,
+        aliases TEXT, keywords TEXT,
+        start_line INTEGER, end_line INTEGER
+      );
+      CREATE TABLE edges (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT, target TEXT, kind TEXT,
+        metadata TEXT, line INTEGER, col INTEGER, provenance TEXT
+      );
+      CREATE TABLE unresolved_refs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, from_node_id TEXT, reference_name TEXT,
+        reference_kind TEXT, line INTEGER, col INTEGER, candidates TEXT,
+        file_path TEXT, language TEXT
+      );
+    `);
+
+    const fileNode = makeFileNodeId(simFile);
+    const runSim = makeCodeNodeId(simFile, 'run_simulation');
+    const adapter = makeCodeNodeId(simFile, 'simulation_adapter');
+    const obj = makeCodeNodeId(simFile, 'objective');
+    const evalFn = makeCodeNodeId(simFile, 'evaluate');
+    const insert = rdb.prepare(
+      `INSERT INTO nodes (id, name, kind, file_path, source_type, status, start_line, end_line) VALUES (?, ?, ?, ?, 'codegraph', 'active', ?, ?)`
+    );
+    insert.run(fileNode, 'simulation_adapter.py', 'file', simFile, null, null);
+    insert.run(runSim, 'run_simulation', 'function', simFile, 15, 22);
+    insert.run(adapter, 'simulation_adapter', 'function', simFile, 25, 32);
+    insert.run(makeCodeNodeId(simFile, 'result_parser'), 'result_parser', 'function', simFile, 35, 38);
+    insert.run(obj, 'objective', 'function', simFile, 41, 46);
+    insert.run(evalFn, 'evaluate', 'function', simFile, 49, 51);
+
+    // calls: simulation_adapter (L30) calls run_simulation; objective (L44) calls
+    // simulation_adapter + result_parser; evaluate (L51) calls objective.
+    const ref = rdb.prepare(
+      `INSERT INTO unresolved_refs (from_node_id, reference_name, reference_kind, line, col, file_path, language) VALUES (?, ?, 'calls', ?, 1, ?, 'python')`
+    );
+    ref.run(fileNode, 'run_simulation', 30, simFile);
+    ref.run(fileNode, 'result_parser', 44, simFile);
+    ref.run(fileNode, 'simulation_adapter', 44, simFile);
+    ref.run(fileNode, 'objective', 51, simFile);
+  });
+
+  afterAll(() => { try { rmSync(rProjectRoot, { recursive: true, force: true }); } catch { /* ignore */ } });
+
+  it('reattributes call-edge source to the enclosing function node', () => {
+    const result = resolveCodeReferences(rdb, { projectPath: rProjectRoot });
+    const calls = result.edges.filter(e => e.kind === 'calls');
+    // source should now be the enclosing function, not the <file> node
+    const fileNode = makeFileNodeId(simFile);
+    const byTarget = new Map(calls.map(c => [c.target, c.source]));
+    // run_simulation called at L30 inside simulation_adapter (L25-32)
+    expect(byTarget.get(makeCodeNodeId(simFile, 'run_simulation'))).toBe(makeCodeNodeId(simFile, 'simulation_adapter'));
+    // result_parser called at L44 inside objective (L41-46)
+    expect(byTarget.get(makeCodeNodeId(simFile, 'result_parser'))).toBe(makeCodeNodeId(simFile, 'objective'));
+    // simulation_adapter called at L44 inside objective (L41-46)
+    expect(byTarget.get(makeCodeNodeId(simFile, 'simulation_adapter'))).toBe(makeCodeNodeId(simFile, 'objective'));
+    // objective called at L51 inside evaluate (L49-51)
+    expect(byTarget.get(makeCodeNodeId(simFile, 'objective'))).toBe(makeCodeNodeId(simFile, 'evaluate'));
+    // NONE of the call edges should still source from the <file> node
+    expect(calls.every(c => c.source !== fileNode)).toBe(true);
+  });
+
+  it('enables function-level callers (backward slice)', () => {
+    resolveCodeReferences(rdb, { projectPath: rProjectRoot });
+    // callers of result_parser = [objective]
+    const callers = rdb.prepare(
+      `SELECT source FROM edges WHERE kind='calls' AND target=? AND provenance='code-resolution'`
+    ).all(makeCodeNodeId(simFile, 'result_parser')) as Array<{ source: string }>;
+    expect(callers.map(c => c.source)).toContain(makeCodeNodeId(simFile, 'objective'));
+  });
+});

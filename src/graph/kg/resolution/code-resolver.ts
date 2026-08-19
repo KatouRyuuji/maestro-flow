@@ -91,6 +91,55 @@ export function resolveCodeReferences(
     const names = [...new Set(callsRefs.map(r => r.reference_name))];
     const byName = new Map<string, Array<{ id: string; file_path: string; kind: string }>>();
 
+    // ── Reattribution index: map (file, line) → enclosing function node id ──
+    // All language extractors persist call refs with fromSymbolId = file node, so
+    // call edges would all be file→symbol and per-function callers/callees/impact
+    // traversal (needed for defensive-programming backward-slice + forward-propagate)
+    // would be impossible. Reattribute each call's source to the function node that
+    // lexically encloses the call line, when one exists; otherwise fall back to the
+    // original file node (preserves prior behavior for module-level / unresolved calls).
+    const enclosingFnByFile = new Map<string, Array<{ id: string; startLine: number; endLine: number }>>();
+    const enclosingFnFiles = [...new Set(callsRefs.map(r => r.file_path.replace(/\\/g, '/')))];
+    if (enclosingFnFiles.length > 0) {
+      // Schema-resilience: the production schema (v8) has start_line/end_line on nodes,
+      // but minimal test stubs may not. Detect column presence once and skip
+      // reattribution (falling back to file-node source) when they are absent —
+      // preserving prior behavior in that case.
+      const nodeCols = db.prepare('PRAGMA table_info(nodes)').all() as unknown as Array<{ name: string }>;
+      const colSet = new Set(nodeCols.map(c => c.name));
+      if (colSet.has('start_line') && colSet.has('end_line')) {
+        const fnPlaceholders = enclosingFnFiles.map(() => '?').join(',');
+        const fnRows = db.prepare(
+          `SELECT id, file_path, start_line, end_line FROM nodes
+           WHERE source_type = 'codegraph'
+             AND kind IN ('function', 'method')
+             AND start_line IS NOT NULL AND end_line IS NOT NULL
+             AND file_path IN (${fnPlaceholders})`
+        ).all(...enclosingFnFiles) as unknown as Array<{ id: string; file_path: string; start_line: number; end_line: number }>;
+        for (const row of fnRows) {
+          const norm = row.file_path.replace(/\\/g, '/');
+          let list = enclosingFnByFile.get(norm);
+          if (!list) { list = []; enclosingFnByFile.set(norm, list); }
+          list.push({ id: row.id, startLine: row.start_line, endLine: row.end_line });
+        }
+        // Sort by start_line so the innermost (last-starting) enclosing fn wins on overlap.
+        for (const list of enclosingFnByFile.values()) list.sort((a, b) => a.startLine - b.startLine);
+      }
+    }
+    const enclosingFnOf = (ref: UnresolvedRefRow): string => {
+      const norm = ref.file_path.replace(/\\/g, '/');
+      const fns = enclosingFnByFile.get(norm);
+      if (!fns || ref.line == null) return ref.from_node_id;
+      // Innermost enclosing: greatest startLine <= ref.line with endLine >= ref.line.
+      let best: { id: string; startLine: number; endLine: number } | undefined;
+      for (const fn of fns) {
+        if (fn.startLine <= ref.line && fn.endLine >= ref.line) {
+          if (!best || fn.startLine > best.startLine) best = fn;
+        }
+      }
+      return best ? best.id : ref.from_node_id;
+    };
+
     const BATCH = 500;
     // extends/implements 引用允许 struct/trait/protocol 目标 (Go 嵌入/Rust trait/ObjC 协议);
     // calls 引用排除低级符号避免噪声。
@@ -130,10 +179,13 @@ export function resolveCodeReferences(
         const edgeKind = ref.reference_kind === 'extends' || ref.reference_kind === 'implements'
           ? (ref.reference_kind as 'extends' | 'implements')
           : 'calls';
+        // Reattribute source from <file> to the lexically enclosing function, so
+        // callers/callees/impact traversals operate at function granularity.
+        const sourceNodeId = enclosingFnOf(ref);
         plannedEdges.push({
           reference: ref,
           edge: {
-            source: ref.from_node_id,
+            source: sourceNodeId,
             target: target.id,
             kind: edgeKind,
             provenance: 'code-resolution',
