@@ -2,7 +2,7 @@
 // 代码提取编排器 — 扫描源文件 → 语言检测 → tree-sitter 解析 → 生成 nodes + edges
 // 参考: codegraph extraction pipeline
 
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync, lstatSync } from 'node:fs';
 import { basename, resolve, extname, join, relative } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import type { UnifiedNode, UnifiedEdge, FileRecord, ExtractionResult, SourceType, Language } from '../../db/types.js';
@@ -282,7 +282,7 @@ function prepareCodeScanPlan(options: ScanOptions): CodeScanPlan {
       const fullPath = join(dir, entry);
       let stat;
       try {
-        stat = statSync(fullPath);
+        stat = lstatSync(fullPath);
       } catch (error) {
         if (options.failOnSkippedFile) {
           throw new Error(`Code scan failed to inspect directory entry: ${fullPath}`, { cause: error });
@@ -290,7 +290,11 @@ function prepareCodeScanPlan(options: ScanOptions): CodeScanPlan {
         continue;
       }
 
-      if (stat.isDirectory()) {
+      // Use lstatSync (not statSync) so symlinks are not followed — a circular
+      // symlink would otherwise cause unbounded recursion (CWE-674). Symlinked
+      // directories are skipped; symlinked files fall through to collectFile
+      // which reads via the safe read path.
+      if (stat.isDirectory() && !stat.isSymbolicLink()) {
         if (!scope.ignores(fullPath, true)) walkDir(fullPath);
         continue;
       }
