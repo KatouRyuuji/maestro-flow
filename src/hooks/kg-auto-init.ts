@@ -20,6 +20,13 @@ export interface KgAutoInitResult {
   durationMs?: number;
 }
 
+class AlreadyInitializedError extends Error {
+  constructor() {
+    super('MaestroGraph already initialized by a concurrent auto-init');
+    this.name = 'AlreadyInitializedError';
+  }
+}
+
 export async function evaluateKgAutoInit(
   projectPath: string,
   sessionId: string,
@@ -40,29 +47,36 @@ export async function evaluateKgAutoInit(
     }
 
     const start = Date.now();
-    // Hold the same FileLock syncKnowledgeGraph uses so DB creation, schema
-    // load, and migrations are mutually exclusive with any concurrent
-    // auto-init or sync. Without this, two hooks could both pass
-    // isInitialized()=false and race on schema/migration application,
-    // corrupting FTS shadow tables.
+    // Protect ONLY MaestroGraph.init() (DB create + schema + migrations) with
+    // the same FileLock syncKnowledgeGraph uses, so two concurrent auto-init
+    // hooks cannot race on schema/migration application and corrupt FTS shadow
+    // tables. mg.sync() is invoked OUTSIDE this lock because syncKnowledgeGraph
+    // acquires the SAME lock internally — wrapping sync() here would deadlock
+    // (FileLock is not re-entrant). The gap between init and sync is safe: init
+    // is idempotent for an existing file, and sync serializes itself.
     const { FileLock } = await import('../graph/kg/sync/file-lock.js');
     const lockPath = resolve(projectPath, '.workflow', 'kg', 'maestro.db.lock');
-    return await new FileLock(lockPath, { timeoutMs: 30_000 }).withLock(async () => {
+    const mg = await new FileLock(lockPath, { timeoutMs: 30_000 }).withLock(async () => {
       // Re-check inside the lock: a concurrent init may have created the DB
       // while we waited.
       if (MaestroGraph.isInitialized(projectPath)) {
-        return { initialized: false, reason: 'already-initialized' };
+        throw new AlreadyInitializedError();
       }
-      const mg = await MaestroGraph.init(projectPath);
-      try {
-        await mg.sync();
-      } finally {
-        mg.close();
-      }
-      kgInitGuard.markDone(sessionId);
-      return { initialized: true, durationMs: Date.now() - start };
+      return await MaestroGraph.init(projectPath);
     });
+    try {
+      await mg.sync();
+    } finally {
+      mg.close();
+    }
+    kgInitGuard.markDone(sessionId);
+    return { initialized: true, durationMs: Date.now() - start };
   } catch (error) {
+    // A concurrent auto-init created the DB while we held the lock — not an
+    // error, just nothing to do.
+    if (error instanceof AlreadyInitializedError) {
+      return { initialized: false, reason: 'already-initialized' };
+    }
     // Failed/racing work must stay immediately retryable (CooldownGuard.clear
     // contract) — do NOT markDone on failure; that would suppress retry for
     // the full 5-minute cooldown window and hide transient failures.
