@@ -332,7 +332,15 @@ describe('linked CodeGraph search', () => {
       expect(migration).not.toHaveBeenCalled();
       expect(sync).not.toHaveBeenCalled();
       expect(embeddings).not.toHaveBeenCalled();
-      expect(exec).not.toHaveBeenCalled();
+      // read-only connections intentionally set `PRAGMA busy_timeout = 5000`
+      // (D1.4: wait on a writer-held lock instead of failing SQLITE_BUSY);
+      // the read path must do no migration/sync/embeddings work, so exec is
+      // allowed only for that benign busy_timeout pragma.
+      expect(
+        exec.mock.calls.map(([sql]) => String(sql)).filter(
+          (sql) => !/PRAGMA\s+busy_timeout/i.test(sql),
+        ),
+      ).toEqual([]);
     } finally {
       writer.close();
     }
