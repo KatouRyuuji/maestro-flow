@@ -794,6 +794,11 @@ export function registerKnowledgeCommand(program: Command): void {
             'Timing: stage after evidence files are finalized — later edits to evidence invalidate the candidate (stale) '
             + 'and require re-staging.',
           );
+          console.log(
+            'Fast path: for a standalone insight that needs no Run/Session binding or review, skip staging and write it '
+            + 'directly with `maestro knowhow add --type <type> --title "<title>" --body-file <path>` — no --evidence, '
+            + 'no promote cycle.',
+          );
         }
       } catch (error) {
         console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);

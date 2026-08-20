@@ -1197,6 +1197,7 @@ Full knowledge lifecycle verified.
     expect(output).toContain('Next: run the review, present each candidate to the user');
     expect(output).toContain('maestro spec supersede <old-sid> --by <new-sid>');
     expect(output).toContain('stage after evidence files are finalized');
+    expect(output).toContain('Fast path: for a standalone insight that needs no Run/Session binding');
   });
 });
 
