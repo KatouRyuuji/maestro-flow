@@ -1,6 +1,6 @@
 ---
 name: odyssey-defensive
-description: Odyssey defensive mode — read-only defensive-programming risk audit driven by business anchors: identify critical business sinks, backward-slice to defensive nodes, scan 8 defensive patterns (broad catch, exception swallowing, defaults, null fallback, auto-correction/clamp, silent conversion, duplicate constraints, duplicate defaults), forward-propagate to business sinks, classify exception semantics, and score risk R=S×P×B×H. Produces severity matrix report with full propagation chains. No fix loop.
+description: "Odyssey defensive mode — read-only defensive-programming risk audit driven by business anchors: identify critical business sinks, backward-slice to defensive nodes, scan 8 defensive patterns (broad catch, exception swallowing, defaults, null fallback, auto-correction/clamp, silent conversion, duplicate constraints, duplicate defaults), forward-propagate to business sinks, classify exception semantics, and score risk R=S×P×B×H. Produces severity matrix report with full propagation chains. No fix loop."
 argument-hint: '<target: file|dir|HEAD|staged|phase#|PR#> [--tier quick|standard|deep] [--sink-depth <list>] [--skip-generalize] [-y] [-c]'
 contract:
   consumes:
