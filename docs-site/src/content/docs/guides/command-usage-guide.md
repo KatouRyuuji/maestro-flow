@@ -11,7 +11,7 @@ Maestro 命令系统包含 **18 个 slash 命令**，另有由编排器在 Sessi
 | **核心编排** | 6 | `/maestro`、`/maestro-ralph`、`/maestro-next`、`/maestro-companion`、`/maestro-init`、`/maestro-session-seal` | 意图到链规划、闭环策略、路由、轻量执行、项目初始化、Session 封存 |
 | **Issue 与知识** | 4 | `/maestro-issue`、`/maestro-knowledge`、`/maestro-knowhow`、`/maestro-learn` | Issue 生命周期与发现；知识存储 audit/harvest/wiki/domain；knowhow 捕获；学习工具集 |
 | **规范** | 1 | `/maestro-spec` | 约束规则录入（初始化 `maestro spec init`、加载 `maestro spec load`、移除 step `specs-remove`） |
-| **深度循环与 UI** | 2 | `/maestro-odyssey`、`/maestro-impeccable` | 六模式长周期迭代（debug/improve/planex/review/security/ui）；UI 设计与 codify |
+| **深度循环与 UI** | 2 | `/maestro-odyssey`、`/maestro-impeccable` | 七模式长周期迭代（debug/improve/planex/review/security/defensive/ui）；UI 设计与 codify |
 | **Worktree** | 2 | `/maestro-fork`、`/maestro-merge` | 创建与合并并行开发 worktree |
 | **系统** | 3 | `/maestro-update`、`/maestro-overlay`、`/maestro-guard` | 自更新、命令 overlay、编辑边界 |
 
@@ -34,7 +34,7 @@ graph TB
     end
 
     subgraph campaign["长跑入口（用户可敲）"]
-        OD["/maestro-odyssey --mode debug|improve|planex|review|security|ui"]
+        OD["/maestro-odyssey --mode debug|improve|planex|review|security|defensive|ui"]
         RA["/maestro-ralph 闭环自治"]
         IMP["/maestro-impeccable UI 精修"]
     end
@@ -331,7 +331,7 @@ maestro session status                                  # 项目仪表板
 
 ## 七、奥德赛系列（Odyssey）
 
-学术研究与深度改进工作流，5 个命令覆盖调试、改进、需求实现、代码审查、UI 优化。
+学术研究与深度改进工作流，统一入口 `/maestro-odyssey --mode <name>` 派发 7 个模式：调试、改进、需求实现、代码审查、安全审计、防御性编程风险审查、UI 优化。所有模式共享后半段（泛化 → 发现 → 沉淀），前半段按模式各自有发现 + 审计 + （可选）修复 + 验证状态机。
 
 ### 命令总览
 
@@ -341,6 +341,8 @@ maestro session status                                  # 项目仪表板
 | `/maestro-odyssey --mode improve` | 代码库质量提升 | 调查 → 6 维审查 → 诊断 → 修复 → 验证 → 泛化 → 发现 → 沉淀 |
 | `/maestro-odyssey --mode planex` | 需求驱动迭代实现 | 解析需求 → 验收标准 → 规划 → 执行 → 验证 → 修复循环 → 泛化 |
 | `/maestro-odyssey --mode review` | 深度代码审查 + 修复 | 考古 → 探索 → 多维审查 → 穷尽修复 → 确认 → 泛化 → 发现 → 沉淀 |
+| `/maestro-odyssey --mode security` | 只读分层安全审计 | 侦察 → 扫描（OWASP + 依赖 + 密钥 + CI/CD + STRIDE + git）→ 报告 → 泛化 → 发现 → 沉淀 |
+| `/maestro-odyssey --mode defensive` | 只读防御性编程风险审查 | 锚点 → 切片 → 8 类防御节点扫描 → 正向传播 → 风险评分 → 报告 → 泛化 → 发现 → 沉淀 |
 | `/maestro-odyssey --mode ui` | UI 视觉体验优化 | 调查 → 6 维审查 → 发散探索 → 修复 → 验证 → 泛化 → 发现 → 沉淀 |
 
 ### 共同特征
@@ -449,6 +451,42 @@ maestro session status                                  # 项目仪表板
 | `--skip-generalize` | 跳过泛化 |
 
 **独特阶段**：S_DIVERGE（发散探索）— 超越缺陷修复，探索"什么会让这个界面令人愉悦？"
+
+### `/maestro-odyssey --mode security` — 只读分层安全审计
+
+```bash
+/maestro-odyssey --mode security src/api/                  # 审计指定模块
+/maestro-odyssey --mode security --tier deep              # 深度审计（含 STRIDE + git 历史）
+/maestro-odyssey --mode security --skip-generalize        # 仅审计 + 报告
+```
+
+| 参数 | 说明 |
+|------|------|
+| `<target>` | 模块/目录路径 / `HEAD` / `staged` / PR 号 |
+| `--tier quick\|standard\|deep` | 审计深度：quick（OWASP+依赖）/ standard（+密钥+CI/CD）/ deep（+STRIDE+git 历史） |
+| `--skip-generalize` | 跳过泛化 |
+
+**只读不变量**：严禁修改源码；产出 severity matrix 报告，修复路由到 `--mode improve` 或 `--mode debug`。详见 [安全审计指南](/guides/security-audit/)。
+
+### `/maestro-odyssey --mode defensive` — 只读防御性编程风险审查
+
+```bash
+/maestro-odyssey --mode defensive src/simulation/         # 审计指定模块
+/maestro-odyssey --mode defensive --tier deep            # 深度审计（含历史考古 + 跨模块）
+/maestro-odyssey --mode defensive --sink-depth 1           # 聚焦一级关键 Sink
+/maestro-odyssey --mode defensive --skip-generalize      # 仅审查 + 报告
+```
+
+| 参数 | 说明 |
+|------|------|
+| `<target>` | 文件/目录路径 / `HEAD` / `staged` / phase 号 / PR 号 |
+| `--tier quick\|standard\|deep` | 审计深度：quick（4 类核心模式）/ standard（全 8 类 + 一致性 + 异常分类）/ deep（+历史考古 + 单位校验 + 全 4 类异常） |
+| `--sink-depth <list>` | Sink 层聚焦：`1`\|`2`\|`3`\|`all`（默认 all） |
+| `--skip-generalize` | 跳过泛化 |
+
+**核心方法论**：以业务关键结果为锚点 → 反向切片定位防御节点 → 正向传播验证业务影响 → 重点检查异常状态是否被转换成合法状态 → 风险评分 `R = S × P × B × H`。8 类防御模式：宽泛异常捕获 / 异常吞噬 / 默认值 / 空值兜底 / 自动修正（clamp）/ 静默转换 / 重复约束 / 默认配置重复。
+
+**只读不变量**：严禁修改源码；产出带完整传播链的 severity matrix 报告（§14 标准格式），修复路由到 `--mode improve`，根因定位路由到 `--mode debug`。
 
 ---
 

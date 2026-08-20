@@ -156,7 +156,7 @@ Intent-driven knowledge-store management — audit, harvest, wiki health, knowle
 
 ## Odyssey
 
-*Long-running iterative cycles — one entry, five modes (debug|improve|planex|review|ui)*
+*Long-running iterative cycles — one entry, seven modes (debug|improve|planex|review|security|defensive|ui)*
 
 ### `maestro-odyssey`
 

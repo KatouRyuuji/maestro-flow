@@ -32,7 +32,7 @@
     {
       "id": "odyssey",
       "name": "Odyssey",
-      "description": "Long-running iterative cycles — one entry, five modes (debug|improve|planex|review|ui)",
+      "description": "Long-running iterative cycles — one entry, seven modes (debug|improve|planex|review|security|defensive|ui)",
       "icon": "mountain",
       "color": "rose"
     },

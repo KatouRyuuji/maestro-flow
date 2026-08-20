@@ -11,7 +11,7 @@ The Maestro command system exposes **18 slash commands**, plus first-tier steps 
 | **Core Orchestration** | 6 | `/maestro`, `/maestro-ralph`, `/maestro-next`, `/maestro-companion`, `/maestro-init`, `/maestro-session-seal` | Intent-to-chain planning, closed-loop policy, routing, lightweight execution, project init, Session seal |
 | **Issues & Knowledge** | 4 | `/maestro-issue`, `/maestro-knowledge`, `/maestro-knowhow`, `/maestro-learn` | Issue lifecycle and discovery; knowledge-store audit/harvest/wiki/domain; knowhow capture; learning toolkit |
 | **Specification** | 1 | `/maestro-spec` | Records constraint rules (init via `maestro spec init`, load via `maestro spec load`, remove via step `specs-remove`) |
-| **Deep Cycle & UI** | 2 | `/maestro-odyssey`, `/maestro-impeccable` | Six-mode long-running iteration (debug/improve/planex/review/security/ui); UI design and codify |
+| **Deep Cycle & UI** | 2 | `/maestro-odyssey`, `/maestro-impeccable` | Seven-mode long-running iteration (debug/improve/planex/review/security/defensive/ui); UI design and codify |
 | **Worktree** | 2 | `/maestro-fork`, `/maestro-merge` | Create and merge parallel-development worktrees |
 | **System** | 3 | `/maestro-update`, `/maestro-overlay`, `/maestro-guard` | Self-update, command overlays, guard rules |
 
@@ -34,7 +34,7 @@ graph TB
     end
 
     subgraph campaign["Long-running Entries (user-invocable)"]
-        OD["/maestro-odyssey --mode debug|improve|planex|review|security|ui"]
+        OD["/maestro-odyssey --mode debug|improve|planex|review|security|defensive|ui"]
         RA["/maestro-ralph Closed-loop Autonomy"]
         IMP["/maestro-impeccable UI Polish"]
     end
@@ -318,7 +318,7 @@ maestro session status                             # Project dashboard
 
 ## 7. Odyssey Series
 
-Academic research and deep improvement workflows — 5 commands covering debugging, improvement, requirement implementation, code review, and UI optimization.
+Academic research and deep improvement workflows — unified entry `/maestro-odyssey --mode <name>` dispatches 7 modes: debugging, improvement, requirement implementation, code review, security audit, defensive-programming risk audit, and UI optimization. All modes share the back-half (generalize → discover → persist); the front-half runs a mode-specific discovery + audit + (optional) fix + verification state machine.
 
 ### Command Overview
 
@@ -328,6 +328,8 @@ Academic research and deep improvement workflows — 5 commands covering debuggi
 | `/maestro-odyssey --mode improve` | Codebase quality improvement | Survey → 6-dimension audit → Diagnose → Fix → Verify → Generalize → Discover → Persist |
 | `/maestro-odyssey --mode planex` | Requirement-driven iterative delivery | Parse requirement → Acceptance criteria → Plan → Execute → Verify → Fix loop → Generalize |
 | `/maestro-odyssey --mode review` | Deep code review + fix | Archaeology → Explore → Multi-dimension review → Exhaustive fix → Confirm → Generalize → Discover → Persist |
+| `/maestro-odyssey --mode security` | Read-only layered security audit | Recon → Scan (OWASP + deps + secrets + CI/CD + STRIDE + git) → Report → Generalize → Discover → Persist |
+| `/maestro-odyssey --mode defensive` | Read-only defensive-programming risk audit | Anchor → Slice → 8-pattern defensive-node scan → Forward propagation → Risk scoring → Report → Generalize → Discover → Persist |
 | `/maestro-odyssey --mode ui` | UI visual experience optimization | Survey → 6-dimension audit → Divergent exploration → Fix → Verify → Generalize → Discover → Persist |
 
 ### Common Traits
@@ -436,6 +438,42 @@ Academic research and deep improvement workflows — 5 commands covering debuggi
 | `--skip-generalize` | Skip generalization |
 
 **Unique phase**: S_DIVERGE (Divergent exploration) — Goes beyond defect fixing to ask "what would make this delightful?"
+
+### `/maestro-odyssey --mode security` — Read-only Layered Security Audit
+
+```bash
+/maestro-odyssey --mode security src/api/                  # Audit a specific module
+/maestro-odyssey --mode security --tier deep              # Deep audit (incl. STRIDE + git history)
+/maestro-odyssey --mode security --skip-generalize        # Audit + report only
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `<target>` | Module/directory path / `HEAD` / `staged` / PR number |
+| `--tier quick\|standard\|deep` | Audit depth: quick (OWASP + deps) / standard (+secrets + CI/CD) / deep (+STRIDE + git history) |
+| `--skip-generalize` | Skip generalization |
+
+**Read-only invariant**: never modifies source; produces a severity-matrix report. Fixes route to `--mode improve` or `--mode debug`.
+
+### `/maestro-odyssey --mode defensive` — Read-only Defensive-Programming Risk Audit
+
+```bash
+/maestro-odyssey --mode defensive src/simulation/         # Audit a specific module
+/maestro-odyssey --mode defensive --tier deep            # Deep audit (incl. historical archaeology + cross-module)
+/maestro-odyssey --mode defensive --sink-depth 1           # Focus on tier-1 critical sinks
+/maestro-odyssey --mode defensive --skip-generalize      # Audit + report only
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `<target>` | File/directory path / `HEAD` / `staged` / phase number / PR number |
+| `--tier quick\|standard\|deep` | Audit depth: quick (4 core patterns) / standard (all 8 + consistency + exception classification) / deep (+historical archaeology + unit validation + all 4 exception classes) |
+| `--sink-depth <list>` | Sink-layer focus: `1`\|`2`\|`3`\|`all` (default `all`) |
+| `--skip-generalize` | Skip generalization |
+
+**Core methodology**: anchor on business-critical outcomes → backward slice to defensive nodes → forward-propagate to verify business impact → check whether exceptional states get transformed into legal states → risk score `R = S × P × B × H`. 8 defensive patterns: broad catch / exception swallow / default value / null fallback / auto-correct (clamp) / silent convert / duplicate constraint / duplicate default.
+
+**Read-only invariant**: never modifies source; produces a severity-matrix report with full propagation chains (§14 standard format). Fixes route to `--mode improve`; root-cause location routes to `--mode debug`.
 
 ---
 
