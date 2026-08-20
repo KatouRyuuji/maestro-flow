@@ -17,6 +17,13 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    version: '0.5.79',
+    date: '2026-08',
+    changes: [
+      { type: 'fix', text_en: 'On Windows, every detached background spawn whose parent chain has no attached console (GUI hosts like Orca, VS Code extensions, or detached terminal daemons) made a new CMD console window flash for the few hundred milliseconds the child ran. Added windowsHide: true (CREATE_NO_WINDOW) to the 6 detached:true spawns that were missing it (search daemon lazy-start and respawn, detached CLI agent worker, detached delegate worker, visualizer server, impeccable live --background), bringing them in line with the already-guarded kg-sync-hook spawn. POSIX ignores the flag, so behavior on macOS/Linux is unchanged.', text_zh: '在 Windows 上，每个 detached 后台 spawn 当其父进程链没有附加控制台（如 Orca、VS Code 扩展或 detached 终端守护进程等 GUI 宿主）时，会弹出一个新的 CMD 控制台窗口并在子进程运行的几百毫秒内闪烁。为 6 个此前缺失该设置的 detached:true spawn（search daemon 懒启动与重启、detached CLI agent worker、detached delegate worker、可视化服务器、impeccable live --background）补上 windowsHide: true（CREATE_NO_WINDOW），与已有该保护的 kg-sync-hook spawn 保持一致。POSIX 忽略该标志，macOS/Linux 行为不变。' },
+    ],
+  },
+  {
     version: '0.5.78',
     date: '2026-08',
     changes: [
