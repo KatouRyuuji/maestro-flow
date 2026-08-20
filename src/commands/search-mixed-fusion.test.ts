@@ -21,6 +21,7 @@ import {
   runMixedSearch,
   runUnifiedSearch,
   type CodeSearchResult,
+  type ScoredArchKbEntry,
   type SearchResult,
 } from './search.js';
 
@@ -280,6 +281,47 @@ describe('legacy mixed rank and score contract', () => {
       expect(result.score).toBeLessThanOrEqual(1);
       expect(Number.isFinite(result.rank)).toBe(true);
     }
+  });
+
+  it('keeps Arch-KB templates visible but below wiki and code matches', () => {
+    const template: ScoredArchKbEntry = {
+      entry: {
+        id: 'arch-tpl-payment-system',
+        type: 'template',
+        title: 'Payment system architecture template',
+        slug: 'payment-system',
+        summary: 'Idempotency and reconciliation',
+        keywords: ['payment', 'idempotency'],
+        path: 'templates/payment-system/README.md',
+        sections: ['Architecture overview'],
+      },
+      score: 20,
+    };
+
+    const results = mergeAndNormalize(
+      [wikiResult('wiki-a', 10)],
+      [codeResult('code-a', 8, 'PaymentService')],
+      10,
+      'payment',
+      [template],
+    );
+
+    expect(results.map(result => result.id)).toEqual([
+      'wiki-a',
+      'code-a',
+      'arch-tpl-payment-system',
+    ]);
+    expect(results[2]).toMatchObject({
+      source: 'arch-kb',
+      kind: 'template',
+      openCommand: 'maestro arch-kb show arch-tpl-payment-system',
+      searchCommand: 'maestro arch-kb search "<query>" --type template',
+      referenceOnly: true,
+      projectRelated: false,
+      sourceRef: 'templates/payment-system/README.md',
+    });
+    expect(results[2].rank).toBeLessThan(results[0].rank);
+    expect(results[2].rank).toBeLessThan(results[1].rank);
   });
 
   it('keeps the default mixed fusion free of RRF and performs one final slice', () => {

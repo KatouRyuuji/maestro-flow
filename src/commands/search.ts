@@ -28,10 +28,11 @@ import type {
   WikiSearchFilters,
 } from '#maestro-dashboard/wiki/wiki-types.js';
 import { loadWorkspaceConfig, resolveWorkspaceLinks } from '../config/index.js';
+import { searchArchKb, type ScoredArchKbEntry } from '../arch-kb/index.js';
 import { tryDaemonSearch, stopDaemon, spawnDaemon, readDaemonInfo, isDaemonAlive, getDaemonPath } from '../search/daemon-client.js';
 
 // Valid type filter values — matches WikiNodeType + virtual aliases.
-const VALID_TYPES = ['project', 'roadmap', 'spec', 'issue', 'knowhow', 'note', 'domain', 'session', 'scratch'] as const;
+const VALID_TYPES = ['project', 'roadmap', 'spec', 'issue', 'knowhow', 'note', 'domain', 'session', 'scratch', 'template'] as const;
 
 // Per-category result caps — prevents low-value sources from dominating.
 const CATEGORY_CAPS: Record<string, number> = {
@@ -1021,13 +1022,31 @@ export interface MixedSearchOutcome {
   candidateLimit: number;
   wikiResults: SearchResult[];
   codeOutcome: CodeSearchOutcome;
+  templateResults: ScoredArchKbEntry[];
   results: MergedResult[];
 }
 
 export interface MixedSearchDependencies {
   wikiSearch: typeof runUnifiedSearch;
   codeSearch: typeof runCodeSearch;
+  archKbSearch: typeof runArchKbSearch;
   merge: typeof mergeAndNormalize;
+}
+
+/** Search bundled architecture templates without touching the project index. */
+export function runArchKbSearch(q: string, limit: number): ScoredArchKbEntry[] {
+  return searchArchKb(q, { type: 'template', limit });
+}
+
+function hasDirectArchKbMatch(result: ScoredArchKbEntry, query: string): boolean {
+  const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const directText = [
+    result.entry.title,
+    result.entry.slug,
+    result.entry.summary,
+    ...result.entry.keywords,
+  ].join(' ').toLowerCase();
+  return tokens.some(token => directText.includes(token));
 }
 
 /**
@@ -1042,6 +1061,7 @@ export async function runMixedSearch(
   const candidateLimit = Math.min(500, Math.max(limit * 3, 60));
   const wikiSearch = dependencies.wikiSearch ?? runUnifiedSearch;
   const codeSearch = dependencies.codeSearch ?? runCodeSearch;
+  const archKbSearch = dependencies.archKbSearch ?? runArchKbSearch;
   const merge = dependencies.merge ?? mergeAndNormalize;
   const { includeLinkedCode = false, ...wikiOptions } = options;
   const executionMode = options.executionMode ?? 'default';
@@ -1056,7 +1076,15 @@ export async function runMixedSearch(
       resolve('.'),
       executionMode,
     );
-  const [wikiResults, codeOutcome] = await Promise.all([
+  const templatePromise = !options.type
+    && !options.category
+    && !options.tag
+    && !options.keyword
+    && !options.workspace
+    ? Promise.resolve(archKbSearch(q, candidateLimit)).then(results =>
+      results.filter(result => hasDirectArchKbMatch(result, q)))
+    : Promise.resolve([] as ScoredArchKbEntry[]);
+  const [wikiResults, codeOutcome, templateResults] = await Promise.all([
     wikiSearch(q, {
       ...wikiOptions,
       limit: candidateLimit,
@@ -1065,8 +1093,11 @@ export async function runMixedSearch(
       explorationLimit: limit,
     }),
     codePromise,
+    templatePromise,
   ]);
-  const results = merge(wikiResults, codeOutcome.results, limit, q);
+  const results = templateResults.length > 0
+    ? merge(wikiResults, codeOutcome.results, limit, q, templateResults)
+    : merge(wikiResults, codeOutcome.results, limit, q);
 
   if (executionMode === 'default' && dependencies.wikiSearch === undefined) {
     const exposedWiki = results
@@ -1086,6 +1117,7 @@ export async function runMixedSearch(
     candidateLimit,
     wikiResults,
     codeOutcome,
+    templateResults,
     results,
   };
 }
@@ -1124,6 +1156,10 @@ export function registerSearchCommand(program: Command): void {
         console.error(`Error: --type must be one of ${VALID_TYPES.join(', ')} (got "${opts.type}")`);
         process.exit(1);
       }
+      if (opts.type === 'template' && (codeOnly || kgMode)) {
+        console.error('Error: --type template is an Arch-KB source and cannot be combined with --code or --kg');
+        process.exit(1);
+      }
       if (resolvedTag && opts.code) {
         console.error('Error: --tag is a wiki facet and cannot be combined with --code');
         process.exit(1);
@@ -1140,6 +1176,42 @@ export function registerSearchCommand(program: Command): void {
       const skipEmbedding = opts.emb === false;
       const isTTY = process.stdout.isTTY === true;
       const qTerms = q.toLowerCase().split(/\s+/).filter(Boolean);
+      const isDevelopmentQuery = /(?:implement|implementation|develop|development|build|feature|refactor|fix|bug|api|class|function|code|组件|开发|实现|功能|重构|修复|代码|接口)/i.test(q);
+      const templateSearchCommand = `maestro arch-kb search ${JSON.stringify(q)} --type template`;
+      const codeSearchCommand = `maestro search ${JSON.stringify(q)} --code`;
+
+      // --type template: exact architecture-template search. This bypasses
+      // project Wiki/CodeGraph providers but uses the same result contract.
+      if (opts.type === 'template') {
+        const templateResults = runArchKbSearch(q, limit);
+        const merged = mergeAndNormalize([], [], limit, q, templateResults);
+        const templateHint = `For exact template lookup, use: ${templateSearchCommand}`;
+        if (opts.json) {
+          console.log(JSON.stringify({
+            query: q,
+            wikiCount: 0,
+            codeCount: 0,
+            templateCount: merged.length,
+            typeCounts: { template: merged.length },
+            count: merged.length,
+            results: merged,
+          }, null, 2));
+          return;
+        }
+        console.log(`Search: "${q}" (template ${merged.length} results)`);
+        if (merged.length === 0) {
+          console.log('  No matches found.');
+          console.log(`  Hint: ${templateHint}`);
+          return;
+        }
+        console.log(`  Hint: ${templateHint}`);
+        for (const result of merged) {
+          const name = isTTY ? highlightTerms(truncate(result.name, 60), qTerms) : truncate(result.name, 60);
+          console.log(`  [arch-kb:template] [reference only; not current project]  ${name}  ${result.detail}  (${result.score.toFixed(4)})`);
+          if (result.summary) console.log(`    ${result.summary}`);
+        }
+        return;
+      }
 
       // --kg: MaestroGraph unified search
       if (kgMode) {
@@ -1250,12 +1322,14 @@ export function registerSearchCommand(program: Command): void {
       const merged = mixedResults ?? mergeAndNormalize(wikiResults, codeResults, limit, q);
       const wikiCount = merged.filter(r => r.source === 'wiki').length;
       const codeCount = merged.filter(r => r.source === 'code').length;
+      const templateCount = merged.filter(r => r.source === 'arch-kb').length;
 
       if (opts.json) {
         const typeCountsJson: Record<string, number> = {};
         for (const r of merged) {
           let dt: string;
           if (r.source === 'code') dt = 'code';
+          else if (r.source === 'arch-kb') dt = 'template';
           else if (r.category === 'session') dt = 'session';
           else if (r.category === 'scratch') dt = 'scratch';
           else dt = r.kind;
@@ -1265,6 +1339,7 @@ export function registerSearchCommand(program: Command): void {
           query: q,
           wikiCount,
           codeCount,
+          templateCount,
           codeIndex: codeOutcome.status,
           ...(codeHint ? { codeIndexHint: codeHint } : {}),
           typeCounts: typeCountsJson,
@@ -1275,11 +1350,12 @@ export function registerSearchCommand(program: Command): void {
       }
 
       // Per-type breakdown header
-      const TYPE_DISPLAY_ORDER = ['spec', 'domain', 'knowhow', 'issue', 'project', 'roadmap', 'note', 'session', 'scratch', 'code'];
+      const TYPE_DISPLAY_ORDER = ['spec', 'domain', 'knowhow', 'issue', 'project', 'roadmap', 'note', 'session', 'scratch', 'template', 'code'];
       const typeCounts = new Map<string, number>();
       for (const r of merged) {
         let displayType: string;
         if (r.source === 'code') displayType = 'code';
+        else if (r.source === 'arch-kb') displayType = 'template';
         else if (r.category === 'session') displayType = 'session';
         else if (r.category === 'scratch') displayType = 'scratch';
         else displayType = r.kind;
@@ -1302,6 +1378,12 @@ export function registerSearchCommand(program: Command): void {
       if (qTerms.length > 4) {
         console.log(`  Hint: ${qTerms.length} terms — split into 1-3 keyword queries for better precision`);
       }
+      if (isDevelopmentQuery && templateCount > 0) {
+        console.log(`  Hint: Template results are reference-only and unrelated to current project content; for exact lookup use: ${templateSearchCommand}`);
+      }
+      if (isDevelopmentQuery && codeCount > 0) {
+        console.log(`  Hint: For implementation symbols, use: ${codeSearchCommand}`);
+      }
 
       if (merged.length === 0) {
         console.log('  No matches found.');
@@ -1323,6 +1405,9 @@ export function registerSearchCommand(program: Command): void {
             const text = isTTY ? highlightTerms(subtitle, qTerms) : subtitle;
             console.log(`    ${text}`);
           }
+        } else if (r.source === 'arch-kb') {
+          console.log(`  [arch-kb:${r.kind}] [reference only; not current project]  ${name}  ${r.detail}${scoreTag}`);
+          if (r.summary) console.log(`    ${r.summary}`);
         } else {
           const sigTag = r.signature ? `  ${truncate(r.signature, 60)}` : '';
           const workspaceTag = r.workspace ? `  @${r.workspace} (${r.workspaceFence})` : '';
@@ -1565,7 +1650,7 @@ function codeLocation(r: CodeSearchResult): string {
 //   4. Rank-based normalization (position-aware, handles ties)
 
 export interface MergedResult {
-  source: 'wiki' | 'code';
+  source: 'wiki' | 'code' | 'arch-kb';
   /** Stable entry id — usable with `maestro load --id`. */
   id: string;
   sourceRef?: string | null;
@@ -1583,6 +1668,13 @@ export interface MergedResult {
   workspaceFence?: string;
   category?: string;
   confidence?: string;
+  /** Dedicated command for opening an Arch-KB result. */
+  openCommand?: string;
+  /** Dedicated command for exact template search. */
+  searchCommand?: string;
+  /** Arch-KB entries are reference material, never current-project facts. */
+  referenceOnly?: boolean;
+  projectRelated?: boolean;
   /** Session/Run topology — present only on run-mode session and run entries. */
   sessionId?: string;
   runId?: string;
@@ -1672,7 +1764,13 @@ function rankNormalize(items: Array<{ index: number; score: number }>): number[]
   return result;
 }
 
-export function mergeAndNormalize(wiki: SearchResult[], code: CodeSearchResult[], limit: number, query?: string): MergedResult[] {
+export function mergeAndNormalize(
+  wiki: SearchResult[],
+  code: CodeSearchResult[],
+  limit: number,
+  query?: string,
+  templateResults: ScoredArchKbEntry[] = [],
+): MergedResult[] {
   const q = query ?? '';
   const isIdQuery = isCodeIdentifier(q);
   const hasStrongCodeMatch = code.length > 0 && code.some(r =>
@@ -1707,11 +1805,22 @@ export function mergeAndNormalize(wiki: SearchResult[], code: CodeSearchResult[]
 
   const wikiRanks = rankNormalize(wikiScored.map(r => ({ index: r.index, score: r.finalScore })));
   const codeRanks = rankNormalize(codeScored.map(r => ({ index: r.index, score: r.finalScore })));
+  const templateScored = templateResults.map((result, index) => ({
+    ...result,
+    finalScore: result.score,
+    index,
+  }));
+  const templateRanks = rankNormalize(templateScored.map(r => ({ index: r.index, score: r.finalScore })));
+
+  // Arch-KB is useful context, but generic Search should keep project knowledge
+  // and code symbols ahead of it whenever those sources have strong matches.
+  const ARCH_KB_WEIGHT = 0.15;
 
   // Rank decides interleave order only; the displayed score is the real
   // per-source normalized relevance (preserves contested/kg-dedup penalties) — X4.
   const maxWikiFinal = wikiScored.reduce((m, r) => Math.max(m, r.finalScore), 0);
   const maxCodeFinal = codeScored.reduce((m, r) => Math.max(m, r.finalScore), 0);
+  const maxTemplateFinal = templateScored.reduce((m, r) => Math.max(m, r.finalScore), 0);
 
   const merged: MergedResult[] = [];
   for (let i = 0; i < wikiScored.length; i++) {
@@ -1751,11 +1860,33 @@ export function mergeAndNormalize(wiki: SearchResult[], code: CodeSearchResult[]
       workspaceFence: r.workspaceFence,
     });
   }
+  for (let i = 0; i < templateScored.length; i++) {
+    const r = templateScored[i];
+    merged.push({
+      source: 'arch-kb',
+      id: r.entry.id,
+      sourceRef: r.entry.path,
+      kind: r.entry.type,
+      name: r.entry.title,
+      detail: `${r.entry.path}  (maestro arch-kb show ${r.entry.id})`,
+      rank: templateRanks[i] * ARCH_KB_WEIGHT,
+      score: maxTemplateFinal > 0 ? r.finalScore / maxTemplateFinal : 0,
+      summary: r.entry.summary || undefined,
+      category: 'arch-kb',
+      openCommand: `maestro arch-kb show ${r.entry.id}`,
+      searchCommand: 'maestro arch-kb search "<query>" --type template',
+      referenceOnly: true,
+      projectRelated: false,
+    });
+  }
 
   merged.sort((a, b) => {
     const rankOrder = b.rank - a.rank;
     if (rankOrder !== 0) return rankOrder;
-    if (a.source !== b.source) return a.source === 'wiki' ? -1 : 1;
+    if (a.source !== b.source) {
+      const sourceOrder: Record<MergedResult['source'], number> = { wiki: 0, code: 1, 'arch-kb': 2 };
+      return sourceOrder[a.source] - sourceOrder[b.source];
+    }
     return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
   });
   const finalResults = merged.slice(0, limit);

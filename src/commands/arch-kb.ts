@@ -11,131 +11,17 @@
  */
 
 import type { Command } from 'commander';
-import { readFileSync, existsSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { paths } from '../config/paths.js';
+import { readFileSync } from 'node:fs';
+import {
+  requireArchKbIndex,
+  resolveArchKbContentPath,
+  searchArchKbEntries,
+  type ArchKbEntry,
+} from '../arch-kb/index.js';
 
 // ─── Types ────────────────────────────────────────────────────────────
 
-interface ArchKbEntry {
-  id: string;
-  type: 'template' | 'tutorial' | 'case';
-  title: string;
-  slug: string;
-  summary: string;
-  keywords: string[];
-  path: string;
-  sections: string[];
-}
-
-interface ArchKbIndex {
-  version: number;
-  builtAt: string;
-  source: string;
-  license: string;
-  stats: { templates: number; tutorials: number; cases: number; total: number };
-  entries: ArchKbEntry[];
-}
-
-// ─── Index Loading ────────────────────────────────────────────────────
-
-let _cachedIndex: ArchKbIndex | null = null;
-
-function bundledResourceDirs(): string[] {
-  const moduleDir = dirname(fileURLToPath(import.meta.url));
-  return [
-    resolve(moduleDir, '../../../resources/arch-kb'), // compiled: dist/src/commands
-    resolve(moduleDir, '../../resources/arch-kb'),  // source: src/commands
-  ];
-}
-
-function resolveIndexDir(): string {
-  const candidates = [
-    paths.archKb,
-    ...bundledResourceDirs(),
-    resolve(process.cwd(), 'resources/arch-kb'),
-  ];
-  return candidates.find((dir) => existsSync(join(dir, 'index.json'))) ?? bundledResourceDirs()[0];
-}
-
-function loadIndex(): ArchKbIndex {
-  if (_cachedIndex) return _cachedIndex;
-  const dir = resolveIndexDir();
-  const indexPath = join(dir, 'index.json');
-  if (!existsSync(indexPath)) {
-    console.error('Error: arch-kb index not found. Run: node scripts/build-arch-kb-index.mjs');
-    process.exit(1);
-  }
-  _cachedIndex = JSON.parse(readFileSync(indexPath, 'utf-8')) as ArchKbIndex;
-  return _cachedIndex;
-}
-
-function resolveContentPath(relativePath: string): string | null {
-  const candidates = [
-    resolve(resolveIndexDir(), relativePath),
-    ...bundledResourceDirs().map((dir) => resolve(dir, relativePath)),
-    resolve(process.cwd(), 'resources/arch-kb', relativePath),
-    resolve(process.cwd(), '_analysis/awesome-architecture', relativePath),
-  ];
-  return candidates.find((candidate) => existsSync(candidate)) ?? null;
-}
-
-// ─── Search Engine (BM25-lite) ────────────────────────────────────────
-
-function tokenize(text: string): string[] {
-  return text
-    .toLowerCase()
-    .replace(/[^\w\u4e00-\u9fff-]/g, ' ')
-    .split(/\s+/)
-    .filter(t => t.length > 0);
-}
-
-function scoreEntry(entry: ArchKbEntry, queryTokens: string[]): number {
-  let score = 0;
-  let matched = false;
-  const titleTokens = tokenize(entry.title);
-  const kwSet = new Set(entry.keywords.map(k => k.toLowerCase()));
-  const sectionText = entry.sections.join(' ').toLowerCase();
-
-  for (const qt of queryTokens) {
-    // 关键词精确匹配 (权重最高)
-    if (kwSet.has(qt)) { score += 10; matched = true; }
-    // 关键词部分匹配
-    else if (entry.keywords.some(k => k.toLowerCase().includes(qt) || qt.includes(k.toLowerCase()))) { score += 6; matched = true; }
-    // 标题匹配
-    if (titleTokens.some(t => t.includes(qt) || qt.includes(t))) { score += 5; matched = true; }
-    // slug 匹配
-    if (entry.slug.includes(qt)) { score += 4; matched = true; }
-    // summary 匹配
-    if (entry.summary.toLowerCase().includes(qt)) { score += 2; matched = true; }
-    // sections 匹配
-    if (sectionText.includes(qt)) { score += 1; matched = true; }
-  }
-
-  // type boost: template > case > tutorial (for match queries)
-  // 仅在确有命中时生效，避免无匹配查询整类混入结果
-  if (matched && entry.type === 'template') score += 1;
-
-  return score;
-}
-
-function searchEntries(entries: ArchKbEntry[], query: string, opts?: { type?: string; limit?: number }): ArchKbEntry[] {
-  const tokens = tokenize(query);
-  if (tokens.length === 0) return [];
-
-  let filtered = entries;
-  if (opts?.type) {
-    filtered = entries.filter(e => e.type === opts.type);
-  }
-
-  const scored = filtered
-    .map(e => ({ entry: e, score: scoreEntry(e, tokens) }))
-    .filter(x => x.score > 0)
-    .sort((a, b) => b.score - a.score);
-
-  return scored.slice(0, opts?.limit ?? 10).map(x => x.entry);
-}
+// Index loading, source resolution, and search are shared with `maestro search`.
 
 // ─── Output Formatting ────────────────────────────────────────────────
 
@@ -181,7 +67,7 @@ export function registerArchKbCommand(program: Command): void {
     .description('List entries (type: template|tutorial|case|all)')
     .option('--json', 'JSON output')
     .action((type: string | undefined, opts) => {
-      const index = loadIndex();
+      const index = requireArchKbIndex();
       const filterType = type && type !== 'all' ? type : undefined;
       const entries = filterType
         ? index.entries.filter(e => e.type === filterType)
@@ -215,7 +101,7 @@ export function registerArchKbCommand(program: Command): void {
     .option('--section <name>', 'Show specific section only')
     .option('--json', 'JSON output (metadata only)')
     .action((id: string, opts) => {
-      const index = loadIndex();
+      const index = requireArchKbIndex();
       const entry = index.entries.find(e => e.id === id || e.slug === id);
       if (!entry) {
         console.error(`Error: entry not found: ${id}`);
@@ -230,7 +116,7 @@ export function registerArchKbCommand(program: Command): void {
       }
 
       // 尝试读取原始 markdown
-      const contentPath = resolveContentPath(entry.path);
+      const contentPath = resolveArchKbContentPath(entry.path);
       if (!contentPath) {
         console.log(formatEntry(entry, true));
         console.error('\n  ⚠ Source file not found. Index metadata shown above.');
@@ -268,8 +154,8 @@ export function registerArchKbCommand(program: Command): void {
     .option('--limit <n>', 'Max results', '8')
     .option('--json', 'JSON output')
     .action((query: string, opts) => {
-      const index = loadIndex();
-      const results = searchEntries(index.entries, query, {
+      const index = requireArchKbIndex();
+      const results = searchArchKbEntries(index.entries, query, {
         type: opts.type,
         limit: parseInt(opts.limit, 10),
       });

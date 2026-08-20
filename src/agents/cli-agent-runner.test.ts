@@ -1,4 +1,4 @@
-import { after, before, beforeEach, describe, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -9,7 +9,7 @@ describe('CliAgentRunner', () => {
   let CliAgentRunner: typeof import('./cli-agent-runner.js').CliAgentRunner;
   let CliHistoryStore: typeof import('./cli-history-store.js').CliHistoryStore;
 
-  before(async () => {
+  beforeAll(async () => {
     process.env.MAESTRO_HOME = tempHome;
     ({ CliAgentRunner } = await import('./cli-agent-runner.js'));
     ({ CliHistoryStore } = await import('./cli-history-store.js'));
@@ -19,7 +19,7 @@ describe('CliAgentRunner', () => {
     rmSync(tempHome, { recursive: true, force: true });
   });
 
-  after(() => {
+  afterAll(() => {
     rmSync(tempHome, { recursive: true, force: true });
     delete process.env.MAESTRO_HOME;
   });
