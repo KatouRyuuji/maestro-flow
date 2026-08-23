@@ -12,6 +12,7 @@ import {
 } from '../run/schemas.js';
 import { SessionStore } from '../run/store.js';
 import { mutateChainV3, type ChainMutation } from '../run/v3/chain-mutations.js';
+import { V3StructuredError } from '../run/v3/errors.js';
 import { applyV3Migration, readAppliedV3Migration } from '../run/v3/migrate-v3.js';
 import { loadLegacyV3MigrationInput } from '../run/v3/migrate-v3-loader.js';
 import {
@@ -54,11 +55,17 @@ function parseExpectedLegacyRevisionsManifest(value: string): ExpectedLegacyRevi
   try {
     parsed = JSON.parse(value);
   } catch (error) {
-    throw new Error(`--expected-revisions must be valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+    throw new V3StructuredError(
+      'INVALID_ARGUMENT',
+      `--expected-revisions must be valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
   const result = expectedLegacyRevisionsManifestSchema.safeParse(parsed);
   if (!result.success) {
-    throw new Error('--expected-revisions must be a JSON object keyed by Session ID with identity_revision and activity_revision');
+    throw new V3StructuredError(
+      'INVALID_ARGUMENT',
+      '--expected-revisions must be a JSON object keyed by Session ID with identity_revision and activity_revision',
+    );
   }
   return result.data;
 }
@@ -68,10 +75,10 @@ function requiredSingleMigrationRevisions(options: {
   expectedActivityRevision?: number;
 }): ExpectedLegacyRevisions {
   if (options.expectedIdentityRevision === undefined) {
-    throw new Error('--expected-identity-revision is required with --session');
+    throw new V3StructuredError('INVALID_ARGUMENT', '--expected-identity-revision is required with --session');
   }
   if (options.expectedActivityRevision === undefined) {
-    throw new Error('--expected-activity-revision is required with --session');
+    throw new V3StructuredError('INVALID_ARGUMENT', '--expected-activity-revision is required with --session');
   }
   return {
     identity_revision: options.expectedIdentityRevision,
@@ -193,7 +200,7 @@ export function registerSessionV3Command(program: Command): void {
     });
 
   session.command('migrate')
-    .description('Migrate one legacy Session atomically to session/3.0 (or every non-v3 Session with --all)')
+    .description('Migrate legacy Session files after selecting the session/3.0 writer (or migrate every non-v3 Session with --all)')
     .option('--session <id>', 'legacy Session ID (mutually exclusive with --all)')
     .option('--all', 'migrate every non-session/3.0 Session')
     .requiredOption('--to-v3', 'confirm migration to session/3.0')
@@ -219,17 +226,24 @@ export function registerSessionV3Command(program: Command): void {
         assertV3ParticipantIdentity(options);
         const store = new SessionStore(resolve(options.workflowRoot));
         if (store.sessionSchemaSelection().writer !== 'session/3.0') {
-          throw new Error('v3 migration requires the session/3.0 writer selection');
+          throw new V3StructuredError(
+            'SESSION_SCHEMA_UNSUPPORTED',
+            'v3 migration requires selecting the session/3.0 writer before migrating legacy Session files',
+            { next_actions: ['select-session/3.0-writer', 'retry-session-migrate'] },
+          );
         }
         if (options.session !== undefined && options.all) {
-          throw new Error('--all and --session are mutually exclusive');
+          throw new V3StructuredError('INVALID_ARGUMENT', '--all and --session are mutually exclusive');
         }
         if (options.all) {
           if (options.expectedIdentityRevision !== undefined || options.expectedActivityRevision !== undefined) {
-            throw new Error('--expected-identity-revision and --expected-activity-revision cannot be used with --all');
+            throw new V3StructuredError(
+              'INVALID_ARGUMENT',
+              '--expected-identity-revision and --expected-activity-revision cannot be used with --all',
+            );
           }
           if (options.expectedRevisions === undefined) {
-            throw new Error('--expected-revisions is required with --all');
+            throw new V3StructuredError('INVALID_ARGUMENT', '--expected-revisions is required with --all');
           }
           const expectedRevisions = parseExpectedLegacyRevisionsManifest(options.expectedRevisions);
           type MigrateAllResult = {
@@ -245,7 +259,10 @@ export function registerSessionV3Command(program: Command): void {
           const results: MigrateAllResult[] = listLegacyV3MigrationCandidates(store).map(candidate => {
             try {
               if (!Object.hasOwn(expectedRevisions, candidate.session_id)) {
-                throw new Error(`expected revisions missing for Session ${candidate.session_id}`);
+                throw new V3StructuredError(
+                  'INVALID_ARGUMENT',
+                  `expected revisions missing for Session ${candidate.session_id}`,
+                );
               }
               const expected = expectedRevisions[candidate.session_id]!;
               applyV3Migration(store, loadLegacyV3MigrationInput(store, candidate.session_id), {

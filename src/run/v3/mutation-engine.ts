@@ -138,6 +138,17 @@ function required(value: string, label: string): string {
   return normalized;
 }
 
+function readRunOrThrow(tx: SessionV30StoreTransaction, runId: string): RunV30 {
+  if (!tx.runExists(runId)) {
+    throw new V3StructuredError('RUN_NOT_FOUND', `Run ${runId} was not found`, {
+      target_type: 'run',
+      target_id: runId,
+      next_actions: ['check-run-id', 'read-session-status'],
+    });
+  }
+  return tx.readRun(runId);
+}
+
 function normalizedIdentity(input: V3MutationIdentity): Required<Omit<V3MutationIdentity, 'evidenceRefs' | 'recordedAt'>> & {
   evidenceRefs: string[];
   recordedAt: string;
@@ -292,7 +303,7 @@ function assertRunCreationLineage(
   if (!tx.runExists(candidate.retry_of_run_id)) {
     throw new V3StructuredError('INVALID_ARGUMENT', `unknown retry source Run ${candidate.retry_of_run_id}`);
   }
-  const source = tx.readRun(candidate.retry_of_run_id);
+  const source = readRunOrThrow(tx, candidate.retry_of_run_id);
   if (source.step_id !== candidate.step_id) {
     throw new V3StructuredError('INVALID_ARGUMENT', `retry source Run ${source.run_id} belongs to a different chain step`);
   }
@@ -633,7 +644,7 @@ export function mutateRunV3(store: SessionStore, input: MutateRunV3Input): V3Mut
     const replayed = replay(tx, identity, payloadHash);
     if (replayed) return replayed;
     const session = tx.readSession();
-    const run = tx.readRun(runId);
+    const run = readRunOrThrow(tx, runId);
     assertRunRevision(run, input.expectedRunRevision);
     if (input.toStatus === 'failed' || input.toStatus === 'cancelled') {
       if (input.expectedOrchestrationRevision === undefined) {
@@ -720,7 +731,7 @@ export function recoverSealRunV3(store: SessionStore, input: RecoverSealRunV3Inp
     const replayed = replay(tx, identity, payloadHash);
     if (replayed) return replayed;
     const session = tx.readSession();
-    const run = tx.readRun(runId);
+    const run = readRunOrThrow(tx, runId);
     assertRunRevision(run, input.expectedRunRevision);
     assertSessionRunTransitionAllowed(session.status, run.status, 'sealed');
     const publication = prepareArtifactPublication({
@@ -1107,7 +1118,7 @@ export function completeRunAndAdvance(
     const replayed = replay(tx, identity, payloadHash);
     if (replayed) return replayed;
     const session = tx.readSession();
-    const run = tx.readRun(runId);
+    const run = readRunOrThrow(tx, runId);
     assertRunRevision(run, input.expectedRunRevision);
     assertOrchestrationRevision(session, input.expectedOrchestrationRevision);
     assertSessionRunTransitionAllowed(session.status, run.status, 'completed');

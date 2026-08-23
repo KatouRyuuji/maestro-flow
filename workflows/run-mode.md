@@ -189,7 +189,7 @@ Migration preserves sealed source bytes and their raw registry role/alias semant
 
   `maestro session complete --session {session_id} --participant {actor_id} --actor {actor_id} --request-id {session_complete_request_id} --reason "<reason>" [--evidence <ref> ...] --expected-orchestration-revision {orchestration_revision} --json`
 
-  Verify the returned transition receipt, then stop. The completed Session identity remains durable and may be **unarchived** (`maestro session unarchive ... --json`) for a later extension; archived Sessions cannot host new Runs. `maestro session archive` / `maestro session unarchive` are the only archive-state mutations. Legacy migration is audited and revision-fenced:
+  Verify the returned transition receipt, then stop. The completed Session identity remains durable and may be **unarchived** (`maestro session unarchive ... --json`) for a later extension; archived Sessions cannot host new Runs. `maestro session archive` / `maestro session unarchive` are the only archive-state mutations. Legacy migration is audited and revision-fenced. Select the `session/3.0` writer first; the source Session files remain legacy until the migration commits:
 
   - Single Session: `maestro session migrate --session {legacy_session_id} --to-v3 --participant {actor_id} --actor {actor_id} --request-id {migrate_request_id} --reason "migrate legacy Session to v3" --expected-identity-revision {legacyIdentityRevision} --expected-activity-revision {legacyActivityRevision} --json`
   - Batch: `maestro session migrate --all --to-v3 --participant {actor_id} --actor {actor_id} --request-id {migrate_all_request_id} --reason "migrate legacy Sessions to v3" --expected-revisions '<session revision manifest JSON>' --json`

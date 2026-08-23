@@ -489,6 +489,28 @@ describe('formal session/3.0 Commander modules', () => {
     ])).rejects.toThrow(/required option '--expected-orchestration-revision <n>'/);
   });
 
+  it('returns RUN_NOT_FOUND without leaking storage paths', async () => {
+    const root = fixture();
+    const cancelled = await invoke(registerRunV3Command, [
+      'run', 'cancel', 'missing-run', ...mutationFlags(root, '--expected-run-revision'),
+      '--expected-orchestration-revision', '0',
+    ]);
+    expect(cancelled).toMatchObject({
+      operation: 'run-cancel', ok: false,
+      error: { code: 'RUN_NOT_FOUND', message: 'Run missing-run was not found' },
+    });
+    expect(cancelled.error?.message).not.toContain(root);
+
+    vi.restoreAllMocks();
+    const checked = await invoke(registerRunV3Command, [
+      'run', 'check', 'missing-run', '--session', 's-v3', '--json', '--workflow-root', root,
+    ]);
+    expect(checked).toMatchObject({
+      operation: 'check', ok: false,
+      error: { code: 'RUN_NOT_FOUND', message: 'Run missing-run was not found' },
+    });
+  });
+
   it('projects an empty blocking gate set and draft publications from authoritative registries', async () => {
     const root = fixture();
     const sessionDir = join(root, '.workflow', 'sessions', 's-v3');
@@ -1021,8 +1043,10 @@ describe('session migrate --all', () => {
     const response = await invoke(registerSessionV3Command, [
       'session', 'migrate', '--all', '--session', 's-v3', ...migrateAllFlags(root, {}),
     ]);
-    expect(response).toMatchObject({ operation: 'session-migrate', ok: false });
-    expect(response.error?.message).toContain('mutually exclusive');
+    expect(response).toMatchObject({
+      operation: 'session-migrate', ok: false,
+      error: { code: 'INVALID_ARGUMENT', message: expect.stringContaining('mutually exclusive') },
+    });
   });
 });
 

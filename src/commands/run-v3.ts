@@ -3,8 +3,10 @@ import type { Command } from 'commander';
 
 import { resolve } from 'node:path';
 
+import { SessionStore } from '../run/store.js';
 import type { RunV30 } from '../run/schemas.js';
 import { artifactRegistrySchema, type ArtifactRegistry } from '../run/schemas.js';
+import { V3StructuredError } from '../run/v3/errors.js';
 import { buildRetryMetadata } from '../run/v3/run-machine.js';
 import {
   v3CheckNext,
@@ -48,6 +50,20 @@ type RunMutationOptions = V3CommonOptions & { run: string };
 
 function runResult(mutation: ReturnType<typeof mutateRunV3>): unknown {
   return mutation.transition.result;
+}
+
+function readRunOrThrow(store: SessionStore, sessionId: string, runId: string): RunV30 {
+  try {
+    return store.readRunV30(sessionId, runId);
+  } catch (error) {
+    if (error instanceof Error && /Missing authoritative file/i.test(error.message)) {
+      throw new V3StructuredError('RUN_NOT_FOUND', `Run ${runId} was not found`, {
+        target_type: 'run', target_id: runId,
+        next_actions: ['check-run-id', 'read-session-status'],
+      });
+    }
+    throw error;
+  }
 }
 
 export function registerRunV3Command(program: Command): void {
@@ -123,7 +139,7 @@ export function registerRunV3Command(program: Command): void {
         const { store, options: resolved } = resolveV3Options(options);
         const now = new Date().toISOString();
         const retrySource = resolved.retryOfRun
-          ? store.readRunV30(resolved.session, resolved.retryOfRun)
+          ? readRunOrThrow(store, resolved.session, resolved.retryOfRun)
           : null;
         const retry = retrySource
           ? retrySource.status === 'sealed'
@@ -167,17 +183,20 @@ export function registerRunV3Command(program: Command): void {
   addV3MutationOptions(run.command('complete <run-id>').description('Complete and seal a Run atomically'), 'run')
     .option('--summary <text>', 'completion summary (fallback: report.md frontmatter summary)')
     .option('--verdict <verdict>', 'done or done_with_concerns', 'done')
-    .option('--advance', 'complete the Run and its chain step atomically')
+    .option('--advance', 'required: complete the Run and its chain step atomically')
     .requiredOption('--expected-orchestration-revision <n>', 'expected Session orchestration revision', parseV3Revision)
     .action((runId: string, options: V3CommonOptions & {
       summary?: string; verdict: string; advance?: boolean;
     }) => {
       try {
         if (!options.advance) {
-          throw new Error('run complete requires --advance to update the chain step atomically');
+          throw new V3StructuredError(
+            'INVALID_ARGUMENT',
+            'run complete requires --advance to update the chain step atomically',
+          );
         }
         if (options.verdict !== 'done' && options.verdict !== 'done_with_concerns') {
-          throw new Error('--verdict must be done or done_with_concerns');
+          throw new V3StructuredError('INVALID_ARGUMENT', '--verdict must be done or done_with_concerns');
         }
         const { store, options: resolved } = resolveV3Options(options);
         const verdict = resolved.verdict as 'done' | 'done_with_concerns';
@@ -208,7 +227,7 @@ export function registerRunV3Command(program: Command): void {
     .action((runId: string, status: string, options: RunMutationOptions) => {
       try {
         if (!['running', 'blocked', 'failed'].includes(status)) {
-          throw new Error('status must be running, blocked, or failed');
+          throw new V3StructuredError('INVALID_ARGUMENT', 'status must be running, blocked, or failed');
         }
         const { store, options: resolved } = resolveV3Options(options);
         const toStatus = status as 'running' | 'blocked' | 'failed';
@@ -270,10 +289,10 @@ export function registerRunV3Command(program: Command): void {
     }) => {
       try {
         if (!['proceed', 'fix', 'escalate'].includes(options.verdict)) {
-          throw new Error('--verdict must be proceed, fix, or escalate');
+          throw new V3StructuredError('INVALID_ARGUMENT', '--verdict must be proceed, fix, or escalate');
         }
         if (!['high', 'medium', 'low'].includes(options.confidence)) {
-          throw new Error('--confidence must be high, medium, or low');
+          throw new V3StructuredError('INVALID_ARGUMENT', '--confidence must be high, medium, or low');
         }
         const { store, options: resolved } = resolveV3Options(options);
         const mutation = decideV3(store, {
@@ -296,7 +315,7 @@ export function registerRunV3Command(program: Command): void {
     .action((runId: string, options: { session?: string; workflowRoot: string }) => {
       try {
         const { store, options: resolved } = resolveV3Options(options);
-        const value = store.readRunV30(resolved.session, runId);
+        const value = readRunOrThrow(store, resolved.session, runId);
         const sessionState = store.readSessionV30(resolved.session);
         const artifactsPath = resolve(store.sessionDir(resolved.session), sessionState.artifacts_ref);
         const registry = store.readJsonFileReadOnly<ArtifactRegistry>(
@@ -400,7 +419,7 @@ export function registerRunV3Command(program: Command): void {
     .action((runId: string, options: { session?: string; workflowRoot: string }) => {
       try {
         const { store, options: resolved } = resolveV3Options(options);
-        const value = store.readRunV30(resolved.session, runId);
+        const value = readRunOrThrow(store, resolved.session, runId);
         const transitions: Record<RunV30['status'], string[]> = {
           pending: ['running', 'cancelled'], running: ['completed', 'failed', 'blocked', 'cancelled'],
           blocked: ['running', 'failed', 'cancelled'], completed: ['sealed'], failed: ['sealed'],
