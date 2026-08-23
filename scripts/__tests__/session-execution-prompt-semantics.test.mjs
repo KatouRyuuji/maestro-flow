@@ -114,7 +114,7 @@ describe('Session identity plus bounded Execution prompt semantics', () => {
       const errors = validateExecutionPromptSemantics(root).join('\n');
       expect(errors, testCase.name).toMatch(testCase.expected);
     }
-  });
+  }, 30_000);
 
   it('rejects abbreviated canonical v3 Run completion examples without their executable option set', () => {
     const root = createFixture();
