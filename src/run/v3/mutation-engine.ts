@@ -83,6 +83,7 @@ export interface V3MutationResult {
 export interface MutateRunV3Input extends V3MutationIdentity {
   runId: string;
   expectedRunRevision: number;
+  expectedOrchestrationRevision?: number;
   toStatus: RunStatus;
   summary?: string | null;
   verdict?: RunV30['verdict'];
@@ -622,6 +623,7 @@ export function mutateRunV3(store: SessionStore, input: MutateRunV3Input): V3Mut
   const runId = required(input.runId, 'run ID');
   const payload = {
     operation: 'run-transition', run_id: runId, expected_run_revision: input.expectedRunRevision,
+    expected_orchestration_revision: input.expectedOrchestrationRevision ?? null,
     to_status: input.toStatus, summary: input.summary, verdict: input.verdict,
     transition_evidence: input.transitionEvidence ?? {},
     ...auditPayload(identity),
@@ -633,6 +635,15 @@ export function mutateRunV3(store: SessionStore, input: MutateRunV3Input): V3Mut
     const session = tx.readSession();
     const run = tx.readRun(runId);
     assertRunRevision(run, input.expectedRunRevision);
+    if (input.toStatus === 'failed' || input.toStatus === 'cancelled') {
+      if (input.expectedOrchestrationRevision === undefined) {
+        throw new V3StructuredError(
+          'INVALID_ARGUMENT',
+          `expected orchestration revision is required when transitioning a Run to ${input.toStatus}`,
+        );
+      }
+      assertOrchestrationRevision(session, input.expectedOrchestrationRevision);
+    }
     assertSessionRunTransitionAllowed(session.status, run.status, input.toStatus, input.transitionEvidence);
     const transitioned = transitionRun(run, input.toStatus, input.transitionEvidence);
     const nextRun: RunV30 = {
@@ -664,6 +675,25 @@ export function mutateRunV3(store: SessionStore, input: MutateRunV3Input): V3Mut
       : session, identity.recordedAt, changesRunningStep
         ? session.orchestration_revision + 1
         : session.orchestration_revision);
+    const continuation = input.toStatus === 'running'
+      ? v3CompleteNext({
+        sessionId: identity.sessionId,
+        runId,
+        orchestrationRevision: nextSession.orchestration_revision,
+        runRevision: nextRun.revision,
+        reason: 'Run returned to running; execute and complete it with run complete --advance',
+      })
+      : input.toStatus === 'cancelled' && nextSession.chain.some(step => step.status === 'pending')
+        ? v3RunNext({
+          sessionId: identity.sessionId,
+          orchestrationRevision: nextSession.orchestration_revision,
+          reason: 'Run cancelled; dispatch the pending chain step with run next',
+        })
+        : v3CheckNext({
+          sessionId: identity.sessionId,
+          runId,
+          reason: `Run is ${nextRun.status}; inspect canonical Run state before continuing`,
+        });
     return stageApplied({
       tx, identity, payloadHash, session: nextSession, run: nextRun,
       targetType: 'run', targetId: runId,
@@ -671,6 +701,7 @@ export function mutateRunV3(store: SessionStore, input: MutateRunV3Input): V3Mut
       result: {
         run_id: runId, status: nextRun.status, revision: nextRun.revision,
         orchestration_revision: nextSession.orchestration_revision,
+        ...continuation,
       },
     });
   });

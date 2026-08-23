@@ -207,7 +207,8 @@ describe('v3 mutation engine', () => {
         ...identity('req-a'), runId: 'r-1', expectedRunRevision: 0, toStatus: 'blocked',
       })),
       Promise.resolve().then(() => mutateRunV3(store, {
-        ...identity('req-b'), actorId: 'actor-b', runId: 'r-1', expectedRunRevision: 0, toStatus: 'cancelled',
+        ...identity('req-b'), actorId: 'actor-b', runId: 'r-1', expectedRunRevision: 0,
+        expectedOrchestrationRevision: 0, toStatus: 'cancelled',
       })),
     ]);
     expect(results.filter(item => item.status === 'fulfilled')).toHaveLength(1);
@@ -258,10 +259,14 @@ describe('v3 mutation engine', () => {
   ] as const)('projects a running Run transitioned to %s into recoverable chain state %s', (runStatus, stepStatus) => {
     const store = setup();
     const result = mutateRunV3(store, {
-      ...identity(`req-${runStatus}`), runId: 'r-1', expectedRunRevision: 0, toStatus: runStatus,
+      ...identity(`req-${runStatus}`), runId: 'r-1', expectedRunRevision: 0,
+      expectedOrchestrationRevision: 0, toStatus: runStatus,
       verdict: runStatus === 'failed' ? 'needs_retry' : undefined,
     });
     expect(result.transition).toMatchObject({ revision_before: 0, revision_after: 1 });
+    expect(result.transition.result).toMatchObject({
+      continuation: { operation: runStatus === 'cancelled' ? 'next' : 'check' },
+    });
     expect(store.readRunV30('s-1', 'r-1')).toMatchObject({ status: runStatus, revision: 1 });
     expect(store.readSessionV30('s-1')).toMatchObject({
       orchestration_revision: 1, activity_revision: 1, active_run_ids: ['r-2'],
@@ -269,11 +274,43 @@ describe('v3 mutation engine', () => {
     });
   });
 
+  it('rejects stale orchestration CAS for Session-changing Run mutations without writes', () => {
+    const store = setup();
+    const sessionBefore = store.readSessionV30('s-1');
+    const runBefore = store.readRunV30('s-1', 'r-1');
+    expect(() => mutateRunV3(store, {
+      ...identity('req-stale-cancel'), runId: 'r-1', expectedRunRevision: 0,
+      expectedOrchestrationRevision: 9, toStatus: 'cancelled',
+    })).toThrow(expect.objectContaining({
+      code: 'ORCHESTRATION_REVISION_CONFLICT', expected_revision: 9, current_revision: 0,
+    }));
+    expect(store.readSessionV30('s-1')).toEqual(sessionBefore);
+    expect(store.readRunV30('s-1', 'r-1')).toEqual(runBefore);
+    expect(store.readRequestReceiptV20('s-1', 'req-stale-cancel')).toBeNull();
+  });
+
+  it('returns actionable continuations for blocked and running recovery states', () => {
+    const store = setup();
+    const blocked = mutateRunV3(store, {
+      ...identity('req-block'), runId: 'r-1', expectedRunRevision: 0, toStatus: 'blocked',
+    });
+    expect(blocked.transition.result).toMatchObject({ continuation: { operation: 'check' } });
+    const running = mutateRunV3(store, {
+      ...identity('req-running'), runId: 'r-1', expectedRunRevision: 1, toStatus: 'running',
+    });
+    expect(running.transition.result).toMatchObject({
+      continuation: {
+        operation: 'complete',
+        revision_requirements: { expected_orchestration_revision: 0, expected_run_revision: 2 },
+      },
+    });
+  });
+
   it('validates and derives retry lineage from locked source state', () => {
     const store = setup();
     mutateRunV3(store, {
       ...identity('req-source-failed'), runId: 'r-1', expectedRunRevision: 0,
-      toStatus: 'failed', verdict: 'needs_retry',
+      expectedOrchestrationRevision: 0, toStatus: 'failed', verdict: 'needs_retry',
     });
     const result = createRunningRunV3(store, {
       ...identity('req-retry'), expectedOrchestrationRevision: 1,
@@ -292,7 +329,7 @@ describe('v3 mutation engine', () => {
     const store = setup();
     mutateRunV3(store, {
       ...identity('req-source-forged'), runId: 'r-1', expectedRunRevision: 0,
-      toStatus: 'failed', verdict: 'needs_retry',
+      expectedOrchestrationRevision: 0, toStatus: 'failed', verdict: 'needs_retry',
     });
     const before = store.readSessionV30('s-1');
     expect(() => createRunningRunV3(store, {
@@ -316,7 +353,7 @@ describe('v3 mutation engine', () => {
     const crossStepStore = setup();
     mutateRunV3(crossStepStore, {
       ...identity('req-cross-source-failed'), runId: 'r-1', expectedRunRevision: 0,
-      toStatus: 'failed', verdict: 'needs_retry',
+      expectedOrchestrationRevision: 0, toStatus: 'failed', verdict: 'needs_retry',
     });
     const crossStepBefore = crossStepStore.readSessionV30('s-1');
     expect(() => createRunningRunV3(crossStepStore, {

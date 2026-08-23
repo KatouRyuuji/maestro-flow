@@ -278,10 +278,13 @@ describe('formal session/3.0 Commander modules', () => {
     expect(blocked).toMatchObject({ operation: 'run-transition', ok: true, result: { status: 'blocked' } });
     vi.restoreAllMocks();
     const failed = await invoke(registerRunV3Command, [
-      'run', 'transition', 'run-1', 'failed',
+      'run', 'transition', 'run-1', 'failed', '--expected-orchestration-revision', '0',
       ...mutationFlags(root, '--expected-run-revision', 1),
     ]);
-    expect(failed).toMatchObject({ operation: 'run-transition', ok: true, result: { status: 'failed' } });
+    expect(failed).toMatchObject({
+      operation: 'run-transition', ok: true,
+      result: { status: 'failed', continuation: { operation: 'check' } },
+    });
     expect(JSON.parse(readFileSync(join(root, '.workflow', 'sessions', 's-v3', 'runs', 'run-1', 'run.json'), 'utf8')))
       .toMatchObject({ status: 'failed', revision: 2, verdict: 'needs_retry' });
   });
@@ -461,10 +464,29 @@ describe('formal session/3.0 Commander modules', () => {
     const root = fixture({ run: {} });
     const response = await invoke(registerRunV3Command, [
       'run', 'cancel', 'run-1', ...mutationFlags(root, '--expected-run-revision'),
+      '--expected-orchestration-revision', '0',
     ]);
-    expect(response).toMatchObject({ operation: 'run-cancel', ok: true });
+    expect(response).toMatchObject({
+      operation: 'run-cancel', ok: true,
+      result: {
+        continuation: {
+          operation: 'next',
+          revision_requirements: { expected_orchestration_revision: 0, expected_run_revision: null },
+        },
+      },
+    });
     expect(JSON.parse(readFileSync(join(root, '.workflow', 'sessions', 's-v3', 'runs', 'run-1', 'run.json'), 'utf8')))
       .toMatchObject({ status: 'cancelled', revision: 1 });
+  });
+
+  it('requires an orchestration fence for Run cancellation', async () => {
+    const root = fixture({ run: {} });
+    const program = new Command().name('maestro').exitOverride().configureOutput({ writeErr: () => {} });
+    registerRunV3Command(program);
+    await expect(program.parseAsync([
+      'node', 'maestro', 'run', 'cancel', 'run-1',
+      ...mutationFlags(root, '--expected-run-revision'),
+    ])).rejects.toThrow(/required option '--expected-orchestration-revision <n>'/);
   });
 
   it('projects an empty blocking gate set and draft publications from authoritative registries', async () => {

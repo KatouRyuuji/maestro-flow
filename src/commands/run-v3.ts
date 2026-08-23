@@ -204,6 +204,7 @@ export function registerRunV3Command(program: Command): void {
     });
 
   addV3MutationOptions(run.command('transition <run-id> <status>').description('Transition a Run between active states'), 'run')
+    .option('--expected-orchestration-revision <n>', 'required when failed transition updates the Session chain', parseV3Revision)
     .action((runId: string, status: string, options: RunMutationOptions) => {
       try {
         if (!['running', 'blocked', 'failed'].includes(status)) {
@@ -213,7 +214,9 @@ export function registerRunV3Command(program: Command): void {
         const toStatus = status as 'running' | 'blocked' | 'failed';
         const mutation = mutateRunV3(store, {
           ...mutationIdentity(resolved), runId,
-          expectedRunRevision: resolved.expectedRunRevision!, toStatus,
+          expectedRunRevision: resolved.expectedRunRevision!,
+          expectedOrchestrationRevision: resolved.expectedOrchestrationRevision,
+          toStatus,
           transitionEvidence: { reason: resolved.reason, evidence: resolved.evidence },
           verdict: toStatus === 'blocked' ? 'blocked' : toStatus === 'failed' ? 'needs_retry' : undefined,
         });
@@ -225,12 +228,15 @@ export function registerRunV3Command(program: Command): void {
     });
 
   addV3MutationOptions(run.command('cancel <run-id>').description('Cancel a Run'), 'run')
+    .requiredOption('--expected-orchestration-revision <n>', 'expected Session orchestration revision', parseV3Revision)
     .action((runId: string, options: RunMutationOptions) => {
       try {
         const { store, options: resolved } = resolveV3Options(options);
         const mutation = mutateRunV3(store, {
           ...mutationIdentity(resolved), runId,
-          expectedRunRevision: resolved.expectedRunRevision!, toStatus: 'cancelled',
+          expectedRunRevision: resolved.expectedRunRevision!,
+          expectedOrchestrationRevision: resolved.expectedOrchestrationRevision!,
+          toStatus: 'cancelled',
         });
         emitV3Success({ operation: 'run-cancel', sessionId: resolved.session, runId,
           requestId: resolved.requestId, result: runResult(mutation), mutation });

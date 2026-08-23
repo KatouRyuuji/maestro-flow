@@ -32,11 +32,11 @@ IF latest-review (review-findings) is available:
   count findings with actionable fix scope
   IF ≤3 findings AND each touches ≤2 files:
     → Companion path: write report.md with degradation note,
-      run `maestro run cancel {run_id} --session {session_id} --participant {actor_id} --actor {actor_id} --request-id {cancel_request_id} --reason "reroute execute attempt to Companion" --expected-run-revision {run_revision} --json`,
+      run `maestro run cancel {run_id} --session {session_id} --participant {actor_id} --actor {actor_id} --request-id {cancel_request_id} --reason "reroute execute attempt to Companion" --expected-run-revision {run_revision} --expected-orchestration-revision {orchestration_revision} --json`,
       then surface: /maestro-companion "<finding summaries as intent>"
   ELSE:
     → Odyssey planex path: write report.md with degradation note,
-      run `maestro run cancel {run_id} --session {session_id} --participant {actor_id} --actor {actor_id} --request-id {cancel_request_id} --reason "reroute execute attempt to Odyssey planex" --expected-run-revision {run_revision} --json`,
+      run `maestro run cancel {run_id} --session {session_id} --participant {actor_id} --actor {actor_id} --request-id {cancel_request_id} --reason "reroute execute attempt to Odyssey planex" --expected-run-revision {run_revision} --expected-orchestration-revision {orchestration_revision} --json`,
       then surface: /odyssey-planex "<review findings as requirement>"
 
 ELSE IF latest-debug (diagnosis) is available AND fix-directions present:

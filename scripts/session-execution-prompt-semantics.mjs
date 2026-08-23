@@ -105,7 +105,7 @@ const EXECUTION_MUTATIONS = {
     '--participant', '--actor', '--request-id', '--reason', '--json',
   ],
   'maestro run cancel': [
-    '--session', '--expected-run-revision',
+    '--session', '--expected-run-revision', '--expected-orchestration-revision',
     '--participant', '--actor', '--request-id', '--reason', '--json',
   ],
   'maestro run transition': [
