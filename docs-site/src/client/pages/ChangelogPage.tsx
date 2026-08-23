@@ -17,6 +17,16 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    version: '0.5.80',
+    date: '2026-08',
+    changes: [
+      { type: 'feat', text_en: 'Search now surfaces bundled Arch-KB architecture templates as reference results: mixed-fusion search gains a template provider backed by the packaged arch-kb index (no project-index writes), with a new virtual template type filter; results carry scored entries from the bundled architecture knowledge base', text_zh: '搜索现将内置 Arch-KB 架构模板作为参考结果呈现：mixed-fusion 搜索新增由打包 arch-kb 索引驱动的 template 提供方（不写项目索引），并新增虚拟 template 类型过滤器；结果携带内置架构知识库的评分条目' },
+      { type: 'fix', text_en: 'Arch-KB integration hardened after multi-agent review: direct-match detection reuses the scorer tokenizer with substring/superstring semantics so plural/punctuation queries are no longer dropped after scoring; the hermetic built-ranking gate injects an empty archKbSearch stub so bundled templates never leak into the baseline; merged search results substitute the real query instead of a literal placeholder; a missing index is no longer negative-cached so long-lived processes recover once it appears; the development-query regex gains ASCII word boundaries; equal-score ties break deterministically by entry id', text_zh: 'Arch-KB 集成经多智能体评审加固：直接匹配检测复用评分器 tokenizer 并镜像其子串/超串语义，复数/标点查询不再在评分后被丢弃；密闭 built-ranking 门禁注入空 archKbSearch stub，内置模板不再泄漏进基线；合并结果以真实查询替换字面占位符；缺失索引不再被负缓存，长生命周期进程可在索引出现后自愈；开发查询正则增加 ASCII 词边界；同分并列按条目 id 确定性排序' },
+      { type: 'feat', text_en: 'Knowledge-graph explore gains ported codegraph capabilities: multiplicative relevance-scoring demotion levers (KIND / ISOLATION / PENALTY) opt-in via RelevanceContext with legacy computeScore behaviour unchanged, plus score-proportional byte-budget allocation for explore output — the render loop spends reservations with carry-forward and a displacement guard, calibrated to Maestro\'s ~6K-12K envelope', text_zh: '知识图谱 explore 引入移植的 codegraph 能力：乘法相关性降权杠杆（KIND / ISOLATION / PENALTY）经 RelevanceContext 可选启用且 legacy computeScore 行为不变；explore 输出改为按分数比例的字节预算分配——渲染循环带结转与置换保护地消耗预留额度，按 Maestro 约 6K-12K 包络校准' },
+      { type: 'chore', text_en: 'Retired maestro-session-seal references replaced by maestro-session-manage --complete across workflows and maestro-help phases/catalog; maestro-session-manage skill/command sources added (.claude/.codex) and guide docs refreshed', text_zh: 'workflows 与 maestro-help 阶段/目录中退役的 maestro-session-seal 引用替换为 maestro-session-manage --complete；新增 maestro-session-manage skill/命令源（.claude/.codex）并刷新指南文档' },
+    ],
+  },
+  {
     version: '0.5.79',
     date: '2026-08',
     changes: [
