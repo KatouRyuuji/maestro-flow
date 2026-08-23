@@ -487,7 +487,7 @@ async function main() {
 
     const v3OpenArgs = [
       'session', 'open', 'release v3 workspace', '--id', 'release-v3',
-      '--participant', 'window-bootstrap', '--actor', 'release-actor',
+      '--participant', 'release-actor', '--actor', 'release-actor',
       '--request-id', 'req-v3-open', '--reason', 'open v3 release proof',
       '--definition-of-done', 'release machine v3 proofs pass', '--json', v3RootArg,
     ];
@@ -516,7 +516,7 @@ async function main() {
       'execution start', 'execution status',
       'run brief', 'run cancel', 'run check', 'run complete', 'run create', 'run decide', 'run next',
       'run recall', 'run seal', 'run transition',
-      'session archive', 'session chain insert', 'session chain replace', 'session chain skip',
+      'session archive', 'session chain insert', 'session chain replace', 'session chain skip', 'session chain update',
       'session complete', 'session list', 'session migrate', 'session open', 'session resume-view',
       'session status', 'session unarchive',
     ];
@@ -549,21 +549,21 @@ async function main() {
     const v3Store = new SessionStore(v3Root);
     const insertStep = parseEnvelope(invoke([
       'session', 'chain', 'insert', '--session', 'release-v3', '--step-id', 'step-release',
-      '--command', 'release-execution', '--participant', 'window-release', '--actor', 'release-actor',
+      '--command', 'release-execution', '--participant', 'release-actor', '--actor', 'release-actor',
       '--request-id', 'req-v3-chain-insert', '--reason', 'add release proof step',
       '--expected-orchestration-revision', '1', '--json', v3RootArg,
     ]), 'v3 chain insert', 'run-response/1.2');
     assert.equal(insertStep.revision?.revision, 2);
     const v3Next = parseEnvelope(invoke([
       'run', 'next', '--session', 'release-v3', '--run', 'release-v3-run',
-      '--participant', 'window-release', '--actor', 'release-actor', '--request-id', 'req-v3-next',
+      '--participant', 'release-actor', '--actor', 'release-actor', '--request-id', 'req-v3-next',
       '--reason', 'start release proof Run', '--expected-orchestration-revision', '2', '--json', v3RootArg,
     ]), 'v3 run next', 'run-response/1.2');
     assert.equal(v3Next.result.status, 'running');
     assert.equal(v3Next.result.revision, 1);
     const completeWithoutAdvanceArgs = [
       'run', 'complete', 'release-v3-run', '--session', 'release-v3', '--summary', 'release proof done',
-      '--participant', 'window-release', '--actor', 'release-actor', '--request-id', 'req-v3-complete-no-advance',
+      '--participant', 'release-actor', '--actor', 'release-actor', '--request-id', 'req-v3-complete-no-advance',
       '--reason', 'prove atomic advance requirement', '--expected-run-revision', '1',
       '--expected-orchestration-revision', '3', '--json', v3RootArg,
     ];
@@ -600,8 +600,14 @@ async function main() {
     });
     assert.deepEqual(completeWithAdvance.result.next, {
       suggest_only: true,
-      command: 'maestro run next --session release-v3',
-      reason: 'Run sealed; no pending chain step remains',
+      command: 'maestro session complete --session release-v3 --participant <actor-id> --actor <actor-id> --request-id <request-id> --reason "<reason>" --expected-orchestration-revision 4 --json',
+      reason: 'Run sealed; no pending chain step remains, so complete the Session',
+    });
+    assert.deepEqual(completeWithAdvance.result.continuation, {
+      operation: 'session-complete',
+      locator: { session_id: 'release-v3', run_id: null },
+      revision_requirements: { expected_orchestration_revision: 4, expected_run_revision: null },
+      required_caller_fields: ['participant', 'actor', 'request_id', 'reason'],
     });
     assert.equal(v3Store.readRunV30('release-v3', 'release-v3-run').status, 'sealed');
     assert.equal(v3Store.readSessionV30('release-v3').chain[0].status, 'completed');

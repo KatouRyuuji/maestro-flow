@@ -1264,7 +1264,7 @@ export const runOperationV12Schema = z.enum([
   'capabilities',
   'session-open', 'session-migrate', 'session-complete', 'session-archive', 'session-unarchive',
   'session-status', 'session-list', 'session-resume-view', 'session-chain-insert', 'session-chain-skip',
-  'session-chain-replace',
+  'session-chain-replace', 'session-chain-update',
   'run-cancel', 'run-seal', 'run-transition', 'run-decide',
   ...runOperationV11Schema.options.filter(operation => operation.startsWith('execution-')),
   'execution-operation-claim', 'execution-operation-heartbeat',

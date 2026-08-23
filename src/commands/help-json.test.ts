@@ -47,7 +47,7 @@ function invoke(args: string[]) {
 const REQUIRED = [
   'session open', 'session migrate', 'session complete', 'session archive', 'session unarchive',
   'session status', 'session resume-view',
-  'session chain insert', 'session chain skip', 'session chain replace',
+  'session chain insert', 'session chain skip', 'session chain replace', 'session chain update',
   'run next', 'run create', 'run transition', 'run complete', 'run cancel', 'run seal', 'run brief', 'run check',
   'run decide', 'run recall',
   'session list',
@@ -69,22 +69,31 @@ describe('v3 help catalog', () => {
     const catalog = buildV3HelpCatalog();
     for (const item of catalog) {
       if (item.cas_target === 'run') expect(item.options).toContain('--expected-run-revision');
-      if (item.cas_target === 'orchestration') expect(item.options).toContain('--expected-orchestration-revision');
+      if (item.cas_target === 'orchestration' && item.command !== 'session migrate') {
+        expect(item.options).toContain('--expected-orchestration-revision');
+      }
       if ((item.mutation_scope === 'run' || item.mutation_scope === 'orchestration')
-        && item.command !== 'session open' && item.command !== 'session migrate') {
+        && item.command !== 'session open') {
         expect(item.options).toEqual(expect.arrayContaining(['--participant', '--actor', '--request-id']));
       }
       if (item.deprecated) {
         expect(item.command.startsWith('execution ')).toBe(true);
         expect(item.replacement).toBeTruthy();
       }
-      expect(item.options).not.toContain('--expected-activity-revision');
+      if (item.command === 'session migrate') {
+        expect(item.options).toEqual(expect.arrayContaining([
+          '--expected-identity-revision', '--expected-activity-revision', '--expected-revisions',
+        ]));
+      } else {
+        expect(item.options).not.toContain('--expected-activity-revision');
+      }
     }
     const migration = catalog.find(item => item.command === 'session migrate');
     const inspect = catalog.find(item => item.command === 'artifact inspect');
     const republish = catalog.find(item => item.command === 'artifact republish');
     const complete = catalog.find(item => item.command === 'run complete');
     const recoverySeal = catalog.find(item => item.command === 'run seal');
+    const chainUpdate = catalog.find(item => item.command === 'session chain update');
     expect(inspect).toMatchObject({ mutation_scope: 'read', cas_target: 'none' });
     expect(republish).toMatchObject({ mutation_scope: 'artifact', cas_target: 'artifact' });
     expect(republish?.options).toEqual(expect.arrayContaining([
@@ -94,9 +103,19 @@ describe('v3 help catalog', () => {
     expect(complete?.description).toBe('Complete and seal a Run atomically');
     expect(complete?.options).toContain('--advance');
     expect(recoverySeal?.description).toBe('Deprecated recovery seal for an already terminal pre-upgrade Run');
-    expect(migration).toMatchObject({ mutation_scope: 'orchestration', cas_target: 'none' });
-    expect(migration?.options).toEqual(expect.arrayContaining(['--participant', '--actor', '--to-v3']));
-    expect(migration?.options).toContain('--request-id');
+    expect(chainUpdate).toMatchObject({
+      mutation_scope: 'orchestration', cas_target: 'orchestration',
+      description: expect.stringContaining('clearing is unsupported'),
+    });
+    expect(chainUpdate?.options).toEqual(expect.arrayContaining([
+      '--session', '--step-id', '--command', '--arg', '--goal-ref', '--stage', '--decision-ref',
+      '--participant', '--actor', '--request-id', '--reason', '--expected-orchestration-revision',
+    ]));
+    expect(migration).toMatchObject({ mutation_scope: 'orchestration', cas_target: 'orchestration' });
+    expect(migration?.options).toEqual(expect.arrayContaining([
+      '--participant', '--actor', '--to-v3', '--request-id', '--reason',
+      '--expected-identity-revision', '--expected-activity-revision', '--expected-revisions',
+    ]));
   });
 
   it('requires --json before emitting the catalog', async () => {

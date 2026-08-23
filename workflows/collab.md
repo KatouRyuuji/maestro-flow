@@ -207,9 +207,9 @@ Output: {output_dir}
 
 | Condition | Suggestion |
 |-----------|-----------|
-| Deep feasibility needed | step `analyze` (`maestro run prepare analyze` + `maestro run create analyze --session YYYYMMDD-analyze-{topic} --arg "{topic}" --intent "{topic}"`) |
-| Plan from conclusions | step `plan` (`maestro run prepare plan` + `maestro run create plan --session YYYYMMDD-plan-{topic} --arg "{goal}" --intent "{goal}"`) |
-| Expand ideas | step `brainstorm` (`maestro run prepare brainstorm` + `maestro run create brainstorm --session YYYYMMDD-brainstorm-{topic} --arg "{topic}" --intent "{topic}"`) |
+| Deep feasibility needed | step `analyze` through the canonical self-start receipt chain; store `<topic>` with `session chain insert --command analyze --arg "<topic>"` before fenced `run next` |
+| Plan from conclusions | step `plan` through the canonical self-start receipt chain; store `<goal>` with `session chain insert --command plan --arg "<goal>"` before fenced `run next` |
+| Expand ideas | step `brainstorm` through the canonical self-start receipt chain; store `<topic>` with `session chain insert --command brainstorm --arg "<topic>"` before fenced `run next` |
 
 ---
 

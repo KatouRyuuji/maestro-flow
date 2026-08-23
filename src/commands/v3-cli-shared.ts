@@ -54,9 +54,21 @@ export function addV3ReadOptions(command: Command): Command {
     .option('--workflow-root <path>', 'project root containing .workflow', process.cwd());
 }
 
+export function assertV3ParticipantIdentity(options: { participant: string; actor: string }): void {
+  if (options.participant !== options.actor) {
+    throw new V3StructuredError(
+      'INVALID_ARGUMENT',
+      '--participant must equal --actor for the session/3.0 participant identity contract',
+    );
+  }
+}
+
 export function addV3MutationOptions(command: Command, target: 'run' | 'orchestration'): Command {
-  const configured = addV3ReadOptions(command)
-    .requiredOption('--participant <id>', 'participant performing the mutation')
+  const configured = command
+    .requiredOption('--session <id>', 'exact Session ID')
+    .option('--json', 'emit run-response/1.2 JSON')
+    .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
+    .requiredOption('--participant <id>', 'participant performing the mutation; must equal --actor')
     .requiredOption('--actor <id>', 'authorized actor')
     .requiredOption('--request-id <id>', 'idempotency request ID')
     .requiredOption('--reason <text>', 'audit reason')
@@ -81,6 +93,10 @@ export function v3Store(options: { workflowRoot: string }): SessionStore {
 export function resolveV3Options<T extends { session?: string; workflowRoot: string }>(
   options: T,
 ): { store: SessionStore; options: T & { session: string } } {
+  if ('participant' in options && 'actor' in options
+    && typeof options.participant === 'string' && typeof options.actor === 'string') {
+    assertV3ParticipantIdentity({ participant: options.participant, actor: options.actor });
+  }
   const store = v3Store(options);
   const result = resolveSessionContextFromStore(store, { explicit_session_id: options.session });
   if (!result.ok) throw sessionContextErrorToV3Error(result.error);
@@ -90,6 +106,7 @@ export function resolveV3Options<T extends { session?: string; workflowRoot: str
 }
 
 export function mutationIdentity(options: ResolvedV3CommonOptions) {
+  assertV3ParticipantIdentity(options);
   return {
     sessionId: options.session,
     actorId: options.actor,

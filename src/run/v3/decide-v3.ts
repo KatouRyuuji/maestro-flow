@@ -5,6 +5,7 @@ import type { SessionStateV30 } from '../schemas.js';
 import { assertSafePathSegment } from '../ids.js';
 import type { SessionStore, SessionV30StoreTransaction } from '../store.js';
 import { createRevisionConflictError, V3StructuredError } from './errors.js';
+import { v3DecideNext, v3RunNext } from './continuation-v3.js';
 import type { V3MutationIdentity, V3MutationResult } from './mutation-engine.js';
 import {
   canonicalPayloadHash,
@@ -284,6 +285,18 @@ export function decideV3(store: SessionStore, input: DecideV3Input): V3MutationR
       session.orchestration_revision + 1,
     );
 
+    const continuation = verdict === 'escalate'
+      ? v3DecideNext({
+        sessionId: identity.sessionId,
+        pointId,
+        orchestrationRevision: nextSession.orchestration_revision,
+        reason: 'Decision escalated - re-decide once the blocker is resolved; run next remains blocked',
+      })
+      : v3RunNext({
+        sessionId: identity.sessionId,
+        orchestrationRevision: nextSession.orchestration_revision,
+        reason: 'Decision recorded - run next may advance the chain',
+      });
     return stageApplied({
       tx, identity, payloadHash, session: nextSession,
       targetType: 'orchestration', targetId: identity.sessionId,
@@ -293,15 +306,7 @@ export function decideV3(store: SessionStore, input: DecideV3Input): V3MutationR
         point_id: pointId,
         status: decisionStatus,
         orchestration_revision: nextSession.orchestration_revision,
-        next: {
-          suggest_only: true,
-          command: verdict === 'escalate'
-            ? `maestro run decide ${pointId} --verdict proceed`
-            : `maestro run next --session ${identity.sessionId}`,
-          reason: verdict === 'escalate'
-            ? 'Decision escalated — Session stays open; re-decide once the blocker is resolved (run next stays blocked until the decision is resolved)'
-            : 'Decision recorded — run next may advance the chain',
-        },
+        ...continuation,
       },
     });
   });

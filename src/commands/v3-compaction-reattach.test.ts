@@ -95,7 +95,8 @@ describe('v3 compaction reattach', () => {
     expect(open.operation).toBe('session-open');
 
     const insert1 = invoke(root, [
-      'session', 'chain', 'insert', '--step-id', 'step-1', '--command', 'implement',
+      'session', 'chain', 'insert', '--session', 'compaction-session',
+      '--step-id', 'step-1', '--command', 'implement',
       '--participant', 'pi-c1', '--actor', 'pi-c1',
       '--request-id', 'req-c1-insert', '--reason', 'process 1',
       '--expected-orchestration-revision', '1',
@@ -139,12 +140,21 @@ describe('v3 compaction reattach', () => {
     const briefSession = brief.result?.session as Record<string, unknown> | undefined;
     expect(briefSession?.orchestration_revision).toBe(4);
     expect((brief.result?.run as Record<string, unknown> | undefined)?.status).toBe('sealed');
-    expect((brief.result?.next as { command?: string } | undefined)?.command)
-      .toBe('maestro session complete');
+    expect((brief.result?.next as { command?: string } | undefined)?.command).toBe(
+      'maestro session complete --session compaction-session --participant <actor-id> '
+      + '--actor <actor-id> --request-id <request-id> --reason "<reason>" '
+      + '--expected-orchestration-revision 4 --json',
+    );
+    expect(brief.result?.continuation).toMatchObject({
+      operation: 'session-complete',
+      locator: { session_id: 'compaction-session' },
+      revision_requirements: { expected_orchestration_revision: 4 },
+    });
 
     // Insert step-2 and continue — revisions stay contiguous (4 -> 5 -> 6).
     const insert2 = invoke(root, [
-      'session', 'chain', 'insert', '--step-id', 'step-2', '--command', 'implement',
+      'session', 'chain', 'insert', '--session', 'compaction-session',
+      '--step-id', 'step-2', '--command', 'implement',
       '--participant', 'pi-c2', '--actor', 'pi-c2',
       '--request-id', 'req-c2-insert', '--reason', 'process 2 after compaction',
       '--expected-orchestration-revision', '4',

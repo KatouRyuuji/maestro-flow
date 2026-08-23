@@ -65,45 +65,56 @@ const EXECUTION_MUTATIONS = {
     '--id', '--participant', '--actor', '--request-id', '--reason', '--json',
   ],
   'maestro session chain insert': [
-    '--step-id', '--command', '--participant', '--actor', '--request-id', '--reason',
+    '--session', '--step-id', '--command', '--participant', '--actor', '--request-id', '--reason',
     '--expected-orchestration-revision', '--json',
   ],
   'maestro session chain replace': [
-    '--step-id', '--command', '--participant', '--actor', '--request-id', '--reason',
+    '--session', '--step-id', '--command', '--participant', '--actor', '--request-id', '--reason',
+    '--expected-orchestration-revision', '--json',
+  ],
+  'maestro session chain update': [
+    '--session', '--step-id', '--participant', '--actor', '--request-id', '--reason',
     '--expected-orchestration-revision', '--json',
   ],
   'maestro session chain skip': [
-    '--step-id', '--participant', '--actor', '--request-id', '--reason',
+    '--session', '--step-id', '--participant', '--actor', '--request-id', '--reason', '--evidence',
     '--expected-orchestration-revision', '--json',
   ],
   'maestro session complete': [
-    '--participant', '--actor', '--request-id', '--reason',
+    '--session', '--participant', '--actor', '--request-id', '--reason',
     '--expected-orchestration-revision', '--json',
   ],
-  'maestro session migrate': ['--to', '--participant', '--actor', '--json'],
+  'maestro session migrate': [
+    '--session', '--to-v3', '--participant', '--actor', '--request-id', '--reason',
+    '--expected-identity-revision', '--expected-activity-revision', '--json',
+  ],
   'maestro run next': [
-    '--participant', '--actor', '--request-id', '--reason',
+    '--session', '--participant', '--actor', '--request-id', '--reason',
     '--expected-orchestration-revision', '--json',
   ],
   'maestro run create': [
-    '--run', '--step', '--participant', '--actor', '--request-id', '--reason',
+    '--session', '--run', '--step', '--participant', '--actor', '--request-id', '--reason',
     '--expected-orchestration-revision', '--json',
   ],
   'maestro run complete': [
-    '--advance', '--verdict', '--expected-run-revision', '--expected-orchestration-revision',
+    '--session', '--advance', '--verdict', '--expected-run-revision', '--expected-orchestration-revision',
     '--participant', '--actor', '--request-id', '--reason', '--json',
   ],
   'maestro run decide': [
-    '--verdict', '--confidence', '--expected-orchestration-revision',
+    '--session', '--verdict', '--confidence', '--expected-orchestration-revision',
     '--participant', '--actor', '--request-id', '--reason', '--json',
   ],
   'maestro run cancel': [
-    '--expected-run-revision', '--expected-orchestration-revision',
+    '--session', '--expected-run-revision',
+    '--participant', '--actor', '--request-id', '--reason', '--json',
+  ],
+  'maestro run transition': [
+    '--session', '--expected-run-revision',
     '--participant', '--actor', '--request-id', '--reason', '--json',
   ],
   'maestro artifact republish': [
-    '--assessment-hash', '--expected-artifact-revision', '--expected-orchestration-revision',
-    '--participant', '--actor', '--request-id', '--reason', '--json',
+    '--session', '--assessment-hash', '--consumer', '--alias', '--expected-artifact-revision',
+    '--expected-orchestration-revision', '--participant', '--actor', '--request-id', '--reason', '--json',
   ],
 };
 
@@ -113,9 +124,9 @@ export const EXECUTION_PROMPT_PROFILES = [
     path: 'workflows/run-mode.md',
     mutations: [
       'maestro session open', 'maestro session chain insert', 'maestro session chain replace',
-      'maestro session chain skip', 'maestro session complete',
-      'maestro run next', 'maestro run complete', 'maestro run decide', 'maestro run cancel',
-      'maestro artifact republish',
+      'maestro session chain update', 'maestro session chain skip', 'maestro session complete', 'maestro session migrate',
+      'maestro run next', 'maestro run create', 'maestro run complete', 'maestro run decide',
+      'maestro run transition', 'maestro run cancel', 'maestro artifact republish',
     ],
     required: [
       ...COMMON_REQUIRED,
@@ -123,8 +134,11 @@ export const EXECUTION_PROMPT_PROFILES = [
       'maestro run brief',
       'maestro session chain insert',
       'maestro run next',
+      'maestro run create',
       'maestro run complete',
       'maestro run decide',
+      'resolved `task`',
+      'structured executable `continuation`',
       'run_already_created',
       ...KNOWLEDGE_REQUIRED,
     ],
@@ -133,25 +147,32 @@ export const EXECUTION_PROMPT_PROFILES = [
     id: 'lite',
     path: 'workflows/run-mode-lite.md',
     mutations: [
-      'maestro session complete', 'maestro run complete',
+      'maestro session open', 'maestro session chain insert', 'maestro session complete',
+      'maestro run next', 'maestro run create', 'maestro run complete', 'maestro run decide',
+      'maestro run transition', 'maestro run cancel',
     ],
     required: [
       ...COMMON_REQUIRED,
       'maestro run complete',
+      'resolved `task`',
+      'structured executable `continuation`',
     ],
   },
   {
     id: 'orchestrator',
     path: 'workflows/orchestrator-run-loop.md',
     mutations: [
-      'maestro session chain insert', 'maestro session chain replace', 'maestro session chain skip',
-      'maestro session complete', 'maestro run next', 'maestro run complete', 'maestro run decide',
+      'maestro session chain insert', 'maestro session complete',
+      'maestro run next', 'maestro run complete', 'maestro run decide',
+      'maestro run transition', 'maestro run cancel',
     ],
     required: [
       ...COMMON_REQUIRED,
       'maestro run next',
       'maestro run complete',
       'maestro run decide',
+      'resolved `task`',
+      'structured executable `continuation`',
       'chain disposition',
     ],
   },
@@ -218,8 +239,11 @@ const SUPPORT_PROFILES = [
     id: 'entry-command-generator',
     path: 'src/core/entry-command-generator.ts',
     required: [
-      'maestro capabilities --json', 'execution/1.0', 'core_execution_lease', 'run-response/1.1',
-      'maestro run complete', 'maestro execution seal',
+      'maestro capabilities --json', 'session/3.0', 'run-response/1.2',
+      'maestro session open', 'maestro session chain insert', '--arg "<domain text>"',
+      'maestro run next', 'resolved \\`task\\`', 'structured executable \\`continuation\\`',
+      '--input <ART-id>', 'sealed same-Session Artifact ID',
+      'maestro run complete', '--advance', 'maestro session complete',
     ],
     forbidden: [
       { description: 'generated Session convenience start', pattern: /maestro run start/i },

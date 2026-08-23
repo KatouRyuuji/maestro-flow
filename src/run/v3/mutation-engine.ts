@@ -46,6 +46,16 @@ import { hashCommandContract, resolveCommandSource, resolveStepContent } from '.
 import { readReportFrontmatter, type ReportFrontmatter } from '../report.js';
 import { createRevisionConflictError, V3StructuredError } from './errors.js';
 import {
+  v3BriefCommand,
+  v3CheckNext,
+  v3CompleteNext,
+  v3RunNext,
+  v3SessionCompleteNext,
+  v3TaskContractSchema,
+  type V3NextContract,
+  type V3TaskContract,
+} from './continuation-v3.js';
+import {
   canonicalPayloadHash,
   createRequestReceipt,
   createTransitionReceipt,
@@ -696,6 +706,23 @@ export function recoverSealRunV3(store: SessionStore, input: RecoverSealRunV3Inp
       ...session,
       active_run_ids: session.active_run_ids.filter(id => id !== runId),
     }, identity.recordedAt);
+    const continuation = run.status === 'completed'
+      ? nextSession.chain.some(step => step.status === 'pending')
+        ? v3RunNext({
+          sessionId: identity.sessionId,
+          orchestrationRevision: nextSession.orchestration_revision,
+          reason: 'Deprecated recovery seal completed; dispatch the next pending chain Run',
+        })
+        : v3SessionCompleteNext({
+          sessionId: identity.sessionId,
+          orchestrationRevision: nextSession.orchestration_revision,
+          reason: 'Deprecated recovery seal completed; complete the terminal Session',
+        })
+      : v3CheckNext({
+        sessionId: identity.sessionId,
+        runId,
+        reason: 'Deprecated recovery seal completed; re-read canonical Run authority before continuing',
+      });
     return stageApplied({
       tx, identity, payloadHash, session: nextSession, run: nextRun,
       targetType: 'run', targetId: runId,
@@ -705,13 +732,7 @@ export function recoverSealRunV3(store: SessionStore, input: RecoverSealRunV3Inp
         run_revision: nextRun.revision, status: nextRun.status,
         artifact_publication: publication.authority,
         output_warnings: publication.warnings,
-        next: {
-          suggest_only: true,
-          command: run.status === 'completed'
-            ? `maestro run next --session ${identity.sessionId}`
-            : `maestro run check ${runId} --session ${identity.sessionId}`,
-          reason: 'Deprecated recovery seal completed; re-read canonical Session authority before continuing',
-        },
+        ...continuation,
       },
     });
   });
@@ -743,6 +764,11 @@ export function createRunV3(store: SessionStore, input: CreateRunV3Input): V3Mut
     const stepIndex = session.chain.findIndex(step => step.step_id === candidate.step_id);
     if (stepIndex < 0) throw new V3StructuredError('INVALID_ARGUMENT', `unknown chain step ${candidate.step_id}`);
     assertRunCreationLineage(tx, candidate, session.chain[stepIndex].status);
+    const artifacts = tx.readJson(
+      resolve(store.sessionDir(identity.sessionId), session.artifacts_ref),
+      artifactRegistrySchema,
+    );
+    assertExplicitArtifactInputs(candidate.input_refs, artifacts);
     if (session.active_run_ids.includes(candidate.run_id)) {
       throw new V3StructuredError('INVALID_STATE_TRANSITION', `Run ${candidate.run_id} is already active`);
     }
@@ -766,6 +792,32 @@ export function createRunV3(store: SessionStore, input: CreateRunV3Input): V3Mut
       result: { run_id: nextRun.run_id, revision: nextRun.revision },
     });
   });
+}
+
+function assertExplicitArtifactInputs(inputRefs: readonly string[], artifacts: ArtifactRegistry): void {
+  for (const artifactId of [...new Set(inputRefs)]) {
+    const artifact = artifacts.artifacts[artifactId];
+    if (!artifact) {
+      throw new V3StructuredError(
+        'INVALID_ARGUMENT',
+        `explicit input Artifact ${artifactId} does not exist in this Session`,
+        {
+          details: { artifact_id: artifactId, required_status: 'sealed' },
+          next_actions: ['select-a-same-session-artifact-id', 'inspect-session-artifacts'],
+        },
+      );
+    }
+    if (artifact.status !== 'sealed') {
+      throw new V3StructuredError(
+        'INVALID_STATE_TRANSITION',
+        `explicit input Artifact ${artifactId} is ${artifact.status}; only sealed Artifacts may be consumed`,
+        {
+          details: { artifact_id: artifactId, current_status: artifact.status, required_status: 'sealed' },
+          next_actions: ['seal-the-input-artifact', 'select-a-sealed-same-session-artifact-id'],
+        },
+      );
+    }
+  }
 }
 
 function republishedConsumerInputs(
@@ -833,6 +885,7 @@ export function createRunningRunV3(store: SessionStore, input: CreateRunningRunV
       resolve(store.sessionDir(identity.sessionId), session.artifacts_ref),
       artifactRegistrySchema,
     );
+    assertExplicitArtifactInputs(candidate.input_refs, artifacts);
     assertNextPredecessorPublished(tx, session, stepIndex, artifacts);
     const republishedInputs = republishedConsumerInputs(store, session, candidate.command, artifacts);
     const nextRun: RunV30 = {
@@ -867,12 +920,14 @@ export function createRunningRunV3(store: SessionStore, input: CreateRunningRunV
  * so a v3 executor can execute without an extra round trip; replaying the same
  * request-id returns the identical packet via the persisted receipt.
  */
-export interface V3BirthPacket {
+export interface V3BirthPacket extends V3NextContract {
   run_id: string;
   run_dir: string;
   step_id: string;
   status: RunStatus;
   revision: number;
+  /** Immutable execution inputs copied from the canonical Run. */
+  task: V3TaskContract;
   /** Consumed artifacts resolved from the Session artifact registry (by id). */
   upstream: Record<string, { artifact_id: string; path: string; kind: string; status: 'sealed' | 'draft' }>;
   /** Command guidance snapshot (prepare/workflow/run-mode hashes); null when no source resolves. */
@@ -916,12 +971,25 @@ export function v3BirthPacket(store: SessionStore, session: SessionStateV30, run
     };
   }
   const delta = readRunKnowledgeDelta(store, session.session_id, run.run_id, false);
+  const continuation = v3CompleteNext({
+    sessionId: session.session_id,
+    runId: run.run_id,
+    orchestrationRevision: session.orchestration_revision,
+    runRevision: run.revision,
+    reason: 'Run created - execute and complete it with run complete --advance',
+  });
   return {
     run_id: run.run_id,
     run_dir: store.runDir(session.session_id, run.run_id),
     step_id: run.step_id,
     status: run.status,
     revision: run.revision,
+    task: v3TaskContractSchema.parse({
+      command: run.command,
+      args: [...run.args],
+      goal: run.goal,
+      input_refs: [...run.input_refs],
+    }),
     upstream,
     guidance: buildV3GuidanceSnapshot(store, run.command),
     knowledge_context: delta
@@ -931,7 +999,8 @@ export function v3BirthPacket(store: SessionStore, session: SessionStateV30, run
           candidate_count: delta.candidates.length,
         }
       : null,
-    brief: { command: `maestro run brief ${run.run_id} --session ${session.session_id}` },
+    brief: { command: v3BriefCommand(session.session_id, run.run_id) },
+    ...continuation,
     run_already_created: true,
   };
 }
@@ -1108,6 +1177,17 @@ export function completeRunAndAdvance(
       );
     }
 
+    const continuation = nextPendingIndex >= 0
+      ? v3RunNext({
+        sessionId: identity.sessionId,
+        orchestrationRevision: nextSession.orchestration_revision,
+        reason: 'Run sealed; explicit run next may allocate the next chain Run',
+      })
+      : v3SessionCompleteNext({
+        sessionId: identity.sessionId,
+        orchestrationRevision: nextSession.orchestration_revision,
+        reason: 'Run sealed; no pending chain step remains, so complete the Session',
+      });
     return stageApplied({
       tx, identity, payloadHash, session: nextSession, run: nextRun,
       targetType: 'orchestration', targetId: identity.sessionId,
@@ -1122,13 +1202,7 @@ export function completeRunAndAdvance(
         artifact_publication: publication.authority,
         output_warnings: publication.warnings,
         next_step_id: nextPendingIndex >= 0 ? chain[nextPendingIndex].step_id : null,
-        next: {
-          suggest_only: true,
-          command: `maestro run next --session ${identity.sessionId}`,
-          reason: nextPendingIndex >= 0
-            ? 'Run sealed; explicit run next may allocate the next chain Run'
-            : 'Run sealed; no pending chain step remains',
-        },
+        ...continuation,
         ...(knowledgeReceipt
           ? { knowledge_reconciliation: reconciliationSummary(knowledgeReceipt) }
           : {}),

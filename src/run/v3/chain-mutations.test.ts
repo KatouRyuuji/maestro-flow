@@ -57,9 +57,70 @@ describe('v3 chain mutations', () => {
     expect(session.chain[2].decision_refs).toEqual(['evidence-1']);
   });
 
+  it('updates supplied metadata while preserving omitted fields', () => {
+    const store = setup();
+    const before = store.readSessionV30('s-1');
+    store.writeSessionV30({
+      ...before,
+      chain: before.chain.map(step => step.step_id === 'step-2'
+        ? { ...step, args: ['old-arg'], goal_ref: 'goal-old', stage: 'verify', decision_ref: 'gate-old' }
+        : step),
+      decisions: [{ decision_id: 'gate-old', after_step_id: 'step-2', status: 'open', evidence_refs: [] }],
+    });
+
+    mutate(store, 'req-update', { kind: 'update', stepId: 'step-2', command: 'audit' });
+
+    expect(store.readSessionV30('s-1')).toMatchObject({
+      orchestration_revision: 1,
+      activity_revision: 1,
+      chain: [
+        {},
+        {
+          step_id: 'step-2', command: 'audit', args: ['old-arg'], goal_ref: 'goal-old',
+          stage: 'verify', decision_ref: 'gate-old', status: 'pending',
+        },
+      ],
+      decisions: [{ decision_id: 'gate-old', status: 'open' }],
+    });
+  });
+
+  it('creates missing decision gates, reuses open gates without duplicates, and rejects closed gates', () => {
+    const store = setup();
+    mutate(store, 'req-gate-create', { kind: 'update', stepId: 'step-2', decisionRef: 'gate-1' });
+    mutate(store, 'req-gate-reuse', { kind: 'update', stepId: 'step-2', decisionRef: 'gate-1', stage: 'review' }, 1);
+    const updated = store.readSessionV30('s-1');
+    expect(updated.chain[1]).toMatchObject({ decision_ref: 'gate-1', stage: 'review' });
+    expect(updated.decisions).toEqual([
+      { decision_id: 'gate-1', after_step_id: 'step-2', status: 'open', evidence_refs: [] },
+    ]);
+    expect(() => mutate(store, 'req-gate-retarget', {
+      kind: 'update', stepId: 'step-2', decisionRef: 'gate-2',
+    }, 2)).toThrow(expect.objectContaining({ code: 'INVALID_STATE_TRANSITION' }));
+
+    store.writeSessionV30({
+      ...updated,
+      decisions: [...updated.decisions, {
+        decision_id: 'gate-closed', after_step_id: 'step-1', status: 'resolved', evidence_refs: [],
+      }],
+    });
+    expect(() => mutate(store, 'req-gate-closed', {
+      kind: 'update', stepId: 'step-2', decisionRef: 'gate-closed',
+    }, 2)).toThrow(expect.objectContaining({ code: 'INVALID_STATE_TRANSITION' }));
+    expect(store.readSessionV30('s-1')).toMatchObject({ orchestration_revision: 2, activity_revision: 2 });
+  });
+
+  it('rejects empty updates and unsupported clearing without writes', () => {
+    const store = setup();
+    expect(() => mutate(store, 'req-empty-update', { kind: 'update', stepId: 'step-2' }))
+      .toThrow(expect.objectContaining({ code: 'INVALID_ARGUMENT' }));
+    expect(() => mutate(store, 'req-clear-args', { kind: 'update', stepId: 'step-2', args: [] }))
+      .toThrow(expect.objectContaining({ code: 'INVALID_ARGUMENT' }));
+    expect(store.readSessionV30('s-1')).toMatchObject({ orchestration_revision: 0, activity_revision: 0 });
+  });
+
   it('replays without another revision increment', () => {
     const store = setup();
-    const input: ChainMutation = { kind: 'replace', stepId: 'step-2', command: 'audit' };
+    const input: ChainMutation = { kind: 'update', stepId: 'step-2', command: 'audit' };
     const applied = mutate(store, 'req-replay', input);
     const replayed = mutate(store, 'req-replay', input);
     expect(replayed).toEqual({ status: 'replayed', transition: applied.transition });
@@ -68,7 +129,7 @@ describe('v3 chain mutations', () => {
 
   it('rejects stale CAS and non-open mutations without writes', () => {
     const store = setup();
-    expect(() => mutate(store, 'req-stale', { kind: 'replace', stepId: 'step-2', command: 'audit' }, 4))
+    expect(() => mutate(store, 'req-stale', { kind: 'update', stepId: 'step-2', command: 'audit' }, 4))
       .toThrow(expect.objectContaining({ code: 'ORCHESTRATION_REVISION_CONFLICT' }));
     expect(store.readSessionV30('s-1')).toMatchObject({ orchestration_revision: 0, activity_revision: 0 });
 
@@ -83,6 +144,7 @@ describe('v3 chain mutations', () => {
     status => {
       for (const mutation of [
         { kind: 'replace', stepId: 'step-1', command: 'audit' } as const,
+        { kind: 'update', stepId: 'step-1', stage: 'audit' } as const,
         { kind: 'skip', stepId: 'step-1' } as const,
       ]) {
         const store = setup();

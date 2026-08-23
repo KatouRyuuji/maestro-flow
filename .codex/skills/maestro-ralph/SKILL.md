@@ -238,7 +238,7 @@ Follow `orchestrator-run-loop.md` "4. Decision Step"; the VERDICT format is defi
 ### A_FAIL
 
 - Repairable failure → verdict `needs-retry`; re-dispatch only after Runtime returns the step to pending (via `run transition`/`run cancel`).
-- External or exhausted blocker → `maestro run transition {run_id} blocked ... --json` (or `run cancel`); the chain step stays pending for a later fenced `run next`. There is no Execution lease to release.
+- External or exhausted blocker → apply the receipt's structured `continuation` with the fully fenced `run transition ... blocked` or `run cancel` form from `orchestrator-run-loop.md`; the chain step stays pending for a later fenced `run next`. There is no Execution lease to release.
 - Never allocate a new Run while the previous Run is running or gate-blocked.
 
 ### A_RECOVER

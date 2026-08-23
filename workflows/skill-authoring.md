@@ -36,7 +36,7 @@ frontmatter (name, description, argument-hint, allowed-tools, session-mode)
 
 每个 `SKILL.md` 必须在 frontmatter 声明 `session-mode: run|none`：
 
-- `run`：技能产生正式交付物或需要恢复。入口必须调用 `maestro run create <skill>`，正式产物写入 `outputs/`，证据写入 `evidence/`，最终报告写入 `report.md`，并以 `maestro run check/complete` 收口。
+- `run`：技能产生正式交付物或需要恢复。入口优先使用 receipt-chained `session open` → fenced `session chain insert --arg` → fenced `run next`；birth packet 提供 resolved `task` 与 structured `continuation`。仅 machine-protocol caller 可直接 `run create`，且必须携带完整 locator/identity/CAS，domain text 使用 positional args，`--input` 仅接受 sealed same-Session Artifact ID。正式产物写入 `outputs/`，证据写入 `evidence/`，最终报告写入 `report.md`，并以 `maestro run check/complete --advance` 收口。
 - `none`：纯路由、只读查询或无正式持久化的技能。禁止创建私有 `.workflow` 会话目录。
 
 Team skill 可以继续使用 `.workflow/.team/` 作为瞬态消息总线，但正式 artifact/wisdom 必须进入 active Run；消息总线不得作为知识索引源。

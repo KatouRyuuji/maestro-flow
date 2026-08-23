@@ -284,7 +284,7 @@ describe('v3 knowledge reconciliation hook', () => {
     const completed = await invoke(registerRunV3Command, [
       'run', 'complete', 'run-1', '--summary', 'done', '--advance',
       '--expected-orchestration-revision', '0', '--expected-run-revision', '0',
-      '--session', 's-v3', '--participant', 'participant', '--actor', 'actor',
+      '--session', 's-v3', '--participant', 'actor', '--actor', 'actor',
       '--request-id', 'req-complete-knowledge', '--reason', 'complete test',
       '--json', '--workflow-root', root,
     ]);
@@ -343,7 +343,7 @@ describe('v3 knowledge reconciliation hook', () => {
     const completed = await invoke(registerRunV3Command, [
       'run', 'complete', 'run-1', '--summary', 'done', '--advance',
       '--expected-orchestration-revision', '0', '--expected-run-revision', '0',
-      '--session', 's-v3', '--participant', 'participant', '--actor', 'actor',
+      '--session', 's-v3', '--participant', 'actor', '--actor', 'actor',
       '--request-id', 'req-delta-stage', '--reason', 'delta stage test',
       '--json', '--workflow-root', root,
     ]);

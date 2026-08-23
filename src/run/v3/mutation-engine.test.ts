@@ -175,6 +175,9 @@ describe('v3 mutation engine', () => {
       run: { ...run('r-3', 'step-2', 'pending'), command: 'review' },
     });
     expect(next.status).toBe('applied');
+    expect(next.transition.result).toMatchObject({
+      task: { command: 'review', input_refs: [result.artifact_id] },
+    });
     expect(store.readRunV30('s-1', 'r-3')).toMatchObject({
       status: 'running', input_refs: [result.artifact_id],
     });
@@ -390,7 +393,14 @@ describe('v3 mutation engine', () => {
     expect(result.status).toBe('applied');
     expect(result.transition.result).toMatchObject({
       operation: 'run-complete-and-seal', status: 'sealed',
-      next: { suggest_only: true, command: 'maestro run next --session s-1' },
+      next: {
+        suggest_only: true,
+        command: 'maestro run next --session s-1 --participant <actor-id> --actor <actor-id> --request-id <request-id> --reason "<reason>" --expected-orchestration-revision 1 --json',
+      },
+      continuation: {
+        operation: 'next', locator: { session_id: 's-1', run_id: null },
+        revision_requirements: { expected_orchestration_revision: 1, expected_run_revision: null },
+      },
     });
     expect(store.readRunV30('s-1', 'r-1')).toMatchObject({
       status: 'sealed', revision: 1, ended_at: '2026-08-12T01:00:00.000Z', sealed_at: '2026-08-12T01:00:00.000Z',

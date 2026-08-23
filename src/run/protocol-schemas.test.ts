@@ -334,6 +334,7 @@ describe('execution-generation protocol schemas', () => {
     expect(() => runOperationSchema.parse('artifact-republish')).toThrow();
     expect(runOperationV12Schema.parse('artifact-inspect')).toBe('artifact-inspect');
     expect(runOperationV12Schema.parse('artifact-republish')).toBe('artifact-republish');
+    expect(runOperationV12Schema.parse('session-chain-update')).toBe('session-chain-update');
 
     expect(executionLocatorSchema.parse({
       session_id: 's', execution_id: 'exec-1', generation: 1, run_id: null,

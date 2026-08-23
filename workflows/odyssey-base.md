@@ -11,7 +11,7 @@ Shared by all Odyssey modes (debug, improve, planex, review, security, ui). Mode
 
 1. **Phase auto-commit** — auto `git commit` after each phase
    - Code changes + understanding.md → `git add` → `git commit -m "{mode}({slug}): {phase} — {summary}"`
-   - `outputs/session.json` / `outputs/evidence.ndjson` are workflow-owned formal artifacts (registered by `session done`), excluded from phase commits
+   - `outputs/session.json` / `outputs/evidence.ndjson` are workflow-owned formal artifacts (registered atomically by fenced `maestro run complete ... --advance`), excluded from phase commits
 
 2. **Confident edits only, but must attempt** — edit when confident; record decision only when human judgment truly needed
    - Confident → edit + commit

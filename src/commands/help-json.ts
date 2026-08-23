@@ -27,7 +27,7 @@ function classify(path: string, options: string[]): Pick<HelpCatalogCommand, 'mu
   if (path === 'artifact republish') return { mutation_scope: 'artifact', cas_target: 'artifact' };
   if (path.startsWith('execution ')) return { mutation_scope: 'retired', cas_target: 'none' };
   if (path === 'session open') return { mutation_scope: 'orchestration', cas_target: 'none' };
-  if (path === 'session migrate') return { mutation_scope: 'orchestration', cas_target: 'none' };
+  if (path === 'session migrate') return { mutation_scope: 'orchestration', cas_target: 'orchestration' };
   if (!options.includes('--request-id')) return { mutation_scope: 'read', cas_target: 'none' };
   if (options.includes('--expected-run-revision')) return { mutation_scope: 'run', cas_target: 'run' };
   if (options.includes('--expected-orchestration-revision')) {

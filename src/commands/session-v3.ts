@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 
 import type { Command } from 'commander';
+import { z } from 'zod';
 
 import {
   artifactRegistrySchema,
@@ -25,16 +26,58 @@ import { projectResumeMapV1 } from '../run/v3/resume-view.js';
 import {
   addV3MutationOptions,
   addV3ReadOptions,
+  assertV3ParticipantIdentity,
   emitV3Error,
   emitV3Success,
   listLegacyV3MigrationCandidates,
   listV3Sessions,
   mutateSessionStatusV3,
   mutationIdentity,
+  parseV3Revision,
   resolveV3Options,
   type V3CommonOptions,
   v3Store,
 } from './v3-cli-shared.js';
+
+const expectedLegacyRevisionsSchema = z.object({
+  identity_revision: z.number().int().nonnegative(),
+  activity_revision: z.number().int().nonnegative(),
+}).strict();
+
+const expectedLegacyRevisionsManifestSchema = z.record(z.string().min(1), expectedLegacyRevisionsSchema);
+
+type ExpectedLegacyRevisions = z.infer<typeof expectedLegacyRevisionsSchema>;
+type ExpectedLegacyRevisionsManifest = z.infer<typeof expectedLegacyRevisionsManifestSchema>;
+
+function parseExpectedLegacyRevisionsManifest(value: string): ExpectedLegacyRevisionsManifest {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch (error) {
+    throw new Error(`--expected-revisions must be valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const result = expectedLegacyRevisionsManifestSchema.safeParse(parsed);
+  if (!result.success) {
+    throw new Error('--expected-revisions must be a JSON object keyed by Session ID with identity_revision and activity_revision');
+  }
+  return result.data;
+}
+
+function requiredSingleMigrationRevisions(options: {
+  expectedIdentityRevision?: number;
+  expectedActivityRevision?: number;
+}): ExpectedLegacyRevisions {
+  if (options.expectedIdentityRevision === undefined) {
+    throw new Error('--expected-identity-revision is required with --session');
+  }
+  if (options.expectedActivityRevision === undefined) {
+    throw new Error('--expected-activity-revision is required with --session');
+  }
+  return {
+    identity_revision: options.expectedIdentityRevision,
+    activity_revision: options.expectedActivityRevision,
+  };
+}
 
 function runIds(session: SessionStateV30): string[] {
   return [...new Set([...session.active_run_ids, ...session.chain.flatMap(step => step.run_ids)])].sort();
@@ -49,7 +92,7 @@ function readRuns(
 }
 
 function chainMutationAction(
-  operation: 'session-chain-insert' | 'session-chain-skip' | 'session-chain-replace',
+  operation: 'session-chain-insert' | 'session-chain-skip' | 'session-chain-replace' | 'session-chain-update',
   build: (options: V3CommonOptions & {
     stepId: string; command?: string; afterStep?: string; arg?: string[];
     goalRef?: string; stage?: string; decisionRef?: string;
@@ -88,6 +131,7 @@ export function registerSessionV3Command(program: Command): void {
     .option('--chain <commands...>', 'initial chain commands')
     .action((objective: string, options: V3CommonOptions & { id: string; definitionOfDone: string; chain?: string[] }) => {
       try {
+        assertV3ParticipantIdentity(options);
         const store = v3Store(options);
         const sessionId = options.id.trim();
         const now = new Date().toISOString();
@@ -153,20 +197,26 @@ export function registerSessionV3Command(program: Command): void {
     .option('--session <id>', 'legacy Session ID (mutually exclusive with --all)')
     .option('--all', 'migrate every non-session/3.0 Session')
     .requiredOption('--to-v3', 'confirm migration to session/3.0')
-    .requiredOption('--participant <id>', 'participant performing the migration')
+    .requiredOption('--participant <id>', 'participant performing the migration; must equal --actor')
     .requiredOption('--actor <id>', 'authorized actor')
-    .option('--request-id <id>', 'migration audit request ID (default: synthesized)')
-    .option('--reason <text>', 'migration audit reason (overrides the synthesized reason)')
+    .requiredOption('--request-id <id>', 'migration audit request ID')
+    .requiredOption('--reason <text>', 'migration audit reason')
+    .option('--expected-identity-revision <n>', 'expected legacy Session identity revision', parseV3Revision)
+    .option('--expected-activity-revision <n>', 'expected legacy Session activity revision', parseV3Revision)
+    .option('--expected-revisions <json>', 'JSON revisions manifest keyed by Session ID for --all')
     .option('--evidence <ref>', 'migration evidence reference (repeatable)', (value: string, previous: string[] = []) => [...previous, value], [])
     .option('--definition-of-done <text>', 'override definition of done')
     .option('--json', 'emit run-response/1.2 JSON')
     .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
     .action((options: {
       session?: string; all?: boolean; toV3: boolean; participant: string; actor: string;
-      requestId?: string; reason?: string; evidence?: string[];
+      requestId: string; reason: string; evidence?: string[];
+      expectedIdentityRevision?: number; expectedActivityRevision?: number;
+      expectedRevisions?: string;
       definitionOfDone?: string; workflowRoot: string;
     }) => {
       try {
+        assertV3ParticipantIdentity(options);
         const store = new SessionStore(resolve(options.workflowRoot));
         if (store.sessionSchemaSelection().writer !== 'session/3.0') {
           throw new Error('v3 migration requires the session/3.0 writer selection');
@@ -175,6 +225,13 @@ export function registerSessionV3Command(program: Command): void {
           throw new Error('--all and --session are mutually exclusive');
         }
         if (options.all) {
+          if (options.expectedIdentityRevision !== undefined || options.expectedActivityRevision !== undefined) {
+            throw new Error('--expected-identity-revision and --expected-activity-revision cannot be used with --all');
+          }
+          if (options.expectedRevisions === undefined) {
+            throw new Error('--expected-revisions is required with --all');
+          }
+          const expectedRevisions = parseExpectedLegacyRevisionsManifest(options.expectedRevisions);
           type MigrateAllResult = {
             session_id: string;
             source_schema_version: string;
@@ -187,12 +244,18 @@ export function registerSessionV3Command(program: Command): void {
           // both full success and partial failure surface in `result`.
           const results: MigrateAllResult[] = listLegacyV3MigrationCandidates(store).map(candidate => {
             try {
+              if (!Object.hasOwn(expectedRevisions, candidate.session_id)) {
+                throw new Error(`expected revisions missing for Session ${candidate.session_id}`);
+              }
+              const expected = expectedRevisions[candidate.session_id]!;
               applyV3Migration(store, loadLegacyV3MigrationInput(store, candidate.session_id), {
                 actor_id: options.actor,
                 request_id: options.requestId,
                 reason: options.reason,
                 evidence_refs: options.evidence,
                 definition_of_done: options.definitionOfDone,
+                expected_identity_revision: expected.identity_revision,
+                expected_activity_revision: expected.activity_revision,
               });
               return {
                 session_id: candidate.session_id,
@@ -217,13 +280,21 @@ export function registerSessionV3Command(program: Command): void {
         const record = store.readSessionRecord(options.session);
         const result = record.schema_version === 'session/3.0'
           ? readAppliedV3Migration(store, options.session)
-          : applyV3Migration(store, loadLegacyV3MigrationInput(store, options.session), {
-            actor_id: options.actor,
-            request_id: options.requestId,
-            reason: options.reason,
-            evidence_refs: options.evidence,
-            definition_of_done: options.definitionOfDone,
-          });
+          : (() => {
+            if (options.expectedRevisions !== undefined) {
+              throw new Error('--expected-revisions can only be used with --all');
+            }
+            const expected = requiredSingleMigrationRevisions(options);
+            return applyV3Migration(store, loadLegacyV3MigrationInput(store, options.session!), {
+              actor_id: options.actor,
+              request_id: options.requestId,
+              reason: options.reason,
+              evidence_refs: options.evidence,
+              definition_of_done: options.definitionOfDone,
+              expected_identity_revision: expected.identity_revision,
+              expected_activity_revision: expected.activity_revision,
+            });
+          })();
         emitV3Success({ operation: 'session-migrate', sessionId: options.session, result });
       } catch (error) {
         emitV3Error('session-migrate', error, { session: options.session });
@@ -353,6 +424,19 @@ export function registerSessionV3Command(program: Command): void {
     .option('--arg <value>', 'replacement argument (repeatable)', (value, previous: string[] = []) => [...previous, value], [])
     .action(chainMutationAction('session-chain-replace', options => ({
       kind: 'replace', stepId: options.stepId, command: options.command!, args: options.arg ?? [],
+    })));
+
+  addV3MutationOptions(chain.command('update')
+    .description('Update supplied metadata on a pending chain step; omitted fields are preserved and clearing is unsupported'), 'orchestration')
+    .requiredOption('--step-id <id>', 'chain step ID')
+    .option('--command <name>', 'new step command')
+    .option('--arg <value>', 'new step argument (repeatable; supplying args replaces the existing args)', (value, previous: string[] = []) => [...previous, value])
+    .option('--goal-ref <id>', 'new chain step goal reference')
+    .option('--stage <name>', 'new chain step stage')
+    .option('--decision-ref <id>', 'new decision gate; must be missing or open')
+    .action(chainMutationAction('session-chain-update', options => ({
+      kind: 'update', stepId: options.stepId, command: options.command, args: options.arg,
+      goalRef: options.goalRef, stage: options.stage, decisionRef: options.decisionRef,
     })));
 
 }

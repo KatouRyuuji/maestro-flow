@@ -118,7 +118,7 @@ async function invoke(register: (program: Command) => void, args: string[]) {
 
 function mutationFlags(root: string, revisionFlag: string, revision = 0): string[] {
   return [
-    '--session', 's-v3', '--participant', 'participant', '--actor', 'actor',
+    '--session', 's-v3', '--participant', 'actor', '--actor', 'actor',
     '--request-id', `req-${Math.random()}`, revisionFlag, String(revision),
     '--reason', 'focused test', '--evidence', 'evidence-1', '--json', '--workflow-root', root,
   ];
@@ -178,7 +178,8 @@ describe('v3 Run shell', () => {
     expect(birth.run_dir).toBe(join(root, '.workflow', 'sessions', 's-v3', 'runs', 'run-next'));
     expect(birth.step_id).toBe('step-1');
     expect(birth.run_already_created).toBe(true);
-    expect((birth.brief as { command: string }).command).toBe('maestro run brief run-next --session s-v3');
+    expect((birth.brief as { command: string }).command).toBe('maestro run brief run-next --session s-v3 --json');
+    expect(birth.task).toEqual({ command: 'implement', args: [], goal: null, input_refs: [] });
     expect(typeof (birth.guidance as { content_hash?: string } | null)?.content_hash).toBe('string');
     const brief = await invoke(registerRunV3Command, [
       'run', 'brief', 'run-next', '--session', 's-v3', '--json', '--workflow-root', root,
@@ -193,7 +194,11 @@ describe('v3 Run shell', () => {
     });
     const briefResult = brief.result as Record<string, unknown>;
     expect((briefResult.knowledge_context as { path?: string } | null)?.path).toBeTruthy();
-    expect((briefResult.next as { command: string }).command).toBe('maestro run complete run-next --advance');
+    expect((briefResult.next as { command: string }).command).toBe(
+      'maestro run complete run-next --session s-v3 --participant <actor-id> --actor <actor-id> '
+      + '--request-id <request-id> --reason "<reason>" --expected-run-revision 1 '
+      + '--expected-orchestration-revision 1 --verdict done --advance --json',
+    );
     const runDir = join(root, '.workflow', 'sessions', 's-v3', 'runs', 'run-next');
     for (const name of ['outputs', 'evidence', 'work']) {
       expect(existsSync(join(runDir, name))).toBe(true);

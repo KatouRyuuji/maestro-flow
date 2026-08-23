@@ -84,9 +84,9 @@ chain 包含 analyze/plan/execute 等执行 stage 且 `.workflow/specs/` 不存�
 
 ### 4. 创建
 
-`maestro session open "{intent}" --id maestro-{slug} [--definition-of-done "<text>"] [--chain <commands...>] --participant {participant_id} --actor {actor_id} --request-id {request_id} --reason "<reason>" [--evidence <ref> ...] --json`
+`maestro session open "{intent}" --id maestro-{slug} [--definition-of-done "<text>"] [--chain <argument-free commands...>] --participant {actor_id} --actor {actor_id} --request-id {open_request_id} --reason "<reason>" [--evidence <ref> ...] --json`
 
-chain 随 `session open --chain` 建入（或随后用 `session chain insert` 补齐 step 元数据），无临时 chain-file。随后进入共享执行循环（orchestrator-run-loop.md）。
+chain 可随 `session open --chain` 建入无参数 steps；带 domain args 的 step 随后必须用 fenced `session chain insert --arg` 写入，使用与 actor 相同的 participant、fresh request ID 和 open receipt 返回的 exact `orchestration_revision`。无临时 chain-file。随后进入共享执行循环（orchestrator-run-loop.md）。
 
 ## Decomposition Protocol（A_DECOMPOSE）
 

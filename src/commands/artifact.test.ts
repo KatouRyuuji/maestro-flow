@@ -146,7 +146,7 @@ describe('artifact inspect and republish commands', () => {
       '--request-id', 'req-republish-1',
       '--expected-artifact-revision', String(assessment.source.artifact_registry_revision),
       '--expected-session-revision', String(assessment.source.session_revision),
-      '--participant', 'window-a', '--actor', 'actor-a', '--reason', 'approved compatibility repair',
+      '--participant', 'actor-a', '--actor', 'actor-a', '--reason', 'approved compatibility repair',
       '--evidence', 'EVD-compat-1', '--json', '--workflow-root', projectRoot,
     ];
     const republished = await invoke(common);
@@ -252,7 +252,7 @@ gates:
       '--assessment-hash', assessment.assessment_hash, '--request-id', 'req-migrated-republish',
       '--expected-artifact-revision', String(assessment.source.artifact_registry_revision),
       '--expected-session-revision', String(assessment.source.session_revision),
-      '--participant', 'window-a', '--actor', 'actor-a', '--reason', 'repair migrated semantics',
+      '--participant', 'actor-a', '--actor', 'actor-a', '--reason', 'repair migrated semantics',
       '--evidence', 'EVD-migrated', '--json', '--workflow-root', projectRoot,
     ]);
     expect(republished).toMatchObject({
@@ -305,7 +305,7 @@ gates:
       '--assessment-hash', assessment.assessment_hash, '--request-id', 'req-stale-source',
       '--expected-artifact-revision', String(assessment.source.artifact_registry_revision),
       '--expected-session-revision', String(assessment.source.session_revision),
-      '--participant', 'p', '--actor', 'a', '--reason', 'test stale fence', '--evidence', 'EVD-1',
+      '--participant', 'a', '--actor', 'a', '--reason', 'test stale fence', '--evidence', 'EVD-1',
       '--json', '--workflow-root', projectRoot,
     ]);
     expect(rejected).toMatchObject({
@@ -341,7 +341,7 @@ gates:
       '--assessment-hash', assessment.assessment_hash, '--request-id', 'req-v2-limit',
       '--expected-artifact-revision', String(assessment.source.artifact_registry_revision),
       '--expected-session-revision', String(assessment.source.session_revision),
-      '--participant', 'p', '--actor', 'a', '--reason', 'test', '--evidence', 'EVD-1',
+      '--participant', 'a', '--actor', 'a', '--reason', 'test', '--evidence', 'EVD-1',
       '--json', '--workflow-root', projectRoot,
     ]);
     expect(response).toMatchObject({

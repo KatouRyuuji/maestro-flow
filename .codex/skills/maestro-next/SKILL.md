@@ -58,7 +58,7 @@ $ARGUMENTS — intent text + optional flags.
 2. **Pipeline orchestrators excluded** — only recommend registered steps as single-run targets
 3. **Lifecycle continuation** — "continue"/"next"/"go" are explicit continuation signals → lifecycle_position inference (S_STATE). Truly empty arguments (no text at all) → 1 clarify round via request_user_input; still empty → S_FALLBACK (E001)
 4. **Literal match priority** — keyword match takes precedence; lifecycle is tie-breaker
-5. **Argument pass-through** — the intent phrase is Session metadata only (the objective to `session open`); the selected step's domain payload becomes command input through repeatable `--arg <value>`. The user can modify command inputs at confirmation; `-y` only passes through when the user provided it
+5. **Argument pass-through** — the intent phrase is Session metadata only (the objective to `session open`); when a chain step needs domain inputs, store them with repeatable `--arg <value>` on `maestro session chain insert|replace`. A fully specified machine-protocol `run create` passes domain text positionally; `--input <ART-id>` is only for sealed same-Session Artifact IDs. The user can modify command inputs at confirmation; `-y` only passes through when the user provided it
 6. **Manual campaigns excluded** — `team-*` and `maestro-odyssey` never enter the executable candidate pool and are never executed in this turn; they may only be emitted as suggest-only invocations (see the odyssey campaign rows in the intent routing table)
 7. **Retained commands are suggest-only** — route retained commands to an exact slash command. Never execute them in this turn; `-y` applies only to first-tier steps
 8. **Companion routing is suggest-or-execute** — when complexity == lightweight, output `/maestro-companion "<intent>"` invocation. With `-y`, emit the invocation directly (`/maestro-companion "<intent>" -y`); the companion command owns its own execution. Without `-y`, present it as the recommended channel for user confirmation
@@ -250,18 +250,20 @@ Single-run path only. Multi-step execution is handled by `/maestro` (manual) and
 For first-tier steps (those with prepare/ + workflows/ files):
 
 ```bash
-# 1. Open the Session — prepare guidance is injected by Runtime into the birth packet
-#    (prepare is embedded in the Run, not a standalone `run prepare` step):
-maestro session open "<objective>" --id YYYYMMDD-<step>-<topic> --chain <step> --participant {participant_id} --actor {actor_id} --request-id {request_id} --reason "<reason>" --json
+# 1. Open an empty Session; participant and actor are the same identity.
+maestro session open "<objective>" --id YYYYMMDD-<step>-<topic> --participant {actor_id} --actor {actor_id} --request-id {open_request_id} --reason "open single-step Session" --json
 #    Or attach an existing compatible Session read-only first: maestro session status --session {session_id} --json
 
-# 2. LLM performs pre-task thinking using the injected prepare guidance
-#    Produces prep YAML (goal/approach/scope/risks/gates/reads)
+# 2. Persist the selected step and each required positional command input.
+maestro session chain insert --session {session_id} --step-id {step_id} --command <step> --arg "<domain input>" --participant {actor_id} --actor {actor_id} --request-id {insert_request_id} --reason "add selected step" --expected-orchestration-revision {open_orchestration_revision} --json
 
-# 3. Dispatch the step Run (chain-bound); --arg passes each required command input:
-maestro run next --session {session_id} --participant {participant_id} --actor {actor_id} --request-id {request_id} --reason "<reason>" --expected-orchestration-revision {orchestration_revision} --json
-#    (Self-started alternative: maestro run create <step> [args...] --session {session_id} ... --json)
-#    Returns: run_id, run_dir, upstream (alias→artifact), entry_gates, entry_blockers, next (progressive hint)
+# 2a. LLM performs pre-task thinking using the prepare guidance embedded in the birth packet.
+
+# 3. Dispatch with the exact revision returned by chain insert.
+maestro run next --session {session_id} --participant {actor_id} --actor {actor_id} --request-id {next_request_id} --reason "dispatch selected step" --expected-orchestration-revision {insert_orchestration_revision} --json
+#    Direct machine-protocol alternative (only for an existing exact step):
+#    maestro run create <step> "<domain input>" --session {session_id} --run {run_id} --step {step_id} --goal "<goal>" --input <ART-id> --participant {actor_id} --actor {actor_id} --request-id {create_request_id} --reason "create selected Run" --expected-orchestration-revision {step_orchestration_revision} --json
+#    Returns: run_id, run_dir, upstream, resolved task, entry blockers, and structured executable continuation
 
 # 3a. Entry blocker degradation (execute-specific)
 #    IF step == execute AND entry_blockers is non-empty (missing current-plan):
@@ -288,7 +290,7 @@ maestro run next --session {session_id} --participant {participant_id} --actor {
 
 # 6. Check and complete the run
 maestro run check {run_id} --session {session_id} --json
-maestro run complete {run_id} --session {session_id} --participant {participant_id} --actor {actor_id} --request-id {request_id} --reason "<reason>" --expected-orchestration-revision {orchestration_revision} --expected-run-revision {run_revision} --verdict done --advance --json
+maestro run complete {run_id} --session {session_id} --participant {actor_id} --actor {actor_id} --request-id {complete_request_id} --reason "complete selected step" --expected-orchestration-revision {orchestration_revision} --expected-run-revision {run_revision} --verdict done --advance --json
 ```
 
 After `run complete --advance`: re-infer lifecycle and surface the natural next step as a continuation hint — stepwise multi-step work proceeds by re-invoking `/maestro-next` or `/maestro -c`.

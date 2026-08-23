@@ -7,6 +7,7 @@ import { republishArtifactLegacy } from '../run/runtime.js';
 import { SessionStore } from '../run/store.js';
 import { republishArtifactV3 } from '../run/v3/mutation-engine.js';
 import {
+  assertV3ParticipantIdentity,
   collectV3,
   emitV3Error,
   emitV3Success,
@@ -90,6 +91,7 @@ export function registerArtifactCommand(program: Command): void {
     .option('--evidence <ref>', 'evidence reference (repeatable)', collectV3, [])
     .action((artifactId: string, options: ArtifactRepublishCliOptions) => {
       try {
+        assertV3ParticipantIdentity(options);
         const expectedSessionRevision = options.expectedOrchestrationRevision ?? options.expectedSessionRevision;
         if (expectedSessionRevision === undefined) {
           throw new Error('--expected-orchestration-revision is required');

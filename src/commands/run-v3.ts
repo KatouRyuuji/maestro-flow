@@ -7,6 +7,12 @@ import type { RunV30 } from '../run/schemas.js';
 import { artifactRegistrySchema, type ArtifactRegistry } from '../run/schemas.js';
 import { buildRetryMetadata } from '../run/v3/run-machine.js';
 import {
+  v3CheckNext,
+  v3CompleteNext,
+  v3RunNext,
+  v3SessionCompleteNext,
+} from '../run/v3/continuation-v3.js';
+import {
   completeRunAndAdvance,
   createRunningRunV3,
   mutateRunV3,
@@ -95,17 +101,8 @@ export function registerRunV3Command(program: Command): void {
         const mutation = createRunningRunV3(store, {
           ...mutationIdentity(resolved), expectedOrchestrationRevision: resolved.expectedOrchestrationRevision!, run: candidate,
         });
-        const result = {
-          ...(runResult(mutation) as Record<string, unknown>),
-          step_id: step.step_id,
-          next: {
-            suggest_only: true,
-            command: `maestro run complete ${runId} --advance`,
-            reason: 'Run created — execute and complete it with run complete --advance',
-          },
-        };
         emitV3Success({ operation: 'next', sessionId: resolved.session, runId,
-          requestId: resolved.requestId, result, mutation });
+          requestId: resolved.requestId, result: runResult(mutation), mutation });
       } catch (error) {
         emitV3Error('next', error, { session: options.session, runId: options.run, requestId: options.requestId });
       }
@@ -117,7 +114,7 @@ export function registerRunV3Command(program: Command): void {
     .option('--parent-run <id>', 'parent Run ID')
     .option('--retry-of-run <id>', 'derive retry lineage from an existing failed Run')
     .option('--goal <text>', 'Run goal')
-    .option('--input <ref>', 'input reference (repeatable)', collectV3, [])
+    .option('--input <artifact-id>', 'sealed same-Session Artifact ID (repeatable)', collectV3, [])
     .action((command: string, args: string[], options: V3CommonOptions & {
       run: string; step: string; parentRun?: string; retryOfRun?: string;
       goal?: string; input: string[];
@@ -303,6 +300,31 @@ export function registerRunV3Command(program: Command): void {
         );
         const packet = v3BirthPacket(store, sessionState, value, registry);
         const pendingStep = sessionState.chain.find(item => item.status === 'pending');
+        const continuation = value.status === 'running'
+          ? v3CompleteNext({
+            sessionId: sessionState.session_id,
+            runId,
+            orchestrationRevision: sessionState.orchestration_revision,
+            runRevision: value.revision,
+            reason: 'Run running - execute and complete it with run complete --advance',
+          })
+          : value.status === 'sealed'
+            ? pendingStep
+              ? v3RunNext({
+                sessionId: sessionState.session_id,
+                orchestrationRevision: sessionState.orchestration_revision,
+                reason: 'Run sealed - dispatch the next pending step with run next',
+              })
+              : v3SessionCompleteNext({
+                sessionId: sessionState.session_id,
+                orchestrationRevision: sessionState.orchestration_revision,
+                reason: 'Chain complete - complete the Session',
+              })
+            : v3CheckNext({
+              sessionId: sessionState.session_id,
+              runId,
+              reason: `Run is ${value.status} - inspect canonical Run state before continuing`,
+            });
         emitV3Success({
           operation: 'brief',
           sessionId: resolved.session,
@@ -319,19 +341,7 @@ export function registerRunV3Command(program: Command): void {
             },
             run: value,
             ...packet,
-            next: {
-              suggest_only: true,
-              command: value.status === 'running'
-                ? `maestro run complete ${runId} --advance`
-                : pendingStep
-                  ? 'maestro run next'
-                  : 'maestro session complete',
-              reason: value.status === 'running'
-                ? 'Run running — execute and complete it with run complete --advance'
-                : pendingStep
-                  ? 'Run not running — dispatch the next pending step with run next'
-                  : 'Chain complete — seal the Session with session complete',
-            },
+            ...continuation,
           },
         });
       } catch (error) {

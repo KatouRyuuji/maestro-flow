@@ -73,7 +73,14 @@ describe('v3 run decide mutation', () => {
         target_type: 'orchestration', target_id: 's-1', revision_before: 0, revision_after: 1,
         result: {
           point_id: 'P-1', status: 'resolved', orchestration_revision: 1,
-          next: { suggest_only: true, command: 'maestro run next --session s-1' },
+          next: {
+            suggest_only: true,
+            command: 'maestro run next --session s-1 --participant <actor-id> --actor <actor-id> --request-id <request-id> --reason "<reason>" --expected-orchestration-revision 1 --json',
+          },
+          continuation: {
+            operation: 'next', locator: { session_id: 's-1', run_id: null },
+            revision_requirements: { expected_orchestration_revision: 1, expected_run_revision: null },
+          },
         },
       },
     });
@@ -119,7 +126,14 @@ describe('v3 run decide mutation', () => {
         target_type: 'orchestration', revision_before: 0, revision_after: 1,
         result: {
           point_id: 'P-1', status: 'escalated', orchestration_revision: 1,
-          next: { suggest_only: true, command: 'maestro run decide P-1 --verdict proceed' },
+          next: {
+            suggest_only: true,
+            command: 'maestro run decide P-1 --session s-1 --participant <actor-id> --actor <actor-id> --request-id <request-id> --reason "<reason>" --expected-orchestration-revision 1 --verdict proceed --json',
+          },
+          continuation: {
+            operation: 'run-decide', locator: { session_id: 's-1', run_id: null },
+            revision_requirements: { expected_orchestration_revision: 1, expected_run_revision: null },
+          },
         },
       },
     });
@@ -247,7 +261,7 @@ describe('maestro run decide run-response/1.2 envelope', () => {
     const store = setup();
     const response = await invoke([
       'run', 'decide', 'P-1', '--verdict', 'proceed', '--confidence', 'high', '--summary', 'approved',
-      '--session', 's-1', '--participant', 'participant', '--actor', 'actor',
+      '--session', 's-1', '--participant', 'actor', '--actor', 'actor',
       '--request-id', 'req-cli-decide', '--expected-orchestration-revision', '0',
       '--reason', 'cli decide test', '--evidence', 'EVD-cli', '--json', '--workflow-root', store.projectRoot,
     ]);
@@ -267,7 +281,7 @@ describe('maestro run decide run-response/1.2 envelope', () => {
     const store = setup();
     const response = await invoke([
       'run', 'decide', 'P-1', '--verdict', 'maybe',
-      '--session', 's-1', '--participant', 'participant', '--actor', 'actor',
+      '--session', 's-1', '--participant', 'actor', '--actor', 'actor',
       '--request-id', 'req-cli-bad', '--expected-orchestration-revision', '0',
       '--reason', 'bad verdict', '--json', '--workflow-root', store.projectRoot,
     ]);

@@ -108,7 +108,8 @@ Parse input, analyze the seed idea, optionally explore codebase, establish sessi
 
 **Step 2.2: Session Initialization**
 ```
-Session: via maestro run create spec-generate --session YYYYMMDD-spec-{slug}
+Session/Run: consume the exact `session_id`, `run_id`, `run_dir`, resolved `task`, and structured `continuation` from the `maestro run next` birth packet.
+Self-start: follow run-mode.md's fully fenced `session open` -> `session chain insert --command spec-generate --arg "<seed text>"` -> `run next` receipt chain.
 Output dir: {run_dir}/outputs/
 ```
 

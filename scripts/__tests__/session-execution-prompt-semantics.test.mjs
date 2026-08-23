@@ -69,42 +69,42 @@ describe('Session identity plus bounded Execution prompt semantics', () => {
         expected: /workflows\/run-mode\.md: missing Execution semantic token: maestro capabilities --json/,
       },
       {
-        name: 'lite Execution seal',
+        name: 'lite Run completion',
         path: 'workflows/run-mode-lite.md',
-        before: 'maestro execution seal',
-        after: 'maestro legacy seal',
+        before: 'maestro run complete',
+        after: 'maestro legacy complete',
         all: true,
-        expected: /workflows\/run-mode-lite\.md: missing Execution semantic token: maestro execution seal/,
+        expected: /workflows\/run-mode-lite\.md: missing Execution semantic token: maestro run complete/,
       },
       {
         name: 'orchestrator revision fence',
         path: 'workflows/orchestrator-run-loop.md',
-        before: '--expected-execution-revision',
+        before: '--expected-orchestration-revision',
         after: '--expected-session-revision',
         all: true,
-        expected: /workflows\/orchestrator-run-loop\.md: missing Execution semantic token: --expected-execution-revision/,
+        expected: /workflows\/orchestrator-run-loop\.md: missing Execution semantic token: --expected-orchestration-revision/,
       },
       {
-        name: 'Ralph core lease',
+        name: 'Ralph v3 resume packet',
         path: 'prepare/ralph.md',
-        before: 'core_execution_lease',
-        after: 'host_only_lease',
+        before: 'brief-result/3.0',
+        after: 'brief-result/1.1',
         all: true,
-        expected: /prepare\/ralph\.md: missing Execution semantic token: core_execution_lease/,
+        expected: /prepare\/ralph\.md: missing Execution semantic token: brief-result\/3\.0/,
       },
       {
         name: 'Ralph amendment Session mutation',
         path: 'workflows/ralph-amend-goal.md',
-        before: '## 4. Commit Inside the Current Execution',
-        after: 'maestro session meta update --session {session_id}\n\n## 4. Commit Inside the Current Execution',
+        before: '## 4. Commit the Amendment',
+        after: 'maestro session meta update --session {session_id}\n\n## 4. Commit the Amendment',
         expected: /workflows\/ralph-amend-goal\.md: canonical new-runtime path contains canonical Session amendment mutation/,
       },
       {
-        name: 'session-source permanent seal gate',
+        name: 'session-source sealed Session regression',
         path: 'workflows/run-mode.md',
-        before: 'does **not** require Session seal',
-        after: 'requires the Session itself sealed',
-        expected: /workflows\/run-mode\.md: missing Execution semantic token: does \*\*not\*\* require Session seal/,
+        before: 'A `session/3.0` session-source candidate does **not** require Session completion.',
+        after: 'A session-source candidate requires the Session itself sealed.',
+        expected: /workflows\/run-mode\.md: canonical new-runtime path contains Session seal promotion prerequisite/,
       },
     ];
 
@@ -116,16 +116,16 @@ describe('Session identity plus bounded Execution prompt semantics', () => {
     }
   });
 
-  it('rejects abbreviated canonical mutation examples without their executable option set', () => {
+  it('rejects abbreviated canonical v3 Run completion examples without their executable option set', () => {
     const root = createFixture();
     replace(
       root,
       'workflows/run-mode.md',
-      'maestro execution start --session {session_id} --request-id {request_id} --expected-identity-revision {identity_revision} --expected-activity-revision {activity_revision} --expected-lease-epoch 0 --execution-owner {owner_id} --owner-kind {owner_kind} --actor {actor} --reason "{reason}" --evidence {evidence} --json',
-      'maestro execution start --session {session_id} ... --json',
+      'maestro run complete {run_id} --session {session_id} --participant {actor_id} --actor {actor_id} --request-id {complete_request_id} --reason "<reason>" [--evidence <ref> ...] --expected-orchestration-revision {orchestration_revision} --expected-run-revision {run_revision} --verdict {done|done_with_concerns} [--summary "<summary>"] --advance --json',
+      'maestro run complete {run_id} --session {session_id} ... --json',
     );
     expect(validateExecutionPromptSemantics(root).join('\n')).toMatch(
-      /workflows\/run-mode\.md: missing executable canonical command option set for maestro execution start/,
+      /workflows\/run-mode\.md: executable canonical maestro run complete is missing required options:/,
     );
   });
 

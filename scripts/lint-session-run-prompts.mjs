@@ -16,27 +16,75 @@ const commandDir = join(root, '.claude', 'commands');
 const skillDir = join(root, '.claude', 'skills');
 const obsoleteRunMode = /\.workflow\/(?:scratch|\.scratchpad)|Legacy Compatibility Mapping|state\.json\.artifacts\[\]|<run_mode>|## Run Mode Contract|## Run Artifact Boundary|\{run_dir\}\/outputs\/(?:\*|\{YYYYMMDD\}|\$\{date\})/;
 const legacyTeamStateFile = /team-state\.json|(?<!team-)session\.json/;
-const runCreateArgumentChannelTokens = [
-  'Session metadata only',
-  '-- <args...>',
+const directRunCreateTokens = [
+  'maestro run create',
+  '"<task text>"',
+  '--session',
+  '--run',
+  '--step',
+  '--participant {actor_id}',
+  '--actor {actor_id}',
+  '--request-id',
+  '--reason',
+  '--expected-orchestration-revision',
+  '--input <ART-id>',
+  'sealed same-Session Artifact ID',
 ];
 
 export function validateRunCreateArgumentChannels(text, label) {
-  return runCreateArgumentChannelTokens
+  const errors = directRunCreateTokens
     .filter(token => !text.includes(token))
-    .map(token => `${label}: missing ${token}`);
+    .map(token => `${label}: missing direct Run create contract token: ${token}`);
+  if (/--input\s+["']<(?:task summary|intent|task text|domain text)>["']/i.test(text)) {
+    errors.push(`${label}: raw domain text must not be passed through --input`);
+  }
+  return errors;
 }
 
-export function validateCompanionRunCreate(text, label) {
+export function validateCompanionSelfStart(text, label) {
   const required = [
-    'maestro run create companion',
-    '--intent "<intent>"',
+    'maestro session open "<intent>"',
+    'maestro session chain insert',
+    '--command companion',
     '--arg "<intent>"',
-    'required command arguments',
+    'maestro run next',
+    '--participant {actor_id} --actor {actor_id}',
+    '{open_request_id}',
+    '{insert_request_id}',
+    '{next_request_id}',
+    '{open_orchestration_revision}',
+    '{insert_orchestration_revision}',
+    'structured `continuation`',
   ];
-  return required
+  const errors = required
     .filter(token => !text.includes(token))
-    .map(token => `${label}: missing ${token}`);
+    .map(token => `${label}: missing Companion self-start token: ${token}`);
+  if (/--input\s+["']<intent>["']/i.test(text)) {
+    errors.push(`${label}: Companion intent must be positional, not --input`);
+  }
+  return errors;
+}
+
+export function validateTeamCoordinatorSelfStart(text, label, command) {
+  const required = [
+    `maestro session open "<task summary>"`,
+    `--command ${command} --arg "<task summary>"`,
+    'maestro run next',
+    '--participant {actor_id} --actor {actor_id}',
+    '{open_request_id}',
+    '{insert_request_id}',
+    '{next_request_id}',
+    '{open_orchestration_revision}',
+    '{insert_orchestration_revision}',
+    'structured `continuation`',
+  ];
+  const errors = required
+    .filter(token => !text.includes(token))
+    .map(token => `${label}: missing team self-start token: ${token}`);
+  if (/--input\s+["']<task summary>["']/i.test(text)) {
+    errors.push(`${label}: team task prose must be positional, not --input`);
+  }
+  return errors;
 }
 
 export function validateExecutorLifecycleBoundary(text, label) {
@@ -122,6 +170,11 @@ function walkMarkdown(dir) {
     else if (name.isFile() && name.name.endsWith('.md')) out.push(path);
   }
   return out;
+}
+
+function canonicalBranchForLint(text) {
+  const legacyHeading = /^## Legacy `session\/1\.x(?:\/2\.x)?` Compatibility Branch\s*$/m.exec(text);
+  return legacyHeading ? text.slice(0, legacyHeading.index) : text;
 }
 
 function hasActiveLegacyWrite(text) {
@@ -238,6 +291,13 @@ else {
     'maestro run complete',
     'suggest_only',
     'maestro run next',
+    'resolved `task`',
+    'structured executable `continuation`',
+    'done_with_concerns',
+    '--expected-identity-revision',
+    '--expected-activity-revision',
+    '--expected-revisions',
+    'same authorized identity',
     'deprecated admin-only',
     'brief-result/3.0',
     'knowledge_context',
@@ -261,6 +321,9 @@ else {
     if (!text.includes(token)) errors.push(`workflows/run-mode.md: missing ${token}`);
   }
   errors.push(...validateRunCreateArgumentChannels(text, 'workflows/run-mode.md'));
+  if (canonicalBranchForLint(text).includes('done-with-concerns')) {
+    errors.push('workflows/run-mode.md: canonical v3 verdict must be done_with_concerns');
+  }
   if (text.includes('same normalized intent')) errors.push('workflows/run-mode.md: obsolete intent-only Session routing remains');
   if (/maestro ralph\s|\bralph next\b/.test(text)) errors.push('workflows/run-mode.md: normal lifecycle must use only maestro run');
 }
@@ -344,10 +407,50 @@ if (existsSync(canonicalRalphCommand)) {
 
 const canonicalCompanion = join(commandDir, 'maestro-companion.md');
 if (!existsSync(canonicalCompanion)) errors.push('.claude/commands/maestro-companion.md: missing canonical Companion command');
-else errors.push(...validateCompanionRunCreate(
+else errors.push(...validateCompanionSelfStart(
   readFileSync(canonicalCompanion, 'utf8'),
   '.claude/commands/maestro-companion.md',
 ));
+
+for (const command of [
+  'team-arch-opt', 'team-coordinate', 'team-issue', 'team-lifecycle-v4',
+  'team-perf-opt', 'team-review', 'team-swarm', 'team-testing',
+]) {
+  const relativePath = `.claude/skills/${command}/roles/coordinator/role.md`;
+  const path = join(root, relativePath);
+  if (!existsSync(path)) {
+    errors.push(`${relativePath}: missing coordinator self-start source`);
+    continue;
+  }
+  errors.push(...validateTeamCoordinatorSelfStart(readFileSync(path, 'utf8'), relativePath, command));
+}
+
+for (const relativePath of [
+  'workflows/execute.md',
+  'workflows/review.md',
+  'workflows/roadmap.md',
+  'workflows/command-authoring.md',
+  'workflows/odyssey-base.md',
+]) {
+  const path = join(root, relativePath);
+  if (!existsSync(path)) continue;
+  const canonical = canonicalBranchForLint(readFileSync(path, 'utf8'));
+  if (/(?:maestro\s+)?session\s+(?:done|next|decide|seal)\b/i.test(canonical)) {
+    errors.push(`${relativePath}: canonical source contains a legacy Session lifecycle alias`);
+  }
+}
+
+for (const relativePath of ['workflows/blueprint.md', 'workflows/spec-generate.md']) {
+  const path = join(root, relativePath);
+  if (!existsSync(path)) continue;
+  const text = readFileSync(path, 'utf8');
+  for (const token of ['resolved `task`', 'structured `continuation`', 'session chain insert --command', '--arg "<seed text>"', 'run next']) {
+    if (!text.includes(token)) errors.push(`${relativePath}: missing v3 self-start/birth token: ${token}`);
+  }
+  if (/Session:\s+via maestro run create/i.test(text)) {
+    errors.push(`${relativePath}: abbreviated run create Session initialization remains`);
+  }
+}
 
 const canonicalTeamWorker = join(root, '.claude', 'agents', 'team-worker.md');
 if (!existsSync(canonicalTeamWorker)) errors.push('.claude/agents/team-worker.md: missing canonical team worker');

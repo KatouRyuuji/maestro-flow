@@ -208,7 +208,7 @@ type V3MachineOperation =
   | 'create' | 'next' | 'complete' | 'brief' | 'check' | 'recall'
   | 'session-open' | 'session-migrate' | 'session-complete' | 'session-archive' | 'session-unarchive'
   | 'session-status' | 'session-resume-view' | 'session-list'
-  | 'session-chain-insert' | 'session-chain-skip' | 'session-chain-replace'
+  | 'session-chain-insert' | 'session-chain-skip' | 'session-chain-replace' | 'session-chain-update'
   | 'run-transition' | 'run-cancel' | 'run-seal' | 'run-decide';
 
 function inferV3MachineOperation(command: string | undefined, subcommand: string | undefined): V3MachineOperation | 'artifact-inspect' | 'artifact-republish' {
@@ -218,7 +218,7 @@ function inferV3MachineOperation(command: string | undefined, subcommand: string
     if (subcommand === 'chain') {
       const chainIndex = argv.indexOf('chain');
       const action = argv.slice(chainIndex + 1).find(token => !token.startsWith('-'));
-      if (action === 'insert' || action === 'skip' || action === 'replace') {
+      if (action === 'insert' || action === 'skip' || action === 'replace' || action === 'update') {
         return `session-chain-${action}`;
       }
       return 'session-chain-insert';

@@ -76,7 +76,7 @@ Do NOT write to `.workflow/roadmap.md` — roadmap is a Run artifact, not a proj
 
 MANDATORY: apply ~/.maestro/workflows/roadmap-common.md "state.json Session Registration"; REQUIRED produce: state.json updated.
 
-Artifact registration and state updates (session DAG registration, activation) are handled by `maestro session done`. **GATE: sessions-registered** — every session written to `state.json.sessions[]` with `roadmap_artifact_id` and `seed_ref`.
+Artifact registration is handled atomically by the coordinator's fenced `maestro run complete ... --advance`; workflow-owned Session DAG state updates and activation must be complete before that mutation. **GATE: sessions-registered** — every session written to `state.json.sessions[]` with `roadmap_artifact_id` and `seed_ref`.
 
 ---
 
@@ -87,7 +87,7 @@ After outputs are written, confirm which root session to activate via `AskUserQu
 - Choose a different session from the DAG
 - Defer activation (keep all sessions `planned`)
 
-Skip in auto mode (`-y`) — select the first root session automatically. The chosen activation is applied by the runtime via `maestro session done`.
+Skip in auto mode (`-y`) — select the first root session automatically. Persist the chosen activation before the coordinator performs fenced `maestro run complete ... --advance`.
 
 ---
 
@@ -109,7 +109,7 @@ Skip in auto mode (`-y`) — select the first root session automatically. The ch
 
 ## Completion
 
-Report session count, root sessions, strategy, and output path. Verdict `done` on normal completion, `done-with-concerns` if concerns surfaced (e.g. unmapped requirement, low-confidence research).
+Report session count, root sessions, strategy, and output path. Completion verdict is `done` on normal completion or `done_with_concerns` when concerns surfaced (e.g. unmapped requirement, low-confidence research).
 
 ## Error Codes
 

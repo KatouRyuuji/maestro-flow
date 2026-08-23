@@ -173,6 +173,8 @@ export interface V3MigrationOptions {
   actor_id?: string;
   recorded_at?: string;
   definition_of_done?: string;
+  expected_identity_revision?: number;
+  expected_activity_revision?: number;
   /** Migration audit identity (H3/⑨): a request receipt links the migration
    * transition to the caller's request for replay/idempotency parity with
    * regular v3 mutations. When omitted (e.g. programmatic callers) a
@@ -1690,6 +1692,21 @@ export function applyV3Migration(
         evidence_refs: [...transitionReceipt.evidence_refs, ...options.evidence_refs],
       }
     : transitionReceipt;
+  const transitionReceiptHash = canonicalHash(transitionReceiptWithEvidence);
+  projection.transition_receipt = transitionReceiptWithEvidence;
+  projection.report = migrationReportV1Schema.parse({
+    ...projection.report,
+    target_hashes: {
+      ...projection.report.target_hashes,
+      transition_receipt: transitionReceiptHash,
+      projection: canonicalHash({
+        session: projection.report.target_hashes.session,
+        runs: projection.report.target_hashes.runs,
+        transition_receipt: transitionReceiptHash,
+        legacy_transition_receipts: projection.report.target_hashes.legacy_transition_receipts,
+      }),
+    },
+  });
   const migrationRequestId = options.request_id ?? `migrate-${randomUUID()}`;
   const migrationRequestReceipt = createRequestReceipt({
     requestId: migrationRequestId,
@@ -1716,6 +1733,8 @@ export function applyV3Migration(
   const status = store.withV30Transaction(sessionId, tx => {
     const current = JSON.parse(readFileSync(join(store.sessionDir(sessionId), 'session.json'), 'utf8')) as {
       schema_version?: unknown;
+      identity_revision?: unknown;
+      activity_revision?: unknown;
     };
     if (current.schema_version === 'session/3.0') {
       verifyAppliedProjection(store, projection);
@@ -1726,6 +1745,20 @@ export function applyV3Migration(
     }
     if (existsSync(reportPath)) {
       fail('MIGRATION_CONFLICT', 'legacy Session already has a v3 migration report');
+    }
+    if (options.expected_identity_revision !== undefined
+      && current.identity_revision !== options.expected_identity_revision) {
+      fail(
+        'MIGRATION_SOURCE_CHANGED',
+        `legacy Session identity revision conflict: expected ${options.expected_identity_revision}, current ${String(current.identity_revision)}`,
+      );
+    }
+    if (options.expected_activity_revision !== undefined
+      && current.activity_revision !== options.expected_activity_revision) {
+      fail(
+        'MIGRATION_SOURCE_CHANGED',
+        `legacy Session activity revision conflict: expected ${options.expected_activity_revision}, current ${String(current.activity_revision)}`,
+      );
     }
     const receiptPaths = [
       ...projection.legacy_transition_receipts,

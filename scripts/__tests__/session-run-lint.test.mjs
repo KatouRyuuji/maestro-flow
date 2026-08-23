@@ -15,11 +15,12 @@ import {
   validateExecutionPromptSemantics,
 } from '../session-execution-prompt-semantics.mjs';
 import {
-  validateCompanionRunCreate,
+  validateCompanionSelfStart,
   validateConsumesSchema,
   validateExecutorLifecycleBoundary,
   validateProducesAliases,
   validateRunCreateArgumentChannels,
+  validateTeamCoordinatorSelfStart,
 } from '../lint-session-run-prompts.mjs';
 
 const fm = (mode, body = '', extra = '') => `---\nname: demo\nsession-mode: ${mode}\n${extra}---\n${body}`;
@@ -53,34 +54,58 @@ test('rejects missing and mixed lifecycle ownership with stable diagnostic famil
   assert.match(mixed.errors.join('\n'), /both full and lite/);
 });
 
-test('canonical Run creation lint separates Session metadata from command inputs', () => {
-  const complete = '--intent is Session metadata only; use --arg <value> or -- <args...>.';
+test('canonical direct Run creation uses positional domain text and Artifact-only inputs', () => {
+  const complete = [
+    'maestro run create step "<task text>" --session {session_id} --run {run_id} --step {step_id}',
+    '--input <ART-id> --participant {actor_id} --actor {actor_id} --request-id {create_request_id}',
+    '--reason "create Run" --expected-orchestration-revision {step_orchestration_revision} --json',
+    '`--input` accepts only a sealed same-Session Artifact ID.',
+  ].join(' ');
   assert.deepEqual(validateRunCreateArgumentChannels(complete, 'fixture.md'), []);
 
   const missing = validateRunCreateArgumentChannels(
-    '--intent is Session metadata only; command inputs are positional.',
+    complete.replace('--step {step_id}', '').replace('--input <ART-id>', '--input "<task text>"'),
     'fixture.md',
   );
-  assert.ok(missing.includes('fixture.md: missing --arg <value>'));
-  assert.ok(missing.includes('fixture.md: missing -- <args...>'));
+  assert.ok(missing.includes('fixture.md: missing direct Run create contract token: --step'));
+  assert.ok(missing.includes('fixture.md: missing direct Run create contract token: --input <ART-id>'));
+  assert.ok(missing.includes('fixture.md: raw domain text must not be passed through --input'));
 });
 
-test('Companion creation lint requires intent in both metadata and command args', () => {
-  const complete = 'maestro run create companion --intent "<intent>" --arg "<intent>"; required command arguments are validated.';
-  assert.deepEqual(validateCompanionRunCreate(complete, 'fixture.md'), []);
+test('Companion self-start lint requires open, positional chain arg, and fenced next', () => {
+  const complete = [
+    'maestro session open "<intent>" --participant {actor_id} --actor {actor_id} --request-id {open_request_id}',
+    'maestro session chain insert --command companion --arg "<intent>" --request-id {insert_request_id}',
+    '--expected-orchestration-revision {open_orchestration_revision}',
+    'maestro run next --request-id {next_request_id} --expected-orchestration-revision {insert_orchestration_revision}',
+    'structured `continuation`',
+  ].join('\n');
+  assert.deepEqual(validateCompanionSelfStart(complete, 'fixture.md'), []);
 
-  const missing = validateCompanionRunCreate(
-    'maestro run create companion --intent "<intent>"; required command arguments are validated.',
+  const missing = validateCompanionSelfStart(
+    complete.replace('--arg "<intent>"', '--input "<intent>"'),
     'fixture.md',
   );
-  assert.ok(missing.includes('fixture.md: missing --arg "<intent>"'));
+  assert.ok(missing.includes('fixture.md: missing Companion self-start token: --arg "<intent>"'));
+  assert.ok(missing.includes('fixture.md: Companion intent must be positional, not --input'));
+});
+
+test('team coordinator self-start lint requires receipt-chained actor-equal mutations', () => {
+  const complete = [
+    'maestro session open "<task summary>" --participant {actor_id} --actor {actor_id} --request-id {open_request_id}',
+    'maestro session chain insert --command team-demo --arg "<task summary>" --request-id {insert_request_id}',
+    '--expected-orchestration-revision {open_orchestration_revision}',
+    'maestro run next --request-id {next_request_id} --expected-orchestration-revision {insert_orchestration_revision}',
+    'structured `continuation`',
+  ].join('\n');
+  assert.deepEqual(validateTeamCoordinatorSelfStart(complete, 'fixture.md', 'team-demo'), []);
 });
 
 test('Run executor lint keeps completion ownership with the orchestrator', () => {
   const complete = [
     'maestro run brief <run-id>',
     'maestro run check <run-id>',
-    'Do not call `maestro session done` or `maestro run complete` — completion is handled by the orchestrator',
+    'Do not call `maestro run complete` — completion is handled by the orchestrator',
   ].join('\n');
   assert.deepEqual(validateExecutorLifecycleBoundary(complete, 'executor.md'), []);
 
@@ -88,7 +113,7 @@ test('Run executor lint keeps completion ownership with the orchestrator', () =>
     'maestro run brief <run-id>\nmaestro run check <run-id>',
     'executor.md',
   );
-  assert.ok(missing.includes('executor.md: missing Do not call `maestro session done`'));
+  assert.ok(missing.includes('executor.md: missing Do not call `maestro run complete`'));
   assert.ok(missing.includes('executor.md: missing handled by the orchestrator'));
 });
 
@@ -129,15 +154,14 @@ test('mirror lint detects lifecycle profile divergence', () => {
   }
 });
 
-test('source lint reports only the known Odyssey dead alias while migration semantics pass independently', () => {
+test('source lint passes after the Odyssey alias migration', () => {
   const repoRoot = process.cwd();
   const lint = spawnSync(process.execPath, [join(repoRoot, 'scripts', 'lint-session-run-prompts.mjs')], {
     cwd: repoRoot,
     encoding: 'utf8',
   });
-  assert.equal(lint.status, 1);
-  assert.match(lint.stderr, /prepare\\odyssey-ui\.md: consumes alias 'prior-ui-audit'.*dead alias/);
-  assert.match(lint.stderr, /session-run prompt lint failed: 1 issue\(s\)/);
+  assert.equal(lint.status, 0);
+  assert.equal(lint.stderr, '');
   assert.deepEqual(validateExecutionPromptSemantics(repoRoot), []);
   for (const mode of ['debug', 'improve', 'planex', 'review', 'ui']) {
     const text = readFileSync(join(repoRoot, 'workflows', `odyssey-${mode}.md`), 'utf8');
@@ -168,33 +192,44 @@ test('source lint reports only the known Odyssey dead alias while migration sema
   assert.match(lite, /maestro knowledge stage knowhow/);
   assert.match(lite, /--signal cited\|validated\|contradicted --signal-ids <comma-separated ids>/);
   assert.match(lite, /maestro knowledge review <session_id>/);
-  assert.match(lite, /maestro execution seal/);
-  assert.match(lite, /does \*\*not\*\* require Session seal/);
+  assert.match(lite, /maestro run complete.*--advance/);
+  assert.match(lite, /resolved `task`/);
+  assert.match(lite, /structured executable `continuation`/);
+  assert.match(lite, /--input.*sealed same-Session Artifact IDs/);
+  assert.match(lite, /does \*\*not\*\* require Session completion/);
 
   const full = readFileSync(join(repoRoot, 'workflows', 'run-mode.md'), 'utf8');
   assert.match(full, /complete top-level `_meta` object/);
   assert.match(full, /`kind` and `schema` are required together/);
-  assert.match(full, /Session is a durable \*\*topic grouping\/index\*\*/);
+  assert.match(full, /A Session .* is a durable \*\*topic grouping\/index\*\*/);
   assert.match(full, /same Session.*canonical `upstream`\/Artifact Registry map/);
   assert.match(full, /Historical similarity is read-only evidence/);
-  assert.match(full, /Completion atomically registers `outputs\/`, seals the Run, updates the current Execution chain\/gates\/revision/);
+  assert.match(full, /completion atomically validates and publishes `outputs\/` into the artifact registry, seals the Run, completes the chain step/);
   assert.match(full, /deprecated admin-only compatibility commands/);
-  assert.match(full, /compact `knowledge_context` reconciliation card/);
-  assert.match(full, /`brief-result\/1\.1` Resume Packet/);
+  assert.match(full, /knowledge_context/);
+  assert.match(full, /birth packet exposes the resolved `task`/);
+  assert.match(full, /resolved `task`/);
+  assert.match(full, /structured executable `continuation`/);
+  assert.match(full, /--input.*sealed Artifact from the same Session/);
+  assert.match(full, /--expected-identity-revision/);
+  assert.match(full, /--expected-activity-revision/);
+  assert.match(full, /--expected-revisions/);
+  assert.doesNotMatch(canonicalBranch(full), /done-with-concerns/);
+  assert.match(full, /`brief-result\/3\.0` Resume Packet/);
   assert.match(full, /knowledge-candidate-receipt\/1\.0/);
   assert.match(full, /Routine Run completion MUST NOT call `maestro spec add` or `maestro knowhow add` directly/);
   assert.match(full, /maestro capabilities --json/);
   assert.match(full, /maestro execution seal/);
-  assert.match(full, /does \*\*not\*\* require Session seal/);
+  assert.match(full, /does \*\*not\*\* require Session completion/);
   assert.doesNotMatch(full, /same normalized intent/);
 
-  const seal = readFileSync(join(repoRoot, '.claude', 'commands', 'maestro-session-seal.md'), 'utf8');
-  assert.match(seal, /maestro knowledge review \{session_id\} --json/);
-  assert.match(seal, /maestro knowledge promote \{session_id\} --candidate/);
-  assert.doesNotMatch(seal, /Scan session artifacts|recommend `\/maestro-spec add/);
+  const manage = readFileSync(join(repoRoot, '.claude', 'commands', 'maestro-session-manage.md'), 'utf8');
+  assert.match(manage, /maestro knowledge review \{session_id\} --json/);
+  assert.match(manage, /maestro knowledge promote \{session_id\} --candidate/);
+  assert.doesNotMatch(manage, /Scan session artifacts|recommend `\/maestro-spec add/);
 
   const maestro = readFileSync(join(repoRoot, '.claude', 'commands', 'maestro.md'), 'utf8');
-  assert.match(maestro, /argument-hint: "<intent> \[-y\] \[-c\] \[--amend\] \[--dry-run\]"/);
+  assert.match(maestro, /argument-hint: "<intent> \[-y\] \[-c\] \[--amend\]"/);
   assert.match(maestro, /Compatibility commands are out of band/);
   assert.match(maestro, /Historical similarity remains read-only evidence/);
   assert.doesNotMatch(maestro, /resolved paused Session.*maestro session resume/);
@@ -202,7 +237,7 @@ test('source lint reports only the known Odyssey dead alias while migration sema
 
   const ralph = readFileSync(join(repoRoot, '.claude', 'commands', 'maestro-ralph.md'), 'utf8');
   assert.match(ralph, /argument-hint: "<intent> \[-y\] \[-c\] \[--amend\]"/);
-  assert.match(ralph, /Session is identity; Execution is lifecycle/);
+  assert.match(ralph, /Session owns chain and lifecycle/);
   assert.match(ralph, /Legacy compatibility is out of band/);
   assert.match(ralph, /Canonical upstream map/);
   assert.doesNotMatch(ralph, /Read state\.json\.artifacts/);
@@ -247,19 +282,19 @@ test('source lint reports only the known Odyssey dead alias while migration sema
     '### `complete` / `decide` 闭环',
     'run_already_created=true',
     'maestro run decide',
-    'reason_code=DECISION_CARD_READY',
+    'continuation.action',
   ]) {
     assert.match(orchestratorLoop, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
   assert.match(ralph, /Decision is mandatory/);
-  assert.match(ralph, /every Ralph-created Execution chain/);
+  assert.match(ralph, /every Ralph-created Session chain/);
   assert.match(ralph, /run decide --json/);
   assert.match(ralph, /run complete --json/);
   const amendFlow = readFileSync(join(repoRoot, 'workflows', 'ralph-amend-goal.md'), 'utf8');
   assert.match(amendFlow, /maestro capabilities --json/);
   assert.match(amendFlow, /maestro run next/);
-  assert.match(amendFlow, /maestro run complete \{run_id\}.*--execution \{execution_id\}/);
-  assert.match(amendFlow, /maestro execution seal/);
+  assert.match(amendFlow, /maestro run complete \{run_id\}.*--session \{session_id\}/);
+  assert.match(amendFlow, /maestro execution status\/resolve\/resume\/seal/);
   assert.doesNotMatch(canonicalBranch(amendFlow), /maestro session (?:meta|next|done|seal)/);
   const ralphPrepare = readFileSync(join(repoRoot, 'prepare', 'ralph.md'), 'utf8');
   assert.match(ralphPrepare, /\| init \| `init` \|/);
@@ -276,7 +311,7 @@ test('source lint reports only the known Odyssey dead alias while migration sema
     assert.doesNotMatch(workflow, /\bralph next\b/);
     assert.doesNotMatch(
       canonicalBranch(workflow),
-      /maestro session (?:start|next|done|decide|resolve|resume|seal|meta)\b/,
+      /maestro session (?:start|next|done|decide|resolve|resume(?!-view)|seal|meta)\b/,
     );
   }
 });

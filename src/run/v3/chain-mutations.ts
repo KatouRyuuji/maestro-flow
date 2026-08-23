@@ -16,7 +16,8 @@ type SessionChainStepV30 = SessionStateV30['chain'][number];
 export type ChainMutation =
   | { kind: 'insert'; stepId: string; command: string; args?: readonly string[]; afterStepId?: string | null; goalRef?: string | null; stage?: string | null; decisionRef?: string | null }
   | { kind: 'skip'; stepId: string }
-  | { kind: 'replace'; stepId: string; command: string; args?: readonly string[] };
+  | { kind: 'replace'; stepId: string; command: string; args?: readonly string[] }
+  | { kind: 'update'; stepId: string; command?: string; args?: readonly string[]; goalRef?: string; stage?: string; decisionRef?: string };
 
 export interface MutateChainV3Input {
   sessionId: string;
@@ -40,6 +41,29 @@ function text(value: string, label: string): string {
   return normalized;
 }
 
+function decisionsWithOpenGate(
+  session: SessionStateV30,
+  stepId: string,
+  decisionRef: string,
+): SessionStateV30['decisions'] {
+  const existing = session.decisions.find(decision => decision.decision_id === decisionRef);
+  if (existing && existing.status !== 'open') {
+    throw new V3StructuredError(
+      'INVALID_STATE_TRANSITION',
+      `decision gate ${decisionRef} is already ${existing.status}; a resolved/escalated decision cannot be bound as a new gate`,
+      { target_type: 'orchestration', target_id: session.session_id, next_actions: ['choose-a-new-decision-point'] },
+    );
+  }
+  return existing
+    ? session.decisions
+    : [...session.decisions, {
+        decision_id: decisionRef,
+        after_step_id: stepId,
+        status: 'open' as const,
+        evidence_refs: [],
+      }];
+}
+
 function mutateSteps(
   session: SessionStateV30,
   mutation: ChainMutation,
@@ -59,28 +83,11 @@ function mutateSteps(
       decision_ref: decisionRef,
       decision_refs: [], stage: mutation.stage?.trim() || null,
     };
-    // Declaring a decision gate on the inserted step records the open decision
-    // it refers to, so run next and session complete see the gate as open until
-    // `run decide` resolves it. An already-recorded decision keeps its status.
-    let decisions = session.decisions;
-    if (decisionRef !== null) {
-      const existing = decisions.find(decision => decision.decision_id === decisionRef);
-      if (existing && existing.status !== 'open') {
-        throw new V3StructuredError(
-          'INVALID_STATE_TRANSITION',
-          `decision gate ${decisionRef} is already ${existing.status}; a resolved/escalated decision cannot be bound as a new gate`,
-          { target_type: 'orchestration', target_id: session.session_id, next_actions: ['choose-a-new-decision-point'] },
-        );
-      }
-      if (!existing) {
-        decisions = [...decisions, {
-          decision_id: decisionRef,
-          after_step_id: stepId,
-          status: 'open' as const,
-          evidence_refs: [],
-        }];
-      }
-    }
+    // Declaring a decision gate records the open decision it refers to, so run
+    // next and session complete see the gate until `run decide` resolves it.
+    const decisions = decisionRef === null
+      ? session.decisions
+      : decisionsWithOpenGate(session, stepId, decisionRef);
     return {
       chain: [...session.chain.slice(0, insertionIndex), step, ...session.chain.slice(insertionIndex)],
       decisions,
@@ -97,6 +104,47 @@ function mutateSteps(
         ? { ...step, status: 'skipped' as const, decision_refs: [...new Set([...step.decision_refs, ...evidence])].sort() }
         : step),
       decisions: session.decisions,
+    };
+  }
+  if (mutation.kind === 'update') {
+    const supplied = mutation.command !== undefined
+      || mutation.args !== undefined
+      || mutation.goalRef !== undefined
+      || mutation.stage !== undefined
+      || mutation.decisionRef !== undefined;
+    if (!supplied) {
+      throw new V3StructuredError('INVALID_ARGUMENT', 'chain update requires at least one field to update');
+    }
+    if (mutation.args !== undefined && mutation.args.length === 0) {
+      throw new V3StructuredError('INVALID_ARGUMENT', 'chain update does not support clearing args');
+    }
+    const current = session.chain[index];
+    const decisionRef = mutation.decisionRef === undefined
+      ? current.decision_ref
+      : text(mutation.decisionRef, 'decision reference');
+    if (mutation.decisionRef !== undefined
+      && current.decision_ref !== null
+      && decisionRef !== current.decision_ref) {
+      throw new V3StructuredError(
+        'INVALID_STATE_TRANSITION',
+        `chain update cannot retarget decision gate ${current.decision_ref}; insert a new step instead`,
+      );
+    }
+    const decisions = mutation.decisionRef === undefined || decisionRef === current.decision_ref
+      ? session.decisions
+      : decisionsWithOpenGate(session, stepId, decisionRef!);
+    return {
+      chain: session.chain.map((step, itemIndex) => itemIndex === index
+        ? {
+            ...step,
+            command: mutation.command === undefined ? step.command : text(mutation.command, 'command'),
+            args: mutation.args === undefined ? step.args : [...mutation.args],
+            goal_ref: mutation.goalRef === undefined ? step.goal_ref : text(mutation.goalRef, 'goal reference'),
+            stage: mutation.stage === undefined ? step.stage : text(mutation.stage, 'stage'),
+            decision_ref: decisionRef,
+          }
+        : step),
+      decisions,
     };
   }
   return {

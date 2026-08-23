@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
 // Entry command generator — thin skill wrappers over `maestro run`.
 //
-// A generated entry skill carries NO domain logic: its body is the Run
-// lifecycle invocation (prepare → create → brief → execute → check → complete).
+// Generated entry skill carries NO domain logic: its body is the v3 Session/Run
+// lifecycle invocation (open/attach Session → next/create → brief → execute → check → complete).
 // All domain content lives in the step's prepare/<step>.md + workflows/<step>.md.
 // Generated as SKILL.md (skill format); description marks it as internal-only
 // (not for manual /command invocation).
@@ -104,13 +104,13 @@ This skill is for internal orchestration use only. Do not invoke it manually.
 </purpose>
 
 <execution>
-1. \`maestro run prepare ${info.step}\` - read the returned pre-task thinking and note \`workflow.path\`. This is read-only.
-2. Follow \`run-mode.md\` exactly. Before any mutation, negotiate \`maestro capabilities --json\`; require the canonical \`session/2.0 + execution/1.0 + core_execution_lease + run-response/1.1\` contract, then use or acquire the exact current Execution. Retain \`session_id\`, \`execution_id\`, \`generation\`, revisions, private core claim, \`run_id\`, \`run_dir\`, and \`upstream\`. Never persist the raw lease token.
-3. If an orchestrator birth packet already contains the exact Run locator, do NOT create another Run. Otherwise create the self-started Run through the Execution-aware \`maestro run create\` command in \`run-mode.md\`, passing required command inputs with repeatable \`--arg <value>\`; \`--intent\` is Session metadata only.
+1. Use the birth packet's injected \`guidance\`/\`brief.command\` for step \`${info.step}\`; there is no standalone \`maestro run prepare\` call on the v3 surface.
+2. Follow \`run-mode.md\` exactly. Before any mutation, negotiate \`maestro capabilities --json\`; require the canonical \`session/3.0\` + \`run-response/1.2\` contract, then use the exact current Session/Run locator and revisions. Retain \`session_id\`, \`orchestration_revision\`, \`run_id\`, \`run_revision\`, \`run_dir\`, \`upstream\`, resolved \`task\`, and structured executable \`continuation\`; pass the same actor identity to both participant fields and never persist mutation authority.
+3. If an orchestrator birth packet already contains the exact Run locator, do NOT create another Run. Otherwise use the receipt-chained self-start path: \`maestro session open\`, fenced \`maestro session chain insert --command ${info.step} --arg "<domain text>"\`, then fenced \`maestro run next\`, with distinct stable request IDs and each preceding receipt's exact revision. Domain text is positional; \`--input <ART-id>\` accepts only sealed same-Session Artifact IDs. A direct \`maestro run create\` is allowed only with positional domain args plus explicit \`--session\`, \`--run\`, \`--step\`, identical participant/actor values, request ID/reason, and exact orchestration CAS.
 4. Optionally use \`maestro run brief <run_id> --session <session_id>\` for read-only re-attach/backtracking.
 5. Execute the workflow completely. Write formal artifacts to \`{run_dir}/outputs/\`.
 6. Run \`maestro run check <run_id> --session <session_id>\` and repair blocking gates.
-7. If dispatched, return to the claim-holding orchestrator without completing. If self-started and still holding the exact current claim, complete through Execution-aware \`maestro run complete ... --json\`, consume the fresh \`run-response/1.1\` fence, then finish the bounded generation with \`maestro execution seal ... --json\`. Session lifecycle aliases are legacy compatibility only.
+7. If dispatched, return to the claim-holding orchestrator without completing. If self-started and still holding the exact authority, complete through fenced \`maestro run complete ... --advance --json\`, consume the fresh \`run-response/1.2\` fence, and complete the Session with \`maestro session complete ... --json\` when its chain is terminal.
 </execution>
 `;
 }

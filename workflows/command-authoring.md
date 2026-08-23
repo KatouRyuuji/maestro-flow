@@ -42,7 +42,7 @@ frontmatter (name, description, argument-hint, allowed-tools, session-mode)
 
 Every command MUST classify `session-mode` as one of:
 
-- `run`: creates formal Session/Run artifacts and must use `maestro run create/check/complete`;
+- `run`: creates formal Session/Run artifacts and must use the canonical `session open` -> fenced `session chain insert` -> fenced `run next` flow, followed by `run check` and coordinator-owned `run complete --advance`;
 - `none`: stateless/project-level operation with no formal run artifacts;
 - `bootstrap`: pre-Session bootstrap such as `maestro-init`;
 - `deprecated`: retained only as an explicit migration route.
@@ -84,7 +84,7 @@ Supports three modes:
 - **Revise** (`--revise`): Incrementally modify existing plan
 - **Check** (`--check`): Standalone plan verification
 
-Formal output goes to the active Run returned by `maestro run create`: all typed artifacts (including evidence-role) under `{run_dir}/outputs/`, and narrative/handoff in `{run_dir}/report.md`.
+Formal output goes to the active Run returned by `maestro run next` (or a fully specified machine-protocol `maestro run create`): all typed artifacts (including evidence-role) under `{run_dir}/outputs/`, and narrative/handoff in `{run_dir}/report.md`. The birth packet's resolved `task` and structured `continuation` are authoritative.
 </purpose>
 ```
 
@@ -323,20 +323,21 @@ Next steps:
 
 ### Orchestrated Run completion
 
-An executor reports `run_id`, check state, artifacts, summary, concerns, and optional proposal path to the orchestrator. It MUST NOT call `session done` itself. The orchestrator maps the result to:
+An executor reports `run_id`, check state, artifacts, summary, concerns, and optional proposal path to the orchestrator. It MUST NOT complete or mutate the Session itself. The orchestrator consumes the exact birth/check receipt, uses one actor identity for both participant fields, and maps a successful result to:
 
 ```
-maestro session done --session <session-id> --verdict {verdict} \
-  [--chain-proposal outputs/chain-proposal.json] [--evidence <path>] [--note "..."]
+maestro run complete {run_id} --session {session_id} --participant {actor_id} --actor {actor_id} --request-id {complete_request_id} --reason "complete orchestrated Run" [--evidence <path> ...] --expected-orchestration-revision {orchestration_revision} --expected-run-revision {run_revision} --verdict {done|done_with_concerns} [--summary "..."] --advance --json
 ```
 
-`--evidence` / `--artifact` / `--chain-proposal` paths resolve relative to the **Run directory**, not the shell CWD, and must stay inside it — pass run-relative paths (e.g. `outputs/…`) or absolute paths within the Run directory. A shell-CWD-relative reading is accepted only when it unambiguously reaches a file inside the Run directory (or its `outputs/` for chain proposals).
+Every mutation uses a distinct stable request ID and the exact revision returned by the immediately preceding receipt. A hard external blocker uses fully specified `maestro run transition {run_id} blocked --session {session_id} --participant {actor_id} --actor {actor_id} --request-id {blocked_request_id} --reason "<reason>" --expected-run-revision {run_revision} --json`; an abandoned attempt uses the equivalently fenced `maestro run cancel`. A typed chain proposal is never applied implicitly by completion: the orchestrator validates it and applies its operations through receipt-chained `session chain insert|replace|skip` mutations.
 
-Status verdicts (chain-advance vocabulary; ready-vocabulary aliases ready→done / ready_with_concerns→done-with-concerns / failed→needs-retry are also accepted and mapped):
+`--evidence` / `--artifact` paths resolve relative to the **Run directory**, not the shell CWD, and must stay inside it — pass run-relative paths (e.g. `outputs/…`) or absolute paths within the Run directory.
+
+Completion verdicts:
 - **done** — Normal completion
-- **done-with-concerns** — Completed with caveats; pass `--note`
-- **needs-retry** — Tooling error / transient issue; the orchestrator may retry
-- **blocked** — External hard blocker; pass `--reason`
+- **done_with_concerns** — Completed with caveats; put caveats in `report.md` concerns and optionally pass `--summary`
+
+`blocked` and retry/abandonment are Run transitions, not completion verdicts. After every receipt, follow its structured `continuation` contract; use `run decide` for decision gates, fenced `run next` for a pending step, and `session complete` only for a terminal chain.
 
 ### Next-step routing
 
@@ -395,7 +396,7 @@ Line-by-line verifiable completion standards.
 - [ ] Every task has `convergence.criteria[]` with grep-verifiable conditions
 - [ ] Plan-checker passed (or minor issues acknowledged)
 - [ ] User confirmation captured (execute/modify/cancel)
-- [ ] Artifact declared by contract and registered by `maestro session done`
+- [ ] Artifact declared by contract and registered by successful fenced `maestro run complete ... --advance`
 </success_criteria>
 ```
 
