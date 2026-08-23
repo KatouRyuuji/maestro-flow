@@ -1,10 +1,27 @@
 // src/graph/kg/query/context-builder.ts — 上下文组装 (for hook inject)
-// 参考: plan-maestrograph.md 统一 Hook Injector 设计
+// 参考: plan-maestrograph.md 统一 Hook Injector 设计 + codegraph #1500 explore allocation
+//
+// The budget path was ported from codegraph's CG-12/21/26/30/31/36/38 render
+// loop: sections are ranked, each is RESERVED a score-proportional share of the
+// envelope up front (allocateExploreBudget), and the render loop spends those
+// reservations — never a flat cap. Carry-forward hands unspent slack down rank
+// order; a displacement guard (fundedHeadroom) holds back what is still owed to
+// sections below; a whole-section buy rule sends a section in full when its
+// reservation already covers most of it. Invariant: every admitted section
+// receives ≥ its reservation before any section draws carry-forward slack.
 
 import type { KgQueryBuilder } from '../db/queries.js';
-import type { UnifiedNode, UnifiedEdge, SourceType } from '../db/types.js';
+import type { UnifiedNode, SourceType } from '../db/types.js';
 import { searchUnified, parseQuery } from './search.js';
 import { bfs } from './traversal.js';
+import {
+  allocateExploreBudget,
+  getExploreOutputBudget,
+  wholeFileGraceBound,
+  EXPLORE_ALLOCATION,
+  type ExploreAllocationCandidate,
+  type ExploreOutputBudget,
+} from './allocation.js';
 
 // ---------------------------------------------------------------------------
 // Context Section — 注入到 agent 的知识片段
@@ -161,31 +178,148 @@ export function buildContext(
     });
   }
 
-  // Step 4: Context budget 管控
-  const prioritized = sections.sort((a, b) => b.relevance - a.relevance);
-  const selected: ContextSection[] = [];
-  let totalChars = 0;
-
-  for (const section of prioritized) {
-    if (selected.length >= budget.maxSections) break;
-
-    const sectionText = section.lines.join('\n');
-    if (sectionText.length > budget.maxCharsPerSection) {
-      section.lines = section.lines.slice(0, Math.floor(budget.maxCharsPerSection / 80));
-    }
-
-    const sectionChars = section.lines.join('\n').length;
-    if (totalChars + sectionChars > budget.maxTotalChars) break;
-
-    selected.push(section);
-    totalChars += sectionChars;
-  }
+  // Step 4: Allocation-driven budget (CG-12/21/26/30/31/36/38) —
+  //  the render loop lives in {@link renderSectionsWithBudget} below, extracted
+  //  so it is unit-testable without a DB. It keeps three invariants:
+  //   - carry-forward: a section that cannot spend its reservation hands the
+  //     difference DOWN rank order.
+  //   - displacement guard: fundedHeadroom holds back what is still OWED to
+  //     sections below.
+  //   - whole-section buy: a section whose reservation covers >=60% of itself
+  //     is sent in FULL from one shared 15% overshoot pool.
+  const { sections: selected, totalChars } = renderSectionsWithBudget(
+    sections,
+    {
+      maxOutputChars: options?.budget?.maxTotalChars ?? getExploreOutputBudget(allNodes.size).maxOutputChars,
+      maxFiles: options?.budget?.maxSections ?? budget.maxSections,
+      maxCharsPerFile: options?.budget?.maxCharsPerSection ?? budget.maxCharsPerSection,
+    },
+  );
 
   return {
     sections: selected,
     totalChars,
     summary,
   };
+}
+
+/**
+ * Render ranked sections under an allocation-driven budget (exported for
+ * unit testing). Sections are RESERVED a score-proportional share of the
+ * envelope up front ({@link allocateExploreBudget}); the loop spends those
+ * reservations — never a flat cap. Pure function: no DB, no I/O.
+ *
+ * Invariant: every admitted section receives >= its reservation before any
+ * section draws carry-forward slack; cliffed sections are NAMED (a pointer,
+ * never a bare omission); the whole response stays under the hard ceiling.
+ */
+export function renderSectionsWithBudget(
+  sections: ContextSection[],
+  tierBudget: ExploreOutputBudget,
+): { sections: ContextSection[]; totalChars: number } {
+  const prioritized = sections.sort((a, b) => b.relevance - a.relevance);
+
+  const candidates: ExploreAllocationCandidate[] = prioritized.map((s) => ({
+    path: s.label,
+    score: Math.max(0, s.relevance),
+    worth: 1,
+    // Code + spec carry the answer to a flow question -> flow-spine (exempt
+    // from the cliff, weighted x2). Knowledge/domain/issues are context.
+    spine: s.sourceType === 'codegraph' || s.sourceType === 'spec',
+  }));
+  const allocation = allocateExploreBudget(candidates, tierBudget);
+  const reservedTotal = [...allocation.allowances.values()].reduce((s, v) => s + v, 0);
+  const sourceCeiling =
+    reservedTotal + Math.round(tierBudget.maxOutputChars * EXPLORE_ALLOCATION.WHOLE_FILE_BUY_OVERSHOOT_FRACTION);
+  const hardCeiling = Math.min(tierBudget.maxOutputChars * 1.5, 25000);
+
+  const selected: ContextSection[] = [];
+  let reservedSoFar = 0;
+  let sourceSpent = 0;
+  const fullSizeOf = (section: ContextSection): number => section.lines.join('\n').length + LABEL_OVERHEAD;
+
+  for (const section of prioritized) {
+    const reserved = allocation.allowances.get(section.label) ?? 0;
+    if (reserved <= 0) {
+      // Cliffed: not delivered as source, but NAMED so one follow-up fetches it.
+      selected.push({ ...section, lines: cliffedPointer(section), relevance: 0 });
+      continue;
+    }
+
+    reservedSoFar += reserved;
+    const owedBelow = Math.max(0, reservedTotal - reservedSoFar);
+    const fileSize = fullSizeOf(section);
+
+    // Carry-forward: reservation PLUS slack unspent by sections above, clamped
+    // to the MAX_SHARE ceiling so borrowed slack never dominates the envelope.
+    const allowance = Math.min(
+      reserved + Math.max(0, reservedSoFar - sourceSpent - reserved),
+      Math.max(reserved, Math.round(tierBudget.maxOutputChars * EXPLORE_ALLOCATION.MAX_SHARE)),
+    );
+
+    // Whole-section buy (CG-21). MERIT reads `reserved`; FUNDING reads the
+    // shared overshoot pool with owedBelow.
+    const graceBound = wholeFileGraceBound(reserved);
+    const buysWhole =
+      fileSize <= graceBound ||
+      (reserved >= fileSize * EXPLORE_ALLOCATION.WHOLE_FILE_BUY_FRACTION &&
+        sourceSpent + fileSize + owedBelow <= sourceCeiling &&
+        sourceSpent + fileSize <= hardCeiling);
+
+    if (buysWhole) {
+      sourceSpent += fileSize;
+      selected.push(section);
+      continue;
+    }
+
+    // Cluster render bounded by fundedHeadroom (displacement guard in render
+    // space). Hold back what is owed below (CG-26).
+    const headroom = Math.max(0, hardCeiling - sourceSpent - LABEL_OVERHEAD);
+    const fundedHeadroom = Math.floor(Math.min(reserved, headroom, Math.max(0, headroom - owedBelow)));
+    const charsBudget = Math.max(0, Math.min(allowance, fundedHeadroom));
+    if (charsBudget <= 0) continue;
+
+    const trimmed = trimToChars(section, charsBudget);
+    sourceSpent += trimmed.join('\n').length + LABEL_OVERHEAD;
+    selected.push({ ...section, lines: trimmed });
+  }
+
+  const totalChars = selected.reduce(
+    (s, sec) => s + sec.lines.join('\n').length + (sec.relevance === 0 ? 0 : LABEL_OVERHEAD),
+    0,
+  );
+
+  return { sections: selected, totalChars };
+}
+
+// ── Render-path helpers ───────────────────────────────────────────────────
+
+/** Markdown overhead per rendered section (header `## label\n` + trailing blank). */
+const LABEL_OVERHEAD = EXPLORE_ALLOCATION.FILE_OVERHEAD;
+
+/**
+ * Trim a section's lines to a char budget on whole-line boundaries — never
+ * slice a line mid-way (CG-30: cuts on whole lines). Drops trailing lines first
+ * (the grouping above appends nodes in discovery order; the head carries seeds).
+ */
+function trimToChars(section: ContextSection, charsBudget: number): string[] {
+  const out: string[] = [];
+  let acc = 0;
+  for (const line of section.lines) {
+    const cost = line.length + 1; // +newline
+    if (acc > 0 && acc + cost > charsBudget) break;
+    out.push(line);
+    acc += cost;
+  }
+  return out;
+}
+
+/**
+ * A cliffed section becomes a one-line pointer so the agent can fetch it in a
+ * follow-up — "a pointer, never a bare omission".
+ */
+function cliffedPointer(section: ContextSection): string[] {
+  return [`[not included — ${section.sourceType} section "${section.label}" ranked below the relevance cliff; ask again to fetch it]`];
 }
 
 // ---------------------------------------------------------------------------
