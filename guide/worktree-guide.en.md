@@ -45,7 +45,7 @@ Main worktree (master)              Worktree (.worktrees/m2-production/)
 ### Scenario 1: Milestone completed with bugs — start next without waiting
 
 ```bash
-/maestro-session-seal                # M1 complete but has bugs
+/maestro-session-manage-manage --complete                # M1 complete but has bugs
 /maestro-fork -m 2                   # Fork M2 worktree
 
 # Terminal A: Fix M1 bugs on main

@@ -8,7 +8,7 @@ The Maestro command system exposes **18 slash commands**, plus first-tier steps 
 
 | Category | Count | Commands | Responsibility |
 |----------|-------|----------|----------------|
-| **Core Orchestration** | 6 | `/maestro`, `/maestro-ralph`, `/maestro-next`, `/maestro-companion`, `/maestro-init`, `/maestro-session-seal` | Intent-to-chain planning, closed-loop policy, routing, lightweight execution, project init, Session seal |
+| **Core Orchestration** | 6 | `/maestro`, `/maestro-ralph`, `/maestro-next`, `/maestro-companion`, `/maestro-init`, `/maestro-session-manage-manage --complete` | Intent-to-chain planning, closed-loop policy, routing, lightweight execution, project init, Session seal |
 | **Issues & Knowledge** | 4 | `/maestro-issue`, `/maestro-knowledge`, `/maestro-knowhow`, `/maestro-learn` | Issue lifecycle and discovery; knowledge-store audit/harvest/wiki/domain; knowhow capture; learning toolkit |
 | **Specification** | 1 | `/maestro-spec` | Records constraint rules (init via `maestro spec init`, load via `maestro spec load`, remove via step `specs-remove`) |
 | **Deep Cycle & UI** | 2 | `/maestro-odyssey`, `/maestro-impeccable` | Six-mode long-running iteration (debug/improve/planex/review/security/ui); UI design and codify |
@@ -76,7 +76,7 @@ graph TB
     end
 
     subgraph seal["Seal"]
-        SL["/maestro-session-seal"]
+        SL["/maestro-session-manage-manage --complete"]
         KGI["maestro kg index (CLI)"]
     end
 
@@ -118,7 +118,7 @@ graph TB
         direction LR
         AN["analyze"] -->|"Multiple"| AN
         AN --> PL["plan"] -->|"revise"| PL -->|"Execute one-by-one"| EX["execute"] --> VF["verify"]
-        VF --> QR["review"] --> QBT["auto-test"] --> QT["test"] --> MA["session-seal"]
+        VF --> QR["review"] --> QBT["auto-test"] --> QT["test"] --> MA["session-manage --complete"]
     end
 
     subgraph issue_loop["Issue Closed-Loop"]
@@ -179,7 +179,7 @@ graph TB
 ### Milestone Pipeline
 
 ```
-analyze → plan → execute → verify → review → auto-test → test → session-seal
+analyze → plan → execute → verify → review → auto-test → test → session-manage --complete
 ```
 
 | Stage | Skill / Command | Output | Artifact |
@@ -188,7 +188,7 @@ analyze → plan → execute → verify → review → auto-test → test → se
 | Plan | `plan` step | plan.json + TASK-*.json | PLN-{NNN} |
 | Execute | `execute` step | .summaries/, code changes | EXC-{NNN} |
 | Verify | `execute` built-in verification gate (E2.7) | verification.json | VRF-{NNN} |
-| Seal | `/maestro-session-seal` | archived to milestones/ | — |
+| Seal | `/maestro-session-manage-manage --complete` | archived to milestones/ | — |
 
 **Scope routing**: No args = entire milestone; number = specific milestone (micro mode); text = macro exploration (macro mode). `--dir` specifies upstream output path directly.
 
@@ -265,7 +265,7 @@ execute                                          # Execute fix (step)
 ## 4. Quality Pipeline
 
 ```bash
-execute → review → auto-test → test → /maestro-session-seal
+execute → review → auto-test → test → /maestro-session-manage-manage --complete
 ```
 
 > Note: `auto-test` `review` `test` `debug` are first-tier steps dispatched by the orchestrator via the session chain — not directly invokable. Trigger them through `/maestro-next` or `/maestro "<intent>"`.
@@ -292,12 +292,12 @@ execute → review → auto-test → test → /maestro-session-seal
 
 | Chain Name | Command Sequence | Use Case |
 |------------|------------------|----------|
-| `full-lifecycle` | init→blueprint→...→session-seal | Brand new project |
+| `full-lifecycle` | init→blueprint→...→session-manage --complete | Brand new project |
 | `roadmap-driven` | init→roadmap→... | Lightweight roadmap |
 | `brainstorm-driven` | brainstorm→init→roadmap→... | Start from brainstorming |
 | `analyze-plan-execute` | analyze→plan→execute | Quick execution |
 | `quality-loop` | review→test→debug | Quality pipeline |
-| `milestone-close` | session-seal | Close a milestone |
+| `milestone-close` | session-manage --complete | Close a milestone |
 | `companion` | instant small task (`/maestro-companion`) | Instant small tasks |
 
 ---

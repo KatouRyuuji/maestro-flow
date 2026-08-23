@@ -98,13 +98,13 @@ Maestro uses an `action x object` matrix for semantic routing:
 
 | Chain Name | Steps | Use Case |
 |------------|-------|----------|
-| `full-lifecycle` | plan → execute → review → test → session-seal → harvest | Complete milestone |
+| `full-lifecycle` | plan → execute → review → test → session --complete → harvest | Complete milestone |
 | `roadmap-driven` | init → roadmap → plan → execute | Starting from requirements |
 | `brainstorm-driven` | brainstorm → plan → execute | Starting from exploration |
 | `execute-review` | execute → review | Resume after planning |
 | `review-fix` | plan --gaps → execute → review | Fix review issues |
 | `issue-full` | analyze → plan → execute → review → close | Issue closed-loop |
-| `milestone-close` | session-seal | Close milestone |
+| `milestone-close` | session --complete | Close milestone |
 
 ---
 
@@ -186,7 +186,7 @@ When `-y` is enabled, Maestro propagates the auto flag to downstream commands:
 | plan | `-y` | Skip confirmations and clarification |
 | execute | `-y` | Skip confirmations, auto-continue on blocked |
 | test | `-y --auto-fix` | Auto-trigger gap-fix loop |
-| maestro-session-seal | `-y` | Skip confirmations (auto mode) |
+| maestro-session-manage --complete | `-y` | Skip confirmations (auto mode) |
 
 ---
 

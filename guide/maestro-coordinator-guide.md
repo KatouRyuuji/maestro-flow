@@ -98,13 +98,13 @@ Maestro 使用 `action x object` 矩阵进行语义路由：
 
 | 链名 | 步骤 | 场景 |
 |------|------|------|
-| `full-lifecycle` | plan → execute → review → test → session-seal → harvest | 完整 milestone |
+| `full-lifecycle` | plan → execute → review → test → session --complete → harvest | 完整 milestone |
 | `roadmap-driven` | init → roadmap → plan → execute | 从需求开始 |
 | `brainstorm-driven` | brainstorm → plan → execute | 从探索开始 |
 | `execute-review` | execute → review | 规划完成后恢复 |
 | `review-fix` | plan --gaps → execute → review | 修复 review 问题 |
 | `issue-full` | analyze → plan → execute → review → close | Issue 闭环 |
-| `milestone-close` | session-seal | 关闭 milestone |
+| `milestone-close` | session --complete | 关闭 milestone |
 
 ---
 
@@ -186,7 +186,7 @@ Maestro 使用 `action x object` 矩阵进行语义路由：
 | plan | `-y` | 跳过确认和澄清 |
 | execute | `-y` | 跳过确认，blocked 自动继续 |
 | test | `-y --auto-fix` | 自动触发 gap-fix loop |
-| maestro-session-seal | `-y` | 跳过确认（auto 模式） |
+| maestro-session-manage --complete | `-y` | 跳过确认（auto 模式） |
 
 ---
 

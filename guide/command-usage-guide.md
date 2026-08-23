@@ -8,7 +8,7 @@ Maestro 命令系统包含 **18 个 slash 命令**，另有由编排器在 Sessi
 
 | 类别 | 命令数 | 命令 | 职责 |
 |------|--------|------|------|
-| **核心编排** | 6 | `/maestro`、`/maestro-ralph`、`/maestro-next`、`/maestro-companion`、`/maestro-init`、`/maestro-session-seal` | 意图到链规划、闭环策略、路由、轻量执行、项目初始化、Session 封存 |
+| **核心编排** | 6 | `/maestro`、`/maestro-ralph`、`/maestro-next`、`/maestro-companion`、`/maestro-init`、`/maestro-session-manage-manage --complete` | 意图到链规划、闭环策略、路由、轻量执行、项目初始化、Session 封存 |
 | **Issue 与知识** | 4 | `/maestro-issue`、`/maestro-knowledge`、`/maestro-knowhow`、`/maestro-learn` | Issue 生命周期与发现；知识存储 audit/harvest/wiki/domain；knowhow 捕获；学习工具集 |
 | **规范** | 1 | `/maestro-spec` | 约束规则录入（初始化 `maestro spec init`、加载 `maestro spec load`、移除 step `specs-remove`） |
 | **深度循环与 UI** | 2 | `/maestro-odyssey`、`/maestro-impeccable` | 六模式长周期迭代（debug/improve/planex/review/security/ui）；UI 设计与 codify |
@@ -76,7 +76,7 @@ graph TB
     end
 
     subgraph seal["收尾"]
-        SL["/maestro-session-seal"]
+        SL["/maestro-session-manage-manage --complete"]
         KGI["maestro kg index (CLI)"]
     end
 
@@ -118,7 +118,7 @@ graph TB
         direction LR
         AN["analyze"] -->|"多次"| AN
         AN --> PL["plan"] -->|"revise"| PL -->|"逐个执行"| EX["execute"] --> VF["verify"]
-        VF --> QR["review"] --> QBT["auto-test"] --> QT["test"] --> MA["session-seal"]
+        VF --> QR["review"] --> QBT["auto-test"] --> QT["test"] --> MA["session-manage --complete"]
     end
 
     subgraph issue_loop["Issue 闭环"]
@@ -179,7 +179,7 @@ graph TB
 ### Milestone 管线
 
 ```
-analyze → plan → execute → verify → review → auto-test → test → session-seal
+analyze → plan → execute → verify → review → auto-test → test → session-manage --complete
 ```
 
 | 阶段 | Skill / 命令 | 产出 | Artifact |
@@ -188,7 +188,7 @@ analyze → plan → execute → verify → review → auto-test → test → se
 | 规划 | `plan` 步骤 | plan.json + TASK-*.json | PLN-{NNN} |
 | 执行 | `execute` 步骤 | .summaries/, 代码变更 | EXC-{NNN} |
 | 验证 | `execute` 内置验证门（E2.7） | verification.json | VRF-{NNN} |
-| 封存 | `/maestro-session-seal` | 归档到 milestones/ | — |
+| 封存 | `/maestro-session-manage-manage --complete` | 归档到 milestones/ | — |
 
 **Scope 路由**：无参数 = milestone 全量；数字 = 指定 milestone（micro 模式）；文本 = 宏观探索（macro 模式）。`--dir` 直接指定上游产物路径。
 
@@ -265,7 +265,7 @@ execute                                         # 执行修复（step）
 ## 四、质量管线
 
 ```bash
-execute → review → auto-test → test → /maestro-session-seal
+execute → review → auto-test → test → /maestro-session-manage-manage --complete
 ```
 
 > 注：`auto-test` `review` `test` `debug` 为一级 step，由编排器通过 session chain 派发，用户不直接调用；经 `/maestro-next` 或 `/maestro "<意图>"` 触发。
@@ -292,12 +292,12 @@ execute → review → auto-test → test → /maestro-session-seal
 
 | 链名 | 命令序列 | 适用场景 |
 |------|----------|----------|
-| `full-lifecycle` | init→blueprint→...→session-seal | 全新项目 |
+| `full-lifecycle` | init→blueprint→...→session-manage --complete | 全新项目 |
 | `roadmap-driven` | init→roadmap→... | 轻量路线图 |
 | `brainstorm-driven` | brainstorm→init→roadmap→... | 从头脑风暴开始 |
 | `analyze-plan-execute` | analyze→plan→execute | 快速执行 |
 | `quality-loop` | review→test→debug | 质量流水线 |
-| `milestone-close` | session-seal | 关闭里程碑 |
+| `milestone-close` | session-manage --complete | 关闭里程碑 |
 | `companion` | 即时小任务（`/maestro-companion`） | 即时小任务 |
 
 ---

@@ -132,7 +132,7 @@ cat .workflow/state.json 2>/dev/null
 | Latest artifact = plan | execute | execute --session {active} |
 | Latest artifact = execution | review | review --session {active} |
 | Review verdict = PASS | auto-test | auto-test --session {active} |
-| Tests green + active session | session-seal | (maestro-session-seal, not a step) |
+| Tests green + active session | session-manage --complete | (maestro-session-manage --complete, not a step) |
 | Any stage has gaps/failures | debug | debug {gap} |
 
 **Lifecycle main line:**
@@ -140,7 +140,7 @@ cat .workflow/state.json 2>/dev/null
 init → {brainstorm | blueprint | analyze-macro} → roadmap
   → [per session] analyze → plan → execute
   → [quality gate] review → auto-test → test
-  → session-seal → next dep-ready session
+  → session-manage --complete → next dep-ready session
 ```
 
 **Multi-session resolution:** "Latest artifact" refers to the `active_session_id` in state.json. If no active session is set, use the most recently modified session. If multiple sessions are active, lifecycle inference applies only to the active one; surface others as context in S_PRESENT.

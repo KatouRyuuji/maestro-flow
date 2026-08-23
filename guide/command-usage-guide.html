@@ -571,12 +571,12 @@ collab -y "&lt;topic&gt;"</div>
     </div>
 
     <div class="cmd-card">
-      <div class="cmd-name">/maestro-session-seal</div>
+      <div class="cmd-name">/maestro-session-manage-manage --complete</div>
       <div class="cmd-desc">封存里程碑：verify 所有 run 完成 → 归档 scratch 到 milestones/ → 推进下一里程碑。</div>
-      <div class="cmd-usage">/maestro-session-seal</div>
+      <div class="cmd-usage">/maestro-session-manage-manage --complete</div>
       <div class="cmd-chain">
         <code>test</code><span class="arrow">→</span>
-        <code>session-seal</code><span class="arrow">→</span>
+        <code>session-manage --complete</code><span class="arrow">→</span>
         <code>analyze (next M)</code>
       </div>
     </div>
@@ -733,7 +733,7 @@ test --auto-fix</div>
       <div class="cmd-chain">
         <code>review</code><span class="arrow">→</span>
         <code>test</code><span class="arrow">→</span>
-        <code>session-seal</code>
+        <code>session-manage --complete</code>
       </div>
     </div>
 
@@ -907,7 +907,7 @@ retrospective --lens decision --phase 2</div>
     <span class="flow-node">verify</span><span class="flow-arrow">→</span>
     <span class="flow-node">review</span><span class="flow-arrow">→</span>
     <span class="flow-node">test</span><span class="flow-arrow">→</span>
-    <span class="flow-node">session-seal</span>
+    <span class="flow-node">session-manage --complete</span>
   </div>
   <div class="example-steps">
     <div class="step"><span class="step-num">1</span><div><code>analyze</code><div class="step-note">全量分析当前里程碑，产出 ANL artifact（step）</div></div></div>
@@ -915,7 +915,7 @@ retrospective --lens decision --phase 2</div>
     <div class="step"><span class="step-num">3</span><div><code>execute</code><div class="step-note">逐个 plan 执行，plan 内 wave 并行，产出 EXC artifact</div></div></div>
     <div class="step"><span class="step-num">4</span><div><code>verify</code><div class="step-note">验证执行结果。有 gaps 时回退到 analyze</div></div></div>
     <div class="step"><span class="step-num">5</span><div><code>review → auto-test → test</code><div class="step-note">质量三件套（编排器派发的 step）：代码审查 → 自动测试 → UAT</div></div></div>
-    <div class="step"><span class="step-num">6</span><div><code>/maestro-session-seal</code><div class="step-note">封存里程碑：verify 所有 run 完成后归档，推进下一里程碑</div></div></div>
+    <div class="step"><span class="step-num">6</span><div><code>/maestro-session-manage-manage --complete</code><div class="step-note">封存里程碑：verify 所有 run 完成后归档，推进下一里程碑</div></div></div>
   </div>
 </div>
 
@@ -968,7 +968,7 @@ retrospective --lens decision --phase 2</div>
     <div class="step"><span class="step-num">2</span><div><code>/maestro-init --from brainstorm:ANL-xxx</code><div class="step-note">初始化项目</div></div></div>
     <div class="step"><span class="step-num">3</span><div><code>roadmap -y</code><div class="step-note">创建路线图</div></div></div>
     <div class="step"><span class="step-num">4</span><div><code>plan 1 → execute 1 → verify 1</code><div class="step-note">逐 Phase 推进</div></div></div>
-    <div class="step"><span class="step-num">5</span><div><code>/maestro-session-seal</code><div class="step-note">封存并归档里程碑</div></div></div>
+    <div class="step"><span class="step-num">5</span><div><code>/maestro-session-manage-manage --complete</code><div class="step-note">封存并归档里程碑</div></div></div>
   </div>
 </div>
 
@@ -977,7 +977,7 @@ retrospective --lens decision --phase 2</div>
   <h3>一键全自动</h3>
   <p class="ex-desc">使用 /maestro 协调器全自动推进，无需手动衔接。</p>
   <div class="example-steps">
-    <div class="step"><span class="step-num">1</span><div><code>/maestro -y "实现用户认证系统"</code><div class="step-note">自动执行: init → roadmap → plan → execute → verify → review → auto-test → test → session-seal</div></div></div>
+    <div class="step"><span class="step-num">1</span><div><code>/maestro -y "实现用户认证系统"</code><div class="step-note">自动执行: init → roadmap → plan → execute → verify → review → auto-test → test → session-manage --complete</div></div></div>
   </div>
 </div>
 

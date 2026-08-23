@@ -271,10 +271,10 @@ cd /project
 
 ```bash
 # Audit (cross-Phase integration verification)
-/maestro-session-seal
+/maestro-session-manage-manage --complete
 
 # Complete (archive and advance to next milestone)
-/maestro-session-seal
+/maestro-session-manage-manage --complete
 ```
 
 ---
@@ -312,7 +312,7 @@ The Dashboard UI is retired; inspect workflow state through the Session/Run comm
 ### New Project
 
 ```bash
-/maestro-init → /maestro "Build the whole project from requirements" → /maestro-session-seal
+/maestro-init → /maestro "Build the whole project from requirements" → /maestro-session-manage-manage --complete
 # Or closed-loop: /maestro-ralph "Implement X" -y
 ```
 

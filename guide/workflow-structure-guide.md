@@ -344,7 +344,7 @@ Learn 特殊前缀：`KNW-follow-`, `KNW-decompose-`, `KNW-retro-`, `KNW-opinion
 
 ## 六、里程碑归档
 
-里程碑完成时 `/maestro-session-seal` 创建归档：
+里程碑完成时 `/maestro-session-manage-manage --complete` 创建归档：
 
 1. 验证所有 run 已完成 → `audit-report.md`
 2. scratch 产物移入 `milestones/{M}/artifacts/`

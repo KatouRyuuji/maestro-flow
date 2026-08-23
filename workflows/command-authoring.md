@@ -61,7 +61,7 @@ Every command MUST classify `session-mode` as one of:
 |---------------|--------------------------|---------|
 | Multi-round decision tree with traversal order | **Yes** — full protocol with 6 strategy elements | analyze, brainstorm, grill, roadmap, blueprint, init |
 | Version/option selection (1-2 questions, no tree) | **Lightweight** — declare decision points only, no traversal rules | maestro-update |
-| Simple confirmation (proceed/cancel) | **No** — handled inline in `<execution>` | plan, execute, verify, maestro-session-seal |
+| Simple confirmation (proceed/cancel) | **No** — handled inline in `<execution>` | plan, execute, verify, maestro-session-manage |
 
 Section authoring rules are defined in § 2 below.
 
@@ -530,7 +530,7 @@ The two styles are complementary: FSM orchestrators invoke pipeline commands; pi
 
 | Style | Commands |
 |-------|----------|
-| **Pipeline** | init, analyze, plan, execute, verify, brainstorm, grill, blueprint, roadmap, maestro-session-seal |
+| **Pipeline** | init, analyze, plan, execute, verify, brainstorm, grill, blueprint, roadmap, maestro-session-manage |
 | **FSM** | maestro, maestro-ralph |
 
 ---
@@ -796,7 +796,7 @@ Workflow depth correlates with interactivity, multi-agent orchestration, and mod
 | Multi-agent (parallel spawning, cross-agent synthesis) | 400-700 | execute, brainstorm |
 | Multi-mode (3+ execution paths) | 400-600 | plan (create/revise/check/tdd) |
 | Standard (single linear pipeline) | 200-400 | blueprint, roadmap |
-| Procedural/operational (archive, audit, seal) | 100-200 | maestro-session-seal |
+| Procedural/operational (archive, audit, seal) | 100-200 | maestro-session-manage |
 
 A workflow under 100 lines likely belongs inline in the command file rather than as a separate file.
 

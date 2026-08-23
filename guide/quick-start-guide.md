@@ -271,10 +271,10 @@ cd /project
 
 ```bash
 # 审计（跨 Phase 集成验证）
-/maestro-session-seal
+/maestro-session-manage-manage --complete
 
 # 完成（归档并推进到下一里程碑）
-/maestro-session-seal
+/maestro-session-manage-manage --complete
 ```
 
 ---
@@ -312,7 +312,7 @@ Dashboard UI 已退役；工作流状态统一通过 Session/Run 命令查看。
 ### 新项目
 
 ```bash
-/maestro-init → /maestro "从需求开始做整个项目" → /maestro-session-seal
+/maestro-init → /maestro "从需求开始做整个项目" → /maestro-session-manage-manage --complete
 # 或闭环：/maestro-ralph "实现 X" -y
 ```
 

@@ -74,7 +74,7 @@ Directly match user intent to the best `task_type` (maps to chain in chainMap). 
 | `issue_analyze` | Analyze a specific issue |
 | `issue_plan` | Plan fix for an issue |
 | `issue_execute` | Fix issue end-to-end (auto-upgrades to issue-full) |
-| `full-lifecycle` | Complete phase: plan→execute→review→test→harvest→session-seal |
+| `full-lifecycle` | Complete phase: plan→execute→review→test→harvest→session-manage --complete |
 | `grill` | Stress-test a plan/idea against codebase reality (Socratic; `-y` → Auto mode code-answers, stage NOT skipped) |
 | `blueprint` | Formal spec package — 7-phase spec-generate |
 | `analyze-macro` | Broad/medium intent, no numeric phase — produces scope evidence for a later decision node |
@@ -125,7 +125,7 @@ resolvePhase — priority order:
      maestro-issue, maestro-issue discover, maestro-init,
      maestro-fork, maestro-merge, roadmap, maestro-spec setup,
      maestro-knowledge (knowhow/capture/harvest/wiki/domain),
-     maestro-session-seal
+     maestro-session-manage --complete
   6. Ask user
 
 resolveIssueId — priority: intent_analysis.issue_id → regex match ISS-*-NNN from raw intent → null
@@ -166,9 +166,9 @@ const chainMap = {
   'review':             [{ cmd: 'review', args: '{phase}' }],
   'retrospective':      [{ cmd: 'retrospective', args: '{phase}' }],
   'learn':              [{ cmd: 'maestro-knowhow', args: '"{description}"' }],
-  'milestone_close':    [{ cmd: 'maestro-session-seal' }],
+  'milestone_close':    [{ cmd: 'maestro-session-manage', args: '--complete' }],
   'milestone_audit':    [{ cmd: 'review', args: '"{description}"' }],
-  'milestone_complete': [{ cmd: 'maestro-session-seal' }],
+  'milestone_complete': [{ cmd: 'maestro-session-manage', args: '--complete' }],
   'spec_setup':         [{ cmd: 'maestro-spec setup' }],
   'spec_add':           [{ cmd: 'maestro-spec add', args: '"{description}"' }],
   'spec_load':          [{ cmd: 'maestro-spec load' }],
@@ -184,7 +184,7 @@ const chainMap = {
   'merge':              [{ cmd: 'maestro-merge', args: '-m {milestone_num}' }],
 
   // ── Multi-step chains ──
-  'full-lifecycle':       [{ cmd: 'plan', args: '{phase}' }, { cmd: 'execute', args: '{phase}' }, { cmd: 'review', args: '{phase}' }, { cmd: 'test', args: '{phase}' }, { cmd: 'harvest', args: '--auto' }, { cmd: 'maestro-session-seal' }],
+  'full-lifecycle':       [{ cmd: 'plan', args: '{phase}' }, { cmd: 'execute', args: '{phase}' }, { cmd: 'review', args: '{phase}' }, { cmd: 'test', args: '{phase}' }, { cmd: 'harvest', args: '--auto' }, { cmd: 'maestro-session-manage', args: '--complete' }],
   'spec-driven':          [{ cmd: 'maestro-init' }, { cmd: 'roadmap', args: '--mode full "{description}"' }, { cmd: 'plan', args: '{phase}' }, { cmd: 'execute', args: '{phase}' }, { cmd: 'harvest', args: '--auto' }],
   'roadmap-driven':       [{ cmd: 'maestro-init' }, { cmd: 'roadmap', args: '"{description}"' }, { cmd: 'plan', args: '{phase}' }, { cmd: 'execute', args: '{phase}' }, { cmd: 'harvest', args: '--auto' }],
   'grill-driven':         [{ cmd: 'grill', args: '"{description}"' }, { cmd: 'brainstorm', args: '"{description}" --from grill:{grill_id}' }, { cmd: 'plan', args: '{phase}' }, { cmd: 'execute', args: '{phase}' }, { cmd: 'harvest', args: '--auto' }],
@@ -195,7 +195,7 @@ const chainMap = {
   'impeccable-driven':    [{ cmd: 'maestro-impeccable', args: '"{description}" --chain build' }, { cmd: 'execute', args: '{phase}' }],
   'analyze-plan-execute': [{ cmd: 'analyze', args: '"{description}" -q' }, { cmd: 'plan', args: '--dir {run_dir}' }, { cmd: 'execute', args: '--dir {run_dir}' }, { cmd: 'harvest', args: '--auto' }],
   'quality-loop':         [{ cmd: 'review', args: '{phase}' }, { cmd: 'auto-test', args: '{phase}' }, { cmd: 'test', args: '{phase}' }, { cmd: 'debug', args: '--from-uat {phase}' }, { cmd: 'plan', args: '{phase} --gaps' }, { cmd: 'execute', args: '{phase}' }],
-  'milestone-close':      [{ cmd: 'maestro-session-seal' }],
+  'milestone-close':      [{ cmd: 'maestro-session-manage', args: '--complete' }],
   'next-milestone':       [{ cmd: 'roadmap', args: '"{description}"' }, { cmd: 'plan', args: '{phase}' }, { cmd: 'execute', args: '{phase}' }],
   'review-fix':           [{ cmd: 'plan', args: '{phase} --gaps' }, { cmd: 'execute', args: '{phase}' }, { cmd: 'review', args: '{phase}' }],
   'quality-loop-partial': [{ cmd: 'plan', args: '{phase} --gaps' }, { cmd: 'execute', args: '{phase}' }],
@@ -251,7 +251,7 @@ detectNextAction(state):
 
 | Chain | Steps | Use Case |
 |-------|-------|----------|
-| `full-lifecycle` | plan → execute → review → test → harvest → session-seal (harvest stages candidates BEFORE seal; sealed runs reject stage writes) | Full milestone completion |
+| `full-lifecycle` | plan → execute → review → test → harvest → session-manage --complete (harvest stages candidates BEFORE completion; completed sessions reject stage writes) | Full milestone completion |
 | `blueprint-driven` | init → blueprint → plan → execute → harvest | From idea/requirements (heavy) |
 | `roadmap-driven` | init → roadmap → plan → execute → harvest | From requirements (light) |
 | `brainstorm-driven` | brainstorm → plan → execute → harvest | From exploration |
@@ -260,7 +260,7 @@ detectNextAction(state):
 | `review-fix` | plan --gaps → execute → review | Fix review-blocked issues |
 | `quality-loop` | review → auto-test → test → debug → plan --gaps → execute | Fix quality issues |
 | `quality-loop-partial` | plan --gaps → execute | Partial quality fix cycle |
-| `milestone-close` | session-seal | Seal session & close milestone |
+| `milestone-close` | session-manage --complete | Complete session & close milestone |
 | `next-milestone` | roadmap → plan → execute | Next milestone (auto-loads deferred) |
 | `issue-full` | analyze → plan → execute → review → close → harvest | Issue with quality gate |
 | `issue-quick` | plan → execute → close | Issue fast path |
@@ -287,7 +287,7 @@ detectNextAction(state):
 | `"优化界面交互"` | impeccable_improve | maestro-impeccable --chain improve |
 | `"refactor auth module"` | refactor | analyze→plan→execute |
 | `"复盘 phase 2"` | retrospective | retrospective 2 |
-| `"next phase"` | milestone-close | maestro-session-seal |
+| `"next phase"` | milestone-close | maestro-session-manage --complete |
 | `-y "implement X"` | execute | execute (auto) |
 | `"从需求开始做完整个项目"` | spec-driven | init→spec→plan→execute |
 | `"分析完直接改"` | analyze-plan-execute | analyze→plan→execute |

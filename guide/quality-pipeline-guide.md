@@ -61,7 +61,7 @@ test [phase] [--smoke] [--auto-fix]
 
 | 条件 | 下一步 |
 |------|--------|
-| 全部通过 | `/maestro-session-seal` |
+| 全部通过 | `/maestro-session-manage-manage --complete` |
 | `--auto-fix` 成功 | `review {phase}` |
 | 仍有问题 | `debug --from-uat {phase}` |
 | 覆盖率不足 | `auto-test {phase}` |
@@ -212,7 +212,7 @@ retrospective [phase|N..M] [--lens technical|process|quality|decision] [--all] [
   │    └─ BLOCK ──> plan <phase> --gaps
   │
   ├─ 需要用户验收？──> test <phase>
-  │    ├─ 全通过 ──> /maestro-session-seal
+  │    ├─ 全通过 ──> /maestro-session-manage-manage --complete
   │    └─ 有问题 ──> debug --from-uat <phase>
   │
   ├─ 需要自动化测试？──> auto-test <phase>

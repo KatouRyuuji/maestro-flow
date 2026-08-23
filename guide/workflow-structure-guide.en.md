@@ -311,7 +311,7 @@ Learn special prefixes: `KNW-follow-`, `KNW-decompose-`, `KNW-retro-`, `KNW-opin
 
 ## 6. Milestone Archives
 
-Created by `/maestro-session-seal` when a milestone is completed:
+Created by `/maestro-session-manage-manage --complete` when a milestone is completed:
 
 1. Verifies all runs are complete → `audit-report.md`
 2. Scratch artifacts moved into `milestones/{M}/artifacts/`

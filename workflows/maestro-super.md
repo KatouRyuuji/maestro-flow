@@ -19,7 +19,7 @@ MANDATORY, NOT SUBSTITUTABLE by manual Read/Grep: All design/architecture/scope 
 
 ## 4. Auto-Advance Milestones
 
-After each milestone completes and passes verification, automatically advance to the next milestone without user confirmation. Run `maestro-session-seal` → next milestone chain automatically.
+After each milestone completes and passes verification, automatically advance to the next milestone without user confirmation. Run `maestro-session-manage --complete` → next milestone chain automatically.
 
 ## 5. Quality Gate Scoring
 
@@ -90,7 +90,7 @@ Super mode extends the standard session `status.json` (`.workflow/.maestro/{sess
 - `planning` — roadmap/spec/plan generation
 - `executing` — milestone chain execution (plan → execute → verify)
 - `scoring` — quality gate evaluation
-- `advancing` — session-seal + next milestone setup
+- `advancing` — session-manage --complete + next milestone setup
 - `completed` — all milestones passed
 - `blocked` — max retries exceeded, needs user intervention
 

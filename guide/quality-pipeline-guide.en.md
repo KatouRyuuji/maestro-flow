@@ -61,7 +61,7 @@ Artifact path: `scratch/{YYYYMMDD}-test-P{N}-{slug}/` (uat.md, test-plan.json, t
 
 | Condition | Next Step |
 |-----------|-----------|
-| All passed | `/maestro-session-seal` |
+| All passed | `/maestro-session-manage-manage --complete` |
 | `--auto-fix` succeeded | `review {phase}` |
 | Issues remain | `debug --from-uat {phase}` |
 | Insufficient coverage | `auto-test {phase}` |
@@ -212,7 +212,7 @@ Code just executed
   │    └─ BLOCK ──> plan <phase> --gaps
   │
   ├─ Need user acceptance? ──> test <phase>
-  │    ├─ All passed ──> /maestro-session-seal
+  │    ├─ All passed ──> /maestro-session-manage-manage --complete
   │    └─ Issues found ──> debug --from-uat <phase>
   │
   ├─ Need automated testing? ──> auto-test <phase>

@@ -379,7 +379,7 @@ Insights routed to `category="learning"` follow the same stage pipeline (they la
 
 Print: phase, lenses run, insight count, routing summary, output paths.
 
-Next steps: `/maestro-issue list --source retrospective` | `maestro knowhow list` | `/maestro-session-seal`
+Next steps: `/maestro-issue list --source retrospective` | `maestro knowhow list` | `/maestro-session-manage-manage --complete`
 
 If range/all mode: loop Steps 3-8 per phase, then print aggregate summary.
 
