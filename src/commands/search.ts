@@ -28,7 +28,7 @@ import type {
   WikiSearchFilters,
 } from '#maestro-dashboard/wiki/wiki-types.js';
 import { loadWorkspaceConfig, resolveWorkspaceLinks } from '../config/index.js';
-import { searchArchKb, type ScoredArchKbEntry } from '../arch-kb/index.js';
+import { searchArchKb, tokenize as tokenizeArchKb, type ScoredArchKbEntry } from '../arch-kb/index.js';
 import { tryDaemonSearch, stopDaemon, spawnDaemon, readDaemonInfo, isDaemonAlive, getDaemonPath } from '../search/daemon-client.js';
 
 // Valid type filter values — matches WikiNodeType + virtual aliases.
@@ -1039,14 +1039,21 @@ export function runArchKbSearch(q: string, limit: number): ScoredArchKbEntry[] {
 }
 
 function hasDirectArchKbMatch(result: ScoredArchKbEntry, query: string): boolean {
-  const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const queryTokens = tokenizeArchKb(query);
+  if (queryTokens.length === 0) return false;
   const directText = [
     result.entry.title,
     result.entry.slug,
     result.entry.summary,
     ...result.entry.keywords,
   ].join(' ').toLowerCase();
-  return tokens.some(token => directText.includes(token));
+  const directTokens = tokenizeArchKb(directText);
+  // Mirror the scorer's substring + superstring semantics so plural/partial
+  // matches (e.g. "workflows" vs "workflow", "payment,system") aren't dropped.
+  return queryTokens.some(token =>
+    directText.includes(token)
+    || directTokens.some(dt => dt.includes(token) || token.includes(dt)),
+  );
 }
 
 /**
@@ -1176,7 +1183,7 @@ export function registerSearchCommand(program: Command): void {
       const skipEmbedding = opts.emb === false;
       const isTTY = process.stdout.isTTY === true;
       const qTerms = q.toLowerCase().split(/\s+/).filter(Boolean);
-      const isDevelopmentQuery = /(?:implement|implementation|develop|development|build|feature|refactor|fix|bug|api|class|function|code|组件|开发|实现|功能|重构|修复|代码|接口)/i.test(q);
+      const isDevelopmentQuery = /(?:\b(?:implement|implementation|develop|development|build|feature|refactor|fix|bug|api|class|function|code)\b|组件|开发|实现|功能|重构|修复|代码|接口)/i.test(q);
       const templateSearchCommand = `maestro arch-kb search ${JSON.stringify(q)} --type template`;
       const codeSearchCommand = `maestro search ${JSON.stringify(q)} --code`;
 
@@ -1874,7 +1881,7 @@ export function mergeAndNormalize(
       summary: r.entry.summary || undefined,
       category: 'arch-kb',
       openCommand: `maestro arch-kb show ${r.entry.id}`,
-      searchCommand: 'maestro arch-kb search "<query>" --type template',
+      searchCommand: `maestro arch-kb search ${JSON.stringify(q)} --type template`,
       referenceOnly: true,
       projectRelated: false,
     });

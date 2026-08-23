@@ -478,13 +478,17 @@ export async function runBuiltSearchAdapter(
         break;
       }
       case 'mixed': {
+        // Arch-KB templates are reference-only context, not part of the
+        // hermetic ranking corpus. Keep the mixed provider hermetic by
+        // stubbing arch-kb search so bundled templates never leak into the
+        // BUILT_RANKING_GATE baseline.
         const output = await runMixedSearch(judgment.query, {
           limit: expectedCount,
           skipEmbedding: true,
           executionMode: 'read-only-probe',
           evidenceRecorder: event => recordEvidence(event),
           evidenceQueryId: judgment.id,
-        });
+        }, { archKbSearch: () => [] });
         rawResults = output.results.map(item => ({
           id: mixedResultId(item, output.wikiResults, documentIds),
           score: item.score,

@@ -82,11 +82,12 @@ describe('mixed provider candidate pool', () => {
     const wikiSearch = vi.fn(async () => wiki);
     const codeSearch = vi.fn(async () => ({ results: code, status: 'ok' as const }));
     const merge = vi.fn(mergeAndNormalize);
+    const archKbSearch = vi.fn(() => []);
 
     const outcome = await runMixedSearch(
       'plain terms',
       { limit: 7, skipEmbedding: true, includeLinkedCode: true },
-      { wikiSearch, codeSearch, merge },
+      { wikiSearch, codeSearch, merge, archKbSearch },
     );
 
     expect(outcome.candidateLimit).toBe(60);
@@ -105,11 +106,12 @@ describe('mixed provider candidate pool', () => {
   it('caps both provider candidate limits at 500', async () => {
     const wikiSearch = vi.fn(async () => []);
     const codeSearch = vi.fn(async () => ({ results: [], status: 'ok' as const }));
+    const archKbSearch = vi.fn(() => []);
 
     const outcome = await runMixedSearch(
       'plain terms',
       { limit: 200 },
-      { wikiSearch, codeSearch },
+      { wikiSearch, codeSearch, archKbSearch },
     );
 
     expect(outcome.candidateLimit).toBe(500);
@@ -140,7 +142,7 @@ describe('mixed provider candidate pool', () => {
     const outcome = await runMixedSearch(
       'plain terms',
       { limit: 4, skipEmbedding: true, includeLinkedCode: true },
-      { wikiSearch: vi.fn(async () => []), codeSearch },
+      { wikiSearch: vi.fn(async () => []), codeSearch, archKbSearch: vi.fn(() => []) },
     );
 
     expect(outcome.codeOutcome.results.map(result => result.id)).toEqual([
@@ -163,12 +165,13 @@ describe('mixed provider candidate pool', () => {
     const code = [codeResult('code-a', 8), codeResult('code-b', 4)];
     const wikiSearch = vi.fn(async () => wiki);
     const codeSearch = vi.fn(async () => ({ results: code, status: 'ok' as const }));
+    const archKbSearch = vi.fn(() => []);
     const events: Array<{ event: string; site: string; queryId: string | null }> = [];
 
     const plain = await runMixedSearch(
       'plain terms',
       { limit: 4, skipEmbedding: true },
-      { wikiSearch, codeSearch },
+      { wikiSearch, codeSearch, archKbSearch },
     );
     const recorded = await runMixedSearch(
       'plain terms',
@@ -178,7 +181,7 @@ describe('mixed provider candidate pool', () => {
         evidenceRecorder: event => events.push(event),
         evidenceQueryId: 'fixture-query',
       },
-      { wikiSearch, codeSearch },
+      { wikiSearch, codeSearch, archKbSearch },
     );
 
     expect(recorded.results).toEqual(plain.results);
@@ -315,7 +318,7 @@ describe('legacy mixed rank and score contract', () => {
       source: 'arch-kb',
       kind: 'template',
       openCommand: 'maestro arch-kb show arch-tpl-payment-system',
-      searchCommand: 'maestro arch-kb search "<query>" --type template',
+      searchCommand: 'maestro arch-kb search "payment" --type template',
       referenceOnly: true,
       projectRelated: false,
       sourceRef: 'templates/payment-system/README.md',

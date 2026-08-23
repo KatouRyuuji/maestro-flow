@@ -57,12 +57,15 @@ export function resolveArchKbIndexDir(): string | null {
 /** Load the read-only Arch-KB index, returning null when unavailable. */
 export function loadArchKbIndex(): ArchKbIndex | null {
   if (indexLoaded) return cachedIndex;
-  indexLoaded = true;
 
   const dir = resolveArchKbIndexDir();
   if (!dir) return null;
   try {
     cachedIndex = JSON.parse(readFileSync(join(dir, 'index.json'), 'utf-8')) as ArchKbIndex;
+    // Only pin the cache once we actually loaded an index. A missing index
+    // (dir === null or read error) stays uncached so a long-lived process can
+    // recover if the index appears later.
+    indexLoaded = true;
   } catch {
     cachedIndex = null;
   }
@@ -91,7 +94,7 @@ export function resolveArchKbContentPath(relativePath: string): string | null {
   return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
 
-function tokenize(text: string): string[] {
+export function tokenize(text: string): string[] {
   return text
     .toLowerCase()
     .replace(/[^\w\u4e00-\u9fff-]/g, ' ')
@@ -134,7 +137,9 @@ export function scoreArchKbEntry(entry: ArchKbEntry, queryTokens: string[]): num
     }
   }
 
-  // Keep the dedicated template matcher slightly biased toward templates.
+  // Template bias only differentiates in the cross-type dedicated command
+  // (`maestro arch-kb search` without --type); the mixed-search path
+  // pre-filters to templates, where this boost is uniform and order-neutral.
   if (matched && entry.type === 'template') score += 1;
   return score;
 }
