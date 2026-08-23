@@ -6,7 +6,7 @@ export const v3ContinuationOperationSchema = z.enum([
 export type V3ContinuationOperation = z.infer<typeof v3ContinuationOperationSchema>;
 
 export const v3RequiredCallerFieldSchema = z.enum([
-  'participant', 'actor', 'request_id', 'reason',
+  'participant', 'actor', 'request_id', 'reason', 'verdict',
 ]);
 export type V3RequiredCallerField = z.infer<typeof v3RequiredCallerFieldSchema>;
 
@@ -59,6 +59,7 @@ function metadata(input: {
   orchestrationRevision?: number | null;
   runRevision?: number | null;
   mutation?: boolean;
+  additionalCallerFields?: readonly V3RequiredCallerField[];
 }): V3ContinuationMetadata {
   return v3ContinuationMetadataSchema.parse({
     operation: input.operation,
@@ -67,7 +68,9 @@ function metadata(input: {
       expected_orchestration_revision: input.orchestrationRevision ?? null,
       expected_run_revision: input.runRevision ?? null,
     },
-    required_caller_fields: input.mutation ? [...MUTATION_CALLER_FIELDS] : [],
+    required_caller_fields: input.mutation
+      ? [...MUTATION_CALLER_FIELDS, ...(input.additionalCallerFields ?? [])]
+      : [],
   });
 }
 
@@ -145,12 +148,13 @@ export function v3DecideNext(input: {
     next: {
       suggest_only: true,
       command: `maestro run decide ${input.pointId} --session ${input.sessionId} ${MUTATION_CALLER_TEMPLATE} `
-        + `--expected-orchestration-revision ${input.orchestrationRevision} --verdict proceed --json`,
+        + `--expected-orchestration-revision ${input.orchestrationRevision} --verdict <verdict> --json`,
       reason: input.reason,
     },
     continuation: metadata({
       operation: 'run-decide', sessionId: input.sessionId,
       orchestrationRevision: input.orchestrationRevision, mutation: true,
+      additionalCallerFields: ['verdict'],
     }),
   };
 }

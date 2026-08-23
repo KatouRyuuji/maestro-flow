@@ -73,7 +73,7 @@ Normal confirmed-chain continuation does not depend on `-y`. It only expands low
 ### `complete` / `decide` 闭环
 
 - After successful fenced `maestro run complete ... --advance --json` or `maestro run decide ... --json`, consume the fresh fence and immediately execute a satisfiable automatic next action.
-- A decision node does not create a Run. A declared `decision_ref` gate means the chain step must be evaluated with `run decide` before `run next` advances past it.
+- A decision node does not create a Run. A declared `decision_ref` is a post-step gate: the Run completes first, its receipt routes to `run decide`, and `run next` cannot advance past that completed step until the gate resolves.
 - A birth packet with `run_already_created=true` is strict: use that exact `run_id`/locator and never call `run create` again.
 - `proceed` may route to another Run, another decision, or Session completion. `escalate` blocks the gate (the Session stays `open`); `fix` requires new repair evidence before another decision.
 

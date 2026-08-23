@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   v3ContinuationMetadataSchema,
+  v3DecideNext,
   v3RunNext,
   v3TaskContractSchema,
 } from './continuation-v3.js';
@@ -21,6 +22,21 @@ describe('v3 continuation contracts', () => {
       revision_requirements: { expected_orchestration_revision: 7, expected_run_revision: null },
       required_caller_fields: ['participant', 'actor', 'request_id', 'reason'],
     });
+  });
+
+  it('keeps re-decision verdict caller-owned', () => {
+    const contract = v3DecideNext({
+      sessionId: 'session-1', pointId: 'gate-1', orchestrationRevision: 8,
+      reason: 'resolve the gate',
+    });
+    expect(contract.next.command).toBe(
+      'maestro run decide gate-1 --session session-1 --participant <actor-id> --actor <actor-id> '
+      + '--request-id <request-id> --reason "<reason>" --expected-orchestration-revision 8 '
+      + '--verdict <verdict> --json',
+    );
+    expect(contract.continuation.required_caller_fields).toEqual([
+      'participant', 'actor', 'request_id', 'reason', 'verdict',
+    ]);
   });
 
   it('keeps task and continuation nested contracts strict', () => {

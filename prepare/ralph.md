@@ -56,7 +56,7 @@ Ralph 是闭环编排策略层。本文件定义 **命令选择**（Stage Mappin
 3. **quality_mode 过滤**：按 `quality_mode` 排除不匹配 stage。
 3.5. **grill -y 透传**：`-y` 时为 grill args 追加 `-y`；保留 grill stage 与 brainstorm 的 `--from grill:*`。
 3.6. **frontend-verify UI 门控**：仅当交付前端（检出 `dashboard/` 或 UI 关键词）时保留；纯后端删除。
-4. **决策节点**：每个 Decision after 非空的 stage 后插入 decision step（`decision_ref: "<gate>"`）+ 对应 `decision_points` 条目。
+4. **决策节点**：每个 Decision after 非空的 stage 后绑定 post-step gate（`decision_ref: "<gate>"`）+ 对应 `decision_points` 条目；该 stage 的 Run 先完成并封存，随后必须 `run decide`，gate resolve 前不得派发下一 step。
 5. **goal-audit 插入**：有 `task_decomposition` 时，在最后一个 evidence-producing stage 后、`session-complete` 前插入 `post-goal-audit`。
 5.5. **re-grounding 插入**：有 decomposition 且执行 step ≥3 → 从第 3 个执行 step 起每隔 3 个插入 `post-reground`（不与已有 quality-gate 相邻）。
 6. **终点硬约束**：当前 Session 的 chain 以 `session-complete`(decision:post-execution) 结尾；standalone read-only 分析以最后一个质量门结尾。`maestro session complete` 完成 Session 身份，不销毁它（可 `unarchive` 再扩展）。

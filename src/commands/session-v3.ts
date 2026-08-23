@@ -407,7 +407,7 @@ export function registerSessionV3Command(program: Command): void {
     .option('--after-step <id>', 'insert after this step; default appends')
     .option('--goal-ref <id>', 'chain step goal reference')
     .option('--stage <name>', 'chain step stage')
-    .option('--decision-ref <id>', 'decision gate: the decision that must be resolved before the chain advances past this step')
+    .option('--decision-ref <id>', 'post-step decision gate; resolve it before advancing past the completed step')
     .action(chainMutationAction('session-chain-insert', options => ({
       kind: 'insert', stepId: options.stepId, command: options.command!, args: options.arg ?? [],
       afterStepId: options.afterStep ?? null, goalRef: options.goalRef ?? null, stage: options.stage ?? null,
@@ -433,7 +433,7 @@ export function registerSessionV3Command(program: Command): void {
     .option('--arg <value>', 'new step argument (repeatable; supplying args replaces the existing args)', (value, previous: string[] = []) => [...previous, value])
     .option('--goal-ref <id>', 'new chain step goal reference')
     .option('--stage <name>', 'new chain step stage')
-    .option('--decision-ref <id>', 'new decision gate; must be missing or open')
+    .option('--decision-ref <id>', 'new post-step decision gate; must be missing or open')
     .action(chainMutationAction('session-chain-update', options => ({
       kind: 'update', stepId: options.stepId, command: options.command, args: options.arg,
       goalRef: options.goalRef, stage: options.stage, decisionRef: options.decisionRef,

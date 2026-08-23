@@ -49,6 +49,7 @@ import {
   v3BriefCommand,
   v3CheckNext,
   v3CompleteNext,
+  v3DecideNext,
   v3RunNext,
   v3SessionCompleteNext,
   v3TaskContractSchema,
@@ -1177,17 +1178,31 @@ export function completeRunAndAdvance(
       );
     }
 
-    const continuation = nextPendingIndex >= 0
-      ? v3RunNext({
+    const completedStep = chain[completedStepIndex];
+    const gateDecisionId = completedStep.decision_ref;
+    const gateDecision = gateDecisionId === null
+      ? null
+      : nextSession.decisions.find(decision => decision.decision_id === gateDecisionId) ?? null;
+    const gateUnresolved = gateDecisionId !== null
+      && (gateDecision === null || gateDecision.status === 'open' || gateDecision.status === 'escalated');
+    const continuation = gateUnresolved
+      ? v3DecideNext({
         sessionId: identity.sessionId,
+        pointId: gateDecisionId,
         orchestrationRevision: nextSession.orchestration_revision,
-        reason: 'Run sealed; explicit run next may allocate the next chain Run',
+        reason: `Run sealed; decide post-step gate ${gateDecisionId} before continuing`,
       })
-      : v3SessionCompleteNext({
-        sessionId: identity.sessionId,
-        orchestrationRevision: nextSession.orchestration_revision,
-        reason: 'Run sealed; no pending chain step remains, so complete the Session',
-      });
+      : nextPendingIndex >= 0
+        ? v3RunNext({
+          sessionId: identity.sessionId,
+          orchestrationRevision: nextSession.orchestration_revision,
+          reason: 'Run sealed; explicit run next may allocate the next chain Run',
+        })
+        : v3SessionCompleteNext({
+          sessionId: identity.sessionId,
+          orchestrationRevision: nextSession.orchestration_revision,
+          reason: 'Run sealed; no pending chain step remains, so complete the Session',
+        });
     return stageApplied({
       tx, identity, payloadHash, session: nextSession, run: nextRun,
       targetType: 'orchestration', targetId: identity.sessionId,

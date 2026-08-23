@@ -5,7 +5,7 @@ import type { SessionStateV30 } from '../schemas.js';
 import { assertSafePathSegment } from '../ids.js';
 import type { SessionStore, SessionV30StoreTransaction } from '../store.js';
 import { createRevisionConflictError, V3StructuredError } from './errors.js';
-import { v3DecideNext, v3RunNext } from './continuation-v3.js';
+import { v3DecideNext, v3RunNext, v3SessionCompleteNext } from './continuation-v3.js';
 import type { V3MutationIdentity, V3MutationResult } from './mutation-engine.js';
 import {
   canonicalPayloadHash,
@@ -285,18 +285,34 @@ export function decideV3(store: SessionStore, input: DecideV3Input): V3MutationR
       session.orchestration_revision + 1,
     );
 
-    const continuation = verdict === 'escalate'
+    const unresolvedGate = nextSession.chain
+      .filter(step => step.status === 'completed' && step.decision_ref !== null)
+      .map(step => step.decision_ref!)
+      .find(decisionId => {
+        const decision = nextSession.decisions.find(item => item.decision_id === decisionId);
+        return !decision || decision.status === 'open' || decision.status === 'escalated';
+      });
+    const hasPendingStep = nextSession.chain.some(step => step.status === 'pending');
+    const continuation = verdict === 'escalate' || unresolvedGate !== undefined
       ? v3DecideNext({
         sessionId: identity.sessionId,
-        pointId,
+        pointId: verdict === 'escalate' ? pointId : unresolvedGate!,
         orchestrationRevision: nextSession.orchestration_revision,
-        reason: 'Decision escalated - re-decide once the blocker is resolved; run next remains blocked',
+        reason: verdict === 'escalate'
+          ? 'Decision escalated - re-decide once the blocker is resolved; run next remains blocked'
+          : `Decision ${unresolvedGate} remains unresolved; decide it before continuing`,
       })
-      : v3RunNext({
-        sessionId: identity.sessionId,
-        orchestrationRevision: nextSession.orchestration_revision,
-        reason: 'Decision recorded - run next may advance the chain',
-      });
+      : hasPendingStep
+        ? v3RunNext({
+          sessionId: identity.sessionId,
+          orchestrationRevision: nextSession.orchestration_revision,
+          reason: 'Decision recorded - run next may advance the chain',
+        })
+        : v3SessionCompleteNext({
+          sessionId: identity.sessionId,
+          orchestrationRevision: nextSession.orchestration_revision,
+          reason: 'Decision recorded - no pending chain step remains, so complete the Session',
+        });
     return stageApplied({
       tx, identity, payloadHash, session: nextSession,
       targetType: 'orchestration', targetId: identity.sessionId,

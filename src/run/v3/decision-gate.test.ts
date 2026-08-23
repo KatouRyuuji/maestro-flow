@@ -103,11 +103,21 @@ describe('v3 decision gates', () => {
       requestOperation: 'run-create',
       run: pendingRun('run-1', 'step-1'),
     }).status).toBe('applied');
-    expect(completeRunAndAdvance(store, {
+    const completed = completeRunAndAdvance(store, {
       ...identity('req-seed-complete'), runId: 'run-1',
       expectedRunRevision: 1, expectedOrchestrationRevision: 1,
       summary: 'seed step-1', verdict: 'done',
-    }).status).toBe('applied');
+    });
+    expect(completed.status).toBe('applied');
+    expect(completed.transition.result).toMatchObject({
+      continuation: {
+        operation: 'run-decide',
+        locator: { session_id: 's-1', run_id: null },
+        revision_requirements: { expected_orchestration_revision: 2, expected_run_revision: null },
+        required_caller_fields: ['participant', 'actor', 'request_id', 'reason', 'verdict'],
+      },
+      next: { command: expect.stringContaining('maestro run decide P-1') },
+    });
 
     // The gate check runs before the run-next publication machinery, so the
     // open gate surfaces before any publication error.
@@ -151,11 +161,16 @@ describe('v3 decision gates', () => {
       requestOperation: 'run-create',
       run: pendingRun('run-1', 'step-1'),
     }).status).toBe('applied');
-    expect(completeRunAndAdvance(store, {
+    const completed = completeRunAndAdvance(store, {
       ...identity('req-seed-complete'), runId: 'run-1',
       expectedRunRevision: 1, expectedOrchestrationRevision: 1,
       summary: 'seed step-1', verdict: 'done',
-    }).status).toBe('applied');
+    });
+    expect(completed.status).toBe('applied');
+    expect(completed.transition.result).toMatchObject({
+      continuation: { operation: 'run-decide' },
+      next: { command: expect.stringContaining('maestro run decide P-1') },
+    });
 
     const escalated = decideV3(store, {
       ...identity('req-escalate'), pointId: 'P-1', verdict: 'escalate', confidence: 'medium',
