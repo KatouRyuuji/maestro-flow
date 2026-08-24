@@ -112,27 +112,28 @@ S_FALLBACK:
 
 ### A_INFER_LIFECYCLE
 
-Read project state to infer `lifecycle_position`:
+Read canonical Session/Run state to infer `lifecycle_position`; never inspect `.workflow/state.json` or choose by mtime:
 
 ```bash
-maestro session list 2>/dev/null   # read-only: enumerate session/3.0 Sessions
-cat .workflow/state.json 2>/dev/null
+maestro session list --json
+maestro session status --session {session_id} --json
+maestro session resume-view --session {session_id} --json
 ```
 
-**State → lifecycle_position → natural next step:**
+**Canonical state → lifecycle_position → natural next step:**
 
 | State | lifecycle_position | Natural next |
 |-------|-------------------|-------------|
 | No `.workflow/` + no source code | brainstorm | brainstorm |
 | No `.workflow/` + has source code | init | (maestro-init, not a step) |
-| state.json exists, no roadmap, no sessions | analyze-macro | analyze |
-| Has macro analysis, no roadmap | roadmap | roadmap |
-| Has roadmap, dep-ready session unstarted | analyze | analyze --session {slug} |
-| Latest artifact = analysis | plan | plan --session {active} |
-| Latest artifact = plan | execute | execute --session {active} |
-| Latest artifact = execution | review | review --session {active} |
-| Review verdict = PASS | auto-test | auto-test --session {active} |
-| Tests green + active session | session-manage --complete | (maestro-session-manage --complete, not a step) |
+| No compatible Session | analyze-macro | analyze |
+| Session objective spans multiple releases and has no roadmap Artifact | roadmap | roadmap |
+| Pending chain starts before feature analysis | analyze | analyze --session {session_id} |
+| Latest eligible same-Session Artifact = analysis | plan | plan --session {session_id} |
+| Latest eligible same-Session Artifact = plan | execute | execute --session {session_id} |
+| Latest eligible same-Session Artifact = execution | review | review --session {session_id} |
+| Review verdict = PASS | auto-test | auto-test --session {session_id} |
+| Tests green + chain terminal | session-manage --complete | (maestro-session-manage --complete, not a step) |
 | Any stage has gaps/failures | debug | debug {gap} |
 
 **Lifecycle main line:**
@@ -143,7 +144,7 @@ init → {brainstorm | blueprint | analyze-macro} → roadmap
   → session-manage --complete → next dep-ready session
 ```
 
-**Multi-session resolution:** "Latest artifact" refers to the `active_session_id` in state.json. If no active session is set, use the most recently modified session. If multiple sessions are active, lifecycle inference applies only to the active one; surface others as context in S_PRESENT.
+**Multi-Session resolution:** historical similarity is read-only evidence. Resolve an exact compatible Session from `session list` plus `session status`; multiple compatible Sessions require user selection. Use `resume-view` and same-Session sealed Artifacts for lifecycle inference. Never select a Session from a local projection, directory order, or modification time.
 
 ### A_SCORE_CANDIDATES
 
