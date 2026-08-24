@@ -17,6 +17,17 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    version: '0.5.81',
+    date: '2026-08',
+    changes: [
+      { type: 'refactor', text_en: 'Session/3.0 surface closed around Execution-era residue: participant=actor identity is now enforced on lifecycle mutations, chain update and structured continuation commands are added, and the Execution-era surface is removed from the canonical command graph', text_zh: 'Session/3.0 界面围绕 Execution 时代残留收口：生命周期变更强制 participant=actor 身份一致，新增 chain update 与结构化 continuation 命令，并从规范命令图中移除 Execution 时代界面' },
+      { type: 'fix', text_en: 'run-v3 decision gates now route before chain continuation, so a pending decision is resolved before the chain advances instead of being skipped; recovery mutations and return continuations are fenced so a failed or recovering Run no longer mutates state outside its owned step', text_zh: 'run-v3 决策门现在先于 chain continuation 路由，待决策在 chain 推进前被解析而非被跳过；recovery 变更与返回 continuation 被加栅，失败或恢复中的 Run 不再越权修改其所属步骤之外的状态' },
+      { type: 'fix', text_en: 'v3 CLI run errors are normalized with stable migration guidance, so legacy commands report a single actionable error with the canonical replacement instead of ambiguous failure modes', text_zh: 'v3 CLI run 错误被归一化并附带稳定迁移指引，旧命令以单一可执行错误报告规范替换，而非模糊的失败模式' },
+      { type: 'fix', text_en: 'maestro-next now infers lifecycle from canonical Session state, so the router reads the authoritative session entity instead of heuristic or stale signals to decide the next execution channel', text_zh: 'maestro-next 现从规范 Session 状态推断生命周期，路由器读取权威 session 实体而非启发式或陈旧信号来决定下一个执行通道' },
+      { type: 'test', text_en: 'session-run prompt-semantics fixtures are bounded in runtime, and v3-cli / chain-mutations / continuation-v3 / decide-v3 / mutation-engine tests are expanded to cover the new chain-update, structured-continuation, decision-gate routing, and recovery-fence paths', text_zh: 'session-run prompt 语义 fixture 运行时被限定；v3-cli / chain-mutations / continuation-v3 / decide-v3 / mutation-engine 测试扩展覆盖新增的 chain-update、结构化 continuation、决策门路由与 recovery 栅栏路径' },
+    ],
+  },
+  {
     version: '0.5.80',
     date: '2026-08',
     changes: [
