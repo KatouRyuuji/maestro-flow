@@ -517,7 +517,7 @@ maestro run next --session <id> --json
 | `chain-skip` | `session chain skip` | 必填 `--session --step`；仅 pending step |
 | `meta-update` | `session meta update` | 必填 `--session`，且至少一个 `--position-file`/`--decomposition-file` |
 | `accept-reuse` | `run accept-reuse <run-id>` | 必填 request/revision guards、`--actor`、`--reason` 和至少一个 `--evidence`；receipt-backed |
-| `plan-publish` | `plan publish <path>` | 发布不可变的 approved Markdown 为 `plan/1.0` `current-plan`；可绑定 running Session 或自动创建 `execute -> verify` Session；按 handoff key 幂等且 receipt-backed |
+| `plan-publish` | `plan publish <path>` | 发布不可变的 approved Markdown 为 sealed `plan/1.0` `current-plan` artifact。`session/3.0` 下驱动一次 producer Run（`session open --chain plan-publish` → `run next` → `run complete --advance`），将 artifact 注册进 Session Artifact Registry；legacy `session/1.x/2.0` 下可绑定 running Session 或自动创建 `execute -> verify` Session 并携带 Execution/lease authority。按 handoff key 幂等且 receipt-backed |
 
 对 `decide`、recovery、chain 与 meta mutation，`--request-id` 提供幂等 transition receipt；`--expected-identity-revision`、`--expected-activity-revision` 与完整 lease triple 提供 fence。`resolve`/`resume` 将这些 audit/revision 字段设为必填；chain/meta mutation 接受同一组 guard options。
 

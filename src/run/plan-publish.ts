@@ -288,7 +288,7 @@ function executionAuthority(options: PublishPlanOptions): {
   };
 }
 
-function automaticSessionId(requestId: string): string {
+export function automaticSessionId(requestId: string): string {
   const digest = sha256(requestId);
   const numericTail = [...digest.slice(0, 14)]
     .map(character => String(Number.parseInt(character, 16) % 10))
@@ -700,6 +700,27 @@ function ensureAutomaticSession(
 }
 
 function publishArtifactBytes(input: PlanPublishRunInput, markdown: string): Buffer {
+  return planArtifactBytes({
+    handoff_key: input.handoff_key,
+    source_checksum: input.source_checksum,
+    source_pi_session: input.source_pi_session,
+    revision: input.plan_revision,
+    approved_at: input.approved_at,
+  }, markdown);
+}
+
+/**
+ * Plan/1.0 artifact bytes for the `pi-markdown` external-approval variant.
+ * Shared by the legacy plan publisher and the v3 plan-publish producer Run
+ * so both emit byte-identical `outputs/plan.json` for the same approval.
+ */
+export function planArtifactBytes(input: {
+  handoff_key: string;
+  source_checksum: string;
+  source_pi_session: string | null;
+  revision: number;
+  approved_at: string;
+}, markdown: string): Buffer {
   return Buffer.from(`${JSON.stringify({
     _meta: {
       kind: 'plan',
@@ -711,7 +732,7 @@ function publishArtifactBytes(input: PlanPublishRunInput, markdown: string): Buf
     handoff_key: input.handoff_key,
     source_checksum: input.source_checksum,
     source_pi_session: input.source_pi_session,
-    revision: input.plan_revision,
+    revision: input.revision,
     approved_at: input.approved_at,
     markdown,
   }, null, 2)}\n`, 'utf8');

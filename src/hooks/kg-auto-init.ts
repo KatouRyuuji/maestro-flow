@@ -13,6 +13,7 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { kgInitGuard } from '../utils/cooldown-guard.js';
+import { logHookError } from './hook-logger.js';
 
 export interface KgAutoInitResult {
   initialized: boolean;
@@ -81,9 +82,7 @@ export async function evaluateKgAutoInit(
     // contract) — do NOT markDone on failure; that would suppress retry for
     // the full 5-minute cooldown window and hide transient failures.
     kgInitGuard.clear(sessionId);
-    process.stderr.write(
-      `[MaestroGraph] KG auto-init failed: ${error instanceof Error ? error.message : String(error)}\n`,
-    );
+    logHookError('kg-auto-init', error, { message: 'KG auto-init failed' });
     return { initialized: false, reason: 'init-error' };
   }
 }

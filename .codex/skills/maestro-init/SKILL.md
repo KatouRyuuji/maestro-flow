@@ -18,7 +18,7 @@ allowed-tools:
   - spawn_agents_on_csv
   - wait_agent
 session-mode: bootstrap
-version: 0.5.81
+version: 0.5.82
 ---
 
 <bootstrap_mode>

@@ -192,6 +192,30 @@ describe('cleanManifestFiles content-managed safety', () => {
     expect(after).not.toContain('maestro:end');
   });
 
+  it('removes Maestro sections from a hash-mismatched mixed user file', () => {
+    const dir = tempDir();
+    const fp = join(dir, 'AGENTS.md');
+    const installed = [
+      '# Original user section',
+      '',
+      '<!-- maestro:start section="core" -->',
+      '# Maestro content',
+      '<!-- maestro:end section="core" -->',
+      '',
+    ].join('\n');
+    writeFileSync(fp, installed.replace('# Original user section', '# User section edited after install'));
+
+    const result = cleanupManifest([{ path: fp, type: 'file', hash: sha256(installed) }]);
+
+    expect(result.removed).toBe(1);
+    expect(result.preserved).toBe(0);
+    expect(existsSync(fp)).toBe(true);
+    const after = readFileSync(fp, 'utf8');
+    expect(after).toContain('# User section edited after install');
+    expect(after).not.toContain('Maestro content');
+    expect(after).not.toContain('maestro:start');
+  });
+
   it('deletes a file containing only Maestro sections', () => {
     const dir = tempDir();
     const fp = join(dir, 'AGENTS.md');

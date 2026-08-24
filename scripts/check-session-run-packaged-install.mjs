@@ -128,7 +128,8 @@ function main() {
     assert(open.ok === true && open.operation === 'session-open', 'session open failed');
 
     const insert = machineEnvelope(installedInvoke([
-      'session', 'chain', 'insert', '--step-id', 'step-1', '--command', 'implement',
+      'session', 'chain', 'insert', '--session', 'packaged-smoke',
+      '--step-id', 'step-1', '--command', 'implement',
       '--participant', 'pi-packaged', '--actor', 'pi-packaged',
       '--request-id', 'req-packaged-insert', '--reason', 'packaged smoke',
       '--expected-orchestration-revision', '1', '--json', '--workflow-root', workspace,

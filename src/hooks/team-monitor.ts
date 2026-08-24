@@ -26,6 +26,7 @@ import { resolveSelf } from '../tools/team-members.js';
 import { reportActivity, readWorkflowContext } from '../tools/team-activity.js';
 import { evaluateNamespaceGuard } from '../tools/namespace-guard.js';
 import { getProjectRoot } from '../utils/path-validator.js';
+import { logHookWarn } from './hook-logger.js';
 
 interface HookInput {
   session_id?: string;
@@ -138,8 +139,9 @@ export function runTeamMonitor(input: HookInput): void {
           getProjectRoot(),
         );
         if (!guardResult.allowed) {
-          console.error(
-            `[TeamMonitor] WARNING: namespace violation (advisory): ${guardResult.reason}`,
+          logHookWarn(
+            'team-monitor',
+            `namespace violation (advisory): ${guardResult.reason}`,
           );
         }
       }

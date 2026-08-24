@@ -11,6 +11,7 @@ import { loadConfig } from '../config/index.js';
 import { paths } from '../config/paths.js';
 import { registerBuiltinTools } from '../tools/index.js';
 import { DelegateChannelRelay } from './delegate-channel-relay.js';
+import { createMcpToolRequestHandlers } from './tool-access.js';
 
 // Exported for use by CliAgentRunner to push delegate-completion notifications
 let _server: Server | null = null;
@@ -28,6 +29,11 @@ export async function startMcpServer(): Promise<void> {
   const config = loadConfig();
   const registry = new ToolRegistry();
   registerBuiltinTools(registry);
+  const toolHandlers = createMcpToolRequestHandlers(
+    registry,
+    config.mcp.enabledTools,
+    process.env.MAESTRO_ENABLED_TOOLS,
+  );
 
   const server = new Server(
     { name: 'maestro', version: config.version },
@@ -70,32 +76,14 @@ export async function startMcpServer(): Promise<void> {
     }
   };
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => {
-    const tools = registry.list();
-
-    // MAESTRO_ENABLED_TOOLS env var takes priority over config
-    const envTools = process.env.MAESTRO_ENABLED_TOOLS;
-    const enabled = envTools
-      ? envTools.split(',').map(t => t.trim()).filter(Boolean)
-      : config.mcp.enabledTools;
-
-    const filtered =
-      enabled.includes('all')
-        ? tools
-        : tools.filter((t) => enabled.includes(t.name));
-
-    return {
-      tools: filtered.map((t) => ({
-        name: t.name,
-        description: t.description,
-        inputSchema: t.inputSchema,
-      })),
-    };
-  });
+  server.setRequestHandler(ListToolsRequestSchema, async () => toolHandlers.list());
 
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
     const { name, arguments: args } = req.params;
-    return registry.execute(name, (args ?? {}) as Record<string, unknown>) as any;
+    return toolHandlers.call(
+      name,
+      (args ?? {}) as Record<string, unknown>,
+    ) as any;
   });
 
   const transport = new StdioServerTransport();

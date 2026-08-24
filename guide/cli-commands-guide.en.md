@@ -310,7 +310,7 @@ Every entry point shares one Session and one chain; the historical `engine` fiel
 | `chain-skip` | `session chain skip` | Requires `--session --step`; pending steps only |
 | `meta-update` | `session meta update` | Requires `--session` and at least one of `--position-file`/`--decomposition-file` |
 | `accept-reuse` | `run accept-reuse <run-id>` | Requires request/revision guards, `--actor`, `--reason`, and at least one `--evidence`; receipt-backed |
-| `plan-publish` | `plan publish <path>` | Publishes immutable approved Markdown as the `plan/1.0` `current-plan`; targets a running Session or creates an `execute -> verify` Session; idempotent by handoff key and receipt-backed |
+| `plan-publish` | `plan publish <path>` | Publishes immutable approved Markdown as the sealed `plan/1.0` `current-plan` artifact. Under `session/3.0` it drives a producer Run (`session open --chain plan-publish` → `run next` → `run complete --advance`) that registers the artifact in the Session Artifact Registry; under legacy `session/1.x/2.0` it targets a running Session or creates an `execute -> verify` Session with Execution/lease authority. Idempotent by handoff key and receipt-backed |
 
 For `decide`, recovery, chain, and meta mutations, `--request-id` supplies the idempotent transition receipt; `--expected-identity-revision`, `--expected-activity-revision`, and the complete lease triple supply the fence. `resolve`/`resume` make the audit/revision fields required; chain/meta mutations accept the same guard options.
 

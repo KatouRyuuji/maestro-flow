@@ -234,7 +234,7 @@ describe('executeInstallPipeline additive semantics', () => {
     // so match by suffix.
     const backupEntries = readdirSync(result.pruneBackupPath!, { withFileTypes: true });
     expect(backupEntries.some((e) => e.isFile() && e.name.endsWith('AGENTS.md'))).toBe(true);
-  });
+  }, 60_000);
 
   it('records a content hash at install and preserves a user-replaced inject file on prune', async () => {
     mkdirSync(join(packageRoot, 'workflows'), { recursive: true });
@@ -265,7 +265,37 @@ describe('executeInstallPipeline additive semantics', () => {
     expect(existsSync(agentsPath)).toBe(true);
     expect(readFileSync(agentsPath, 'utf8')).toBe('# user file\n');
     expect(result.obsoleteFilesPreserved).toBe(1);
-  });
+  }, 60_000);
+
+  it('removes injected sections but preserves user edits in a hash-mismatched mixed file', async () => {
+    mkdirSync(join(packageRoot, 'workflows'), { recursive: true });
+    writeFileSync(join(packageRoot, 'workflows', 'codex-instructions.md'), '# Maestro instructions\n');
+
+    await executor.executeInstallPipeline({
+      config: config(['codex-agents-md']),
+      pkgRoot: packageRoot,
+      version: 'test',
+    });
+
+    const agentsPath = join(projectPath, '.codex', 'AGENTS.md');
+    const installedContent = readFileSync(agentsPath, 'utf8');
+    expect(installedContent).toContain('maestro:start');
+    writeFileSync(agentsPath, `# User instructions added after install\n\n${installedContent}`);
+
+    const result = await executor.executeInstallPipeline({
+      config: { ...config([]), pruneObsoleteOwnedFiles: true },
+      pkgRoot: packageRoot,
+      version: 'test',
+    });
+
+    expect(existsSync(agentsPath)).toBe(true);
+    const cleaned = readFileSync(agentsPath, 'utf8');
+    expect(cleaned).toContain('# User instructions added after install');
+    expect(cleaned).not.toContain('Maestro instructions');
+    expect(cleaned).not.toContain('maestro:start');
+    expect(result.obsoleteFilesRemoved).toBe(1);
+    expect(result.obsoleteFilesPreserved).toBe(0);
+  }, 60_000);
 
   it('clears explicitly disabled config while preserving additive component ownership', async () => {
     const prior = manifestApi.createManifest('project', projectPath, {

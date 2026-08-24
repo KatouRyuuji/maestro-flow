@@ -2,6 +2,8 @@ import { InvalidArgumentError, type Command } from 'commander';
 import { resolve } from 'node:path';
 
 import { derivePlanPublishRequestId, publishPlan } from '../run/plan-publish.js';
+import { publishPlanV3 } from '../run/v3/plan-publish-v3.js';
+import { SessionStore } from '../run/store.js';
 import {
   parseOwnerKind,
   readExecutionAuthority,
@@ -94,8 +96,55 @@ export function registerPlanCommand(program: Command): void {
       let requestId: string | null = null;
       try {
         requestId = opts.requestId?.trim() || derivePlanPublishRequestId(opts.handoffKey);
+        const workflowRoot = resolve(opts.workflowRoot);
+        const writer = new SessionStore(workflowRoot).sessionSchemaSelection().writer;
+        if (writer === 'session/3.0') {
+          // v3: plan publish is a producer Run over the session/3.0 + run/3.0
+          // lifecycle. Execution/lease/bootstrap authority is retired.
+          if (opts.execution !== undefined || opts.generation !== undefined
+            || opts.expectedExecutionRevision !== undefined || opts.ownerKind !== undefined
+            || opts.executionOwner !== undefined || opts.ownerEpoch !== undefined
+            || opts.leaseId !== undefined || opts.expectedIdentityRevision !== undefined
+            || opts.expectedActivityRevision !== undefined) {
+            throw new InvalidArgumentError(
+              'v3 plan publish does not accept Execution, lease, or legacy revision authority; '
+              + 'drop --execution/--generation/--expected-execution-revision/--execution-owner/--owner-kind/--owner-epoch/--lease-id/--expected-identity-revision/--expected-activity-revision',
+            );
+          }
+          const result = publishPlanV3({
+            projectRoot: workflowRoot,
+            sourcePath,
+            sourceRoot: opts.sourceRoot ? resolve(opts.sourceRoot) : undefined,
+            sessionId: opts.session,
+            intent: opts.intent,
+            topic: opts.topic,
+            handoffKey: opts.handoffKey,
+            sourcePiSession: opts.sourcePiSession,
+            planRevision: opts.planRevision,
+            approvedAt: opts.approvedAt,
+            requestId: opts.requestId,
+            actor: opts.actor,
+            reason: opts.reason,
+            evidence: opts.evidence,
+          });
+          if (opts.json) {
+            emitRunResponse(createRunResponseSuccess({
+              schema_version: 'run-response/1.2',
+              operation: 'plan-publish',
+              result,
+              request_id: result.request_id,
+              locator: { session_id: result.session_id, run_id: result.run_id },
+              revision: null,
+              replay: { status: result.transition.status, transition_id: result.transition.transition_id },
+              warnings: [],
+            }));
+          } else {
+            console.log(JSON.stringify(result, null, 2));
+          }
+          return;
+        }
         const result = publishPlan({
-          projectRoot: resolve(opts.workflowRoot),
+          projectRoot: workflowRoot,
           sourcePath,
           sourceRoot: opts.sourceRoot ? resolve(opts.sourceRoot) : undefined,
           sessionId: opts.session,
