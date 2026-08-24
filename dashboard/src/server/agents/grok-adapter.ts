@@ -100,6 +100,11 @@ type GrokEvent =
 /** Cap serialized tool results so huge outputs don't flood the entry stream */
 const MAX_TOOL_RESULT_CHARS = 4000;
 
+/** Grok CLI prints update prompts on stderr; they must not become error entries. */
+export function isGrokUpdateNotice(text: string): boolean {
+  return /checking for updates|update available|new version|auto-?update|downloading update|npm notice/i.test(text);
+}
+
 // ---------------------------------------------------------------------------
 // Adapter implementation
 // ---------------------------------------------------------------------------
@@ -206,12 +211,13 @@ export class GrokAdapter extends BaseAgentAdapter {
       this.parseStreamJsonMessage(line, processId);
     });
 
-    // Stderr => error entries
+    // Stderr => error entries. Update / auto-update notices are not errors.
     child.stderr.on('data', (chunk: Buffer) => {
       const text = chunk.toString().trim();
-      if (text.length > 0) {
-        this.emitEntry(processId, EntryNormalizer.error(processId, text, 'stderr'));
+      if (text.length === 0 || isGrokUpdateNotice(text)) {
+        return;
       }
+      this.emitEntry(processId, EntryNormalizer.error(processId, text, 'stderr'));
     });
 
     // Last-resort fallback: if stdout closes but neither 'exit' nor 'close'
@@ -466,6 +472,7 @@ export class GrokAdapter extends BaseAgentAdapter {
     const args: string[] = [
       '--output-format', 'streaming-json',
       '--prompt-file', promptArg,
+      '--no-auto-update',
     ];
 
     if (config.model) {

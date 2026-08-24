@@ -10,7 +10,7 @@
 
 [![npm version](https://img.shields.io/npm/v/maestro-flow?color=cb3837&logo=npm&logoColor=white)](https://www.npmjs.com/package/maestro-flow)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Node.js](https://img.shields.io/badge/Node.js-≥18-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-≥22.19-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![MCP](https://img.shields.io/badge/MCP-Protocol-8B5CF6)](https://modelcontextprotocol.io/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -40,11 +40,15 @@
 ## Install
 
 ```bash
-npm install -g maestro-flow
+npm install -g maestro-flow@0.5.81
 maestro install          # interactive component selector
 ```
 
-Requires Node.js ≥ 18 and [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code). Optionally install Codex CLI, agy CLI, or Grok Build CLI for multi-agent workflows.
+Requires Node.js ≥ 22.19 and at least one host CLI: [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (default) and/or [Grok Build](https://docs.x.ai/build/overview). Optionally install Codex CLI or agy CLI for multi-agent workflows.
+
+Grok overlay: install official `maestro-flow@0.5.81` first, then run `.\install.ps1` / `./install.sh` from the **repo root** (do not `cd repo/`; `--path` supported). Project instructions land in `.grok/rules/maestro.md`; leftover Maestro sections in `.grok/AGENTS.md` are stripped on reinstall. A mismatched official version fails; it does not auto-downgrade. If the overlay is already applied and only assets are missing, run the same script again. Project-level MCP / hooks need the folder trusted (interactive confirm or `/hooks-trust`); user-level `maestro-tools` does not. Details: root `INSTALL.md`. Product install: [Installation Guide](guide/install-guide.en.md).
+
+After install, teach only the v3 CLI: `maestro session open` → `maestro run next` → `maestro run complete --advance` → `maestro session complete`.
 
 ---
 

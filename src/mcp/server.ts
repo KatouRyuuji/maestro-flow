@@ -37,10 +37,10 @@ export async function startMcpServer(): Promise<void> {
         experimental: { 'claude/channel': {} },
       },
       instructions:
-        'Delegate task notifications arrive as <channel source="maestro" exec_id="..." event_type="..." status="...">. ' +
-        'These are one-way status updates from async delegate workers. ' +
-        'When a delegate completes (status=completed) or fails (status=failed), report the result. ' +
-        'For full output details, run "maestro delegate status <exec_id>" or "maestro delegate output <exec_id>" in the shell.',
+        'Use the delegate tool to spawn, follow, or cancel external CLI agents. ' +
+        'Default mode is analysis (read-only); set mode="write" only when files must change. ' +
+        'Delegate notifications also arrive as <channel source="maestro" exec_id="..." event_type="..." status="...">. ' +
+        'When a delegate completes or fails, call delegate with operation=output (or status) using that exec_id.',
     }
   );
 

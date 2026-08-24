@@ -129,6 +129,7 @@ describe('GrokAdapter', () => {
     expect(args[args.indexOf('--output-format') + 1]).toBe('streaming-json');
     expect(args[args.indexOf('-m') + 1]).toBe('grok-4.6');
     expect(args).toContain('--always-approve');
+    expect(args).toContain('--no-auto-update');
 
     const options = spawnMock.mock.calls[0][2] as { env: Record<string, string> };
     expect(options.env.XAI_API_KEY).toBe('xai-test-key');
@@ -242,6 +243,21 @@ describe('GrokAdapter', () => {
     expect(usageEntries[0]).toMatchObject({
       inputTokens: 100, outputTokens: 10, cacheReadTokens: 5, cacheWriteTokens: 2,
     });
+  });
+
+  it('does not treat stderr update notices as errors', async () => {
+    const process = await adapter.spawn(baseConfig());
+    const entries: Array<Record<string, unknown>> = [];
+    adapter.onEntry(process.id, (entry) => entries.push(entry as unknown as Record<string, unknown>));
+
+    child.stderr.write('checking for updates…\n');
+    child.stderr.write('A new version of grok is available\n');
+    child.stderr.write('fatal: cannot start session\n');
+    await flushLines();
+
+    const errors = entries.filter((entry) => entry.type === 'error');
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({ message: 'fatal: cannot start session', code: 'stderr' });
   });
 
   it('skips non-JSON lines without failing', async () => {

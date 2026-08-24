@@ -28,7 +28,11 @@ import {
   type Manifest,
 } from '../core/manifest.js';
 import { applyOverlays, ensureOverlayDir, deleteOverlayManifest } from '../core/overlay/applier.js';
-import { injectDocFile, hasAnyMarkers, removeAllSections, type MigrateResult } from '../core/tag-injector.js';
+import { injectDocFile as injectDocFileCore, hasAnyMarkers, removeAllSections, type MigrateResult } from '../core/tag-injector.js';
+import {
+  grokDirFromRulesMaestroPath,
+  stripLegacyGrokAgentsAtGrokDir,
+} from '../core/grok-legacy-agents.js';
 import { COMPONENT_DEFS, type ComponentDef } from '../core/component-defs.js';
 import {
   HOOK_LEVELS,
@@ -654,8 +658,21 @@ export function pruneOrphans(
   return removed;
 }
 
-// Re-export injectDocFile from shared core
-export { injectDocFile, type MigrateResult } from '../core/tag-injector.js';
+export type { MigrateResult } from '../core/tag-injector.js';
+
+/** 注入指令段；若目标是 Grok 的 rules/maestro.md，顺带剥离旧 .grok/AGENTS.md 里的 Maestro 段。 */
+export function injectDocFile(
+  src: string,
+  dest: string,
+  stats: CopyStats,
+  manifest: Manifest,
+  section?: string,
+): MigrateResult {
+  const result = injectDocFileCore(src, dest, stats, manifest, section);
+  const grokDir = grokDirFromRulesMaestroPath(dest);
+  if (grokDir) stripLegacyGrokAgentsAtGrokDir(grokDir);
+  return result;
+}
 
 // ---------------------------------------------------------------------------
 // Backup
@@ -782,6 +799,7 @@ export const MCP_TOOLS = [
   'read_many_files',
   'team_msg',
   'store_knowhow',
+  'delegate',
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -919,9 +937,10 @@ export function getExtraMcpTargetSpec(targetId: ExtraMcpTargetId): ExtraMcpTarge
 // TOML MCP writer (Grok Build config.toml)
 //
 // Grok configures MCP servers as `[mcp_servers.<name>]` tables in TOML.
-// No TOML dependency is introduced: the maestro entry is a single flat table,
-// so that one section is replaced/appended/removed as text while all other
-// sections and comments are preserved.
+// No TOML dependency is introduced: one server's tables are replaced as text
+// while all other sections and comments are preserved. Grok may rewrite the
+// inline `env = { … }` we write into a nested `[mcp_servers.<name>.env]`
+// table — strip must remove the parent and every dotted child table.
 // ---------------------------------------------------------------------------
 
 /** Escape a value for use inside a TOML basic string (JSON escapes are a valid subset) */
@@ -946,23 +965,38 @@ function buildTomlServerSection(enabledTools: string[], projectRoot?: string): s
 }
 
 /**
- * Remove the `[mcp_servers.<name>]` section (header + body) from TOML text.
- * Matches only a real line-anchored table header — never a comment or string
- * containing the same text. Returns null when the section is absent.
+ * Remove `[mcp_servers.<name>]` and every dotted child table
+ * (`[mcp_servers.<name>.env]`, …) from TOML text.
+ *
+ * Line-by-line, same approach as `removeCodexMcpBlock`: a regex slice to the
+ * next `[` would stop at a nested env table that Grok writes back, leaving an
+ * orphan section and duplicate keys on re-install. Returns null when absent.
  */
 function stripTomlServerSection(content: string, serverName: string): string | null {
   const escaped = serverName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const headerRe = new RegExp(`^\\[mcp_servers\\.${escaped}\\][ \\t]*$`, 'm');
-  const match = headerRe.exec(content);
-  if (match === null) return null;
-  const start = match.index;
-  // The section body runs until the next line-anchored table header or EOF.
-  const rest = content.slice(start + match[0].length);
-  const nextHeader = rest.search(/^\[/m);
-  const end = nextHeader === -1 ? content.length : start + match[0].length + nextHeader;
-  const removed = content.slice(0, start) + content.slice(end);
-  // Collapse 3+ consecutive blank lines left behind by the removal.
-  return removed.replace(/\n{3,}/g, '\n\n');
+  const tableHeaderRe = /^\[\[?[^\]]+\]\]?\s*(?:#.*)?$/;
+  const targetHeaderRe = new RegExp(
+    `^\\[mcp_servers\\.${escaped}(?:\\.[^\\]]+)?\\]\\s*(?:#.*)?$`,
+  );
+
+  const lines = content.split(/\r?\n/);
+  const out: string[] = [];
+  let skipping = false;
+  let found = false;
+
+  for (const line of lines) {
+    if (tableHeaderRe.test(line)) {
+      skipping = targetHeaderRe.test(line);
+      if (skipping) {
+        found = true;
+        continue;
+      }
+    }
+    if (!skipping) out.push(line);
+  }
+
+  if (!found) return null;
+  return out.join('\n').replace(/\n{3,}/g, '\n\n');
 }
 
 function addTomlMcpServer(
@@ -1092,7 +1126,7 @@ export interface UninstallResult {
 
 export interface UninstallOptions {
   /**
-   * Skip CONTENT_MANAGED files (CLAUDE.md, AGENTS.md). Used when uninstalling
+   * Skip CONTENT_MANAGED files (CLAUDE.md, AGENTS.md, maestro.md). Used when uninstalling
    * before a re-install — tag injection updates these in place, so cleanup
    * would lose user content.
    */
@@ -1244,7 +1278,7 @@ function legacyCleanup(manifest: Manifest, result: UninstallResult): void {
 const FALLBACK_PRESERVE = new Set(['settings.json', 'settings.local.json']);
 
 /** Content-managed doc files: remove maestro sections, don't delete entirely. */
-const FALLBACK_CONTENT_MANAGED = new Set(['CLAUDE.md', 'AGENTS.md', 'GEMINI.md', 'copilot-instructions.md']);
+const FALLBACK_CONTENT_MANAGED = new Set(['CLAUDE.md', 'AGENTS.md', 'GEMINI.md', 'copilot-instructions.md', 'maestro.md']);
 
 export interface FallbackScanResult {
   /** Unique target directories that contain files. */

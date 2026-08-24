@@ -52,6 +52,7 @@
     "dev": "tsc --watch",
     "start": "node bin/maestro.js",
     "apply-to-official": "node scripts/apply-to-official.mjs",
+    "install:grok": "node scripts/install-grok.mjs",
     "build:dashboard": "cd dashboard && npx vite build",
     "mcp": "node bin/maestro-mcp.js",
     "test": "vitest run",

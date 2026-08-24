@@ -1,30 +1,99 @@
-// 把本仓库已编译产物叠到官方全局 maestro-flow，不碰官方 node_modules。
+// Overlay this project's compiled files onto a matching official maestro-flow.
+// Scenario: npm i -g maestro-flow@<repo version> first, then run this patcher.
+// Never replace whole dist / dashboard trees or touch official node_modules.
+import { createHash } from 'node:crypto';
 import { execSync } from 'node:child_process';
 import {
-  cpSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import { stdin as input, stdout as output } from 'node:process';
 
+function filePatch(rel, { source = null, markers = [] } = {}) {
+  return { from: rel, to: rel, kind: 'file', source, markers };
+}
+
+/** Files this project must land on official 0.5.81. kind is always file. */
 export const APPLY_ENTRIES = [
-  { from: 'dist', to: 'dist', kind: 'dir' },
-  { from: join('dashboard', 'dist-server'), to: join('dashboard', 'dist-server'), kind: 'dir' },
-  { from: join('dashboard', 'dist'), to: join('dashboard', 'dist'), kind: 'dir' },
-  { from: 'shared', to: 'shared', kind: 'dir' },
-  {
-    from: join('workflows', 'delegate-usage.md'),
-    to: join('workflows', 'delegate-usage.md'),
-    kind: 'file',
-  },
+  filePatch(join('dashboard', 'dist-server', 'dashboard', 'src', 'server', 'agents', 'grok-adapter.js'), {
+    source: join('dashboard', 'src', 'server', 'agents', 'grok-adapter.ts'),
+    markers: ['--no-auto-update'],
+  }),
+  filePatch(join('dashboard', 'dist-server', 'dashboard', 'src', 'server', 'agents', 'adapter-factory.js'), {
+    source: join('dashboard', 'src', 'server', 'agents', 'adapter-factory.ts'),
+    markers: ['grok'],
+  }),
+  filePatch(join('dist', 'src', 'config', 'cli-tools-defaults.json'), {
+    source: join('src', 'config', 'cli-tools-defaults.json'),
+    markers: ['"name": "grok"'],
+  }),
+  filePatch(join('dist', 'src', 'agents', 'cli-agent-runner.js'), {
+    source: join('src', 'agents', 'cli-agent-runner.ts'),
+    markers: ['grok'],
+  }),
+  filePatch(join('dist', 'src', 'commands', 'delegate.js'), {
+    source: join('src', 'commands', 'delegate.ts'),
+    markers: ['grok'],
+  }),
+  filePatch(join('dist', 'src', 'core', 'component-defs.js'), {
+    source: join('src', 'core', 'component-defs.ts'),
+    markers: ['rules/maestro.md'],
+  }),
+  filePatch(join('dist', 'src', 'commands', 'install-backend.js'), {
+    source: join('src', 'commands', 'install-backend.ts'),
+    markers: ['grok', 'stripLegacyGrokAgentsAtGrokDir'],
+  }),
+  // 旧 AGENTS.md 剥离：官方包没有此文件，必须一并覆盖
+  filePatch(join('dist', 'src', 'core', 'grok-legacy-agents.js'), {
+    source: join('src', 'core', 'grok-legacy-agents.ts'),
+    markers: ['stripLegacyGrokAgentsMd'],
+  }),
+  filePatch(join('dist', 'src', 'core', 'manifest.js'), {
+    source: join('src', 'core', 'manifest.ts'),
+    markers: ['maestro.md'],
+  }),
+  filePatch(join('workflows', 'delegate-usage.md'), {
+    source: join('workflows', 'delegate-usage.md'),
+    markers: ['grok'],
+  }),
+  filePatch(join('dist', 'src', 'hooks', 'session-context.js'), {
+    source: join('src', 'hooks', 'session-context.ts'),
+    markers: ['session/3.0'],
+  }),
+  filePatch(join('dist', 'src', 'run', 'continuation.js'), {
+    source: join('src', 'run', 'continuation.ts'),
+    markers: ['session/3.0'],
+  }),
+  filePatch(join('dist', 'src', 'run', 'v3', 'knowledge-v3.js'), {
+    source: join('src', 'run', 'v3', 'knowledge-v3.ts'),
+    markers: ['V3KnowledgeReconciliationError'],
+  }),
+  filePatch(join('dist', 'src', 'run', 'v3', 'mutation-engine.js'), {
+    source: join('src', 'run', 'v3', 'mutation-engine.ts'),
+    markers: ['knowledge reconciliation failed'],
+  }),
+  filePatch(join('dist', 'src', 'commands', 'run-v3.js'), {
+    source: join('src', 'commands', 'run-v3.ts'),
+    markers: ['generateV3RunKnowledgeReconciliation'],
+  }),
 ];
+
+export const OVERLAY_MANIFEST_REL = '.maestro-grok-overlay.json';
 
 const GROK_ADAPTER_REL = join(
   'dashboard', 'dist-server', 'dashboard', 'src', 'server', 'agents', 'grok-adapter.js',
+);
+const GROK_FACTORY_REL = join(
+  'dashboard', 'dist-server', 'dashboard', 'src', 'server', 'agents', 'adapter-factory.js',
 );
 const GROK_DEFAULTS_REL = join('dist', 'src', 'config', 'cli-tools-defaults.json');
 
@@ -48,68 +117,123 @@ export function readPackageVersion(pkgRoot) {
   }
 }
 
+export function overlayNeedsBuild(repoRoot) {
+  for (const entry of APPLY_ENTRIES) {
+    const built = join(repoRoot, entry.from);
+    if (!existsSync(built)) return true;
+    if (!entry.source) continue;
+    const source = join(repoRoot, entry.source);
+    if (!existsSync(source)) continue;
+    if (statSync(source).mtimeMs > statSync(built).mtimeMs) return true;
+  }
+  return false;
+}
+
 export function collectApplyProblems(repoRoot, officialRoot) {
   const problems = [];
+  const expectedVersion = readPackageVersion(repoRoot);
   if (!existsSync(officialRoot)) {
-    problems.push(`未找到官方全局安装：${officialRoot}\n请先执行：npm install -g maestro-flow@latest`);
+    const hint = expectedVersion
+      ? `npm install -g maestro-flow@${expectedVersion}`
+      : 'npm install -g maestro-flow@<本仓库版本>';
+    problems.push(`未找到官方全局安装：${officialRoot}\n请先手动安装匹配版本：${hint}（脚本不会自动安装或降级）`);
   }
-  for (const entry of APPLY_ENTRIES) {
-    const from = join(repoRoot, entry.from);
-    if (!existsSync(from)) {
-      problems.push(`本仓库缺少待覆盖路径：${entry.from}\n请先执行：npm run build`);
+  const missing = APPLY_ENTRIES
+    .filter((entry) => !existsSync(join(repoRoot, entry.from)))
+    .map((entry) => entry.from);
+  if (missing.length > 0) {
+    problems.push(`本仓库尚未编译出覆盖产物：${missing.join('、')}\n请先执行：npm run build`);
+  } else if (overlayNeedsBuild(repoRoot)) {
+    problems.push('本仓库编译产物早于源码。请先执行：npm run build');
+  } else {
+    const precheck = verifyLocalOverlay(repoRoot);
+    if (!precheck.ok) {
+      problems.push(`本仓库产物未通过覆盖预检：${precheck.reason}\n请先执行：npm run build`);
     }
-  }
-  if (!existsSync(join(repoRoot, GROK_ADAPTER_REL))) {
-    problems.push(`本仓库尚未编译出 Grok 产物：${GROK_ADAPTER_REL}\n请先执行：npm run build`);
-  }
-  if (!existsSync(join(repoRoot, 'dashboard', 'dist', 'index.html'))) {
-    problems.push('本仓库尚未编译 Dashboard 前端：dashboard/dist/index.html\n请先执行：npm run build:dashboard');
-  }
-  if (!existsSync(join(repoRoot, GROK_DEFAULTS_REL))) {
-    problems.push(`本仓库缺少编译后的 cli-tools-defaults.json\n请先执行：npm run build`);
   }
   return problems;
 }
 
-export function applyLocalOverlay(repoRoot, officialRoot) {
-  for (const entry of APPLY_ENTRIES) {
-    const from = join(repoRoot, entry.from);
-    const to = join(officialRoot, entry.to);
-    if (!existsSync(from)) {
-      throw new Error(`缺少源路径：${from}`);
-    }
-    mkdirSync(dirname(to), { recursive: true });
-    cpSync(from, to, { recursive: true, force: true });
+function replaceFile(tmp, to) {
+  try {
+    renameSync(tmp, to);
+  } catch {
+    copyFileSync(tmp, to);
+    unlinkSync(tmp);
   }
 }
 
-export function verifyLocalOverlay(officialRoot) {
-  const adapter = join(officialRoot, GROK_ADAPTER_REL);
-  if (!existsSync(adapter)) {
-    return { ok: false, reason: `覆盖后仍缺少 ${adapter}` };
+export function applyLocalOverlay(repoRoot, officialRoot) {
+  const precheck = verifyLocalOverlay(repoRoot);
+  if (!precheck.ok) {
+    throw new Error(`本仓库产物未通过覆盖预检：${precheck.reason}`);
   }
-  const defaultsPath = join(officialRoot, GROK_DEFAULTS_REL);
-  if (!existsSync(defaultsPath)) {
-    return { ok: false, reason: `覆盖后仍缺少 ${defaultsPath}` };
+  const staged = [];
+  try {
+    for (const entry of APPLY_ENTRIES) {
+      const from = join(repoRoot, entry.from);
+      const to = join(officialRoot, entry.to);
+      if (!existsSync(from)) {
+        throw new Error(`缺少源路径：${from}`);
+      }
+      mkdirSync(dirname(to), { recursive: true });
+      const tmp = `${to}.maestro-overlay.tmp`;
+      copyFileSync(from, tmp);
+      staged.push({ tmp, to });
+    }
+    for (const item of staged) {
+      replaceFile(item.tmp, item.to);
+      item.tmp = null;
+    }
+    writeOverlayManifest(repoRoot, officialRoot);
+  } catch (error) {
+    for (const { tmp } of staged) {
+      if (!tmp) continue;
+      try { unlinkSync(tmp); } catch { /* already moved or missing */ }
+    }
+    throw error;
   }
-  const defaults = readFileSync(defaultsPath, 'utf8');
-  if (!defaults.includes('"name": "grok"')) {
-    return { ok: false, reason: '覆盖后 cli-tools-defaults.json 未包含 grok' };
-  }
-  const factoryPath = join(
-    officialRoot, 'dashboard', 'dist-server', 'dashboard', 'src', 'server', 'agents', 'adapter-factory.js',
+}
+
+export function writeOverlayManifest(repoRoot, officialRoot) {
+  const files = APPLY_ENTRIES.map((entry) => {
+    const abs = join(officialRoot, entry.to);
+    return {
+      path: entry.to.replace(/\\/g, '/'),
+      sha256: createHash('sha256').update(readFileSync(abs)).digest('hex'),
+    };
+  });
+  const manifest = {
+    schema: 'maestro-grok-overlay/1.0',
+    repo_version: readPackageVersion(repoRoot),
+    official_version: readPackageVersion(officialRoot),
+    applied_at: new Date().toISOString(),
+    files,
+  };
+  writeFileSync(
+    join(officialRoot, OVERLAY_MANIFEST_REL),
+    `${JSON.stringify(manifest, null, 2)}\n`,
+    'utf8',
   );
-  if (existsSync(factoryPath)) {
-    const factory = readFileSync(factoryPath, 'utf8');
-    if (!factory.includes("'grok'") && !factory.includes('"grok"')) {
-      return { ok: false, reason: '覆盖后 adapter-factory.js 未注册 grok' };
+}
+
+export function verifyLocalOverlay(officialRoot) {
+  for (const entry of APPLY_ENTRIES) {
+    const target = join(officialRoot, entry.to);
+    if (!existsSync(target)) {
+      return { ok: false, reason: `覆盖后仍缺少 ${entry.to}` };
+    }
+    const text = readFileSync(target, 'utf8');
+    const missing = (entry.markers ?? []).filter((marker) => !text.includes(marker));
+    if (missing.length > 0) {
+      return { ok: false, reason: `覆盖后 ${entry.to} 缺少标记：${missing.join('、')}` };
     }
   }
-  const dashboardIndex = join(officialRoot, 'dashboard', 'dist', 'index.html');
-  if (!existsSync(dashboardIndex)) {
-    return { ok: false, reason: `覆盖后仍缺少 ${dashboardIndex}` };
-  }
-  return { ok: true, adapter, defaultsPath };
+  return {
+    ok: true,
+    adapter: join(officialRoot, GROK_ADAPTER_REL),
+    defaultsPath: join(officialRoot, GROK_DEFAULTS_REL),
+  };
 }
 
 function parseArgs(argv) {
@@ -172,16 +296,12 @@ export async function runApplyToOfficial(options = {}) {
     return { ok: false, code: 1 };
   }
 
-  if (officialVersion !== 'unknown' && localVersion !== officialVersion) {
+  if (localVersion !== officialVersion) {
     log('');
-    log(`警告：官方 ${officialVersion} 与本仓库 ${localVersion} 不一致，覆盖可能不兼容。`);
-    if (!yes) {
-      const proceed = await confirm('仍要继续？', false);
-      if (!proceed) {
-        log('已取消。');
-        return { ok: false, code: 0 };
-      }
-    }
+    log(`官方 ${officialVersion} 与本仓库 ${localVersion} 不一致。`);
+    log(`请先手动安装匹配版本：npm install -g maestro-flow@${localVersion}`);
+    log('脚本不会自动安装或降级官方包。');
+    return { ok: false, code: 1, reason: 'official-version' };
   } else if (!yes) {
     log('');
     const proceed = await confirm('把本仓库产物叠到官方安装目录？', true);
@@ -206,7 +326,7 @@ export async function runApplyToOfficial(options = {}) {
   }
 
   log('');
-  log('覆盖完成，Grok 适配已写入官方安装目录。');
+  log(`覆盖完成，清单已写入 ${OVERLAY_MANIFEST_REL}。`);
 
   if (!skipInstall && !yes) {
     log('');
