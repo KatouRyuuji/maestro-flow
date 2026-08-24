@@ -102,6 +102,40 @@ mod tests {
         assert!(out.error.is_some());
         assert!(out.results.is_empty());
     }
+
+    #[test]
+    fn session_project_locator_disambiguates_global_duplicate_ids() {
+        let base = std::env::temp_dir().join(format!(
+            "maestro-sidebar-project-locator-{}-{}",
+            std::process::id(),
+            crate::snapshot::now_seconds()
+        ));
+        let project_a = base.join("a");
+        let project_b = base.join("b");
+        std::fs::create_dir_all(project_a.join(".workflow")).unwrap();
+        std::fs::create_dir_all(project_b.join(".workflow")).unwrap();
+        let mut cfg = AppConfig {
+            roots: vec![
+                config::normalize_path(&project_a),
+                config::normalize_path(&project_b),
+            ],
+            global_mode: true,
+            ..Default::default()
+        };
+        let workflow_b = project_b.join(".workflow");
+        let located = session_projects(&cfg, Some(&config::normalize_path(&workflow_b)));
+        assert_eq!(located, vec![workflow_b.clone()]);
+        assert!(session_projects(&cfg, Some("")).is_empty());
+        assert!(session_projects(&cfg, Some("missing/.workflow")).is_empty());
+
+        let global = session_projects(&cfg, None);
+        assert!(global.contains(&project_a.join(".workflow")));
+        assert!(global.contains(&workflow_b));
+
+        cfg.global_mode = false;
+        assert_eq!(session_projects(&cfg, None), vec![project_a.join(".workflow")]);
+        let _ = std::fs::remove_dir_all(base);
+    }
 }
 
 #[cfg(test)]
@@ -421,6 +455,27 @@ fn active_projects(cfg: &AppConfig) -> Vec<std::path::PathBuf> {
     }
 }
 
+/// Session/Run 读取工程集合。显式 locator 必须精确命中受信任工程；
+/// 旧调用在全局模式扫描全部工程，单工程模式维持激活工程行为。
+fn session_projects(cfg: &AppConfig, project_path: Option<&str>) -> Vec<std::path::PathBuf> {
+    let projects = all_projects(cfg);
+    if let Some(locator) = project_path {
+        if locator.is_empty() {
+            return Vec::new();
+        }
+        let target = config::normalize_path(&std::path::PathBuf::from(locator));
+        return projects
+            .into_iter()
+            .filter(|project| config::normalize_path(project) == target)
+            .collect();
+    }
+    if cfg.global_mode {
+        projects
+    } else {
+        resolve_active(cfg, &projects).cloned().into_iter().collect()
+    }
+}
+
 /// 可用工作空间列表（切换菜单用）
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -514,13 +569,16 @@ fn is_safe_id(id: &str) -> bool {
 }
 
 #[tauri::command]
-fn get_session_runs(state: tauri::State<AppState>, session_id: String) -> Vec<workflow::RunSummary> {
+fn get_session_runs(
+    state: tauri::State<AppState>,
+    session_id: String,
+    project_path: Option<String>,
+) -> Vec<workflow::RunSummary> {
     if !is_safe_id(&session_id) {
         return Vec::new();
     }
     let cfg = state.config.lock().unwrap().clone();
-    let projects = active_projects(&cfg);
-    for wf in projects {
+    for wf in session_projects(&cfg, project_path.as_deref()) {
         let runs = workflow::scan_runs(&wf, &session_id);
         if !runs.is_empty() {
             return runs;
@@ -533,13 +591,13 @@ fn get_session_runs(state: tauri::State<AppState>, session_id: String) -> Vec<wo
 fn get_session_detail(
     state: tauri::State<AppState>,
     session_id: String,
+    project_path: Option<String>,
 ) -> Option<workflow::SessionDetail> {
     if !is_safe_id(&session_id) {
         return None;
     }
     let cfg = state.config.lock().unwrap().clone();
-    let projects = active_projects(&cfg);
-    for wf in projects {
+    for wf in session_projects(&cfg, project_path.as_deref()) {
         if let Some(detail) = workflow::scan_session_detail(&wf, &session_id) {
             return Some(detail);
         }
@@ -553,12 +611,13 @@ fn get_run_artifacts(
     state: tauri::State<AppState>,
     session_id: String,
     run_id: String,
+    project_path: Option<String>,
 ) -> Option<workflow::RunArtifacts> {
     if !is_safe_id(&session_id) || !is_safe_id(&run_id) {
         return None;
     }
     let cfg = state.config.lock().unwrap().clone();
-    for wf in active_projects(&cfg) {
+    for wf in session_projects(&cfg, project_path.as_deref()) {
         if let Some(a) = workflow::scan_run_artifacts(&wf, &session_id, &run_id) {
             return Some(a);
         }
@@ -573,12 +632,13 @@ fn get_run_artifact_content(
     session_id: String,
     run_id: String,
     name: String,
+    project_path: Option<String>,
 ) -> Option<String> {
     if !is_safe_id(&session_id) || !is_safe_id(&run_id) {
         return None;
     }
     let cfg = state.config.lock().unwrap().clone();
-    for wf in active_projects(&cfg) {
+    for wf in session_projects(&cfg, project_path.as_deref()) {
         if let Some(c) = workflow::read_run_output(&wf, &session_id, &run_id, &name) {
             return Some(c);
         }

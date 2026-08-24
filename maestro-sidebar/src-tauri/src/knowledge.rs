@@ -658,6 +658,8 @@ pub fn create_knowledge_md(
 pub struct PendingCandidate {
     pub session_id: String,
     pub run_id: String,
+    #[serde(default)]
+    pub project_path: Option<String>,
     pub candidate_id: String,
     pub target: String, // spec | knowhow
     pub action: String, // propose | ...
@@ -738,6 +740,7 @@ pub fn scan_pending_candidates(wf_root: &Path) -> PendingCandidates {
                 all.push(PendingCandidate {
                     session_id: session_id.clone(),
                     run_id: run_id.clone(),
+                    project_path: Some(crate::config::normalize_path(wf_root)),
                     candidate_id: cid,
                     target: c
                         .get("target")
@@ -820,6 +823,10 @@ mod tests {
         // updated_at 倒序：s2 在前
         assert_eq!(result.items[0].candidate_id, "KDC-b");
         assert_eq!(result.items[0].target, "knowhow");
+        assert_eq!(
+            result.items[0].project_path,
+            Some(crate::config::normalize_path(&wf))
+        );
         assert_eq!(result.items[0].session_id, "s2");
         assert_eq!(result.items[2].candidate_id, "KDC-a");
         assert_eq!(result.items[2].summary, "body A");

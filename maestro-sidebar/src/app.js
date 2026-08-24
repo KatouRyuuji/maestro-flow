@@ -53,6 +53,7 @@ let expandedSessions = new Set(); // 列表里展开 run 明细的会话
 const runDisclosureState = new Map();
 const sessionRunCache = {};   // 会话 run 缓存
 const sessionLoadState = {};  // collapsed | loading | expanded | error
+const sessionRunGeneration = {};
 const CALLS_LIMIT = 8;
 const SESSIONS_LIMIT = 8;
 let callsExpanded = false;
@@ -178,9 +179,15 @@ async function init() {
   try {
     const cached = JSON.parse(localStorage.getItem('snapshot-cache') || 'null');
     if (cached && cached.snapshot && cached.snapshot.sessions) {
-      snapshot = cached.snapshot;
-      render();
-      $('liveStatus').textContent = t('status.cached', { time: fmtClock2(new Date(cached.ts).toISOString()) });
+      const locatorReady = !Boolean(config.global_mode ?? config.globalMode)
+        || cached.snapshot.sessions.every((session) => Boolean(session.project_path));
+      if (locatorReady) {
+        snapshot = cached.snapshot;
+        render();
+        $('liveStatus').textContent = t('status.cached', { time: fmtClock2(new Date(cached.ts).toISOString()) });
+      } else {
+        localStorage.removeItem('snapshot-cache');
+      }
     }
   } catch { /* 缓存损坏忽略 */ }
 
@@ -194,7 +201,12 @@ async function init() {
     cacheSnapshot(snapshot);
     seedNotifyState(snapshot);
   } catch (err) {
-    snapshot = { workspace: t('workspace.notConnected'), active_session_id: null, sessions: [], calls: [], knowledge: { total: 0 } };
+    snapshot = {
+      workspace: t('workspace.notConnected'),
+      active_session_id: null,
+      active_project_path: null,
+      sessions: [], calls: [], knowledge: { total: 0 },
+    };
     $('liveStatus').textContent = t('status.disconnected');
     $('liveDot').classList.add('stale');
     showBootError(t('boot.snapshotFailed', { error: String(err && err.message ? err.message : err) }));
@@ -841,10 +853,9 @@ function bindEvents() {
   $('capSessionPanel').title = t('capsule.doubleClickSession');
   $('capAgentPanel').title = t('capsule.doubleClickCall');
   $('capSessionPanel').addEventListener('dblclick', async () => {
-    const sessions = snapshot?.sessions || [];
-    const active = sessions.find((s) => s.session_id === snapshot.active_session_id) || sessions[0];
+    const active = findActiveSession(snapshot);
     await restoreCard();
-    if (active) openDetail('session', active.session_id);
+    if (active) openDetail('session', active.session_id, null, false, active.project_path);
   });
   $('capAgentPanel').addEventListener('dblclick', async () => {
     const calls = snapshot?.calls || [];
@@ -1157,7 +1168,7 @@ async function cycleWorkspace() {
 function seedNotifyState(snap) {
   notifySeen.calls = new Map((snap.calls || []).map((c) => [c.execId, callStatus(c)]));
   notifySeen.sessions = new Map(
-    (snap.sessions || []).map((s) => [s.session_id, String(s.status || '').toLowerCase()]),
+    (snap.sessions || []).map((s) => [sessionObjectKey(s), String(s.status || '').toLowerCase()]),
   );
   notifyReady = true;
   lastKbStatsDigest = JSON.stringify(snap.knowledge || null);
@@ -1196,7 +1207,8 @@ function notifyMigration(snap) {
 
   const sessions = snap.sessions || [];
   for (const s of sessions) {
-    const prev = notifySeen.sessions.get(s.session_id);
+    const sessionKey = sessionObjectKey(s);
+    const prev = notifySeen.sessions.get(sessionKey);
     const now = String(s.status || '').toLowerCase();
     if (prev !== undefined && prev !== now
       && ['running', 'active', 'executing', 'paused'].includes(prev)
@@ -1204,7 +1216,11 @@ function notifyMigration(snap) {
       const body = oneLine(s.intent || s.session_id).slice(0, 120);
       invoke('notify', { title: t('notifications.sessionBlocked'), body }).catch(() => {});
     }
-    notifySeen.sessions.set(s.session_id, now);
+    notifySeen.sessions.set(sessionKey, now);
+  }
+  const seenSessions = new Set(sessions.map(sessionObjectKey));
+  for (const key of notifySeen.sessions.keys()) {
+    if (!seenSessions.has(key)) notifySeen.sessions.delete(key);
   }
 }
 
@@ -1311,6 +1327,31 @@ function sessionActiveRunIds(session) {
     : [];
   if (!ids.length && session?.active_run_id) ids.push(String(session.active_run_id));
   return [...new Set(ids)];
+}
+
+function sessionLocatorKey(sessionId, projectPath = '') {
+  return `${projectPath || ''}::${sessionId}`;
+}
+
+function sessionObjectKey(session) {
+  return sessionLocatorKey(
+    session?.session_id || '',
+    session?.project_path || session?.project || '',
+  );
+}
+
+function findActiveSession(snap) {
+  const sessions = snap?.sessions || [];
+  if (snap?.active_project_path) {
+    const exact = sessions.find((session) => (
+      session.session_id === snap.active_session_id
+      && session.project_path === snap.active_project_path
+    ));
+    if (exact) return exact;
+  }
+  return sessions.find((session) => session.session_id === snap?.active_session_id)
+    || sessions[0]
+    || null;
 }
 
 function isRunActive(run, session) {
@@ -1473,7 +1514,9 @@ async function renderOverview() {
       txt.appendChild(el('span', 'ov-row-a', t('overview.session')));
       txt.appendChild(el('span', 'ov-row-b', oneLine(s.intent) || s.session_id));
       row.appendChild(txt);
-      row.addEventListener('click', () => openDetail('session', s.session_id, row));
+      row.addEventListener('click', () => openDetail(
+        'session', s.session_id, row, false, s.project_path,
+      ));
       rBody.appendChild(row);
     }
     for (const c of runningCalls.slice(0, 2)) {
@@ -1867,12 +1910,12 @@ function renderSessions() {
     empty.appendChild(el('div', '', t('search.noMatchingSessions')));
     empty.appendChild(el('div', 'empty-hint', t('search.sessionsHint')));
   }
-  const active = snapshot.active_session_id;
-  const orderedSessions = sessions.slice().sort((a, b) => Number(b.session_id === active) - Number(a.session_id === active));
+  const active = findActiveSession(snapshot);
+  const orderedSessions = sessions.slice().sort((a, b) => Number(b === active) - Number(a === active));
   const visibleSessions = searching || sessionsListExpanded ? orderedSessions : orderedSessions.slice(0, SESSIONS_LIMIT);
 
   for (const s of visibleSessions) {
-    list.appendChild(sessionRowEl(s, s.session_id === active));
+    list.appendChild(sessionRowEl(s, s === active));
   }
   const foot = $('sessionsFoot');
   foot.innerHTML = '';
@@ -1897,11 +1940,12 @@ function renderSessions() {
 
 /** 单条会话行（含可展开 Run 时间线；列表与「全部会话」详情视图共用） */
 function sessionRowEl(s, isActive) {
-  const expanded = expandedSessions.has(s.session_id);
-  const loadState = sessionLoadState[s.session_id] || 'collapsed';
+  const cacheKey = sessionObjectKey(s);
+  const expanded = expandedSessions.has(cacheKey);
+  const loadState = sessionLoadState[cacheKey] || 'collapsed';
   const sm = sessionStatusMeta(s.status, sessionActiveRunIds(s).length);
   const lr = s.latest_run || null;
-  const timelineId = `session-runs-${safeDomId(s.session_id)}`;
+  const timelineId = `session-runs-${safeDomId(cacheKey)}`;
   const item = el('article', `srow${expanded ? ' open' : ''}${isActive ? ' active' : ''}`);
 
   const toggle = el('button', 'sess-toggle');
@@ -1947,7 +1991,7 @@ function sessionRowEl(s, isActive) {
   chev.appendChild(svg('i-chevron', 10));
   sl3.appendChild(chev);
   toggle.appendChild(sl3);
-  toggle.addEventListener('click', () => toggleSessionExpand(s.session_id));
+  toggle.addEventListener('click', () => toggleSessionExpand(s));
   item.appendChild(toggle);
 
   const sexpb = el('div', 'sexpb');
@@ -1959,7 +2003,7 @@ function sessionRowEl(s, isActive) {
   tl.setAttribute('aria-label', t('sessions.timelineAria', { id: s.session_id }));
   tl.setAttribute('aria-busy', String(loadState === 'loading'));
   const MINI_TL_CAP = 8;
-  const cached = sessionRunCache[s.session_id];
+  const cached = sessionRunCache[cacheKey];
   const runs = expanded && cached?.length ? cached.slice(-MINI_TL_CAP) : (lr ? [lr] : []);
   for (const run of runs) tl.appendChild(miniTlNode(run));
   if (expanded && cached && cached.length > MINI_TL_CAP) {
@@ -1976,7 +2020,7 @@ function sessionRowEl(s, isActive) {
     retry.type = 'button';
     retry.addEventListener('click', (event) => {
       event.stopPropagation();
-      toggleSessionExpand(s.session_id, true);
+      toggleSessionExpand(s, true);
     });
     sexpf.appendChild(retry);
   }
@@ -1984,7 +2028,7 @@ function sessionRowEl(s, isActive) {
   more.type = 'button';
   more.addEventListener('click', (event) => {
     event.stopPropagation();
-    openDetail('session', s.session_id, more);
+    openDetail('session', s.session_id, more, false, s.project_path);
   });
   sexpf.appendChild(more);
   sexp.appendChild(sexpf);
@@ -1994,43 +2038,49 @@ function sessionRowEl(s, isActive) {
   return item;
 }
 
-async function toggleSessionExpand(sessionId, force = false) {
-  if (!force && expandedSessions.has(sessionId)) {
-    expandedSessions.delete(sessionId);
-    sessionLoadState[sessionId] = 'collapsed';
+async function toggleSessionExpand(session, force = false) {
+  const sessionId = session.session_id;
+  const projectPath = session.project_path || null;
+  const cacheKey = sessionObjectKey(session);
+  if (!force && expandedSessions.has(cacheKey)) {
+    sessionRunGeneration[cacheKey] = (sessionRunGeneration[cacheKey] || 0) + 1;
+    expandedSessions.delete(cacheKey);
+    sessionLoadState[cacheKey] = 'collapsed';
     renderSessions();
     fitWindow();
     return;
   }
-  if (!force && sessionRunCache[sessionId]?.length) {
-    expandedSessions.add(sessionId);
-    sessionLoadState[sessionId] = 'expanded';
+  if (!force && sessionRunCache[cacheKey]?.length) {
+    expandedSessions.add(cacheKey);
+    sessionLoadState[cacheKey] = 'expanded';
     renderSessions();
     fitWindow();
-    refocusSessionToggle(sessionId);
+    refocusSessionToggle(cacheKey);
     return;
   }
-  sessionLoadState[sessionId] = 'loading';
-  expandedSessions.add(sessionId);
+  sessionLoadState[cacheKey] = 'loading';
+  expandedSessions.add(cacheKey);
+  const generation = (sessionRunGeneration[cacheKey] || 0) + 1;
+  sessionRunGeneration[cacheKey] = generation;
   renderSessions();
   try {
-    const runs = await invoke('get_session_runs', { sessionId });
-    sessionRunCache[sessionId] = Array.isArray(runs) ? runs : [];
-    expandedSessions.add(sessionId);
-    sessionLoadState[sessionId] = 'expanded';
+    const runs = await invoke('get_session_runs', { sessionId, projectPath });
+    if (sessionRunGeneration[cacheKey] !== generation || !expandedSessions.has(cacheKey)) return;
+    sessionRunCache[cacheKey] = Array.isArray(runs) ? runs : [];
+    sessionLoadState[cacheKey] = 'expanded';
   } catch {
+    if (sessionRunGeneration[cacheKey] !== generation || !expandedSessions.has(cacheKey)) return;
     // 失败保留展开状态 + 行内错误（含重试），不静默折叠
-    expandedSessions.add(sessionId);
-    sessionLoadState[sessionId] = 'error';
+    sessionLoadState[cacheKey] = 'error';
   }
   renderSessions();
   fitWindow();
-  refocusSessionToggle(sessionId);
+  refocusSessionToggle(cacheKey);
 }
 
-function refocusSessionToggle(sessionId) {
+function refocusSessionToggle(cacheKey) {
   requestAnimationFrame(() => {
-    const tl = document.getElementById(`session-runs-${safeDomId(sessionId)}`);
+    const tl = document.getElementById(`session-runs-${safeDomId(cacheKey)}`);
     const toggle = tl && tl.closest('.srow')?.querySelector('.sess-toggle');
     if (toggle && toggle.isConnected) toggle.focus();
   });
@@ -2455,12 +2505,14 @@ function renderSemanticDetail() {
 // 详情视图
 // ---------------------------------------------------------------------------
 
-async function openDetail(kind, id, trigger = null, fromStack = false) {
+async function openDetail(kind, id, trigger = null, fromStack = false, projectPath = null) {
   teardownCallDetailSearch();
   const requestId = ++detailRequestId;
-  const key = `${kind}::${id}`;
+  const key = kind === 'session'
+    ? `${kind}::${sessionLocatorKey(id, projectPath || '')}`
+    : `${kind}::${id}`;
   if (trigger) detailReturnFocus = trigger;
-  if (!fromStack) viewStack.push({ kind, id });
+  if (!fromStack) viewStack.push({ kind, id, projectPath });
   // 重置详情搜索
   detailSearch = '';
   semanticReqId += 1;
@@ -2470,7 +2522,7 @@ async function openDetail(kind, id, trigger = null, fromStack = false) {
   $('detailSearchClear').hidden = true;
   // 快照直供视图（全部调用 / 全部会话 / 待处置候选）：无需后端拉取
   if (kind === 'calls' || kind === 'sessions' || kind === 'pending') {
-    view = { kind, id };
+    view = { kind, id, projectPath };
     detail = { ok: true };
     detailStatus = 'ready';
     render();
@@ -2480,7 +2532,7 @@ async function openDetail(kind, id, trigger = null, fromStack = false) {
   }
   // 已缓存 → 直接展示（返回栈回退秒开）
   if (detailCache[key]) {
-    view = { kind, id };
+    view = { kind, id, projectPath };
     detail = detailCache[key];
     detailStatus = 'ready';
     render();
@@ -2488,7 +2540,7 @@ async function openDetail(kind, id, trigger = null, fromStack = false) {
     requestAnimationFrame(() => $('detailTitle').focus());
     return;
   }
-  view = { kind, id };
+  view = { kind, id, projectPath };
   detail = null;
   detailStatus = 'loading';
   render();
@@ -2507,9 +2559,12 @@ async function openDetail(kind, id, trigger = null, fromStack = false) {
       const iid = sep > 0 ? id.slice(sep + 2) : id;
       result = await invoke('get_knowledge_item_content', { kind: k, id: iid });
     } else {
-      result = await invoke('get_session_detail', { sessionId: id });
+      result = await invoke('get_session_detail', { sessionId: id, projectPath });
     }
-    if (requestId !== detailRequestId || view?.kind !== kind || view?.id !== id) return;
+    if (requestId !== detailRequestId
+      || view?.kind !== kind
+      || view?.id !== id
+      || (view?.projectPath || null) !== (projectPath || null)) return;
     if (!result) {
       detailStatus = 'not-found';
       detail = null;
@@ -2534,7 +2589,7 @@ function closeDetail() {
   // 返回栈回退：回到上一详情（知识列表等），而不是直接跳回主列表
   const prev = viewStack[viewStack.length - 1] || null;
   if (prev) {
-    openDetail(prev.kind, prev.id, null, true);
+    openDetail(prev.kind, prev.id, null, true, prev.projectPath || null);
     return;
   }
   view = null;
@@ -2579,7 +2634,9 @@ function renderDetailState(kindLabel) {
     back.addEventListener('click', closeDetail);
     const retry = el('button', 'retry-btn primary', t('detail.reload'));
     retry.type = 'button';
-    retry.addEventListener('click', () => openDetail(view.kind, view.id));
+    retry.addEventListener('click', () => openDetail(
+      view.kind, view.id, null, true, view.projectPath || null,
+    ));
     actions.appendChild(back);
     actions.appendChild(retry);
     missing.appendChild(actions);
@@ -2598,7 +2655,9 @@ function renderDetailState(kindLabel) {
     back.addEventListener('click', closeDetail);
     const retry = el('button', 'retry-btn primary', t('common.retry'));
     retry.type = 'button';
-    retry.addEventListener('click', () => openDetail(view.kind, view.id));
+    retry.addEventListener('click', () => openDetail(
+      view.kind, view.id, null, true, view.projectPath || null,
+    ));
     actions.appendChild(back);
     actions.appendChild(retry);
     error.appendChild(actions);
@@ -3186,10 +3245,10 @@ function renderSessionsListDetail() {
     body.appendChild(emptySearchResult(t('search.noMatchingSessions')));
     return;
   }
-  const active = snapshot.active_session_id;
-  const ordered = matched.slice().sort((a, b) => Number(b.session_id === active) - Number(a.session_id === active));
+  const active = findActiveSession(snapshot);
+  const ordered = matched.slice().sort((a, b) => Number(b === active) - Number(a === active));
   const rows = el('div', 'rows');
-  for (const s of ordered) rows.appendChild(sessionRowEl(s, s.session_id === active));
+  for (const s of ordered) rows.appendChild(sessionRowEl(s, s === active));
   body.appendChild(rows);
   body.appendChild(el('div', 'kb-sub', t('sessions.openHint')));
 }
@@ -3254,7 +3313,7 @@ function appendRunDetailSection(parent, label, items, tone) {
 }
 
 function renderRunEntry(run, session, q, gates) {
-  const key = `${session.session_id}:${run.run_id}`;
+  const key = `${sessionObjectKey(session)}::${run.run_id}`;
   const verdict = normalizeRunSignal(run.verdict || run.status || 'unknown');
   const attention = ['blocked', 'failed', 'needs_retry', 'done_with_concerns'].includes(verdict) || (run.concerns || []).length > 0;
   const current = isRunActive(run, session) || String(run.status).toLowerCase() === 'running';
@@ -3321,9 +3380,11 @@ function renderRunEntry(run, session, q, gates) {
   appendRunDetailSection(details, t('runs.concernsTitle'), run.concerns, 'concern');
   renderGateList(details, run.gate_ids, gates);
   // 产出物（懒加载：展开时拉取，按 run 缓存）
-  const artKey = `${session.session_id}:${run.run_id}`;
+  const artKey = key;
   const artState = runArtifactsCache.get(artKey) || { status: 'idle', data: null };
-  if (expanded && artState.status === 'idle') loadRunArtifacts(session.session_id, run.run_id);
+  if (expanded && artState.status === 'idle') {
+    loadRunArtifacts(session.session_id, run.run_id, session.project_path);
+  }
   if (expanded) {
     if (artState.status === 'loading') {
       const sec = el('section', 'run-detail-section');
@@ -3336,7 +3397,9 @@ function renderRunEntry(run, session, q, gates) {
       sec.appendChild(el('div', 'run-detail-item', t('runs.noArtifacts')));
       details.appendChild(sec);
     } else if (artState.status === 'ready') {
-      renderRunArtifactsSection(details, artState.data, session.session_id, run.run_id);
+      renderRunArtifactsSection(
+        details, artState.data, session.session_id, run.run_id, session.project_path,
+      );
     }
   }
   entry.appendChild(details);
@@ -3393,12 +3456,12 @@ function renderGateList(parent, gateIds, gates) {
 /** run 产出物缓存（按 session:run 键） */
 const runArtifactsCache = new Map();
 
-async function loadRunArtifacts(sessionId, runId) {
-  const key = `${sessionId}:${runId}`;
+async function loadRunArtifacts(sessionId, runId, projectPath = null) {
+  const key = `${sessionLocatorKey(sessionId, projectPath || '')}::${runId}`;
   if (runArtifactsCache.has(key)) return;
   runArtifactsCache.set(key, { status: 'loading', data: null });
   try {
-    const data = await invoke('get_run_artifacts', { sessionId, runId });
+    const data = await invoke('get_run_artifacts', { sessionId, runId, projectPath });
     runArtifactsCache.set(key, { status: data ? 'ready' : 'error', data });
   } catch {
     runArtifactsCache.set(key, { status: 'error', data: null });
@@ -3413,7 +3476,7 @@ function fmtBytes(n) {
   return `${v}B`;
 }
 
-function renderRunArtifactsSection(parent, art, sessionId, runId) {
+function renderRunArtifactsSection(parent, art, sessionId, runId, projectPath = null) {
   const section = el('section', 'run-detail-section');
   section.appendChild(el('div', 'run-detail-title', t('runs.artifacts')));
   const meta = [];
@@ -3434,7 +3497,9 @@ function renderRunArtifactsSection(parent, art, sessionId, runId) {
     const name = el('button', 'art-file-name', f.name);
     name.type = 'button';
     name.title = t('runs.viewFull');
-    name.addEventListener('click', () => openRunOutputModal(sessionId, runId, f.name));
+    name.addEventListener('click', () => openRunOutputModal(
+      sessionId, runId, f.name, projectPath,
+    ));
     row.appendChild(name);
     if (f.preview) row.appendChild(el('div', 'art-file-preview', oneLine(f.preview)));
     row.appendChild(el('span', 'rt', fmtBytes(f.size)));
@@ -3444,7 +3509,7 @@ function renderRunArtifactsSection(parent, art, sessionId, runId) {
 }
 
 /** output 文件全文 modal */
-async function openRunOutputModal(sessionId, runId, name) {
+async function openRunOutputModal(sessionId, runId, name, projectPath = null) {
   const opener = document.activeElement;
   const overlay = el('div', 'md-preview-overlay');
   overlay.setAttribute('role', 'dialog');
@@ -3482,7 +3547,9 @@ async function openRunOutputModal(sessionId, runId, name) {
   document.body.appendChild(overlay);
   close.focus();
   try {
-    const content = await invoke('get_run_artifact_content', { sessionId, runId, name });
+    const content = await invoke('get_run_artifact_content', {
+      sessionId, runId, name, projectPath,
+    });
     if (overlay.isConnected) body.textContent = content || t('runs.emptyFile');
   } catch {
     if (overlay.isConnected) body.textContent = t('runs.readFailed');
@@ -3781,7 +3848,9 @@ function renderPendingDetail() {
     open.title = t('knowledge.openSession');
     open.setAttribute('aria-label', t('knowledge.openSession'));
     open.appendChild(svg('i-session', 12));
-    open.addEventListener('click', () => openDetail('session', it.session_id, open));
+    open.addEventListener('click', () => openDetail(
+      'session', it.session_id, open, false, it.project_path || null,
+    ));
     actions.appendChild(open);
     row.appendChild(actions);
     rows.appendChild(row);
@@ -3802,7 +3871,7 @@ let capDwellTimer = null;
 function renderCapsule() {
   const sessions = snapshot.sessions || [];
   const calls = snapshot.calls || [];
-  const active = sessions.find((item) => item.session_id === snapshot.active_session_id) || sessions[0];
+  const active = findActiveSession(snapshot);
   const runningCalls = calls.filter((call) => callStatus(call) === 'running');
   const selectedCall = runningCalls[0] || calls[0] || null;
   const hasRunningAgent = runningCalls.length > 0;
@@ -4042,6 +4111,7 @@ document.addEventListener('keydown', (e) => {
 // ---------------------------------------------------------------------------
 let gkEl = null;
 let gkOpener = null;
+let globalSearchReqId = 0;
 
 function openGlobalSearch() {
   if (gkEl) { gkEl.querySelector('input')?.focus(); return; }
@@ -4096,6 +4166,7 @@ function openGlobalSearch() {
 }
 
 function closeGlobalSearch() {
+  globalSearchReqId += 1;
   if (!gkEl) return;
   gkEl.remove();
   gkEl = null;
@@ -4104,6 +4175,7 @@ function closeGlobalSearch() {
 }
 
 async function renderGlobalSearch(body, rawQ) {
+  const requestId = ++globalSearchReqId;
   const q = rawQ.toLowerCase();
   const mkItem = (title, meta, onOpen) => {
     const b = el('button', 'gk-item');
@@ -4118,15 +4190,19 @@ async function renderGlobalSearch(body, rawQ) {
     .map((c) => mkItem(oneLine(c.prompt || c.execId), `${TOOL_LABEL[c.tool] || c.tool || 'Agent'} · ${callStatusLabel(c)}`, () => openDetail('call', c.execId)));
   if (calls.length) groups.push([t('sections.calls'), calls]);
   const sess = (snapshot?.sessions || []).filter((s) => matchSession(s, q)).slice(0, 6)
-    .map((s) => mkItem(oneLine(s.intent || s.session_id), `${s.session_id}${s.status ? ' · ' + s.status : ''}`, () => openDetail('session', s.session_id)));
+    .map((s) => mkItem(
+      oneLine(s.intent || s.session_id),
+      `${s.session_id}${s.status ? ' · ' + s.status : ''}`,
+      () => openDetail('session', s.session_id, null, false, s.project_path),
+    ));
   if (sess.length) groups.push(['Session · Run', sess]);
   if (q) {
     const items = (await getKbItems() || []).filter((k) => matchKbItem(k, q)).slice(0, 6)
       .map((k) => mkItem(k.title || k.id, k.kind || '', () => openDetail('knowledge-item', `${k.kind}::${k.id}`)));
     if (items.length) groups.push([t('knowledge.knowledge'), items]);
   }
-  // 异步返回后面板可能已关闭
-  if (!body.isConnected) return;
+  // 异步返回后面板可能已关闭或查询已变化
+  if (!body.isConnected || requestId !== globalSearchReqId) return;
   body.innerHTML = '';
   for (const [label, items] of groups) {
     body.appendChild(el('div', 'gk-group', label));

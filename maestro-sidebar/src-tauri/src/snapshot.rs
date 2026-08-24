@@ -13,6 +13,8 @@ use crate::workflow::{self, ProjectInfo, SessionSummary};
 pub struct RuntimeSnapshot {
     pub workspace: Option<String>,
     pub active_session_id: Option<String>,
+    #[serde(default)]
+    pub active_project_path: Option<String>,
     pub generated_at: i64,
     pub sessions: Vec<SessionSummary>,
     pub calls: Vec<AgentCall>,
@@ -72,26 +74,24 @@ pub fn resolve_active<'a>(
 /// 所有扫描失败都降级为空数据而非报错。
 pub fn build_snapshot(cfg: &AppConfig) -> RuntimeSnapshot {
     let mut projects = all_projects(cfg);
+    let active_project = resolve_active(cfg, &projects).cloned();
     if !cfg.global_mode {
-        let active = resolve_active(cfg, &projects);
-        if let Some(a) = active {
-            projects = vec![a.clone()];
-        } else {
-            projects = Vec::new();
-        }
+        projects = active_project.clone().into_iter().collect();
     }
     let mut sessions: Vec<SessionSummary> = Vec::new();
     let mut knowledge = KnowledgeStats::default();
     let mut workspace: Option<String> = None;
     let mut active_session_id: Option<String> = None;
+    let mut active_project_path: Option<String> = None;
     let mut learning_top_digest = String::new();
     let mut pending_candidates = knowledge::PendingCandidates::default();
 
     for wf in projects {
         let info: ProjectInfo = workflow::project_info(&wf);
-        if workspace.is_none() {
+        if active_project.as_ref() == Some(&wf) || workspace.is_none() {
             workspace = Some(info.name.clone());
             active_session_id = info.active_session_id.clone();
+            active_project_path = Some(config::normalize_path(&wf));
         }
         let s = workflow::scan_sessions_with_project(&wf, Some(info.name.as_str()));
         sessions.extend(s);
@@ -135,6 +135,7 @@ pub fn build_snapshot(cfg: &AppConfig) -> RuntimeSnapshot {
     RuntimeSnapshot {
         workspace,
         active_session_id,
+        active_project_path,
         generated_at: now_seconds(),
         sessions,
         calls,
@@ -159,9 +160,10 @@ pub fn snapshot_fingerprint(snapshot: &RuntimeSnapshot) -> String {
     let calls = serde_json::to_string(&calls).unwrap_or_default();
     let knowledge = serde_json::to_string(&snapshot.knowledge).unwrap_or_default();
     format!(
-        "{}|{}|{}|{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}|{}|{}|{}",
         snapshot.workspace.as_deref().unwrap_or(""),
         snapshot.active_session_id.as_deref().unwrap_or(""),
+        snapshot.active_project_path.as_deref().unwrap_or(""),
         sessions,
         calls,
         knowledge,
@@ -178,6 +180,7 @@ mod tests {
         RuntimeSnapshot {
             workspace: Some("demo".into()),
             active_session_id: Some("s1".into()),
+            active_project_path: Some("/demo/.workflow".into()),
             generated_at: 100,
             sessions: vec![],
             calls: vec![],
@@ -207,6 +210,13 @@ mod tests {
         c.active_session_id = Some("s2".into());
         assert_ne!(snapshot_fingerprint(&a), snapshot_fingerprint(&c));
 
+        let mut active_project = sample();
+        active_project.active_project_path = Some("/other/.workflow".into());
+        assert_ne!(
+            snapshot_fingerprint(&a),
+            snapshot_fingerprint(&active_project)
+        );
+
         // 高频知识摘要变化（行内频率更新）必须改变指纹 → 触发 snapshot-changed
         let mut d = sample();
         d.learning_top_digest = "deadbeef".into();
@@ -219,5 +229,81 @@ mod tests {
         let raw = r#"{"workspace":"demo","active_session_id":null,"generated_at":100,"sessions":[],"calls":[],"knowledge":{"specs":1,"memory":0,"knowhow":0,"learning_rows":0,"issue_rows":0,"total":1}}"#;
         let parsed: RuntimeSnapshot = serde_json::from_str(raw).unwrap();
         assert_eq!(parsed.learning_top_digest, "");
+    }
+
+    #[test]
+    fn global_snapshot_preserves_locator_for_duplicate_session_ids() {
+        let base = std::env::temp_dir().join(format!(
+            "maestro-sidebar-global-sessions-{}-{}",
+            std::process::id(),
+            now_seconds()
+        ));
+        let mut roots = Vec::new();
+        for (dir, name, intent) in [("a", "alpha", "from alpha"), ("b", "beta", "from beta")] {
+            let project = base.join(dir);
+            let workflow_root = project.join(".workflow");
+            std::fs::create_dir_all(workflow_root.join("sessions/shared-session/runs/shared-run"))
+                .unwrap();
+            std::fs::write(
+                workflow_root.join("state.json"),
+                format!(
+                    r#"{{"project_name":"{name}","active_session_id":"shared-session","sessions":[{{"session_id":"shared-session","intent":"{intent}","status":"sealed"}}]}}"#
+                ),
+            )
+            .unwrap();
+            std::fs::write(
+                workflow_root.join("sessions/shared-session/session.json"),
+                format!(
+                    r#"{{"session_id":"shared-session","intent":"{intent}","status":"sealed"}}"#
+                ),
+            )
+            .unwrap();
+            std::fs::write(
+                workflow_root.join("sessions/shared-session/runs/shared-run/knowledge-delta.json"),
+                format!(
+                    r#"{{"session_id":"shared-session","run_id":"shared-run","updated_at":"9999-12-31T00:00:00Z","candidates":[{{"candidate_id":"KDC-{name}","target":"spec","action":"propose","title":"{name}","content":"{intent}"}}]}}"#
+                ),
+            )
+            .unwrap();
+            roots.push(config::normalize_path(&project));
+        }
+
+        let cfg = AppConfig {
+            roots,
+            global_mode: true,
+            ..Default::default()
+        };
+        let snapshot = build_snapshot(&cfg);
+        let sessions: Vec<&SessionSummary> = snapshot
+            .sessions
+            .iter()
+            .filter(|session| session.session_id == "shared-session")
+            .collect();
+        assert_eq!(sessions.len(), 2);
+        assert_ne!(sessions[0].project_path, sessions[1].project_path);
+        assert_eq!(
+            snapshot.active_session_id.as_deref(),
+            Some("shared-session")
+        );
+        assert_eq!(
+            snapshot.active_project_path,
+            Some(config::normalize_path(&base.join("a/.workflow")))
+        );
+        let candidates: Vec<&knowledge::PendingCandidate> = snapshot
+            .pending_candidates
+            .items
+            .iter()
+            .filter(|candidate| ["KDC-alpha", "KDC-beta"].contains(&candidate.candidate_id.as_str()))
+            .collect();
+        assert_eq!(candidates.len(), 2);
+        assert_ne!(candidates[0].project_path, candidates[1].project_path);
+        for session in sessions {
+            let locator = session.project_path.as_ref().unwrap();
+            let detail =
+                workflow::scan_session_detail(&std::path::PathBuf::from(locator), "shared-session")
+                    .unwrap();
+            assert_eq!(detail.session.intent, session.intent);
+        }
+        let _ = std::fs::remove_dir_all(base);
     }
 }

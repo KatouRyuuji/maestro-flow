@@ -85,6 +85,9 @@ pub struct SessionSummary {
     pub status: String,
     /// 所属工程（state.json project_name；多工程合并时用于区分）
     pub project: Option<String>,
+    /// 受信任的 .workflow 归一化路径；全局模式下用于无歧义详情定位。
+    #[serde(default)]
+    pub project_path: Option<String>,
     /// Full canonical active set. Legacy sessions contain zero or one entry.
     #[serde(default)]
     pub active_run_ids: Vec<String>,
@@ -565,6 +568,7 @@ pub fn scan_session_detail(wf_root: &Path, session_id: &str) -> Option<SessionDe
         intent: str_field(&session_json, "intent").or_else(|| v3_intent(&session_json)),
         status,
         project,
+        project_path: Some(normalize_path(wf_root)),
         active_run_ids: all_active_run_ids,
         active_run_id: compatible_active_run_id(&session_json, &runs),
         latest_completed_run_id: str_field(&session_json, "latest_completed_run_id")
@@ -718,6 +722,7 @@ fn scan_sessions_impl(wf_root: &Path, project: Option<&str>) -> Vec<SessionSumma
                 // their latest Run. Canonical session/3.0 status is authority.
                 status: effective_status(&raw_status, &latest_run, &session_dir, is_v3),
                 project: project_name.clone(),
+                project_path: Some(normalize_path(wf_root)),
                 active_run_ids: all_active_run_ids,
                 active_run_id: session_json
                     .as_ref()
@@ -1522,6 +1527,7 @@ mod tests {
 
         let detail = scan_session_detail(&wf, "s1").unwrap();
         assert_eq!(detail.session.project.as_deref(), Some("demo"));
+        assert_eq!(detail.session.project_path, Some(normalize_path(&wf)));
         let _ = fs::remove_dir_all(&root);
     }
 
