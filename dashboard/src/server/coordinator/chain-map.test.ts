@@ -222,6 +222,10 @@ describe('resolveAgentType', () => {
     expect(resolveAgentType('pi')).toBe('pi');
   });
 
+  it('maps grok to grok', () => {
+    expect(resolveAgentType('grok')).toBe('grok');
+  });
+
   it('returns claude-code for null', () => {
     expect(resolveAgentType(null)).toBe('claude-code');
   });
