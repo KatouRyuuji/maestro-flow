@@ -22,7 +22,7 @@ import {
   replayRequestReceipt,
   transitionReceiptRef,
 } from '../run/v3/receipts.js';
-import { completeSessionV3 } from '../run/v3/mutation-engine.js';
+import { completeSessionV3, type V3MutationResult } from '../run/v3/mutation-engine.js';
 import { projectResumeMapV1 } from '../run/v3/resume-view.js';
 import {
   addV3MutationOptions,
@@ -124,6 +124,79 @@ function chainMutationAction(
   };
 }
 
+export interface OpenSessionV3Input {
+  objective: string;
+  sessionId: string;
+  actorId: string;
+  requestId: string;
+  reason: string;
+  evidence?: readonly string[];
+  definitionOfDone?: string;
+  chain?: readonly string[];
+}
+
+/**
+ * Open a session/3.0 Session idempotently. Replays the original receipt when
+ * the same request-id is retried against an existing Session. Shared by the
+ * `maestro session open` CLI and the v3 plan-publish producer flow.
+ */
+export function openSessionV3(store: SessionStore, input: OpenSessionV3Input): V3MutationResult {
+  assertV3ParticipantIdentity({ participant: input.actorId, actor: input.actorId });
+  const sessionId = input.sessionId.trim();
+  if (!sessionId) throw new V3StructuredError('INVALID_ARGUMENT', 'Session ID is required');
+  const now = new Date().toISOString();
+  const evidence = [...(input.evidence ?? [])];
+  const payloadHash = canonicalPayloadHash({
+    operation: 'session-open',
+    objective: input.objective,
+    definition_of_done: input.definitionOfDone ?? '',
+    actor_id: input.actorId,
+    reason: input.reason,
+    evidence_refs: [...evidence].sort(),
+  });
+  const state = sessionStateV30Schema.parse({
+    schema_version: 'session/3.0', session_id: sessionId, objective: input.objective,
+    definition_of_done: input.definitionOfDone ?? '', status: 'open',
+    orchestration_revision: 1, activity_revision: 1,
+    chain: (input.chain ?? []).map((command, index) => ({
+      step_id: `s-${index + 1}`, command, args: [], status: 'pending' as const,
+      run_ids: [], goal_ref: null, decision_ref: null, decision_refs: [], stage: null,
+    })),
+    decisions: [], active_run_ids: [],
+    artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
+    created_at: now, updated_at: now, completed_at: null, archived_at: null,
+  });
+  const transition = createTransitionReceipt({
+    transitionId: `open-${input.requestId}`, requestId: input.requestId, sessionId,
+    activityRevision: 1, targetType: 'orchestration', targetId: sessionId,
+    revisionBefore: 0, revisionAfter: 1, actorId: input.actorId, participantId: input.actorId,
+    reason: input.reason, evidenceRefs: evidence, recordedAt: now, result: state,
+  });
+  const request = createRequestReceipt({
+    requestId: input.requestId, participantId: input.actorId, payloadHash,
+    transitionReceiptRef: transitionReceiptRef(1, transition.transition_id),
+  });
+  return store.withV30Transaction(sessionId, tx => {
+    if (tx.sessionExists()) {
+      const replayed = replayRequestReceipt({
+        tx, sessionId, requestId: input.requestId, participantId: input.actorId, payloadHash,
+      });
+      if (!replayed) throw new V3StructuredError('INVALID_STATE_TRANSITION', `Session already exists: ${sessionId}`);
+      return { status: 'replayed' as const, transition: replayed };
+    }
+    tx.writeSession(state);
+    tx.writeJson(resolve(store.sessionDir(sessionId), state.artifacts_ref), {
+      schema_version: 'artifacts/1.0', revision: 0, artifacts: {}, aliases: {},
+    }, artifactRegistrySchema);
+    tx.writeJson(resolve(store.sessionDir(sessionId), state.evidence_ref), {
+      schema_version: 'evidence/1.0', revision: 0, records: {},
+    }, evidenceStoreSchema);
+    tx.writeTransitionReceipt(transition);
+    tx.writeRequestReceipt(request);
+    return { status: 'applied' as const, transition };
+  });
+}
+
 export function registerSessionV3Command(program: Command): void {
   const session = program.command('session').description('Manage session/3.0 Sessions');
 
@@ -140,60 +213,13 @@ export function registerSessionV3Command(program: Command): void {
       try {
         assertV3ParticipantIdentity(options);
         const store = v3Store(options);
-        const sessionId = options.id.trim();
-        const now = new Date().toISOString();
-        const payloadHash = canonicalPayloadHash({
-          operation: 'session-open',
-          objective,
-          definition_of_done: options.definitionOfDone,
-          actor_id: options.actor,
-          reason: options.reason,
-          evidence_refs: [...options.evidence].sort(),
+        const mutation = openSessionV3(store, {
+          objective, sessionId: options.id.trim(), actorId: options.actor,
+          requestId: options.requestId, reason: options.reason, evidence: options.evidence,
+          definitionOfDone: options.definitionOfDone, chain: options.chain,
         });
-        if (!sessionId) throw new Error('Session ID is required');
-        const state = sessionStateV30Schema.parse({
-          schema_version: 'session/3.0', session_id: sessionId, objective,
-          definition_of_done: options.definitionOfDone, status: 'open',
-          orchestration_revision: 1, activity_revision: 1,
-          chain: (options.chain ?? []).map((command, index) => ({
-            step_id: `s-${index + 1}`, command, args: [], status: 'pending' as const,
-            run_ids: [], goal_ref: null, decision_ref: null, decision_refs: [], stage: null,
-          })),
-          decisions: [], active_run_ids: [],
-          artifacts_ref: 'artifacts.json', evidence_ref: 'evidence.json',
-          created_at: now, updated_at: now, completed_at: null, archived_at: null,
-        });
-        const transition = createTransitionReceipt({
-          transitionId: `open-${options.requestId}`, requestId: options.requestId, sessionId,
-          activityRevision: 1, targetType: 'orchestration', targetId: sessionId,
-          revisionBefore: 0, revisionAfter: 1, actorId: options.actor, participantId: options.actor,
-          reason: options.reason, evidenceRefs: options.evidence, recordedAt: now, result: state,
-        });
-        const request = createRequestReceipt({
-          requestId: options.requestId, participantId: options.actor, payloadHash,
-          transitionReceiptRef: transitionReceiptRef(1, transition.transition_id),
-        });
-        const mutation = store.withV30Transaction(sessionId, tx => {
-          if (tx.sessionExists()) {
-            const replayed = replayRequestReceipt({
-              tx, sessionId, requestId: options.requestId, participantId: options.actor, payloadHash,
-            });
-            if (!replayed) throw new Error(`Session already exists: ${sessionId}`);
-            return { status: 'replayed' as const, transition: replayed };
-          }
-          tx.writeSession(state);
-          tx.writeJson(resolve(store.sessionDir(sessionId), state.artifacts_ref), {
-            schema_version: 'artifacts/1.0', revision: 0, artifacts: {}, aliases: {},
-          }, artifactRegistrySchema);
-          tx.writeJson(resolve(store.sessionDir(sessionId), state.evidence_ref), {
-            schema_version: 'evidence/1.0', revision: 0, records: {},
-          }, evidenceStoreSchema);
-          tx.writeTransitionReceipt(transition);
-          tx.writeRequestReceipt(request);
-          return { status: 'applied' as const, transition };
-        });
-        emitV3Success({ operation: 'session-open', sessionId, requestId: options.requestId,
-          result: mutation.transition.result, mutation });
+        emitV3Success({ operation: 'session-open', sessionId: mutation.transition.session_id,
+          requestId: options.requestId, result: mutation.transition.result, mutation });
       } catch (error) {
         emitV3Error('session-open', error, { session: options.id, requestId: options.requestId });
       }
