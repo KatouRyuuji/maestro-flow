@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="dark light" />
-<title>Maestro Sidebar · 编辑器</title>
+<title data-i18n="app.editorTitle">Maestro Sidebar · 编辑器</title>
 <link rel="icon" href="icons.svg" type="image/svg+xml" />
 <link rel="stylesheet" href="themes.css" />
 <style>
@@ -164,27 +164,28 @@
 </style>
 </head>
 <body data-theme="graphite">
-  <div class="ed-tabs" id="edTabs" role="tablist" aria-label="打开的文档">
-    <button type="button" class="ed-new" id="edNew" title="新建条目" aria-label="新建条目">＋</button>
+  <div class="ed-tabs" id="edTabs" role="tablist" aria-label="打开的文档" data-i18n-aria-label="editor.openDocuments">
+    <button type="button" class="ed-new" id="edNew" title="新建条目" aria-label="新建条目" data-i18n-title="editor.newItem" data-i18n-aria-label="editor.newItem">＋</button>
   </div>
   <div class="ed-toolbar">
-    <button type="button" class="ed-btn primary" id="edSave" disabled>保存</button>
-    <button type="button" class="ed-btn" id="edPreview">预览</button>
-    <button type="button" class="ed-btn" id="edCopy">复制 ID</button>
-    <button type="button" class="ed-btn danger" id="edDelete" disabled>删除</button>
+    <button type="button" class="ed-btn primary" id="edSave" disabled data-i18n="editor.save">保存</button>
+    <button type="button" class="ed-btn" id="edPreview" data-i18n="editor.preview">预览</button>
+    <button type="button" class="ed-btn" id="edCopy" data-i18n="editor.copyId">复制 ID</button>
+    <button type="button" class="ed-btn danger" id="edDelete" disabled data-i18n="editor.delete">删除</button>
     <span class="ed-dirty" id="edDirty"></span>
     <span class="ed-meta" id="edMeta"></span>
   </div>
   <div class="ed-body" id="edBody">
-    <textarea id="edContent" spellcheck="false" aria-label="条目内容（Markdown / JSON）"></textarea>
+    <textarea id="edContent" spellcheck="false" aria-label="条目内容（Markdown / JSON）" data-i18n-aria-label="editor.contentAria"></textarea>
     <div class="ed-preview" id="edPreviewPane" hidden></div>
   </div>
   <div class="ed-status">
     <span class="st-dot" id="stDot"></span>
-    <span id="stText" role="status" aria-live="polite">就绪</span>
-    <span style="margin-left:auto" id="stHint">Ctrl+S 保存 · 点击侧边栏条目可继续添加标签页</span>
+    <span id="stText" role="status" aria-live="polite" data-i18n="editor.ready">就绪</span>
+    <span style="margin-left:auto" id="stHint" data-i18n="editor.hint">Ctrl+S 保存 · 点击侧边栏条目可继续添加标签页</span>
   </div>
   <script src="md.js"></script>
+  <script src="i18n.js"></script>
   <script src="editor.js"></script>
 </body>
 </html>

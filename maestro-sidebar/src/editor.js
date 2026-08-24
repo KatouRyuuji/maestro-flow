@@ -5,6 +5,8 @@
 // ===========================================================================
 'use strict';
 
+const i18n = window.MaestroI18n;
+const tr = (key, variables) => i18n.t(key, variables);
 const TAURI = window.__TAURI__;
 const { invoke } = TAURI?.core ?? {};
 const { listen } = TAURI?.event ?? {};
@@ -75,11 +77,11 @@ function renderTabs() {
     tt.title = `${t.kind} · ${t.id}`;
     btn.appendChild(tt);
     const x = el('span', 'ed-tab-x', '×');
-    x.title = '关闭';
+    x.title = tr('editor.close');
     x.addEventListener('click', async (e) => {
       e.stopPropagation();
       const dirty = state.tabs[i]?.dirty;
-      if (dirty && !window.confirm('有未保存的修改，放弃？')) return;
+      if (dirty && !window.confirm(tr('editor.discardConfirm'))) return;
       await invoke('close_editor_tab', { index: i }).catch(() => {});
       await loadState();
       if (state.tabs.length === 0) window.close();
@@ -119,7 +121,7 @@ function renderBody() {
     $('edPreviewPane').hidden = true;
     $('edMeta').textContent = '';
     $('edDirty').textContent = '';
-    setStatus('就绪 · 点击侧边栏知识条目打开文档');
+    setStatus(tr('editor.readyHint'));
     return;
   }
   $('edContent').value = t.content;
@@ -127,8 +129,8 @@ function renderBody() {
   $('edPreviewPane').hidden = !previewMode;
   if (previewMode) $('edPreviewPane').innerHTML = renderMd(t.content);
   $('edMeta').textContent = `${t.kind} · ${t.id}`;
-  $('edDirty').textContent = t.dirty ? '未保存' : '';
-  $('edPreview').textContent = previewMode ? '编辑' : '预览';
+  $('edDirty').textContent = t.dirty ? tr('editor.unsaved') : '';
+  $('edPreview').textContent = previewMode ? tr('editor.edit') : tr('editor.preview');
   setStatus(`${t.kind} · ${t.id}`, t.dirty ? 'warn' : 'ok');
 }
 
@@ -138,7 +140,7 @@ async function save() {
   const btn = $('edSave');
   btn.disabled = true;
   btn.setAttribute('aria-busy', 'true');
-  setStatus('保存中…', 'warn');
+  setStatus(tr('editor.saving'), 'warn');
   try {
     const content = $('edContent').value;
     t.content = content;
@@ -147,9 +149,9 @@ async function save() {
     await invoke('editor_synced', { kind: t.kind, id: t.id, content });
     t.dirty = false;
     $('edDirty').textContent = '';
-    setStatus(`已保存 · ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`, 'ok');
+    setStatus(tr('editor.saved', { time: i18n.formatTime(new Date()) }), 'ok');
   } catch (err) {
-    setStatus(`保存失败：${err && err.message ? err.message : err}`, 'error');
+    setStatus(tr('editor.saveFailed', { error: err && err.message ? err.message : err }), 'error');
   } finally {
     btn.disabled = !tab();
     btn.removeAttribute('aria-busy');
@@ -159,28 +161,28 @@ async function save() {
 async function removeTab() {
   const t = tab();
   if (!t) return;
-  if (!window.confirm(`删除知识条目？\n${t.kind} · ${t.id}`)) return;
+  if (!window.confirm(tr('editor.deleteConfirm', { kind: t.kind, id: t.id }))) return;
   try {
     await invoke('delete_knowledge_item', { kind: t.kind, id: t.id });
     const idx = state.active;
     await invoke('close_editor_tab', { index: idx });
-    setStatus(`已删除 ${t.id}`, 'ok');
+    setStatus(tr('editor.deleted', { id: t.id }), 'ok');
     await loadState();
     if (state.tabs.length === 0) window.close();
   } catch (err) {
-    setStatus(`删除失败：${err && err.message ? err.message : err}`, 'error');
+    setStatus(tr('editor.deleteFailed', { error: err && err.message ? err.message : err }), 'error');
   }
 }
 
 async function createTab() {
-  const kind = window.prompt('条目类型（specs / memory / knowhow）：', 'specs');
+  const kind = window.prompt(tr('editor.kindPrompt'), 'specs');
   if (!kind || !['specs', 'memory', 'knowhow'].includes(kind)) return;
-  const title = window.prompt('条目标题：');
+  const title = window.prompt(tr('editor.titlePrompt'));
   if (!title) return;
   try {
     const id = await invoke('create_knowledge_item', { kind, title, content: '' });
     await invoke('open_editor_tab', { kind, id });
-    setStatus(`已创建 ${id}`, 'ok');
+    setStatus(tr('editor.created', { id }), 'ok');
     await loadState();
     // 预填标题并聚焦
     const t = tab();
@@ -192,7 +194,7 @@ async function createTab() {
       $('edContent').focus();
     }
   } catch (err) {
-    setStatus(`创建失败：${err && err.message ? err.message : err}`, 'error');
+    setStatus(tr('editor.createFailed', { error: err && err.message ? err.message : err }), 'error');
   }
 }
 
@@ -204,9 +206,9 @@ $('edCopy').addEventListener('click', async () => {
   if (!t) return;
   try {
     await navigator.clipboard.writeText(t.id);
-    setStatus(`已复制 ${t.id}`, 'ok');
+    setStatus(tr('editor.copied', { id: t.id }), 'ok');
   } catch {
-    setStatus('复制失败：剪贴板不可用', 'error');
+    setStatus(tr('editor.copyFailed'), 'error');
   }
 });
 $('edDelete').addEventListener('click', removeTab);
@@ -220,7 +222,7 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     const t = tab();
     if (t) {
-      if (t.dirty && !window.confirm('有未保存的修改，放弃？')) return;
+      if (t.dirty && !window.confirm(tr('editor.discardConfirm'))) return;
       invoke('close_editor_tab', { index: state.active }).then(async () => {
         await loadState();
         if (state.tabs.length === 0) window.close();
@@ -263,7 +265,7 @@ $('edContent').addEventListener('input', () => {
     const wasDirty = t.dirty;
     t.content = $('edContent').value;
     t.dirty = true;
-    $('edDirty').textContent = '未保存';
+    $('edDirty').textContent = tr('editor.unsaved');
     if (!wasDirty) setStatus(`${t.kind} · ${t.id}`, 'warn');
     void syncDraft(t, t.content).catch(() => {});
   }
@@ -275,4 +277,15 @@ $('edContent').addEventListener('input', () => {
   }
 });
 
-loadState();
+function applyEditorLocale() {
+  i18n.applyTranslations(document);
+  renderTabs();
+  renderBody();
+}
+
+window.addEventListener('maestro-locale-changed', applyEditorLocale);
+
+i18n.init().then(() => {
+  applyEditorLocale();
+  loadState();
+});

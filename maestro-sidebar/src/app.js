@@ -6,6 +6,9 @@
 
 'use strict';
 
+const i18n = window.MaestroI18n;
+const t = (key, variables) => i18n.t(key, variables);
+
 // ---------------------------------------------------------------------------
 // 启动错误捕获（必须最先注册，任何初始化失败都可见）
 // ---------------------------------------------------------------------------
@@ -26,14 +29,10 @@ window.addEventListener('unhandledrejection', (e) => {
 
 // Tauri global API（防御式获取；失败时显示明确错误）
 const TAURI = window.__TAURI__;
-if (!TAURI) {
-  showBootError('window.__TAURI__ 不存在：应用未在 Tauri 容器中运行，或 withGlobalTauri 未生效');
-}
 const { invoke } = TAURI?.core ?? {};
 const { listen } = TAURI?.event ?? {};
 const { open: dialogOpen } = TAURI?.dialog ?? {};
 const appWindow = TAURI?.window?.getCurrentWindow?.() ?? null;
-if (!invoke) showBootError('__TAURI__.core 缺失：Tauri API 未注入');
 
 // ---------------------------------------------------------------------------
 // 状态
@@ -116,19 +115,23 @@ const TOOL_LABEL = {
   'api-explore': 'API Explore',
 };
 const VERDICT_COLOR = {
-  ready: 'var(--ok)', done: 'var(--ok)',
+  ready: 'var(--ok)', done: 'var(--ok)', completed: 'var(--ok)', sealed: 'var(--ok)',
   blocked: 'var(--danger)', failed: 'var(--danger)',
-  'needs-retry': 'var(--warn)', done_with_concerns: 'var(--warn)', ready_with_concerns: 'var(--warn)',
+  needs_retry: 'var(--warn)', done_with_concerns: 'var(--warn)', ready_with_concerns: 'var(--warn)',
 };
 // verdict 中文语义（层次分明的状态语言）；原始英文保留在 title 中供技术读者查看
-const VERDICT_LABEL = {
-  ready: '就绪', done: '完成',
-  blocked: '卡住', failed: '失败',
-  'needs-retry': '需重试', done_with_concerns: '有疑虑', ready_with_concerns: '有疑虑',
+const VERDICT_LABEL_KEYS = {
+  ready: 'common.ready', done: 'common.done', completed: 'common.done', sealed: 'common.sealed',
+  running: 'common.running', pending: 'common.pending', cancelled: 'common.cancelled',
+  blocked: 'knowledge.status.blocked', failed: 'common.failed', needs_retry: 'common.retry',
+  done_with_concerns: 'runs.concernsTitle', ready_with_concerns: 'runs.concernsTitle',
 };
+function normalizeRunSignal(value) {
+  return String(value || '').toLowerCase().replace('needs-retry', 'needs_retry');
+}
 function verdictLabel(v) {
-  const s = String(v || '').toLowerCase();
-  return VERDICT_LABEL[s] || s || '未知';
+  const s = normalizeRunSignal(v);
+  return VERDICT_LABEL_KEYS[s] ? t(VERDICT_LABEL_KEYS[s]) : (s || t('common.unknown'));
 }
 
 const $ = (id) => document.getElementById(id);
@@ -151,6 +154,10 @@ const safeDomId = (value) => {
 // ---------------------------------------------------------------------------
 
 async function init() {
+  await i18n.init();
+  applyLocaleUi();
+  if (!TAURI) showBootError(t('boot.tauriMissing'));
+  if (!invoke) showBootError(t('boot.coreMissing'));
   applyTheme();
   await bindEvents();
   try {
@@ -173,13 +180,13 @@ async function init() {
     if (cached && cached.snapshot && cached.snapshot.sessions) {
       snapshot = cached.snapshot;
       render();
-      $('liveStatus').textContent = `缓存 · ${fmtClock2(new Date(cached.ts).toISOString())}`;
+      $('liveStatus').textContent = t('status.cached', { time: fmtClock2(new Date(cached.ts).toISOString()) });
     }
   } catch { /* 缓存损坏忽略 */ }
 
   // 首帧骨架：无缓存时快照到达前不闪空态
   if (!snapshot) {
-    $('liveStatus').textContent = '正在加载…';
+    $('liveStatus').textContent = t('status.loading');
     renderSkeleton();
   }
   try {
@@ -187,10 +194,10 @@ async function init() {
     cacheSnapshot(snapshot);
     seedNotifyState(snapshot);
   } catch (err) {
-    snapshot = { workspace: '未连接', active_session_id: null, sessions: [], calls: [], knowledge: { total: 0 } };
-    $('liveStatus').textContent = '连接中断';
+    snapshot = { workspace: t('workspace.notConnected'), active_session_id: null, sessions: [], calls: [], knowledge: { total: 0 } };
+    $('liveStatus').textContent = t('status.disconnected');
     $('liveDot').classList.add('stale');
-    showBootError(`首次快照失败：${String(err && err.message ? err.message : err)}`);
+    showBootError(t('boot.snapshotFailed', { error: String(err && err.message ? err.message : err) }));
     seedNotifyState(snapshot);
   }
   render();
@@ -211,16 +218,16 @@ async function init() {
       scheduleLiveCallDetailRefresh();
       if (!$('menuPop').hidden) return;
       $('liveDot').classList.remove('stale');
-      $('liveStatus').textContent = '实时监听';
+      $('liveStatus').textContent = t('status.live');
       renderWithFocus();
     });
     await listen('knowledge-updated', (event) => {
       void refreshKnowledgeCaches(event.payload || {});
     });
-    $('liveStatus').textContent = '实时监听';
+    $('liveStatus').textContent = t('status.live');
   } catch {
     pollFallback = true;
-    $('liveStatus').textContent = '轮询模式';
+    $('liveStatus').textContent = t('status.polling');
     $('liveDot').classList.add('stale');
   }
 
@@ -231,7 +238,7 @@ async function init() {
       // 连接恢复：清除 stale 状态点并复位文案（轮询降级模式保留「轮询模式」提示）
       if ($('liveDot').classList.contains('stale')) {
         $('liveDot').classList.remove('stale');
-        $('liveStatus').textContent = pollFallback ? '轮询模式' : '实时监听';
+        $('liveStatus').textContent = pollFallback ? t('status.polling') : t('status.live');
       }
       if (JSON.stringify(s) !== JSON.stringify(snapshot)) {
         snapshot = s;
@@ -248,7 +255,7 @@ async function init() {
         renderWithFocus();
       }
     } catch {
-      $('liveStatus').textContent = '连接中断';
+      $('liveStatus').textContent = t('status.disconnected');
       $('liveDot').classList.add('stale');
     }
   }, 15000);
@@ -379,7 +386,7 @@ function bindWindowDrag(surface, blockedSelector) {
     invoke('undock_window').catch(() => {});
     appWindow.startDragging().catch(() => {
       dockTracking = false;
-      $('liveStatus').textContent = '窗口拖动不可用';
+      $('liveStatus').textContent = t('status.dragUnavailable');
     });
   });
 }
@@ -568,7 +575,7 @@ function bindEvents() {
 
   // 底部渐隐与时钟
   $('content').addEventListener('scroll', updateFade);
-  const tickClock = () => { $('clk').textContent = new Date().toLocaleTimeString('zh-CN', { hour12: false }); };
+  const tickClock = () => { $('clk').textContent = i18n.formatTime(new Date()); };
   setInterval(tickClock, 1000);
   tickClock();
 
@@ -578,7 +585,7 @@ function bindEvents() {
     btn.classList.add('rotating');
     btn.disabled = true;
     btn.setAttribute('aria-busy', 'true');
-    $('liveStatus').textContent = '正在刷新';
+    $('liveStatus').textContent = t('status.refreshing');
     try {
       snapshot = await invoke('get_snapshot');
       cacheSnapshot(snapshot);
@@ -589,7 +596,7 @@ function bindEvents() {
       await loadTopKnowledge(true);
       if (!view) renderOverview();
       $('liveDot').classList.remove('stale');
-      $('liveStatus').textContent = `已更新 ${fmtClock2(new Date().toISOString())}`;
+      $('liveStatus').textContent = t('status.updated', { time: fmtClock2(new Date().toISOString()) });
       // 完成闭环反馈：旋转图标短暂变为勾选（复用复制按钮模式）
       const use = btn.querySelector('use');
       if (use) {
@@ -597,7 +604,7 @@ function bindEvents() {
         setTimeout(() => { if (use.isConnected) use.setAttribute('href', 'icons.svg#i-refresh'); }, 900);
       }
     } catch (err) {
-      $('liveStatus').textContent = `刷新失败${err && err.message ? ' · ' + err.message : ''}`;
+      $('liveStatus').textContent = t('status.refreshFailed', { detail: err && err.message ? ' · ' + err.message : '' });
     } finally {
       btn.classList.remove('rotating');
       btn.disabled = false;
@@ -628,7 +635,7 @@ function bindEvents() {
       await invoke('set_always_on_top', { flag });
       applyTop(flag);
     } catch {
-      $('liveStatus').textContent = '置顶设置失败';
+      $('liveStatus').textContent = t('status.topFailed');
     } finally {
       btn.disabled = false;
       btn.removeAttribute('aria-busy');
@@ -638,7 +645,7 @@ function bindEvents() {
   const applyAutoStart = (flag) => {
     const btn = $('btnAutoStart');
     btn.setAttribute('aria-checked', String(flag));
-    btn.querySelector('i').textContent = flag ? '开' : '关';
+    btn.querySelector('i').textContent = flag ? t('common.on') : t('common.off');
   };
   $('btnAutoStart').addEventListener('click', async () => {
     const btn = $('btnAutoStart');
@@ -648,9 +655,9 @@ function bindEvents() {
     try {
       await invoke('set_autostart', { flag });
       applyAutoStart(flag);
-      $('liveStatus').textContent = flag ? '已开启开机自启' : '已关闭开机自启';
+      $('liveStatus').textContent = flag ? t('status.autostartEnabled') : t('status.autostartDisabled');
     } catch {
-      $('liveStatus').textContent = '自启设置失败';
+      $('liveStatus').textContent = t('status.autostartFailed');
     } finally {
       btn.disabled = false;
       btn.removeAttribute('aria-busy');
@@ -677,9 +684,9 @@ function bindEvents() {
       render();
       $('setup').hidden = true;
       $('mainView').hidden = false;
-      $('liveStatus').textContent = `已添加工程 ${(config.roots || []).length} 个`;
+      $('liveStatus').textContent = t('status.projectsAdded', { count: (config.roots || []).length });
     } catch {
-      $('liveStatus').textContent = '目录无效，请重试';
+      $('liveStatus').textContent = t('setup.invalidDirectory');
     } finally {
       btn.disabled = false;
     }
@@ -702,9 +709,9 @@ function bindEvents() {
       seedNotifyState(snapshot);
       applyGlobalMode();
       render();
-      $('liveStatus').textContent = flag ? '已切换到全局模式' : '已切换到单工程模式';
+      $('liveStatus').textContent = flag ? t('status.globalEnabled') : t('status.globalDisabled');
     } catch {
-      $('liveStatus').textContent = '全局模式切换失败';
+      $('liveStatus').textContent = t('status.globalFailed');
     } finally {
       btn.disabled = false;
     }
@@ -736,7 +743,7 @@ function bindEvents() {
       applyTop(flag);
     } catch {
       // 胶囊无状态栏：用上下文 meta 短暂反馈失败（下次渲染自动覆盖）
-      $('capContextMeta').textContent = '置顶设置失败';
+      $('capContextMeta').textContent = t('status.topFailed');
     } finally {
       btn.disabled = false;
       toggleCapsuleMenu(false);
@@ -749,7 +756,10 @@ function bindEvents() {
   });
   $('btnCapQuit').addEventListener('click', () => invoke('quit_app'));
 
-  // 主题（点击 + radiogroup 方向键，roving tabindex）
+  // 主题与语言（点击 + radiogroup 方向键，roving tabindex）
+  $('localeSelect').addEventListener('change', (event) => {
+    i18n.setPreference(event.currentTarget.value);
+  });
   const dots = Array.from(document.querySelectorAll('.theme-dot'));
   const selectTheme = (name) => {
     document.body.dataset.theme = name;
@@ -789,16 +799,16 @@ function bindEvents() {
     const path = await dialogOpen({
       directory: false,
       multiple: false,
-      filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'] }],
+      filters: [{ name: t('settings.chooseWallpaper'), extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'] }],
     });
     if (!path) return;
     try {
       config = await invoke('set_wallpaper', { path });
       applyWallpaper(config);
       updateWallpaperUI();
-      $('liveStatus').textContent = '壁纸已应用';
+      $('liveStatus').textContent = t('status.wallpaperApplied');
     } catch {
-      $('liveStatus').textContent = '壁纸文件不可用';
+      $('liveStatus').textContent = t('status.wallpaperUnavailable');
     }
   });
   let wpTimer = null;
@@ -812,7 +822,7 @@ function bindEvents() {
         config = await invoke('set_wallpaper_opacity', { opacity: Number(v) / 100 });
       } catch {
         // 本地预览保留，但持久化失败要可感知
-        $('liveStatus').textContent = '透明度未保存（重启后将还原）';
+        $('liveStatus').textContent = t('status.wallpaperOpacityUnsaved');
       }
     }, 80);
   });
@@ -821,15 +831,15 @@ function bindEvents() {
       config = await invoke('clear_wallpaper');
       applyWallpaper(config);
       updateWallpaperUI();
-      $('liveStatus').textContent = '壁纸已清除';
+      $('liveStatus').textContent = t('status.wallpaperCleared');
     } catch {
-      $('liveStatus').textContent = '清除失败';
+      $('liveStatus').textContent = t('status.clearFailed');
     }
   });
 
   // 胶囊 → 卡片：双击面板直达对应详情（单击 mousedown 仍走窗口拖拽，event.detail>1 不触发拖拽）
-  $('capSessionPanel').title = '双击打开会话详情';
-  $('capAgentPanel').title = '双击打开调用详情';
+  $('capSessionPanel').title = t('capsule.doubleClickSession');
+  $('capAgentPanel').title = t('capsule.doubleClickCall');
   $('capSessionPanel').addEventListener('dblclick', async () => {
     const sessions = snapshot?.sessions || [];
     const active = sessions.find((s) => s.session_id === snapshot.active_session_id) || sessions[0];
@@ -875,7 +885,7 @@ function bindEvents() {
       return;
     }
     if (event.key === 'Tab' && !$('menuPop').hidden) {
-      const focusables = Array.from($('menuPop').querySelectorAll('button:not([disabled]), input[type="range"]')).filter((n) => !n.hidden);
+      const focusables = Array.from($('menuPop').querySelectorAll('button:not([disabled]), select:not([disabled]), input[type="range"]')).filter((n) => !n.hidden);
       if (!focusables.length) return;
       const first = focusables[0];
       const last = focusables[focusables.length - 1];
@@ -929,10 +939,37 @@ function toggleMenu(open, trigger = null) {
 
 function applyTop(flag) {
   $('btnTop').setAttribute('aria-checked', String(flag));
-  $('btnTop').querySelector('i').textContent = flag ? '开' : '关';
+  $('btnTop').querySelector('i').textContent = flag ? t('common.on') : t('common.off');
   $('btnCapTop').setAttribute('aria-checked', String(flag));
-  $('btnCapTop').querySelector('i').textContent = flag ? '开' : '关';
+  $('btnCapTop').querySelector('i').textContent = flag ? t('common.on') : t('common.off');
 }
+
+function applyLocaleUi() {
+  i18n.applyTranslations(document);
+  const select = $('localeSelect');
+  if (select) select.value = i18n.getPreference();
+  for (const dot of document.querySelectorAll('.theme-dot')) {
+    const name = t(dot.dataset.themeNameKey);
+    dot.title = name;
+    dot.setAttribute('aria-label', t('settings.theme', { name }));
+  }
+  for (const id of ['btnTop', 'btnCapTop', 'btnAutoStart']) {
+    const button = $(id);
+    if (!button) continue;
+    button.querySelector('i').textContent = button.getAttribute('aria-checked') === 'true' ? t('common.on') : t('common.off');
+  }
+  $('capSessionPanel').title = t('capsule.doubleClickSession');
+  $('capAgentPanel').title = t('capsule.doubleClickCall');
+}
+
+window.addEventListener('maestro-locale-changed', () => {
+  applyLocaleUi();
+  if (config) {
+    applyGlobalMode();
+    renderRootList();
+  }
+  if (snapshot) renderWithFocus();
+});
 
 function applyTheme() {
   const supported = ['graphite', 'mist', 'glass', 'ember', 'blueprint', 'ocean', 'sunset'];
@@ -970,7 +1007,7 @@ function applyWallpaper(cfg) {
   probe.onerror = () => {
     document.body.classList.remove('has-wallpaper');
     world.style.removeProperty('--wp-img');
-    $('liveStatus').textContent = '壁纸文件不存在，已回退主题';
+    $('liveStatus').textContent = t('status.wallpaperMissing');
   };
   probe.src = url;
 }
@@ -979,14 +1016,14 @@ function renderRootList() {
   const box = $('rootList');
   box.innerHTML = '';
   if (!workspaces.length) {
-    box.appendChild(el('div', 'mp-label', '未发现工作空间'));
+    box.appendChild(el('div', 'mp-label', t('workspace.notFound')));
     return;
   }
   for (const ws of workspaces) {
     const row = el('button', `mp-row${ws.active ? ' active-ws' : ''}`);
     row.type = 'button';
-    row.title = ws.active ? `${ws.name}（当前）` : `切换到 ${ws.name}`;
-    row.setAttribute('aria-label', `工作空间：${ws.name}${ws.active ? '（当前）' : ''}`);
+    row.title = ws.active ? `${ws.name} (${t('workspace.current')})` : t('workspace.switchTo', { name: ws.name });
+    row.setAttribute('aria-label', t('workspace.aria', { name: ws.name, current: ws.active ? ` (${t('workspace.current')})` : '' }));
     row.appendChild(svg(ws.source === 'root' ? 'i-folder' : 'i-git', 12));
     const span = el('span', 'root-path', `${ws.name} · ${ws.path}`);
     span.title = ws.path;
@@ -1007,22 +1044,22 @@ function renderRootList() {
         snapshot = await invoke('get_snapshot');
         render();
         await refreshWorkspaces();
-        $('liveStatus').textContent = `已切换：${ws.name}`;
+        $('liveStatus').textContent = t('status.switchedWorkspace', { name: ws.name });
         fitWindow();
       } catch {
-        $('liveStatus').textContent = '切换失败';
+        $('liveStatus').textContent = t('status.switchFailed');
       }
     });
     // 删除（仅 root 来源）
     if (ws.source === 'root' && config?.roots?.includes(ws.path)) {
       const trash = el('span', 'ws-trash', '');
-      trash.title = '移除工程目录';
+      trash.title = t('workspace.remove');
       trash.setAttribute('role', 'button');
-      trash.setAttribute('aria-label', `移除工程目录：${ws.name}`);
+      trash.setAttribute('aria-label', t('workspace.removeAria', { name: ws.name }));
       trash.appendChild(svg('i-trash', 11));
       trash.addEventListener('click', async (event) => {
         event.stopPropagation();
-        if (!window.confirm(`从侧边栏移除工程目录？\n${ws.path}`)) return;
+        if (!window.confirm(t('workspace.removeConfirm', { path: ws.path }))) return;
         config = await invoke('remove_root', { path: ws.path });
         await refreshWorkspaces();
         snapshot = await invoke('get_snapshot');
@@ -1069,7 +1106,7 @@ function renderWorkspacePop() {
     row.setAttribute('aria-selected', String(ws.active));
     row.appendChild(el('span', 'ws-item-name', ws.name));
     row.appendChild(el('span', 'ws-item-path', ws.path));
-    row.appendChild(el('span', 'ws-item-src', ws.source === 'root' ? '根' : '自动'));
+    row.appendChild(el('span', 'ws-item-src', ws.source === 'root' ? t('workspace.root') : t('workspace.automatic')));
     row.appendChild(el('span', 'ws-item-mark', ws.active ? '✓' : ''));
     row.addEventListener('click', async () => {
       if (ws.active) { toggleWsPop(false); return; }
@@ -1080,10 +1117,10 @@ function renderWorkspacePop() {
         render();
         await refreshWorkspaces();
         toggleWsPop(false);
-        $('liveStatus').textContent = `已切换：${ws.name}`;
+        $('liveStatus').textContent = t('status.switchedWorkspace', { name: ws.name });
         fitWindow();
       } catch {
-        $('liveStatus').textContent = '切换失败';
+        $('liveStatus').textContent = t('status.switchFailed');
       }
     });
     list.appendChild(row);
@@ -1093,7 +1130,7 @@ function renderWorkspacePop() {
 /** 切换到下一个工作空间（胶囊 chip 循环） */
 async function cycleWorkspace() {
   if (workspaces.length < 2) {
-    $('liveStatus').textContent = workspaces.length === 1 ? '仅一个工作空间' : '无可用工作空间';
+    $('liveStatus').textContent = workspaces.length === 1 ? t('status.oneWorkspace') : t('status.noWorkspace');
     return;
   }
   const idx = workspaces.findIndex((w) => w.active);
@@ -1104,10 +1141,10 @@ async function cycleWorkspace() {
     snapshot = await invoke('get_snapshot');
     render();
     await refreshWorkspaces();
-    $('liveStatus').textContent = `已切换：${next.name}`;
+    $('liveStatus').textContent = t('status.switchedWorkspace', { name: next.name });
     fitWindow();
   } catch {
-    $('liveStatus').textContent = '切换失败';
+    $('liveStatus').textContent = t('status.switchFailed');
   }
 }
 
@@ -1145,8 +1182,8 @@ function notifyMigration(snap) {
       && ['running', 'queued'].includes(prev)
       && ['done', 'error'].includes(now)) {
       const tool = TOOL_LABEL[c.tool] || c.tool || 'Agent';
-      const title = now === 'done' ? `Agent 完成 · ${tool}` : `Agent 失败 · ${tool}`;
-      const body = oneLine(c.prompt || '无提示词').slice(0, 120);
+      const title = now === 'done' ? t('notifications.agentDone', { tool }) : t('notifications.agentFailed', { tool });
+      const body = oneLine(c.prompt || t('overview.noPrompt')).slice(0, 120);
       invoke('notify', { title, body }).catch(() => {});
     }
     notifySeen.calls.set(c.execId, now);
@@ -1165,7 +1202,7 @@ function notifyMigration(snap) {
       && ['running', 'active', 'executing', 'paused'].includes(prev)
       && ['blocked', 'failed', 'error'].includes(now)) {
       const body = oneLine(s.intent || s.session_id).slice(0, 120);
-      invoke('notify', { title: '会话受阻', body }).catch(() => {});
+      invoke('notify', { title: t('notifications.sessionBlocked'), body }).catch(() => {});
     }
     notifySeen.sessions.set(s.session_id, now);
   }
@@ -1175,8 +1212,8 @@ function applyGlobalMode() {
   const on = Boolean(config?.global_mode);
   const btn = $('btnGlobal');
   btn.setAttribute('aria-pressed', String(on));
-  $('globalName').textContent = on ? '全局' : '单工程';
-  btn.title = on ? '全局模式：观察全部工程（点击切回单工程）' : '单工程模式：仅观察激活工程（点击切换全局）';
+  $('globalName').textContent = on ? t('workspace.global') : t('workspace.singleProject');
+  btn.title = on ? t('workspace.globalTitle') : t('workspace.singleTitle');
 }
 
 // ---------------------------------------------------------------------------
@@ -1186,8 +1223,8 @@ function applyGlobalMode() {
 function render() {
   if (!snapshot) return;
   $('wsChip').textContent = config?.global_mode && workspaces.length > 1
-    ? `全局 · ${workspaces.length} 工程`
-    : (snapshot.workspace || '未连接');
+    ? t('workspace.globalCount', { count: workspaces.length })
+    : (snapshot.workspace || t('workspace.notConnected'));
   $('wsChip').title = snapshot.workspace || '';
 
   // 详情视图
@@ -1254,8 +1291,8 @@ function setSearchCount(matched, total) {
 
 function emptySearchResult(text) {
   const d = el('div', 'detail-empty');
-  d.appendChild(el('div', '', text || '未找到匹配内容'));
-  d.appendChild(el('div', 'empty-hint', '换个关键词试试，或清除搜索'));
+  d.appendChild(el('div', '', text || t('search.noMatch')));
+  d.appendChild(el('div', 'empty-hint', t('search.tryAnother')));
   return d;
 }
 
@@ -1267,11 +1304,36 @@ function matchCall(c, q) {
     .some((v) => String(v).toLowerCase().includes(q));
 }
 
+/** Return the complete active Run set while retaining legacy singular data. */
+function sessionActiveRunIds(session) {
+  const ids = Array.isArray(session?.active_run_ids)
+    ? session.active_run_ids.filter(Boolean).map(String)
+    : [];
+  if (!ids.length && session?.active_run_id) ids.push(String(session.active_run_id));
+  return [...new Set(ids)];
+}
+
+function isRunActive(run, session) {
+  return Boolean(run?.run_id) && sessionActiveRunIds(session).includes(String(run.run_id));
+}
+
+function runExecutorLabel(run) {
+  if (run?.platform) return TOOL_LABEL[run.platform] || run.platform;
+  return run?.actor_id ? `@${run.actor_id}` : '';
+}
+
+function runDisplayTime(run) {
+  return run?.started_at || run?.created_at || run?.completed_at || null;
+}
+
 /** 会话匹配：ID / 意图 / 工程 / 状态 / 最新 Run */
 function matchSession(s, q) {
   if (!q) return true;
   const run = s.latest_run || {};
-  const hay = [s.session_id, s.intent, s.project, s.status, run.command, run.verdict, run.status, run.run_id, run.handoff_summary]
+  const hay = [
+    s.session_id, s.intent, s.project, s.status, sessionActiveRunIds(s).join(' '),
+    run.command, run.platform, run.actor_id, run.verdict, run.status, run.run_id, run.handoff_summary,
+  ]
     .filter(Boolean)
     .some((v) => String(v).toLowerCase().includes(q));
   return hay;
@@ -1281,7 +1343,7 @@ function matchSession(s, q) {
 function runMatches(run, q) {
   if (!q) return true;
   const parts = [
-    run.sequence, run.command, run.platform, run.run_id, run.verdict, run.status,
+    run.sequence, run.command, run.platform, run.actor_id, run.run_id, run.verdict, run.status,
     run.handoff_summary, (run.decisions || []).join(' '), (run.concerns || []).join(' '),
     (run.gate_ids || []).join(' '),
   ];
@@ -1384,31 +1446,31 @@ async function renderOverview() {
   renderOverviewStats($('ovRunningStats'), [
     { label: 'Session', value: sessions.length },
     { label: 'Agent', value: calls.length },
-    { label: '运行中', value: runningTotal, tone: 'live' },
-    { label: '异常', value: failedSessions + failedCalls, tone: failedSessions + failedCalls ? 'warn' : '' },
+    { label: t('overview.running'), value: runningTotal, tone: 'live' },
+    { label: t('overview.issues'), value: failedSessions + failedCalls, tone: failedSessions + failedCalls ? 'warn' : '' },
   ]);
   const knowledge = snapshot.knowledge || {};
   $('ovTopKbCount').textContent = String(knowledge.total || 0);
   renderOverviewStats($('ovTopKbStats'), [
-    { label: '规格', value: knowledge.specs || 0 },
-    { label: '记忆', value: knowledge.memory || 0 },
+    { label: t('overview.specs'), value: knowledge.specs || 0 },
+    { label: t('overview.memory'), value: knowledge.memory || 0 },
     { label: 'Know-how', value: knowledge.knowhow || 0 },
     { label: 'Learning', value: knowledge.learning_rows || 0 },
   ]);
   const rBody = $('ovRunningBody');
   rBody.innerHTML = '';
   if (!runningSessions.length && !runningCalls.length) {
-    rBody.appendChild(el('div', 'ov-empty', '当前无运行中的 Agent / 会话'));
+    rBody.appendChild(el('div', 'ov-empty', t('overview.noRunning')));
   } else {
     for (const s of runningSessions.slice(0, 2)) {
       const row = el('button', 'ov-row');
       row.type = 'button';
-      row.title = `打开会话 ${s.session_id}`;
+      row.title = t('overview.openSession', { id: s.session_id });
       const dot = el('span', 'dot pulse');
       dot.style.setProperty('--c', 'var(--ok)');
       row.appendChild(dot);
       const txt = el('div', 'ov-row-t');
-      txt.appendChild(el('span', 'ov-row-a', '会话'));
+      txt.appendChild(el('span', 'ov-row-a', t('overview.session')));
       txt.appendChild(el('span', 'ov-row-b', oneLine(s.intent) || s.session_id));
       row.appendChild(txt);
       row.addEventListener('click', () => openDetail('session', s.session_id, row));
@@ -1417,13 +1479,13 @@ async function renderOverview() {
     for (const c of runningCalls.slice(0, 2)) {
       const row = el('button', 'ov-row');
       row.type = 'button';
-      row.title = `打开调用 ${c.execId}`;
+      row.title = t('overview.openCall', { id: c.execId });
       const dot = el('span', 'dot pulse');
       dot.style.setProperty('--c', TOOL_COLORS[c.tool] || 'var(--ok)');
       row.appendChild(dot);
       const txt = el('div', 'ov-row-t');
       txt.appendChild(el('span', 'ov-row-a', TOOL_LABEL[c.tool] || c.tool || 'Agent'));
-      txt.appendChild(el('span', 'ov-row-b', oneLine(c.prompt) || '无提示词'));
+      txt.appendChild(el('span', 'ov-row-b', oneLine(c.prompt) || t('overview.noPrompt')));
       row.appendChild(txt);
       row.addEventListener('click', () => openDetail('call', c.execId, row));
       rBody.appendChild(row);
@@ -1435,21 +1497,21 @@ async function renderOverview() {
   const kbBody = $('ovTopKbBody');
   kbBody.innerHTML = '';
   if (!kb.length) {
-    kbBody.appendChild(el('div', 'ov-empty', '暂无高频知识沉淀'));
+    kbBody.appendChild(el('div', 'ov-empty', t('overview.noTopKnowledge')));
   } else {
     for (const item of kb) {
       const row = el('button', 'ov-row');
       row.type = 'button';
-      row.title = `打开知识条目 ${item.id}（使用 ${item.frequency} 次）`;
+      row.title = t('overview.openKnowledge', { id: item.id, count: item.frequency });
       const dot = el('span', 'lg-dot');
       dot.style.setProperty('--c', 'var(--accent)');
       row.appendChild(dot);
       const txt = el('div', 'ov-row-t');
       txt.appendChild(el('span', 'ov-row-a', item.title || item.id));
-      txt.appendChild(el('span', 'ov-row-b', item.summary ? oneLine(item.summary) : `使用 ${item.frequency} 次`));
+      txt.appendChild(el('span', 'ov-row-b', item.summary ? oneLine(item.summary) : t('overview.usedTimes', { count: item.frequency })));
       row.appendChild(txt);
       const freq = el('span', 'ov-freq', `×${item.frequency ?? '—'}`);
-      freq.title = `调用频次 ${item.frequency}`;
+      freq.title = t('overview.frequency', { count: item.frequency });
       row.appendChild(freq);
       row.addEventListener('click', () => openDetail('knowledge-item', `${item.kind}::${item.id}`, row));
       kbBody.appendChild(row);
@@ -1506,17 +1568,17 @@ function updateDetailSearchUI() {
   const kbView = view.kind === 'knowledge';
   sem.hidden = !kbView;
   sem.setAttribute('aria-pressed', String(kbView && semanticMode));
-  sem.textContent = semanticMode ? '语义 ✓' : '语义';
+  sem.textContent = semanticMode ? t('search.semanticOn') : t('search.semantic');
   const ph = {
-    call: '搜索对话 / 提示词…',
-    calls: '搜索 Agent 调用…',
-    session: '搜索 Run / 编排步骤…',
-    sessions: '搜索会话 / Run…',
-    knowledge: semanticMode ? '语义搜索：wiki + 代码图谱（回车触发）…' : '搜索知识条目…',
-    'knowledge-item': '搜索全文…',
-    pending: '搜索待处置候选…',
+    call: t('search.callPlaceholder'),
+    calls: t('search.callsPlaceholder'),
+    session: t('search.sessionPlaceholder'),
+    sessions: t('search.sessionsPlaceholder'),
+    knowledge: semanticMode ? t('search.semanticPlaceholder') : t('search.knowledgePlaceholder'),
+    'knowledge-item': t('search.fullTextPlaceholder'),
+    pending: t('search.pendingPlaceholder'),
   };
-  input.placeholder = ph[view.kind] || '搜索…';
+  input.placeholder = ph[view.kind] || t('common.search');
   $('detailSearchCount').hidden = !detailSearch;
 }
 
@@ -1545,7 +1607,7 @@ function renderCalls() {
     const dot = el('i', 'hm-dot');
     dot.style.setProperty('--c', 'var(--ok)');
     hm.appendChild(dot);
-    hm.appendChild(document.createTextNode(`运行 ${runningCount}`));
+    hm.appendChild(document.createTextNode(t('calls.runCount', { count: runningCount })));
     meta.appendChild(hm);
     $('headCalls').insertBefore(meta, $('callsCount'));
   }
@@ -1559,22 +1621,22 @@ function renderCalls() {
     const ic = el('div', 'empty-ic');
     ic.appendChild(svg('i-activity', 20));
     empty.appendChild(ic);
-    empty.appendChild(el('div', '', '暂无 Agent 调用'));
-    empty.appendChild(el('div', 'empty-hint', '运行一个 Agent，这里就会亮起来'));
+    empty.appendChild(el('div', '', t('sections.noCalls')));
+    empty.appendChild(el('div', 'empty-hint', t('calls.emptyHint')));
   } else if ((searching || filtering) && !calls.length) {
     const empty = $('callsEmpty');
     empty.innerHTML = '';
     const ic = el('div', 'empty-ic');
     ic.appendChild(svg('i-search', 18));
     empty.appendChild(ic);
-    empty.appendChild(el('div', '', `未找到匹配的调用`));
-    empty.appendChild(el('div', 'empty-hint', '换个关键词或筛选条件（提示词 / 模型 / 工具）'));
+    empty.appendChild(el('div', '', t('search.noMatchingCalls')));
+    empty.appendChild(el('div', 'empty-hint', t('search.callsHint')));
   }
   const foot = $('callsFoot');
   foot.innerHTML = '';
   if (calls.length > CALLS_LIMIT && !searching) {
     foot.hidden = false;
-    const expand = el('button', 'expand-btn', callsExpanded ? '收起 ↑' : `展开全部 ${calls.length} 条 ↓`);
+    const expand = el('button', 'expand-btn', callsExpanded ? t('calls.collapse') : t('calls.expandAll', { count: calls.length }));
     expand.type = 'button';
     expand.setAttribute('aria-expanded', String(callsExpanded));
     expand.addEventListener('click', () => {
@@ -1597,8 +1659,8 @@ function renderCallFilterChips() {
   if (!wrap) return;
   wrap.innerHTML = '';
   const statuses = [
-    ['', '全部'], ['running', '运行中'], ['error', '失败'], ['done', '完成'],
-    ['queued', '排队'], ['cancel', '取消'],
+    ['', t('common.all')], ['running', t('common.running')], ['error', t('common.failed')], ['done', t('common.done')],
+    ['queued', t('common.queued')], ['cancel', t('common.cancelled')],
   ];
   for (const [val, label] of statuses) {
     const chip = el('button', `fchip${callsFilter.status === val ? ' on' : ''}`, label);
@@ -1636,8 +1698,12 @@ function callRowEl(call, q) {
   const running = callStatus(call) === 'running';
   const item = el('button', 'row');
   item.type = 'button';
-  item.title = oneLine(call.prompt) || '调用';
-  item.setAttribute('aria-label', `${TOOL_LABEL[call.tool] || call.tool || 'Agent'}：${oneLine(call.prompt) || '无提示词'}，${callStatusLabel(call)}`);
+  item.title = oneLine(call.prompt) || t('calls.call');
+  item.setAttribute('aria-label', t('calls.aria', {
+    tool: TOOL_LABEL[call.tool] || call.tool || 'Agent',
+    prompt: oneLine(call.prompt) || t('overview.noPrompt'),
+    status: callStatusLabel(call),
+  }));
   const dot = el('span', `dot${running ? ' pulse' : ''}`);
   dot.style.setProperty('--c', TOOL_COLORS[call.tool] || 'var(--text-dim)');
   item.appendChild(dot);
@@ -1659,7 +1725,7 @@ function callRowEl(call, q) {
   rb.appendChild(rl);
   const livePreview = running ? oneLine(call.lastOutputPreview) : '';
   const rp = el('div', `rp${livePreview ? ' live' : ''}`);
-  rp.appendChild(highlightText(livePreview || oneLine(call.prompt) || '（无提示词）', q));
+  rp.appendChild(highlightText(livePreview || oneLine(call.prompt) || t('calls.emptyPrompt'), q));
   rb.appendChild(rp);
   item.appendChild(rb);
 
@@ -1693,12 +1759,12 @@ function callStatusClass(call) {
 }
 function callStatusLabel(call) {
   switch (callStatus(call)) {
-    case 'done': return '完成';
-    case 'error': return '失败';
-    case 'cancel': return '取消';
-    case 'queued': return '排队';
-    case 'unknown': return call.delegateStatus || '未知';
-    default: return '运行中';
+    case 'done': return t('common.done');
+    case 'error': return t('common.failed');
+    case 'cancel': return t('common.cancelled');
+    case 'queued': return t('common.queued');
+    case 'unknown': return call.delegateStatus || t('common.unknown');
+    default: return t('common.running');
   }
 }
 
@@ -1706,17 +1772,23 @@ function callStatusLabel(call) {
 // Session · Run（列表 + 时间线展开）
 // ---------------------------------------------------------------------------
 
-function sessionStatusMeta(status) {
+function sessionStatusMeta(status, activeRunCount = 0) {
   const s = String(status || '').toLowerCase();
-  if (s === 'running' || s === 'active' || s === 'executing') return ['st-running', '运行中', true, 'var(--ok)'];
-  if (s === 'sealed' || s === 'completed' || s === 'done') return ['st-queued', '已封存', false, 'var(--info)'];
-  if (s === 'paused') return ['st-cancel', '已暂停', false, 'var(--warn)'];
-  if (s === 'failed' || s === 'blocked' || s === 'error') return ['st-error', '失败', false, 'var(--danger)'];
-  return ['st-unknown', '未知', false, 'var(--text-dim)'];
+  if (activeRunCount > 0 || s === 'running' || s === 'active' || s === 'executing') {
+    return ['st-running', t('common.running'), true, 'var(--ok)'];
+  }
+  if (s === 'open') return ['st-queued', t('common.open'), false, 'var(--info)'];
+  if (s === 'completed' || s === 'done') return ['st-queued', t('common.done'), false, 'var(--info)'];
+  if (s === 'sealed') return ['st-queued', t('common.sealed'), false, 'var(--info)'];
+  if (s === 'archived') return ['st-queued', t('common.archived'), false, 'var(--text-dim)'];
+  if (s === 'paused' || s === 'pending' || s === 'cancelled') return ['st-cancel', verdictLabel(s), false, 'var(--warn)'];
+  if (s === 'failed' || s === 'blocked' || s === 'error') return ['st-error', t('common.failed'), false, 'var(--danger)'];
+  return ['st-unknown', t('common.unknown'), false, 'var(--text-dim)'];
 }
 
 function miniTlNode(run) {
-  const vc = VERDICT_COLOR[String(run.verdict || run.status || '').toLowerCase()] || 'var(--text-dim)';
+  const signal = normalizeRunSignal(run.verdict || run.status);
+  const vc = VERDICT_COLOR[signal] || 'var(--text-dim)';
   const running = String(run.status || '').toLowerCase() === 'running';
   const node = el('div', 'tln');
   const d = el('span', `tld${running ? ' pulse' : ''}`);
@@ -1724,14 +1796,16 @@ function miniTlNode(run) {
   node.appendChild(d);
   const tlc = el('div', 'tlc');
   const tlh = el('div', 'tlh');
-  const cmd = el('span', 'tlh-cmd', `#${run.sequence ?? '—'} ${run.command || 'run'}`);
+  const runOrder = run.sequence ?? (String(run.run_id || '').slice(0, 8) || '—');
+  const cmd = el('span', 'tlh-cmd', `#${runOrder} ${run.command || 'run'}`);
   cmd.title = `${run.run_id || ''} · ${run.verdict || run.status || ''}`;
   tlh.appendChild(cmd);
-  if (run.platform) tlh.appendChild(el('span', 'bd bd-dim', run.platform));
-  const v = el('span', `bd ${verdictClass(run.verdict)}`, verdictLabel(run.verdict));
+  const executor = runExecutorLabel(run);
+  if (executor) tlh.appendChild(el('span', 'bd bd-dim', executor));
+  const v = el('span', `bd ${verdictClass(signal)}`, verdictLabel(signal));
   v.title = run.verdict || run.status || 'unknown';
   tlh.appendChild(v);
-  tlh.appendChild(el('span', 'rt', `${fmtClock2(run.started_at)}${run.duration_secs != null ? ` · ${run.duration_secs}s` : ''}`));
+  tlh.appendChild(el('span', 'rt', `${fmtClock2(runDisplayTime(run))}${run.duration_secs != null ? ` · ${run.duration_secs}s` : ''}`));
   tlc.appendChild(tlh);
   if (run.handoff_summary) tlc.appendChild(el('div', 'tls', oneLine(run.handoff_summary)));
   node.appendChild(tlc);
@@ -1751,15 +1825,15 @@ function renderSessions() {
   const statusCounts = { running: 0, sealed: 0, paused: 0, failed: 0 };
   for (const s of all) {
     const st = String(s.status || '').toLowerCase();
-    if (['running', 'active', 'executing'].includes(st)) statusCounts.running++;
-    else if (['sealed', 'completed', 'done'].includes(st)) statusCounts.sealed++;
-    else if (st === 'paused') statusCounts.paused++;
+    if (sessionActiveRunIds(s).length || ['running', 'active', 'executing'].includes(st)) statusCounts.running++;
+    else if (['sealed', 'completed', 'done', 'archived'].includes(st)) statusCounts.sealed++;
+    else if (st === 'paused' || st === 'open') statusCounts.paused++;
     else if (['failed', 'blocked', 'error'].includes(st)) statusCounts.failed++;
   }
   const statusChips = [];
-  if (statusCounts.running) statusChips.push(['run', `运行 ${statusCounts.running}`]);
-  if (statusCounts.paused) statusChips.push(['', `暂停 ${statusCounts.paused}`]);
-  if (statusCounts.failed) statusChips.push(['fail', `失败 ${statusCounts.failed}`]);
+  if (statusCounts.running) statusChips.push(['run', t('sessions.runningCount', { count: statusCounts.running })]);
+  if (statusCounts.paused) statusChips.push(['', t('sessions.pausedCount', { count: statusCounts.paused })]);
+  if (statusCounts.failed) statusChips.push(['fail', t('sessions.failedCount', { count: statusCounts.failed })]);
   if (statusChips.length) {
     meta = el('span', 'sh-meta');
     for (const [cls, text] of statusChips) {
@@ -1782,16 +1856,16 @@ function renderSessions() {
     const ic = el('div', 'empty-ic');
     ic.appendChild(svg('i-session', 20));
     empty.appendChild(ic);
-    empty.appendChild(el('div', '', '暂无会话'));
-    empty.appendChild(el('div', 'empty-hint', '运行一次 Maestro 流程后，会话会出现在这里'));
+    empty.appendChild(el('div', '', t('sections.noSessions')));
+    empty.appendChild(el('div', 'empty-hint', t('sessions.emptyHint')));
   } else if (searching && !sessions.length) {
     const empty = $('sessionsEmpty');
     empty.innerHTML = '';
     const ic = el('div', 'empty-ic');
     ic.appendChild(svg('i-search', 18));
     empty.appendChild(ic);
-    empty.appendChild(el('div', '', '未找到匹配的会话'));
-    empty.appendChild(el('div', 'empty-hint', '换个关键词试试（ID / 意图 / Run）'));
+    empty.appendChild(el('div', '', t('search.noMatchingSessions')));
+    empty.appendChild(el('div', 'empty-hint', t('search.sessionsHint')));
   }
   const active = snapshot.active_session_id;
   const orderedSessions = sessions.slice().sort((a, b) => Number(b.session_id === active) - Number(a.session_id === active));
@@ -1804,7 +1878,7 @@ function renderSessions() {
   foot.innerHTML = '';
   if (sessions.length > SESSIONS_LIMIT && !searching) {
     foot.hidden = false;
-    const expand = el('button', 'expand-btn', sessionsListExpanded ? '收起 ↑' : `展开全部 ${sessions.length} 个会话 ↓`);
+    const expand = el('button', 'expand-btn', sessionsListExpanded ? t('calls.collapse') : t('sessions.expandAll', { count: sessions.length }));
     expand.type = 'button';
     expand.setAttribute('aria-expanded', String(sessionsListExpanded));
     expand.addEventListener('click', () => {
@@ -1825,7 +1899,7 @@ function renderSessions() {
 function sessionRowEl(s, isActive) {
   const expanded = expandedSessions.has(s.session_id);
   const loadState = sessionLoadState[s.session_id] || 'collapsed';
-  const sm = sessionStatusMeta(s.status);
+  const sm = sessionStatusMeta(s.status, sessionActiveRunIds(s).length);
   const lr = s.latest_run || null;
   const timelineId = `session-runs-${safeDomId(s.session_id)}`;
   const item = el('article', `srow${expanded ? ' open' : ''}${isActive ? ' active' : ''}`);
@@ -1844,7 +1918,7 @@ function sessionRowEl(s, isActive) {
   // 多工程合并：行内标注工程归属
   if (s.project && s.project !== snapshot.workspace) {
     const proj = el('span', 'bd bd-dim', s.project);
-    proj.title = `工程：${s.project}`;
+    proj.title = t('sessions.project', { name: s.project });
     rl.appendChild(proj);
   }
   if (isActive) rl.appendChild(el('span', 'bd bd-accent', 'ACTIVE'));
@@ -1852,20 +1926,21 @@ function sessionRowEl(s, isActive) {
   rl.appendChild(el('span', `bd ${sm[0]}`, sm[1]));
   toggle.appendChild(rl);
   const sl2 = el('div', 'sl2');
-  sl2.appendChild(el('span', 'si', oneLine(s.intent) || '无意图'));
+  sl2.appendChild(el('span', 'si', oneLine(s.intent) || t('sessions.noIntent')));
   toggle.appendChild(sl2);
   const sl3 = el('div', 'sl3');
   const slat = el('span', 'slat');
   if (lr) {
-    const vc = VERDICT_COLOR[String(lr.verdict || lr.status || '').toLowerCase()] || 'var(--text-dim)';
-    slat.append(`第 ${lr.sequence ?? '—'}/${s.run_count || '—'} 步 · ${lr.command || 'run'} · `);
-    const v = el('span', 'slat-v', verdictLabel(lr.verdict));
+    const signal = normalizeRunSignal(lr.verdict || lr.status);
+    const vc = VERDICT_COLOR[signal] || 'var(--text-dim)';
+    slat.append(t('sessions.step', { current: lr.sequence ?? '—', total: s.run_count || '—' }) + ` · ${lr.command || 'run'} · `);
+    const v = el('span', 'slat-v', verdictLabel(lr.verdict || lr.status));
     v.style.color = vc;
     v.title = `${lr.run_id || ''} · ${lr.verdict || lr.status || ''}`;
     slat.appendChild(v);
-    slat.append(` · ${fmtAgo(lr.started_at)}${lr.duration_secs != null ? ` · ${lr.duration_secs}s` : ''}`);
+    slat.append(` · ${fmtAgo(runDisplayTime(lr))}${lr.duration_secs != null ? ` · ${lr.duration_secs}s` : ''}`);
   } else {
-    slat.textContent = `${s.run_count || 0} runs · 无 Run 数据`;
+    slat.textContent = t('sessions.noRunData', { count: s.run_count || 0 });
   }
   sl3.appendChild(slat);
   const chev = el('span', 'schev');
@@ -1881,23 +1956,23 @@ function sessionRowEl(s, isActive) {
   const tl = el('div', 'mini-tl');
   tl.id = timelineId;
   tl.setAttribute('role', 'region');
-  tl.setAttribute('aria-label', `${s.session_id} Run 时间线`);
+  tl.setAttribute('aria-label', t('sessions.timelineAria', { id: s.session_id }));
   tl.setAttribute('aria-busy', String(loadState === 'loading'));
   const MINI_TL_CAP = 8;
   const cached = sessionRunCache[s.session_id];
   const runs = expanded && cached?.length ? cached.slice(-MINI_TL_CAP) : (lr ? [lr] : []);
   for (const run of runs) tl.appendChild(miniTlNode(run));
   if (expanded && cached && cached.length > MINI_TL_CAP) {
-    tl.appendChild(el('div', 'timeline-limit', `仅展示最近 ${MINI_TL_CAP} 个 Run，共 ${cached.length} 个`));
+    tl.appendChild(el('div', 'timeline-limit', t('sessions.recentRuns', { shown: MINI_TL_CAP, total: cached.length })));
   }
-  if (loadState === 'loading') tl.appendChild(el('div', 'run-inline-status', '正在载入历史 Run…'));
-  if (loadState === 'error') tl.appendChild(el('div', 'run-inline-error', '载入失败，保留最新 Run'));
+  if (loadState === 'loading') tl.appendChild(el('div', 'run-inline-status', t('sessions.loadingRuns')));
+  if (loadState === 'error') tl.appendChild(el('div', 'run-inline-error', t('sessions.loadRunsFailed')));
   sexp.appendChild(tl);
   const sexpf = el('div', 'sexp-f');
   const engine = s.orchestration?.engine;
   if (engine) sexpf.appendChild(el('span', 'bd bd-dim', `engine · ${engine}`));
   if (loadState === 'error') {
-    const retry = el('button', 'more', '重试');
+    const retry = el('button', 'more', t('common.retry'));
     retry.type = 'button';
     retry.addEventListener('click', (event) => {
       event.stopPropagation();
@@ -1905,7 +1980,7 @@ function sessionRowEl(s, isActive) {
     });
     sexpf.appendChild(retry);
   }
-  const more = el('button', 'more', '查看详情 ›');
+  const more = el('button', 'more', t('sessions.viewDetails'));
   more.type = 'button';
   more.addEventListener('click', (event) => {
     event.stopPropagation();
@@ -1964,17 +2039,17 @@ function refocusSessionToggle(sessionId) {
 function statusClass(status) {
   const s = String(status).toLowerCase();
   if (s === 'running' || s === 'active' || s === 'executing') return 'sb-running';
-  if (s === 'sealed' || s === 'completed' || s === 'done') return 'sb-sealed';
-  if (s === 'paused') return 'sb-paused';
+  if (s === 'sealed' || s === 'completed' || s === 'done' || s === 'archived') return 'sb-sealed';
+  if (s === 'open' || s === 'paused' || s === 'pending' || s === 'cancelled') return 'sb-paused';
   if (s === 'failed' || s === 'blocked' || s === 'error') return 'sb-failed';
   return 'sb-unknown';
 }
 function verdictClass(v) {
-  if (!v) return 'default';
-  const s = String(v).toLowerCase();
-  if (s === 'ready' || s === 'done') return 'v-ready';
+  const s = normalizeRunSignal(v);
+  if (!s) return 'default';
+  if (s === 'ready' || s === 'done' || s === 'completed' || s === 'sealed') return 'v-ready';
   if (s === 'blocked' || s === 'failed') return 'v-blocked';
-  if (s === 'needs-retry' || s === 'done_with_concerns' || s === 'ready_with_concerns') return 'v-retry';
+  if (s === 'pending' || s === 'cancelled' || s === 'needs_retry' || s === 'done_with_concerns' || s === 'ready_with_concerns') return 'v-retry';
   return 'default';
 }
 
@@ -1983,11 +2058,11 @@ function verdictClass(v) {
 // ---------------------------------------------------------------------------
 
 const KNOWLEDGE_ITEMS = [
-  ['specs', '规范', 'var(--accent)'],
-  ['memory', '记忆', 'var(--info)'],
-  ['knowhow', '诀窍', 'var(--ok)'],
-  ['learning', '学习', 'var(--cyan, #22d3ee)'],
-  ['issues', '问题', 'var(--danger)'],
+  ['specs', 'knowledge.specs', 'var(--accent)'],
+  ['memory', 'knowledge.memory', 'var(--info)'],
+  ['knowhow', 'knowledge.knowhow', 'var(--ok)'],
+  ['learning', 'knowledge.learning', 'var(--cyan, #22d3ee)'],
+  ['issues', 'knowledge.issues', 'var(--danger)'],
 ];
 
 function knowledgeValue(stats, key) {
@@ -2005,7 +2080,7 @@ function renderKnowledge() {
   if (q) {
     $('knowledgeTotal').textContent = `…/${total}`;
     body.innerHTML = '';
-    const searching = el('div', 'kb-searching', `搜索 “${q}”`);
+    const searching = el('div', 'kb-searching', t('search.searchingFor', { query: q }));
     body.appendChild(searching);
     getKbItems().then((items) => {
       if (listSearch.knowledge !== q) return; // 关键词已变化，丢弃过期结果
@@ -2017,14 +2092,14 @@ function renderKnowledge() {
         const ic = el('div', 'empty-ic');
         ic.appendChild(svg('i-search', 18));
         empty.appendChild(ic);
-        empty.appendChild(el('div', '', '未找到匹配的知识条目'));
-        empty.appendChild(el('div', 'empty-hint', '换个关键词试试（标题 / ID / 标签）'));
+        empty.appendChild(el('div', '', t('search.noMatchingKnowledge')));
+        empty.appendChild(el('div', 'empty-hint', t('search.knowledgeHint')));
         body.appendChild(empty);
         return;
       }
       for (const item of matched.slice(0, 8)) body.appendChild(kbEntryEl(item, q));
       const foot = el('div', 'kb-foot');
-      const more = el('button', 'expand-btn', `在详情中查看全部 ${matched.length} 条 ›`);
+      const more = el('button', 'expand-btn', t('knowledge.moreResults', { count: matched.length }));
       more.type = 'button';
       more.addEventListener('click', () => openDetail('knowledge', 'all', more));
       foot.appendChild(more);
@@ -2041,21 +2116,22 @@ function renderKnowledge() {
     const ic = el('div', 'empty-ic');
     ic.appendChild(svg('i-book', 20));
     empty.appendChild(ic);
-    empty.appendChild(el('div', '', '暂无知识积累'));
-    empty.appendChild(el('div', 'empty-hint', 'specs / memory / knowhow 沉淀后展示占比'));
+    empty.appendChild(el('div', '', t('knowledge.empty')));
+    empty.appendChild(el('div', 'empty-hint', t('knowledge.emptyHint')));
     body.appendChild(empty);
     return;
   }
   const kpis = el('div', 'kpis');
   const stack = el('div', 'stack');
   const legend = el('div', 'legend');
-  for (const [key, label, color] of KNOWLEDGE_ITEMS) {
+  for (const [key, labelKey, color] of KNOWLEDGE_ITEMS) {
+    const label = t(labelKey);
     const value = knowledgeValue(k, key);
     const kpi = el('button', 'kpi');
     kpi.type = 'button';
     kpi.style.setProperty('--c', color);
-    kpi.title = `${key}：${value} 条 · 点击查看条目`;
-    kpi.setAttribute('aria-label', `查看${label}条目`);
+    kpi.title = t('knowledge.kpiTitle', { kind: key, count: value });
+    kpi.setAttribute('aria-label', t('knowledge.kpiAria', { label }));
     kpi.appendChild(el('b', '', String(value)));
     kpi.appendChild(el('span', '', label));
     kpi.addEventListener('click', () => openDetail('knowledge', 'all', kpi));
@@ -2085,34 +2161,45 @@ function renderKnowledge() {
   if (pc && pc.total > 0) {
     const pend = el('button', 'expand-btn pend-btn');
     pend.type = 'button';
-    pend.title = '会话 run 已生成待处置的知识候选（knowledge promote/review）';
+    pend.title = t('knowledge.pendingTitle');
     pend.appendChild(el('span', 'pend-dot'));
-    pend.appendChild(document.createTextNode(`待处置 ${pc.total} 条候选 ›`));
+    pend.appendChild(document.createTextNode(t('knowledge.pendingCount', { count: pc.total })));
     pend.addEventListener('click', () => openDetail('pending', 'all', pend));
     foot.appendChild(pend);
   }
-  const all = el('button', 'expand-btn', '查看全部条目 ›');
+  const all = el('button', 'expand-btn', t('knowledge.viewAll'));
   all.type = 'button';
   all.addEventListener('click', () => openDetail('knowledge', 'all', all));
   foot.appendChild(all);
-  const create = el('button', 'expand-btn', '+ 新建条目');
+  const create = el('button', 'expand-btn', t('knowledge.create'));
   create.type = 'button';
   create.addEventListener('click', createKnowledgeItem);
   foot.appendChild(create);
   body.appendChild(foot);
 }
 
+function knowledgeStatusLabel(status) {
+  const normalized = String(status || '').toLowerCase();
+  const keys = {
+    open: 'knowledge.status.open', blocked: 'knowledge.status.blocked',
+    registered: 'knowledge.status.registered', draft: 'knowledge.status.draft',
+    in_progress: 'knowledge.status.inProgress', completed: 'knowledge.status.completed',
+    closed: 'knowledge.status.closed',
+  };
+  return keys[normalized] ? t(keys[normalized]) : (status || t('common.unknown'));
+}
+
 /** 知识条目行（知识详情分组 / 区块搜索共用；点击复制 ID） */
 function kbEntryEl(item, q) {
   const ke = el('button', 'ke');
   ke.type = 'button';
-  ke.title = `${item.id} · ${item.status || ''}`;
-  ke.setAttribute('aria-label', `复制 ${item.id}`);
+  ke.title = `${item.id} · ${knowledgeStatusLabel(item.status)}`;
+  ke.setAttribute('aria-label', `${t('common.copy')} ${item.id}`);
   const kh = el('div', 'ke-h');
   kh.appendChild(el('span', 'ke-id', item.id || ''));
-  const t = el('span', 'ke-t');
-  t.appendChild(highlightText(item.title || '未命名条目', q));
-  kh.appendChild(t);
+  const titleNode = el('span', 'ke-t');
+  titleNode.appendChild(highlightText(item.title || t('knowledge.unnamed'), q));
+  kh.appendChild(titleNode);
   ke.appendChild(kh);
   if (item.summary) {
     const s = el('div', 'ke-s');
@@ -2123,8 +2210,8 @@ function kbEntryEl(item, q) {
   for (const tag of (item.tags || []).slice(0, 4)) {
     kf.appendChild(el('span', 'tag', String(tag)));
   }
-  if (item.status) kf.appendChild(el('span', `bd ${kbStatusClass(item.status)}`, item.status));
-  if (item.updated) kf.appendChild(el('span', 'rt', `${fmtAgo(item.updated)} 更新`));
+  if (item.status) kf.appendChild(el('span', `bd ${kbStatusClass(item.status)}`, knowledgeStatusLabel(item.status)));
+  if (item.updated) kf.appendChild(el('span', 'rt', t('knowledge.updated', { time: fmtAgo(item.updated) })));
   ke.appendChild(kf);
   ke.addEventListener('click', () => openEditor(item.kind, item.id));
   return ke;
@@ -2138,15 +2225,18 @@ function kbStatusClass(status) {
   if (s === 'completed' || s === 'active' || s === 'required' || s === 'sealed' || s === 'done') return 'st-done';
   return 'st-unknown';
 }
-const KB_KIND_ORDER = [['specs', '规范'], ['memory', '记忆'], ['knowhow', '诀窍'], ['learning', '学习'], ['issues', '问题']];
+const KB_KIND_ORDER = [
+  ['specs', 'knowledge.specs'], ['memory', 'knowledge.memory'], ['knowhow', 'knowledge.knowhow'],
+  ['learning', 'knowledge.learning'], ['issues', 'knowledge.issues'],
+];
 // issues 状态子分组（真实数据含 open/completed/registered；未知状态归「其他」）
 const ISSUE_STATUS_ORDER = [
-  ['open', '待处理'], ['blocked', '受阻'], ['registered', '已登记'],
-  ['draft', '草稿'], ['in_progress', '进行中'], ['completed', '已完成'], ['closed', '已关闭'],
+  ['open', 'knowledge.status.open'], ['blocked', 'knowledge.status.blocked'], ['registered', 'knowledge.status.registered'],
+  ['draft', 'knowledge.status.draft'], ['in_progress', 'knowledge.status.inProgress'], ['completed', 'knowledge.status.completed'], ['closed', 'knowledge.status.closed'],
 ];
 
 function renderKnowledgeDetail() {
-  if (!renderDetailState('知识积累')) return;
+  if (!renderDetailState(t('knowledge.title'))) return;
   if (semanticMode) {
     renderSemanticDetail();
     return;
@@ -2155,25 +2245,26 @@ function renderKnowledgeDetail() {
   const items = Array.isArray(detail.items) ? detail.items : [];
   const q = detailSearch;
   const matched = q ? items.filter((it) => matchKbItem(it, q)) : items;
-  $('detailTitle').textContent = '知识积累';
+  $('detailTitle').textContent = t('knowledge.title');
   $('detailKind').textContent = 'KNOWLEDGE';
   setSearchCount(matched.length, items.length);
   const sub = el('div', 'kb-sub');
-  sub.textContent = 'specs 规范 / memory 记忆 / knowhow 诀窍 / learning 学习 / issues 问题 · 点击条目复制 ID';
+  sub.textContent = t('knowledge.subtitle');
   body.appendChild(sub);
   if (!items.length) {
-    body.appendChild(el('div', 'detail-empty', '暂无知识条目。'));
+    body.appendChild(el('div', 'detail-empty', t('knowledge.noItems')));
     return;
   }
   if (q && !matched.length) {
-    body.appendChild(emptySearchResult('未找到匹配的知识条目'));
+    body.appendChild(emptySearchResult(t('search.noMatchingKnowledge')));
     return;
   }
   const colorOf = (key) => {
     const found = KNOWLEDGE_ITEMS.find(([k]) => k === key);
     return found ? found[2] : 'var(--text-dim)';
   };
-  for (const [kind, label] of KB_KIND_ORDER) {
+  for (const [kind, labelKey] of KB_KIND_ORDER) {
+    const label = t(labelKey);
     const group = matched.filter((item) => item.kind === kind);
     if (!group.length) continue;
     const head = el('div', 'kg-h');
@@ -2191,7 +2282,8 @@ function renderKnowledgeDetail() {
         if (!buckets.has(st)) buckets.set(st, []);
         buckets.get(st).push(item);
       }
-      for (const [st, stLabel] of ISSUE_STATUS_ORDER) {
+      for (const [st, stLabelKey] of ISSUE_STATUS_ORDER) {
+        const stLabel = t(stLabelKey);
         const items = buckets.get(st);
         if (!items) continue;
         buckets.delete(st);
@@ -2200,7 +2292,7 @@ function renderKnowledgeDetail() {
       }
       if (buckets.size) {
         const rest = [...buckets.values()].reduce((n, a) => n + a.length, 0);
-        body.appendChild(el('div', 'issue-sub', `其他 · ${rest}`));
+        body.appendChild(el('div', 'issue-sub', `${t('common.other')} · ${rest}`));
         for (const items of buckets.values()) {
           for (const item of items) body.appendChild(kbEntryEl(item, q));
         }
@@ -2213,33 +2305,33 @@ function renderKnowledgeDetail() {
 
 /** 知识条目详情：meta 卡 + 全文（点击列表条目进入） */
 function renderKnowledgeItemDetail() {
-  if (!renderDetailState('知识条目')) return;
+  if (!renderDetailState(t('knowledge.item'))) return;
   const body = $('detailBody');
   const item = (detail && detail.item) || {};
-  $('detailTitle').textContent = item.title || item.id || '知识条目';
+  $('detailTitle').textContent = item.title || item.id || t('knowledge.item');
   $('detailKind').textContent = String(item.kind || '').toUpperCase();
   const meta = el('section', 'detail-card');
-  meta.appendChild(el('h2', 'd-sec-title', '条目信息'));
+  meta.appendChild(el('h2', 'd-sec-title', t('knowledge.itemInfo')));
   meta.appendChild(detailRow('ID', item.id));
-  meta.appendChild(detailRow('类型', item.kind));
-  meta.appendChild(detailRow('状态', item.status || '—'));
-  if (item.priority) meta.appendChild(detailRow('优先级', item.priority));
-  if (item.updated) meta.appendChild(detailRow('更新', fmtFull(item.updated)));
-  if (Array.isArray(item.tags) && item.tags.length) meta.appendChild(detailRow('标签', item.tags.join(' / ')));
-  const copyBtn = el('button', 'retry-btn', '复制 ID');
+  meta.appendChild(detailRow(t('knowledge.type'), item.kind));
+  meta.appendChild(detailRow(t('knowledge.state'), item.status ? knowledgeStatusLabel(item.status) : '—'));
+  if (item.priority) meta.appendChild(detailRow(t('knowledge.priority'), item.priority));
+  if (item.updated) meta.appendChild(detailRow(t('knowledge.updatedLabel'), fmtFull(item.updated)));
+  if (Array.isArray(item.tags) && item.tags.length) meta.appendChild(detailRow(t('knowledge.tags'), item.tags.join(' / ')));
+  const copyBtn = el('button', 'retry-btn', t('knowledge.copyId'));
   copyBtn.type = 'button';
   copyBtn.addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText(item.id || '');
-      $('liveStatus').textContent = `已复制 ${item.id}`;
+      $('liveStatus').textContent = t('status.copied', { value: item.id });
     } catch { /* 剪贴板不可用 */ }
   });
   meta.appendChild(copyBtn);
   // markdown 类条目：详情页内渲染预览 modal（md.js 共享渲染器）
   if (['specs', 'memory', 'knowhow'].includes(item.kind)) {
-    const pv = el('button', 'retry-btn primary', '预览 Markdown');
+    const pv = el('button', 'retry-btn primary', t('knowledge.previewMarkdown'));
     pv.type = 'button';
-    pv.title = '在当前窗口渲染 Markdown 预览';
+    pv.title = t('knowledge.previewMarkdownTitle');
     pv.addEventListener('click', () => openMdPreview(String(item.content || ''), item.title || item.id));
     meta.appendChild(pv);
   }
@@ -2250,15 +2342,15 @@ function renderKnowledgeItemDetail() {
   const matchedLines = q ? lines.filter((l) => l.toLowerCase().includes(q)) : lines;
   setSearchCount(matchedLines.length, lines.length);
   if (!content) {
-    body.appendChild(el('div', 'detail-empty', '该条目没有可展示的正文。'));
+    body.appendChild(el('div', 'detail-empty', t('knowledge.noBody')));
     return;
   }
   if (q && !matchedLines.length) {
-    body.appendChild(emptySearchResult('未找到匹配内容'));
+    body.appendChild(emptySearchResult(t('search.noMatch')));
     return;
   }
   const card = el('section', 'detail-card full-width');
-  card.appendChild(el('h2', 'd-sec-title', q ? `全文 · 命中 ${matchedLines.length} 行` : '全文'));
+  card.appendChild(el('h2', 'd-sec-title', q ? t('knowledge.fullTextMatches', { count: matchedLines.length }) : t('knowledge.fullText')));
   const pre = el('pre', 'd-prompt');
   if (q) {
     for (const line of matchedLines) {
@@ -2281,7 +2373,7 @@ async function runSemanticSearch(q) {
   try {
     const out = await invoke('semantic_search', { query: q, limit: 10 });
     if (reqId !== semanticReqId) return;
-    semanticResults = out || { results: [], error: '无返回' };
+    semanticResults = out || { results: [], error: t('search.noData') };
   } catch (err) {
     if (reqId !== semanticReqId) return;
     semanticResults = { results: [], error: String(err && err.message ? err.message : err) };
@@ -2292,10 +2384,10 @@ async function runSemanticSearch(q) {
 function semanticRowEl(r, q) {
   const row = el('article', 'sem-row');
   const head = el('div', 'sem-head');
-  head.appendChild(el('span', `bd ${r.source === 'code' ? 'st-done' : 'st-queued'}`, r.source === 'code' ? '代码' : '知识'));
+  head.appendChild(el('span', `bd ${r.source === 'code' ? 'st-done' : 'st-queued'}`, r.source === 'code' ? t('knowledge.code') : t('knowledge.knowledge')));
   if (r.kind) head.appendChild(el('span', 'sem-kind', r.kind));
   const name = el('span', 'sem-name');
-  name.appendChild(highlightText(r.name || r.detail || '未命名', q));
+  name.appendChild(highlightText(r.name || r.detail || t('knowledge.unnamed'), q));
   name.title = r.name || '';
   head.appendChild(name);
   row.appendChild(head);
@@ -2311,24 +2403,24 @@ function semanticRowEl(r, q) {
   }
   const foot = el('div', 'sem-foot');
   if (r.detail) foot.appendChild(el('span', 'sem-detail', r.detail));
-  if (r.score != null) foot.appendChild(el('span', 'rt', `得分 ${(r.score * 100).toFixed(0)}`));
+  if (r.score != null) foot.appendChild(el('span', 'rt', t('knowledge.score', { score: (r.score * 100).toFixed(0) })));
   row.appendChild(foot);
   if (r.detail) {
-    row.appendChild(copyButton(r.detail, '复制引用', '已复制引用'));
+    row.appendChild(copyButton(r.detail, t('knowledge.copyReference'), t('knowledge.copiedReference')));
   }
   return row;
 }
 
 function renderSemanticDetail() {
   const body = $('detailBody');
-  $('detailTitle').textContent = '语义搜索';
+  $('detailTitle').textContent = t('knowledge.semanticTitle');
   $('detailKind').textContent = 'SEARCH';
   const sub = el('div', 'kb-sub');
-  sub.textContent = 'maestro search · wiki + 代码图谱混合检索 · 输入关键词后回车';
+  sub.textContent = t('knowledge.semanticSubtitle');
   body.appendChild(sub);
   const q = detailSearch;
   if (!q) {
-    body.appendChild(el('div', 'detail-empty', '输入关键词开始语义搜索（如「门禁」「知识沉淀」）。'));
+    body.appendChild(el('div', 'detail-empty', t('knowledge.semanticStart')));
     return;
   }
   if (!semanticResults) {
@@ -2339,24 +2431,24 @@ function renderSemanticDetail() {
     return;
   }
   if (semanticResults.error) {
-    body.appendChild(el('div', 'detail-empty', `语义搜索不可用：${semanticResults.error}`));
-    const back = el('button', 'retry-btn', '切回本地搜索');
+    body.appendChild(el('div', 'detail-empty', t('knowledge.semanticUnavailable', { error: semanticResults.error })));
+    const back = el('button', 'retry-btn', t('knowledge.localSearch'));
     back.type = 'button';
     back.addEventListener('click', () => { semanticMode = false; semanticResults = null; onDetailSearchInput(); });
     body.appendChild(back);
     return;
   }
   const results = Array.isArray(semanticResults.results) ? semanticResults.results : [];
-  $('detailSearchCount').textContent = `${results.length} 条`;
+  $('detailSearchCount').textContent = t('knowledge.resultsCount', { count: results.length });
   $('detailSearchCount').hidden = false;
   if (!results.length) {
-    body.appendChild(el('div', 'detail-empty', '未找到相关结果。'));
+    body.appendChild(el('div', 'detail-empty', t('knowledge.noRelated')));
     return;
   }
   const rows = el('div', 'rows');
   for (const r of results) rows.appendChild(semanticRowEl(r, q));
   body.appendChild(rows);
-  body.appendChild(el('div', 'kb-sub', '点击「复制引用」获取路径 / id；结果来自 maestro search（wiki + 代码图谱）'));
+  body.appendChild(el('div', 'kb-sub', t('knowledge.semanticHint')));
 }
 
 // ---------------------------------------------------------------------------
@@ -2464,7 +2556,7 @@ function renderDetailState(kindLabel) {
   body.innerHTML = '';
   body.setAttribute('aria-busy', String(detailStatus === 'loading'));
   if (detailStatus === 'loading') {
-    $('detailTitle').textContent = '正在载入';
+    $('detailTitle').textContent = t('detail.loading');
     const loading = el('div', 'loading-state');
     loading.appendChild(el('div', 'loading-line'));
     loading.appendChild(el('div', 'loading-line short'));
@@ -2473,17 +2565,19 @@ function renderDetailState(kindLabel) {
     return false;
   }
   if (detailStatus === 'not-found') {
-    $('detailTitle').textContent = view?.kind === 'session' ? 'Session 不可用' : view?.kind === 'knowledge-item' ? '知识条目不可用' : '调用记录不可用';
+    $('detailTitle').textContent = view?.kind === 'session'
+      ? t('detail.sessionUnavailable')
+      : view?.kind === 'knowledge-item' ? t('detail.knowledgeUnavailable') : t('detail.callUnavailable');
     const missing = el('section', 'missing-state');
     missing.appendChild(svg('i-alert', 20));
-    missing.appendChild(el('h2', 'missing-title', '未找到可读取的详情记录'));
-    missing.appendChild(el('p', 'missing-copy', '记录可能来自旧版索引，或对应的元数据文件已被清理。列表快照仍会保留其最后状态。'));
+    missing.appendChild(el('h2', 'missing-title', t('detail.notFound')));
+    missing.appendChild(el('p', 'missing-copy', t('detail.notFoundDescription')));
     missing.appendChild(el('code', 'missing-id', view?.id || 'unknown'));
     const actions = el('div', 'missing-actions');
-    const back = el('button', 'retry-btn', '返回列表');
+    const back = el('button', 'retry-btn', t('detail.back'));
     back.type = 'button';
     back.addEventListener('click', closeDetail);
-    const retry = el('button', 'retry-btn primary', '重新读取');
+    const retry = el('button', 'retry-btn primary', t('detail.reload'));
     retry.type = 'button';
     retry.addEventListener('click', () => openDetail(view.kind, view.id));
     actions.appendChild(back);
@@ -2493,16 +2587,16 @@ function renderDetailState(kindLabel) {
     return false;
   }
   if (detailStatus === 'error') {
-    $('detailTitle').textContent = '载入失败';
+    $('detailTitle').textContent = t('detail.loadFailed');
     const error = el('section', 'missing-state error');
     error.appendChild(svg('i-alert', 20));
-    error.appendChild(el('h2', 'missing-title', '无法载入详情'));
-    error.appendChild(el('p', 'missing-copy', detail?.error || '读取本地元数据时发生错误。'));
+    error.appendChild(el('h2', 'missing-title', t('detail.loadFailedTitle')));
+    error.appendChild(el('p', 'missing-copy', detail?.error || t('detail.loadFailedDescription')));
     const actions = el('div', 'missing-actions');
-    const back = el('button', 'retry-btn', '返回列表');
+    const back = el('button', 'retry-btn', t('detail.back'));
     back.type = 'button';
     back.addEventListener('click', closeDetail);
-    const retry = el('button', 'retry-btn primary', '重试');
+    const retry = el('button', 'retry-btn primary', t('common.retry'));
     retry.type = 'button';
     retry.addEventListener('click', () => openDetail(view.kind, view.id));
     actions.appendChild(back);
@@ -2569,10 +2663,10 @@ function normalizeCallEntries(rawEntries, running) {
 
 function callEntryText(entry) {
   if (entry.type === 'tool_use') {
-    const head = [entry.name || '工具', entry.status].filter(Boolean).join(' · ');
+    const head = [entry.name || t('calls.tool'), entry.status].filter(Boolean).join(' · ');
     return [head, entry.result].filter(Boolean).join('\n');
   }
-  if (entry.type === 'error') return entry.message || entry.content || '调用失败';
+  if (entry.type === 'error') return entry.message || entry.content || t('calls.callFailed');
   if (entry.type === 'status_change') return [entry.status, entry.reason].filter(Boolean).join(' · ');
   return entry.content || entry.message || entry.result || '';
 }
@@ -2597,17 +2691,17 @@ function callEntryKind(entry) {
 }
 
 function callEntryRole(entry) {
-  const labels = {
-    user_message: '用户',
-    assistant_message: '助手',
-    thinking: '思考',
-    tool_use: '工具',
-    tool_result: '工具结果',
-    system_message: '系统',
-    status_change: '状态',
-    error: '错误',
+  const keys = {
+    user_message: 'calls.roles.user',
+    assistant_message: 'calls.roles.assistant',
+    thinking: 'calls.roles.thinking',
+    tool_use: 'calls.roles.tool',
+    tool_result: 'calls.roles.toolResult',
+    system_message: 'calls.roles.system',
+    status_change: 'calls.roles.status',
+    error: 'calls.roles.error',
   };
-  return labels[entry.type] || entry.type || '消息';
+  return keys[entry.type] ? t(keys[entry.type]) : (entry.type || t('calls.roles.message'));
 }
 
 function getCallDetailUi(call) {
@@ -2696,11 +2790,11 @@ async function copyCallText(text, button, successText) {
       if (!button.isConnected) return;
       button.classList.remove('copied');
       button.replaceChildren(svg('i-copy', 12));
-      button.title = button.dataset.copyLabel || '复制';
-      button.setAttribute('aria-label', button.dataset.copyLabel || '复制');
+      button.title = button.dataset.copyLabel || t('common.copy');
+      button.setAttribute('aria-label', button.dataset.copyLabel || t('common.copy'));
     }, 1500);
   } catch {
-    $('liveStatus').textContent = '剪贴板不可用';
+    $('liveStatus').textContent = t('status.clipboardUnavailable');
   }
 }
 
@@ -2718,8 +2812,8 @@ function callDisclosure(label, id, expanded, onToggle, action = null) {
   const trigger = el('button', 'call-disclosure-trigger');
   trigger.type = 'button';
   trigger.dataset.focusKey = `disclosure:${id}`;
-  trigger.title = `${expanded ? '收起' : '展开'}${label}`;
-  trigger.setAttribute('aria-label', `${expanded ? '收起' : '展开'}${label}`);
+  trigger.title = expanded ? t('detail.collapseLabel', { label }) : t('detail.expandLabel', { label });
+  trigger.setAttribute('aria-label', expanded ? t('detail.collapseLabel', { label }) : t('detail.expandLabel', { label }));
   trigger.setAttribute('aria-expanded', String(expanded));
   trigger.setAttribute('aria-controls', id);
   trigger.appendChild(svg('i-chevron', 11));
@@ -2744,7 +2838,7 @@ function renderCallSummary(call, running) {
   lead.appendChild(el('strong', '', running ? 'LIVE' : callStatusLabel(call).toUpperCase()));
   summary.appendChild(lead);
   const facts = el('div', 'call-live-facts');
-  for (const value of [call.model || '默认模型', call.mode || 'default', fmtAgo(call.lastActivityMs ? new Date(Number(call.lastActivityMs)).toISOString() : call.startedAt)]) {
+  for (const value of [call.model || t('calls.defaultModel'), call.mode || 'default', fmtAgo(call.lastActivityMs ? new Date(Number(call.lastActivityMs)).toISOString() : call.startedAt)]) {
     facts.appendChild(el('span', '', value));
   }
   summary.appendChild(facts);
@@ -2754,7 +2848,7 @@ function renderCallSummary(call, running) {
 
 function formatCallConversation(entries) {
   return entries.map((entry) => {
-    const time = entry.timestamp ? fmtFull(entry.timestamp) : '无时间';
+    const time = entry.timestamp ? fmtFull(entry.timestamp) : t('calls.noTime');
     return `[${time}] ${callEntryRole(entry)}\n${String(callEntryText(entry))}`;
   }).join('\n\n');
 }
@@ -2779,13 +2873,13 @@ function renderAuxiliaryCallEntry(entry, key, state, q) {
   const bodyId = `call-entry-${safeDomId(key)}`;
   trigger.type = 'button';
   trigger.dataset.focusKey = `event:${key}`;
-  trigger.title = `${expanded ? '收起' : '展开'}${callEntryRole(entry)}`;
-  trigger.setAttribute('aria-label', `${expanded ? '收起' : '展开'}${callEntryRole(entry)}`);
+  trigger.title = expanded ? t('detail.collapseLabel', { label: callEntryRole(entry) }) : t('detail.expandLabel', { label: callEntryRole(entry) });
+  trigger.setAttribute('aria-label', expanded ? t('detail.collapseLabel', { label: callEntryRole(entry) }) : t('detail.expandLabel', { label: callEntryRole(entry) }));
   trigger.setAttribute('aria-expanded', String(expanded));
   trigger.setAttribute('aria-controls', bodyId);
   trigger.appendChild(svg('i-chevron', 10));
   trigger.appendChild(el('span', 'chat-event-role', callEntryRole(entry)));
-  trigger.appendChild(el('span', 'chat-event-summary', content.split('\n')[0] || '无内容'));
+  trigger.appendChild(el('span', 'chat-event-summary', content.split('\n')[0] || t('calls.noContent')));
   if (entry.timestamp) trigger.appendChild(el('time', 'chat-event-time', fmtClock2(entry.timestamp)));
   trigger.addEventListener('click', () => {
     if (state.auxiliaryExpanded.has(key)) state.auxiliaryExpanded.delete(key);
@@ -2793,7 +2887,7 @@ function renderAuxiliaryCallEntry(entry, key, state, q) {
     renderWithFocus();
   });
   head.appendChild(trigger);
-  head.appendChild(copyButton(content, `复制${callEntryRole(entry)}`, `已复制${callEntryRole(entry)}`, `copy:${key}`));
+  head.appendChild(copyButton(content, t('calls.copyRole', { role: callEntryRole(entry) }), t('calls.copiedRole', { role: callEntryRole(entry) }), `copy:${key}`));
   item.appendChild(head);
   const panel = el('div', 'chat-event-panel');
   panel.id = bodyId;
@@ -2813,10 +2907,10 @@ function renderPrimaryCallEntry(entry, key, state, q) {
   const bubble = el('article', `chat-bubble ${kind}`);
   const head = el('header', 'chat-message-head');
   const role = el('div', 'chat-role', callEntryRole(entry));
-  if (entry.type === 'assistant_message' && entry.partial) role.appendChild(el('span', 'chat-stream-label', '正在生成'));
+  if (entry.type === 'assistant_message' && entry.partial) role.appendChild(el('span', 'chat-stream-label', t('calls.generating')));
   head.appendChild(role);
   if (entry.timestamp) head.appendChild(el('time', 'chat-time', fmtClock2(entry.timestamp)));
-  head.appendChild(copyButton(content, `复制${callEntryRole(entry)}消息`, `已复制${callEntryRole(entry)}消息`, `copy:${key}`));
+  head.appendChild(copyButton(content, t('calls.copyMessage', { role: callEntryRole(entry) }), t('calls.copiedMessage', { role: callEntryRole(entry) }), `copy:${key}`));
   bubble.appendChild(head);
   const contentId = `call-message-${safeDomId(key)}`;
   const contentDiv = el('div', `chat-content${isLong && !expanded ? ' clipped' : ''}`);
@@ -2825,12 +2919,15 @@ function renderPrimaryCallEntry(entry, key, state, q) {
   if (entry.type === 'assistant_message' && entry.partial) contentDiv.appendChild(el('span', 'chat-cursor'));
   bubble.appendChild(contentDiv);
   if (isLong && !q) {
-    const more = el('button', 'chat-expand-text', expanded ? '收起' : '展开全文');
+    const more = el('button', 'chat-expand-text', expanded ? t('calls.collapseText') : t('calls.expandFull'));
     more.type = 'button';
     more.dataset.focusKey = `expand:${key}`;
     more.setAttribute('aria-expanded', String(expanded));
     more.setAttribute('aria-controls', contentId);
-    more.setAttribute('aria-label', `${expanded ? '收起' : '展开'}${callEntryRole(entry)}消息全文`);
+    const roleMessage = t('calls.roleMessage', { role: callEntryRole(entry) });
+    more.setAttribute('aria-label', expanded
+      ? t('detail.collapseLabel', { label: roleMessage })
+      : t('detail.expandLabel', { label: roleMessage }));
     more.addEventListener('click', () => {
       if (expanded) state.longExpanded.delete(key);
       else state.longExpanded.add(key);
@@ -2864,31 +2961,31 @@ function renderCallDetail() {
   const existingState = callDetailUiState.get(String(call.execId || view?.id || 'unknown'));
   if (existingState?.skipNextCapture) existingState.skipNextCapture = false;
   else captureCallDetailViewport(call.execId || view?.id);
-  if (!renderDetailState('AGENT 调用')) return;
+  if (!renderDetailState(t('sections.calls'))) return;
   const body = $('detailBody');
   body.classList.add('call-detail-body');
   const q = detailSearch;
   const running = callStatus(call) === 'running';
   const state = getCallDetailUi(call);
-  $('detailTitle').textContent = TOOL_LABEL[call.tool] || call.tool || '调用详情';
+  $('detailTitle').textContent = TOOL_LABEL[call.tool] || call.tool || t('calls.details');
 
   body.appendChild(renderCallSummary(call, running));
 
   const contextStack = el('div', 'call-context-stack');
   const metaId = `call-meta-${safeDomId(call.execId || 'current')}`;
-  const meta = callDisclosure('执行信息', metaId, state.metaExpanded, () => {
+  const meta = callDisclosure(t('calls.executionInfo'), metaId, state.metaExpanded, () => {
     state.metaExpanded = !state.metaExpanded;
     state.metaTouched = true;
     renderWithFocus();
   });
-  meta.panel.appendChild(detailRow('模型', call.model));
-  meta.panel.appendChild(detailRow('模式', call.mode));
-  meta.panel.appendChild(detailRow('状态', callStatusLabel(call)));
-  meta.panel.appendChild(detailRow('执行目录', call.workDir));
-  meta.panel.appendChild(detailRow('开始', fmtFull(call.startedAt)));
-  meta.panel.appendChild(detailRow('结束', fmtFull(call.completedAt)));
-  if (call.exitCode !== null && call.exitCode !== undefined) meta.panel.appendChild(detailRow('退出码', String(call.exitCode)));
-  if (call.delegateStatus) meta.panel.appendChild(detailRow('委托状态', call.delegateStatus));
+  meta.panel.appendChild(detailRow(t('calls.model'), call.model));
+  meta.panel.appendChild(detailRow(t('calls.mode'), call.mode));
+  meta.panel.appendChild(detailRow(t('calls.state'), callStatusLabel(call)));
+  meta.panel.appendChild(detailRow(t('calls.workdir'), call.workDir));
+  meta.panel.appendChild(detailRow(t('calls.started'), fmtFull(call.startedAt)));
+  meta.panel.appendChild(detailRow(t('calls.ended'), fmtFull(call.completedAt)));
+  if (call.exitCode !== null && call.exitCode !== undefined) meta.panel.appendChild(detailRow(t('calls.exitCode'), String(call.exitCode)));
+  if (call.delegateStatus) meta.panel.appendChild(detailRow(t('calls.delegateStatus'), call.delegateStatus));
   if (call.inputTokens || call.outputTokens) {
     meta.panel.appendChild(detailRow('Token', `${fmtTokens(call.inputTokens)} in / ${fmtTokens(call.outputTokens)} out`));
   }
@@ -2899,10 +2996,10 @@ function renderCallDetail() {
   if (promptText && promptMatch) {
     const promptId = `call-prompt-${safeDomId(call.execId || 'current')}`;
     const promptExpanded = Boolean(q) || state.promptExpanded;
-    const prompt = callDisclosure('完整提示词', promptId, promptExpanded, () => {
+    const prompt = callDisclosure(t('calls.fullPrompt'), promptId, promptExpanded, () => {
       state.promptExpanded = !state.promptExpanded;
       renderWithFocus();
-    }, copyButton(promptText, '复制完整提示词', '已复制完整提示词', `copy:${promptId}`));
+    }, copyButton(promptText, t('calls.copyPrompt'), t('calls.copiedPrompt'), `copy:${promptId}`));
     const pre = el('pre', 'd-prompt call-prompt');
     pre.appendChild(highlightText(promptText, q));
     prompt.panel.appendChild(pre);
@@ -2929,9 +3026,9 @@ function renderCallDetail() {
   const chat = el('section', 'call-chat-workspace');
   const toolbar = el('div', 'call-chat-toolbar');
   const title = el('div', 'call-chat-title');
-  title.appendChild(el('strong', '', '对话'));
-  title.appendChild(el('span', '', `${entries.length}${q ? ` / ${allEntries.length}` : ' 条'}`));
-  if (running) title.appendChild(el('span', 'call-chat-live', '实时'));
+  title.appendChild(el('strong', '', t('calls.conversation')));
+  title.appendChild(el('span', '', t('calls.itemsCount', { count: `${entries.length}${q ? ` / ${allEntries.length}` : ''}` })));
+  if (running) title.appendChild(el('span', 'call-chat-live', t('calls.live')));
   toolbar.appendChild(title);
 
   const auxiliaryEntries = entries
@@ -2939,12 +3036,12 @@ function renderCallDetail() {
     .filter(({ entry }) => AUXILIARY_CALL_ENTRY_TYPES.has(entry.type));
   if (auxiliaryEntries.length) {
     const allAuxExpanded = auxiliaryEntries.every(({ key }) => state.auxiliaryExpanded.has(key));
-    const toggleAux = el('button', 'call-toolbar-command', allAuxExpanded ? '收起事件' : '展开事件');
+    const toggleAux = el('button', 'call-toolbar-command', allAuxExpanded ? t('calls.collapseEvents') : t('calls.expandEvents'));
     toggleAux.type = 'button';
     toggleAux.dataset.focusKey = 'toggle-auxiliary-events';
     toggleAux.disabled = Boolean(q);
-    toggleAux.setAttribute('aria-label', allAuxExpanded ? '收起全部辅助事件' : '展开全部辅助事件');
-    toggleAux.title = q ? '搜索结果会临时展开命中事件' : (allAuxExpanded ? '收起全部辅助事件' : '展开全部辅助事件');
+    toggleAux.setAttribute('aria-label', allAuxExpanded ? t('calls.collapseAllEvents') : t('calls.expandAllEvents'));
+    toggleAux.title = q ? t('calls.searchExpandsEvents') : (allAuxExpanded ? t('calls.collapseAllEvents') : t('calls.expandAllEvents'));
     toggleAux.addEventListener('click', () => {
       for (const { key } of auxiliaryEntries) {
         if (allAuxExpanded) state.auxiliaryExpanded.delete(key);
@@ -2954,7 +3051,12 @@ function renderCallDetail() {
     });
     toolbar.appendChild(toggleAux);
   }
-  const conversationCopy = copyButton(formatCallConversation(entries), q ? '复制当前搜索结果' : '复制完整对话', q ? '已复制当前搜索结果' : '已复制完整对话', 'copy:conversation');
+  const conversationCopy = copyButton(
+    formatCallConversation(entries),
+    q ? t('calls.copySearchResults') : t('calls.copyConversation'),
+    q ? t('calls.copiedSearchResults') : t('calls.copiedConversation'),
+    'copy:conversation',
+  );
   conversationCopy.disabled = !entries.length;
   toolbar.appendChild(conversationCopy);
   chat.appendChild(toolbar);
@@ -2962,14 +3064,14 @@ function renderCallDetail() {
   const scroll = el('div', 'chat-scroll');
   scroll.tabIndex = 0;
   scroll.setAttribute('role', 'log');
-  scroll.setAttribute('aria-label', 'Agent 对话记录');
+  scroll.setAttribute('aria-label', t('calls.conversationAria'));
   scroll.setAttribute('aria-live', 'polite');
   scroll.setAttribute('aria-relevant', 'additions text');
   scroll.setAttribute('aria-busy', String(running));
   if (!allEntries.length) {
-    scroll.appendChild(el('div', 'detail-empty', running ? 'Agent 已连接，正在等待首个输出。' : '没有可展示的对话条目。'));
+    scroll.appendChild(el('div', 'detail-empty', running ? t('calls.waitingOutput') : t('calls.noConversation')));
   } else if (q && !entries.length) {
-    scroll.appendChild(emptySearchResult(promptMatch ? '对话中未找到匹配内容' : undefined));
+    scroll.appendChild(emptySearchResult(promptMatch ? t('calls.noConversationMatch') : undefined));
   } else {
     const flow = el('div', 'chat-flow');
     entries.forEach((entry, index) => {
@@ -2982,11 +3084,11 @@ function renderCallDetail() {
   }
   const jump = el('button', 'chat-jump-latest');
   jump.appendChild(svg('i-arrow-down', 12));
-  jump.appendChild(el('span', '', `${state.newActivityCount} 条新动态`));
+  jump.appendChild(el('span', '', t('calls.newActivity', { count: state.newActivityCount })));
   jump.type = 'button';
   jump.dataset.focusKey = 'jump-to-latest';
   jump.hidden = !state.newActivityCount;
-  jump.setAttribute('aria-label', `跳到最新，${state.newActivityCount} 条新动态`);
+  jump.setAttribute('aria-label', t('calls.jumpLatest', { count: state.newActivityCount }));
   jump.addEventListener('click', () => {
     state.followLive = true;
     state.newActivityCount = 0;
@@ -3011,26 +3113,26 @@ function renderCallDetail() {
 
 /** 全部 Agent 调用详情视图（含搜索） */
 function renderCallsListDetail() {
-  if (!renderDetailState('AGENT 调用')) return;
+  if (!renderDetailState(t('sections.calls'))) return;
   const body = $('detailBody');
   const q = detailSearch;
   const calls = snapshot.calls || [];
   const matched = q ? calls.filter((c) => matchCall(c, q)) : calls;
-  $('detailTitle').textContent = 'Agent 调用 · 全部';
+  $('detailTitle').textContent = t('calls.allTitle');
   $('detailKind').textContent = 'AGENT';
   setSearchCount(matched.length, calls.length);
   if (!calls.length) {
-    body.appendChild(el('div', 'detail-empty', '暂无 Agent 调用记录。'));
+    body.appendChild(el('div', 'detail-empty', t('calls.noRecords')));
     return;
   }
   if (q && !matched.length) {
-    body.appendChild(emptySearchResult('未找到匹配的调用'));
+    body.appendChild(emptySearchResult(t('search.noMatchingCalls')));
     return;
   }
   const rows = el('div', 'rows');
   for (const call of matched) rows.appendChild(callRowEl(call, q));
   body.appendChild(rows);
-  body.appendChild(el('div', 'kb-sub', '点击任意调用查看完整对话与元数据'));
+  body.appendChild(el('div', 'kb-sub', t('calls.openHint')));
   // Token 聚合：总计 + 按工具汇总（仅当前快照视窗内的记录）
   const totals = { input: 0, output: 0 };
   const byTool = new Map();
@@ -3047,10 +3149,10 @@ function renderCallsListDetail() {
   }
   if (totals.input || totals.output) {
     const card = el('section', 'detail-card token-totals');
-    card.appendChild(el('h2', 'd-sec-title', `Token 消耗（快照视窗 ${calls.length} 次调用）`));
-    card.appendChild(detailRow('总计', `${fmtTokens(totals.input)} in / ${fmtTokens(totals.output)} out`));
-    for (const [tool, t] of byTool) {
-      card.appendChild(detailRow(tool, `${fmtTokens(t.input)} in / ${fmtTokens(t.output)} out · ${t.n} 次`));
+    card.appendChild(el('h2', 'd-sec-title', t('calls.tokenTitle', { count: calls.length })));
+    card.appendChild(detailRow(t('calls.total'), `${fmtTokens(totals.input)} in / ${fmtTokens(totals.output)} out`));
+    for (const [tool, toolTotals] of byTool) {
+      card.appendChild(detailRow(tool, `${fmtTokens(toolTotals.input)} in / ${fmtTokens(toolTotals.output)} out · ${t('calls.times', { count: toolTotals.n })}`));
     }
     body.appendChild(card);
   }
@@ -3073,15 +3175,15 @@ function renderSessionsListDetail() {
   const q = detailSearch;
   const sessions = snapshot.sessions || [];
   const matched = q ? sessions.filter((s) => matchSession(s, q)) : sessions;
-  $('detailTitle').textContent = 'Session · Run · 全部';
+  $('detailTitle').textContent = t('sessions.allTitle');
   $('detailKind').textContent = 'SESSIONS';
   setSearchCount(matched.length, sessions.length);
   if (!sessions.length) {
-    body.appendChild(el('div', 'detail-empty', '暂无会话记录。'));
+    body.appendChild(el('div', 'detail-empty', t('sessions.noRecords')));
     return;
   }
   if (q && !matched.length) {
-    body.appendChild(emptySearchResult('未找到匹配的会话'));
+    body.appendChild(emptySearchResult(t('search.noMatchingSessions')));
     return;
   }
   const active = snapshot.active_session_id;
@@ -3089,7 +3191,7 @@ function renderSessionsListDetail() {
   const rows = el('div', 'rows');
   for (const s of ordered) rows.appendChild(sessionRowEl(s, s.session_id === active));
   body.appendChild(rows);
-  body.appendChild(el('div', 'kb-sub', '点击会话查看完整时间线、编排链与边界契约'));
+  body.appendChild(el('div', 'kb-sub', t('sessions.openHint')));
 }
 
 function textArray(value) {
@@ -3105,7 +3207,7 @@ function appendContractBlock(parent, label, value, wide = false) {
   block.appendChild(el('div', 'contract-label', label));
   const values = textArray(value);
   if (!values.length) {
-    block.appendChild(el('div', 'contract-empty', '未声明'));
+    block.appendChild(el('div', 'contract-empty', t('sessions.undeclared')));
   } else {
     const list = el('ul', 'contract-list');
     for (const item of values) list.appendChild(el('li', '', item));
@@ -3115,7 +3217,9 @@ function appendContractBlock(parent, label, value, wide = false) {
 }
 
 function chainStepState(step, session, index, position) {
-  if (step.run_id && step.run_id === session.active_run_id) return 'current';
+  const activeRunIds = new Set(sessionActiveRunIds(session));
+  const stepRunIds = Array.isArray(step.run_ids) ? step.run_ids : [step.run_id].filter(Boolean);
+  if (stepRunIds.some((runId) => activeRunIds.has(String(runId)))) return 'current';
   if (String(step.status || '').toLowerCase() === 'running') return 'current';
   if (Number.isInteger(position) && index === position) return 'current';
   if (typeof position === 'string' && (position === step.step_id || position === step.command || position === step.stage)) return 'current';
@@ -3151,9 +3255,9 @@ function appendRunDetailSection(parent, label, items, tone) {
 
 function renderRunEntry(run, session, q, gates) {
   const key = `${session.session_id}:${run.run_id}`;
-  const verdict = String(run.verdict || run.status || 'unknown').toLowerCase();
-  const attention = ['blocked', 'failed', 'needs-retry', 'done_with_concerns'].includes(verdict) || (run.concerns || []).length > 0;
-  const current = run.run_id === session.active_run_id || String(run.status).toLowerCase() === 'running';
+  const verdict = normalizeRunSignal(run.verdict || run.status || 'unknown');
+  const attention = ['blocked', 'failed', 'needs_retry', 'done_with_concerns'].includes(verdict) || (run.concerns || []).length > 0;
+  const current = isRunActive(run, session) || String(run.status).toLowerCase() === 'running';
   if (!runDisclosureState.has(key)) runDisclosureState.set(key, current || attention);
   const expanded = runDisclosureState.get(key);
   const detailId = `run-detail-${safeDomId(key)}`;
@@ -3171,7 +3275,10 @@ function renderRunEntry(run, session, q, gates) {
   const cmd = el('span', 'run-cmd');
   cmd.appendChild(highlightText(run.command || 'run', q));
   primary.appendChild(cmd);
-  if (run.platform) primary.appendChild(el('span', 'run-platform', run.platform));
+  const executor = runExecutorLabel(run);
+  if (executor) primary.appendChild(el('span', 'run-platform', executor));
+  if (Number.isInteger(run.attempt)) primary.appendChild(el('span', 'run-platform', t('runs.attempt', { value: run.attempt })));
+  if (Number.isInteger(run.revision)) primary.appendChild(el('span', 'run-platform', t('runs.revision', { value: run.revision })));
   const rid = el('span', 'run-runid', run.run_id || '—');
   primary.appendChild(rid);
   main.appendChild(primary);
@@ -3184,17 +3291,17 @@ function renderRunEntry(run, session, q, gates) {
   const decisions = Array.isArray(run.decisions) ? run.decisions.length : 0;
   const concerns = Array.isArray(run.concerns) ? run.concerns.length : 0;
   const gateCount = Array.isArray(run.gate_ids) ? run.gate_ids.length : 0;
-  if (decisions) signals.appendChild(el('span', 'signal-chip decision', `决策 ${decisions}`));
-  if (concerns) signals.appendChild(el('span', 'signal-chip concern', `疑虑 ${concerns}`));
-  if (gateCount) signals.appendChild(el('span', 'signal-chip gate', `门禁 ${gateCount}`));
+  if (decisions) signals.appendChild(el('span', 'signal-chip decision', t('runs.decisions', { count: decisions })));
+  if (concerns) signals.appendChild(el('span', 'signal-chip concern', t('runs.concerns', { count: concerns })));
+  if (gateCount) signals.appendChild(el('span', 'signal-chip gate', t('runs.gates', { count: gateCount })));
   if (signals.children.length) main.appendChild(signals);
   trigger.appendChild(main);
 
   const side = el('div', 'run-side');
-  const vBadge = el('span', `run-verdict ${verdictClass(verdict)}`, verdictLabel(run.verdict));
+  const vBadge = el('span', `run-verdict ${verdictClass(verdict)}`, verdictLabel(verdict));
   vBadge.title = run.verdict || run.status || 'unknown';
   side.appendChild(vBadge);
-  const time = [fmtClock2(run.started_at), run.duration_secs !== null && run.duration_secs !== undefined ? `${run.duration_secs}s` : ''].filter(Boolean).join(' · ');
+  const time = [fmtClock2(runDisplayTime(run)), run.duration_secs !== null && run.duration_secs !== undefined ? `${run.duration_secs}s` : ''].filter(Boolean).join(' · ');
   if (time) side.appendChild(el('span', 'tl-time', time));
   side.appendChild(svg('i-chevron', 11));
   side.lastChild.setAttribute('class', 'lucide run-chevron');
@@ -3206,12 +3313,12 @@ function renderRunEntry(run, session, q, gates) {
   details.hidden = !expanded;
   if (run.handoff_summary) {
     const handoff = el('section', 'run-detail-section');
-    handoff.appendChild(el('div', 'run-detail-title', '交接摘要'));
+    handoff.appendChild(el('div', 'run-detail-title', t('runs.handoff')));
     handoff.appendChild(el('div', 'run-detail-item', String(run.handoff_summary)));
     details.appendChild(handoff);
   }
-  appendRunDetailSection(details, '决策', run.decisions, 'decision');
-  appendRunDetailSection(details, '疑虑与警告', run.concerns, 'concern');
+  appendRunDetailSection(details, t('runs.decisionsTitle'), run.decisions, 'decision');
+  appendRunDetailSection(details, t('runs.concernsTitle'), run.concerns, 'concern');
   renderGateList(details, run.gate_ids, gates);
   // 产出物（懒加载：展开时拉取，按 run 缓存）
   const artKey = `${session.session_id}:${run.run_id}`;
@@ -3220,13 +3327,13 @@ function renderRunEntry(run, session, q, gates) {
   if (expanded) {
     if (artState.status === 'loading') {
       const sec = el('section', 'run-detail-section');
-      sec.appendChild(el('div', 'run-detail-title', '产出物'));
-      sec.appendChild(el('div', 'run-detail-item', '载入产出物…'));
+      sec.appendChild(el('div', 'run-detail-title', t('runs.artifacts')));
+      sec.appendChild(el('div', 'run-detail-item', t('runs.loadingArtifacts')));
       details.appendChild(sec);
     } else if (artState.status === 'error' || (artState.status === 'ready' && !artState.data)) {
       const sec = el('section', 'run-detail-section');
-      sec.appendChild(el('div', 'run-detail-title', '产出物'));
-      sec.appendChild(el('div', 'run-detail-item', '无产出物数据。'));
+      sec.appendChild(el('div', 'run-detail-title', t('runs.artifacts')));
+      sec.appendChild(el('div', 'run-detail-item', t('runs.noArtifacts')));
       details.appendChild(sec);
     } else if (artState.status === 'ready') {
       renderRunArtifactsSection(details, artState.data, session.session_id, run.run_id);
@@ -3242,21 +3349,29 @@ function renderRunEntry(run, session, q, gates) {
   return entry;
 }
 
+/** Canonical session/3.0 decision status. */
+function decisionStatusMeta(status) {
+  const s = String(status || '').toLowerCase();
+  if (s === 'resolved') return ['st-done', t('common.resolved')];
+  if (s === 'escalated') return ['st-error', t('common.escalated')];
+  return ['st-cancel', t('common.open')];
+}
+
 /** 门禁状态徽章（gates.json status） */
 function gateStatusMeta(status) {
   const s = String(status || '').toLowerCase();
-  if (s === 'passed' || s === 'done') return ['st-done', '通过'];
-  if (s === 'failed' || s === 'blocked' || s === 'error') return ['st-error', '失败'];
-  if (s === 'waived') return ['st-unknown', '豁免'];
-  if (s === 'skipped') return ['st-unknown', '跳过'];
-  return ['st-cancel', s || '待审'];
+  if (s === 'passed' || s === 'done') return ['st-done', t('runs.passed')];
+  if (s === 'failed' || s === 'blocked' || s === 'error') return ['st-error', t('common.failed')];
+  if (s === 'waived') return ['st-unknown', t('runs.waived')];
+  if (s === 'skipped') return ['st-unknown', t('runs.skipped')];
+  return ['st-cancel', s || t('runs.pendingReview')];
 }
 
 /** run 的门禁列表：id + 状态 + 标题（gates.json 查表） */
 function renderGateList(parent, gateIds, gates) {
   if (!Array.isArray(gateIds) || !gateIds.length) return;
   const section = el('section', 'run-detail-section');
-  section.appendChild(el('div', 'run-detail-title', '审批门禁'));
+  section.appendChild(el('div', 'run-detail-title', t('runs.gateReview')));
   const map = new Map((gates || []).map((g) => [g.key, g]));
   for (const id of gateIds) {
     const g = map.get(id) || {};
@@ -3266,9 +3381,9 @@ function renderGateList(parent, gateIds, gates) {
     row.appendChild(document.createTextNode(` ${id}`));
     if (g.title) row.appendChild(document.createTextNode(` · ${g.title}`));
     const marks = [];
-    if (g.required) marks.push('必过');
-    if (g.blocking) marks.push('阻塞');
-    if (g.waiver) marks.push('豁免');
+    if (g.required) marks.push(t('runs.required'));
+    if (g.blocking) marks.push(t('runs.blocking'));
+    if (g.waiver) marks.push(t('runs.waived'));
     if (marks.length) row.appendChild(el('span', 'bd bd-dim', marks.join('/')));
     section.appendChild(row);
   }
@@ -3300,10 +3415,10 @@ function fmtBytes(n) {
 
 function renderRunArtifactsSection(parent, art, sessionId, runId) {
   const section = el('section', 'run-detail-section');
-  section.appendChild(el('div', 'run-detail-title', '产出物'));
+  section.appendChild(el('div', 'run-detail-title', t('runs.artifacts')));
   const meta = [];
-  if (art.evidence_records) meta.push(`证据 ${art.evidence_records}`);
-  if (art.artifacts_count) meta.push(`产物 ${art.artifacts_count}`);
+  if (art.evidence_records) meta.push(t('runs.evidence', { count: art.evidence_records }));
+  if (art.artifacts_count) meta.push(t('runs.artifactCount', { count: art.artifacts_count }));
   if (meta.length) section.appendChild(el('div', 'art-meta', meta.join(' · ')));
   if (art.report_md) {
     const rep = el('details', 'art-report');
@@ -3318,7 +3433,7 @@ function renderRunArtifactsSection(parent, art, sessionId, runId) {
     const row = el('div', 'art-file');
     const name = el('button', 'art-file-name', f.name);
     name.type = 'button';
-    name.title = '点击查看全文';
+    name.title = t('runs.viewFull');
     name.addEventListener('click', () => openRunOutputModal(sessionId, runId, f.name));
     row.appendChild(name);
     if (f.preview) row.appendChild(el('div', 'art-file-preview', oneLine(f.preview)));
@@ -3334,7 +3449,7 @@ async function openRunOutputModal(sessionId, runId, name) {
   const overlay = el('div', 'md-preview-overlay');
   overlay.setAttribute('role', 'dialog');
   overlay.setAttribute('aria-modal', 'true');
-  overlay.setAttribute('aria-label', `产出物：${name}`);
+  overlay.setAttribute('aria-label', t('runs.artifactAria', { name }));
   const box = el('div', 'md-preview-box');
   const head = el('div', 'md-preview-head');
   const h = el('div', 'md-preview-title', name);
@@ -3342,8 +3457,8 @@ async function openRunOutputModal(sessionId, runId, name) {
   head.appendChild(h);
   const close = el('button', 'chat-icon-btn', '');
   close.type = 'button';
-  close.title = '关闭（Esc）';
-  close.setAttribute('aria-label', '关闭');
+  close.title = t('runs.closeEsc');
+  close.setAttribute('aria-label', t('common.close'));
   close.appendChild(svg('i-x', 13));
   const dismiss = () => {
     overlay.remove();
@@ -3352,7 +3467,7 @@ async function openRunOutputModal(sessionId, runId, name) {
   close.addEventListener('click', dismiss);
   head.appendChild(close);
   const body = el('pre', 'md-preview-body art-content');
-  body.textContent = '载入中…';
+  body.textContent = t('runs.loadingContent');
   body.setAttribute('aria-busy', 'true');
   box.appendChild(head);
   box.appendChild(body);
@@ -3368,9 +3483,9 @@ async function openRunOutputModal(sessionId, runId, name) {
   close.focus();
   try {
     const content = await invoke('get_run_artifact_content', { sessionId, runId, name });
-    if (overlay.isConnected) body.textContent = content || '（空文件）';
+    if (overlay.isConnected) body.textContent = content || t('runs.emptyFile');
   } catch {
-    if (overlay.isConnected) body.textContent = '读取失败';
+    if (overlay.isConnected) body.textContent = t('runs.readFailed');
   }
   body.removeAttribute('aria-busy');
 }
@@ -3380,23 +3495,33 @@ function renderSessionDetail() {
   const body = $('detailBody');
   const session = detail.session || {};
   const q = detailSearch;
-  $('detailTitle').textContent = session.session_id || '会话详情';
+  $('detailTitle').textContent = session.session_id || t('sessions.details');
 
   const resume = el('section', 'resume-strip');
-  resume.appendChild(el('div', 'resume-intent', session.intent || '未声明会话意图'));
+  resume.appendChild(el('div', 'resume-intent', session.intent || t('sessions.undeclaredIntent')));
+  const activeRunIds = sessionActiveRunIds(session);
   const resumeMeta = el('div', 'resume-meta');
-  resumeMeta.appendChild(el('span', `badge ${statusClass(session.status)}`, session.status || 'unknown'));
+  resumeMeta.appendChild(el('span', `badge ${statusClass(session.status)}`, sessionStatusMeta(session.status, activeRunIds.length)[1]));
   resumeMeta.appendChild(el('span', 'resume-stat', `${session.run_count || 0} Runs`));
-  if (session.active_run_id) {
+  if (activeRunIds.length) {
     const active = el('span', 'resume-stat');
-    active.appendChild(document.createTextNode('活动 '));
-    active.appendChild(el('code', '', session.active_run_id));
+    active.appendChild(document.createTextNode(t('sessions.activeRuns', { count: activeRunIds.length })));
+    activeRunIds.forEach((runId, index) => {
+      if (index) active.appendChild(document.createTextNode(', '));
+      active.appendChild(el('code', '', runId));
+    });
     resumeMeta.appendChild(active);
   } else if (session.latest_completed_run_id) {
     const latest = el('span', 'resume-stat');
-    latest.appendChild(document.createTextNode('最近完成 '));
+    latest.appendChild(document.createTextNode(t('sessions.latestCompleted')));
     latest.appendChild(el('code', '', session.latest_completed_run_id));
     resumeMeta.appendChild(latest);
+  }
+  if (Number.isInteger(session.orchestration_revision)) {
+    resumeMeta.appendChild(el('span', 'resume-stat', t('sessions.orchestrationRevision', { value: session.orchestration_revision })));
+  }
+  if (Number.isInteger(session.activity_revision)) {
+    resumeMeta.appendChild(el('span', 'resume-stat', t('sessions.activityRevision', { value: session.activity_revision })));
   }
   resume.appendChild(resumeMeta);
   body.appendChild(resume);
@@ -3409,18 +3534,18 @@ function renderSessionDetail() {
     || lifecycle.seal_summary || lifecycle.sealed_at || lifecycle.forked_from;
   if (hasReceipt) {
     const kSection = el('section', 'detail-section receipt-section');
-    kSection.appendChild(el('h2', 'section-title', '知识沉淀 · Receipt'));
+    kSection.appendChild(el('h2', 'section-title', t('sessions.receiptTitle')));
     const promoteRow = (label, ids, kind) => {
       const row = el('div', 'receipt-row');
       row.appendChild(el('span', 'receipt-label', label));
       const wrap = el('div', 'receipt-ids');
       if (!ids.length) {
-        wrap.appendChild(el('span', 'receipt-empty', '无'));
+        wrap.appendChild(el('span', 'receipt-empty', t('common.none')));
       } else {
         for (const id of ids) {
           const chip = el('button', 'receipt-chip', id);
           chip.type = 'button';
-          chip.title = `打开知识条目 ${id}`;
+          chip.title = t('sessions.openKnowledge', { id });
           chip.addEventListener('click', () => openDetail('knowledge-item', `${kind}::${id}`, chip));
           wrap.appendChild(chip);
         }
@@ -3428,20 +3553,20 @@ function renderSessionDetail() {
       row.appendChild(wrap);
       kSection.appendChild(row);
     };
-    promoteRow('已沉淀规范', promotedSpecs, 'specs');
-    promoteRow('已沉淀诀窍', promotedKnowhow, 'knowhow');
-    if (lifecycle.seal_summary) kSection.appendChild(el('div', 'receipt-note', `封存摘要：${lifecycle.seal_summary}`));
-    if (lifecycle.sealed_at) kSection.appendChild(el('div', 'receipt-note', `封存时间：${fmtFull(lifecycle.sealed_at)}`));
-    if (lifecycle.forked_from) kSection.appendChild(el('div', 'receipt-note', `派生自：${lifecycle.forked_from}`));
+    promoteRow(t('sessions.promotedSpecs'), promotedSpecs, 'specs');
+    promoteRow(t('sessions.promotedKnowhow'), promotedKnowhow, 'knowhow');
+    if (lifecycle.seal_summary) kSection.appendChild(el('div', 'receipt-note', t('sessions.sealSummary', { value: lifecycle.seal_summary })));
+    if (lifecycle.sealed_at) kSection.appendChild(el('div', 'receipt-note', t('sessions.sealedAt', { value: fmtFull(lifecycle.sealed_at) })));
+    if (lifecycle.forked_from) kSection.appendChild(el('div', 'receipt-note', t('sessions.forkedFrom', { value: lifecycle.forked_from })));
     body.appendChild(kSection);
   }
 
   const boundary = detail.boundary_contract && typeof detail.boundary_contract === 'object' ? detail.boundary_contract : {};
   const boundarySection = el('section', 'detail-section boundary-section');
-  boundarySection.appendChild(el('h2', 'section-title', '边界契约 · Boundary Contract'));
+  boundarySection.appendChild(el('h2', 'section-title', t('sessions.boundaryTitle')));
   const dod = el('div', 'contract-dod');
   dod.appendChild(el('div', 'contract-label', 'Definition of Done'));
-  dod.appendChild(el('div', 'contract-value', boundary.definition_of_done || '未声明'));
+  dod.appendChild(el('div', 'contract-value', boundary.definition_of_done || t('sessions.undeclared')));
   boundarySection.appendChild(dod);
   const contractGrid = el('div', 'contract-grid');
   appendContractBlock(contractGrid, 'In Scope', boundary.in_scope);
@@ -3450,61 +3575,96 @@ function renderSessionDetail() {
   boundarySection.appendChild(contractGrid);
   body.appendChild(boundarySection);
 
-  const gates = Array.isArray(detail.gates) ? detail.gates : [];
-  const gatesSection = el('section', 'detail-section gates-section');
-  gatesSection.appendChild(el('h2', 'section-title', `门禁状态 · Gates`));
-  if (!gates.length) {
-    gatesSection.appendChild(el('div', 'detail-empty', '尚未登记门禁。'));
-  } else {
+  const decisions = Array.isArray(detail.decisions) ? detail.decisions : [];
+  if (decisions.length) {
+    const decisionSection = el('section', 'detail-section gates-section');
+    decisionSection.appendChild(el('h2', 'section-title', t('sessions.decisionsTitle')));
     const ledger = el('div', 'run-ledger');
-    for (const g of gates) {
-      const [cls, label] = gateStatusMeta(g.status);
+    for (const decision of decisions) {
+      const [cls, label] = decisionStatusMeta(decision.status);
       const row = el('div', 'gate-row');
       row.appendChild(el('span', `bd ${cls}`, label));
-      const txt = el('div', 'gate-copy');
-      const t = el('div', 'gate-title', g.title || g.key);
-      t.title = `${g.key} · ${g.scope || ''}`;
-      txt.appendChild(t);
-      const meta = [g.key, g.scope, g.run_id].filter(Boolean).join(' · ');
-      if (meta) txt.appendChild(el('div', 'gate-meta', meta));
-      row.appendChild(txt);
-      const marks = [];
-      if (g.required) marks.push('必过');
-      if (g.blocking) marks.push('阻塞');
-      if (g.waiver) marks.push('已豁免');
-      if (marks.length) row.appendChild(el('span', 'gate-marks', marks.join(' / ')));
+      const copy = el('div', 'gate-copy');
+      copy.appendChild(el('div', 'gate-title', decision.decision_id || t('common.unknown')));
+      const meta = [
+        decision.after_step_id ? t('sessions.afterStep', { id: decision.after_step_id }) : '',
+        Array.isArray(decision.evidence_refs) && decision.evidence_refs.length
+          ? t('sessions.decisionEvidence', { count: decision.evidence_refs.length })
+          : '',
+      ].filter(Boolean).join(' · ');
+      if (meta) copy.appendChild(el('div', 'gate-meta', meta));
+      row.appendChild(copy);
       ledger.appendChild(row);
     }
-    gatesSection.appendChild(ledger);
+    decisionSection.appendChild(ledger);
+    body.appendChild(decisionSection);
   }
-  body.appendChild(gatesSection);
+
+  const gates = Array.isArray(detail.gates) ? detail.gates : [];
+  if (gates.length || !decisions.length) {
+    const gatesSection = el('section', 'detail-section gates-section');
+    gatesSection.appendChild(el('h2', 'section-title', t('sessions.gatesTitle')));
+    if (!gates.length) {
+      gatesSection.appendChild(el('div', 'detail-empty', t('sessions.noGates')));
+    } else {
+      const ledger = el('div', 'run-ledger');
+      for (const g of gates) {
+        const [cls, label] = gateStatusMeta(g.status);
+        const row = el('div', 'gate-row');
+        row.appendChild(el('span', `bd ${cls}`, label));
+        const txt = el('div', 'gate-copy');
+        const gateTitle = el('div', 'gate-title', g.title || g.key);
+        gateTitle.title = `${g.key} · ${g.scope || ''}`;
+        txt.appendChild(gateTitle);
+        const meta = [g.key, g.scope, g.run_id].filter(Boolean).join(' · ');
+        if (meta) txt.appendChild(el('div', 'gate-meta', meta));
+        row.appendChild(txt);
+        const marks = [];
+        if (g.required) marks.push(t('runs.required'));
+        if (g.blocking) marks.push(t('runs.blocking'));
+        if (g.waiver) marks.push(t('runs.waived'));
+        if (marks.length) row.appendChild(el('span', 'gate-marks', marks.join(' / ')));
+        ledger.appendChild(row);
+      }
+      gatesSection.appendChild(ledger);
+    }
+    body.appendChild(gatesSection);
+  }
 
   const orchestration = detail.orchestration && typeof detail.orchestration === 'object' ? detail.orchestration : {};
   const chain = Array.isArray(orchestration.chain) ? orchestration.chain.filter((step) => step && typeof step === 'object') : [];
   const stepMatches = (step) => {
     if (!q) return true;
-    return [step.command, step.step_id, step.stage, step.goal_ref, step.run_id, step.status]
+    return [
+      step.command, step.step_id, step.stage, step.goal_ref, step.run_id, step.status,
+      ...(Array.isArray(step.run_ids) ? step.run_ids : []),
+      step.decision_ref, ...(Array.isArray(step.decision_refs) ? step.decision_refs : []),
+    ]
       .filter(Boolean)
       .some((v) => String(v).toLowerCase().includes(q));
   };
   const steps = chain.filter(stepMatches);
   const chainSection = el('section', 'detail-section chain-section');
-  chainSection.appendChild(el('h2', 'section-title', '编排链 · Orchestration'));
+  chainSection.appendChild(el('h2', 'section-title', t('sessions.orchestrationTitle')));
   const summary = el('div', 'chain-summary');
   if (orchestration.engine) {
-    summary.appendChild(document.createTextNode('引擎 '));
+    summary.appendChild(document.createTextNode(t('sessions.engine')));
     summary.appendChild(el('strong', '', orchestration.engine));
   }
   if (orchestration.quality_mode) {
-    summary.appendChild(document.createTextNode('质量 '));
+    summary.appendChild(document.createTextNode(t('sessions.quality')));
     summary.appendChild(el('strong', '', orchestration.quality_mode));
+  }
+  const orchestrationRevision = orchestration.orchestration_revision ?? session.orchestration_revision;
+  if (Number.isInteger(orchestrationRevision)) {
+    summary.appendChild(el('span', '', t('sessions.orchestrationRevision', { value: orchestrationRevision })));
   }
   if (chain.length) summary.appendChild(el('span', '', `${chain.length} steps`));
   chainSection.appendChild(summary);
   if (!chain.length) {
-    chainSection.appendChild(el('div', 'detail-empty', '尚未定义编排步骤。'));
+    chainSection.appendChild(el('div', 'detail-empty', t('sessions.noSteps')));
   } else if (q && !steps.length) {
-    chainSection.appendChild(el('div', 'detail-empty', '未找到匹配的编排步骤'));
+    chainSection.appendChild(el('div', 'detail-empty', t('sessions.noMatchingSteps')));
   } else {
     const rail = el('ol', 'chain-rail');
     chain.forEach((step, index) => {
@@ -3517,10 +3677,19 @@ function renderSessionDetail() {
       cmd.appendChild(highlightText(step.command || step.step_id || `step ${index + 1}`, q));
       copy.appendChild(cmd);
       const id = el('div', 'chain-id');
-      id.appendChild(highlightText([step.step_id, step.stage, step.goal_ref].filter(Boolean).join(' · '), q));
+      id.appendChild(highlightText([
+        step.step_id, step.stage, step.goal_ref, step.decision_ref,
+      ].filter(Boolean).join(' · '), q));
       copy.appendChild(id);
       row.appendChild(copy);
-      row.appendChild(el('span', 'chain-run', step.run_id || step.status || 'pending'));
+      const runIds = Array.isArray(step.run_ids) ? step.run_ids.filter(Boolean) : [step.run_id].filter(Boolean);
+      const latestRunId = step.run_id || runIds.at(-1);
+      const runLabel = runIds.length > 1
+        ? t('sessions.runAttempts', { run: latestRunId, count: runIds.length })
+        : (latestRunId || step.status || 'pending');
+      const runBadge = el('span', 'chain-run', runLabel);
+      if (runIds.length) runBadge.title = runIds.join('\n');
+      row.appendChild(runBadge);
       rail.appendChild(row);
     });
     chainSection.appendChild(rail);
@@ -3532,12 +3701,15 @@ function renderSessionDetail() {
   const visibleRuns = q ? runs.filter((r) => runMatches(r || {}, q)) : runs;
   setSearchCount(visibleRuns.length + steps.length, runs.length + chain.length);
   const runSection = el('section', 'detail-section runs-section');
-  runSection.appendChild(el('h2', 'section-title', `Run 时间线 · ${visibleRuns.length}${q ? ` / ${runs.length}` : ''}`));
-  if (allRuns.length > runs.length) runSection.appendChild(el('div', 'timeline-limit', `为保证性能，仅展示最近 ${runs.length} 个 Run。`));
+  runSection.appendChild(el('h2', 'section-title', t('sessions.timelineTitle', {
+    visible: visibleRuns.length,
+    total: q ? ` / ${runs.length}` : '',
+  })));
+  if (allRuns.length > runs.length) runSection.appendChild(el('div', 'timeline-limit', t('sessions.timelineLimit', { count: runs.length })));
   if (!runs.length) {
-    runSection.appendChild(el('div', 'detail-empty', '尚无 Run 记录。'));
+    runSection.appendChild(el('div', 'detail-empty', t('sessions.noRuns')));
   } else if (q && !visibleRuns.length && !steps.length) {
-    runSection.appendChild(emptySearchResult('未找到匹配的 Run'));
+    runSection.appendChild(emptySearchResult(t('sessions.noMatchingRuns')));
   } else {
     const ledger = el('div', 'run-ledger');
     for (const run of visibleRuns) ledger.appendChild(renderRunEntry(run || {}, session, q, gates));
@@ -3548,7 +3720,7 @@ function renderSessionDetail() {
 
 /** 待处置知识候选（A1+A2）：KDC 列表 + 处置命令复制 */
 function renderPendingDetail() {
-  if (!renderDetailState('待处置候选')) return;
+  if (!renderDetailState(t('knowledge.pendingLabel'))) return;
   const body = $('detailBody');
   const pc = snapshot.pending_candidates || { total: 0, items: [] };
   const items = Array.isArray(pc.items) ? pc.items : [];
@@ -3559,18 +3731,18 @@ function renderPendingDetail() {
           .filter(Boolean)
           .some((v) => String(v).toLowerCase().includes(q)))
     : items;
-  $('detailTitle').textContent = `待处置候选 · ${pc.total}`;
+  $('detailTitle').textContent = t('knowledge.pendingDetailTitle', { count: pc.total });
   $('detailKind').textContent = 'PENDING';
   setSearchCount(matched.length, items.length);
   const sub = el('div', 'kb-sub');
-  sub.textContent = '会话 run 已生成知识候选（KDC），需 review / promote 处置 · 复制命令后在终端执行，或在会话详情查看沉淀收据';
+  sub.textContent = t('knowledge.pendingSubtitle');
   body.appendChild(sub);
   if (!items.length) {
-    body.appendChild(el('div', 'detail-empty', '暂无待处置候选。'));
+    body.appendChild(el('div', 'detail-empty', t('knowledge.noPending')));
     return;
   }
   if (q && !matched.length) {
-    body.appendChild(emptySearchResult('未找到匹配的候选'));
+    body.appendChild(emptySearchResult(t('search.noMatchingCandidate')));
     return;
   }
   const rows = el('div', 'rows');
@@ -3581,9 +3753,9 @@ function renderPendingDetail() {
     row.appendChild(dot);
     const main = el('div', 'pend-main');
     const head = el('div', 'pend-head');
-    const t = el('span', 'pend-title');
-    t.appendChild(highlightText(it.title || it.candidate_id, q));
-    head.appendChild(t);
+    const titleNode = el('span', 'pend-title');
+    titleNode.appendChild(highlightText(it.title || it.candidate_id, q));
+    head.appendChild(titleNode);
     head.appendChild(el('span', 'bd bd-dim', it.target || '—'));
     head.appendChild(el('span', 'bd bd-dim', it.action || '—'));
     main.appendChild(head);
@@ -3601,13 +3773,13 @@ function renderPendingDetail() {
     row.appendChild(main);
     const actions = el('div', 'pend-actions');
     const promoteCmd = `maestro knowledge promote ${it.session_id} --candidate ${it.candidate_id}`;
-    const copy = copyButton(promoteCmd, '复制 promote 命令', '已复制 promote 命令');
+    const copy = copyButton(promoteCmd, t('knowledge.copyPromote'), t('knowledge.copiedPromote'));
     copy.title = promoteCmd;
     actions.appendChild(copy);
     const open = el('button', 'chat-icon-btn', '');
     open.type = 'button';
-    open.title = '打开所属会话';
-    open.setAttribute('aria-label', '打开所属会话');
+    open.title = t('knowledge.openSession');
+    open.setAttribute('aria-label', t('knowledge.openSession'));
     open.appendChild(svg('i-session', 12));
     open.addEventListener('click', () => openDetail('session', it.session_id, open));
     actions.appendChild(open);
@@ -3615,7 +3787,7 @@ function renderPendingDetail() {
     rows.appendChild(row);
   }
   body.appendChild(rows);
-  body.appendChild(el('div', 'kb-sub', '处置后候选将进入知识库；会话详情「知识沉淀 · Receipt」展示 promote 收据'));
+  body.appendChild(el('div', 'kb-sub', t('knowledge.pendingHint')));
 }
 
 // ---------------------------------------------------------------------------
@@ -3649,11 +3821,12 @@ function renderCapsule() {
 
   let sessionSignal = 'idle';
   let sessionColor = 'var(--text-dim)';
-  let sessionContextMeta = '空闲';
+  let sessionContextMeta = t('common.idle');
   if (active) {
     const run = active.latest_run || null;
-    const running = ['running', 'active', 'executing'].includes(String(active.status || '').toLowerCase());
-    sessionSignal = String(run?.verdict || run?.status || active.status || 'unknown').toLowerCase();
+    const activeRunCount = sessionActiveRunIds(active).length;
+    const running = activeRunCount > 0 || String(run?.status || '').toLowerCase() === 'running';
+    sessionSignal = normalizeRunSignal(run?.verdict || run?.status || active.status || 'unknown');
     sessionColor = VERDICT_COLOR[sessionSignal]
       || (running ? 'var(--ok)' : null)
       || (['sealed', 'completed'].includes(sessionSignal) ? 'var(--info)' : null)
@@ -3661,19 +3834,19 @@ function renderCapsule() {
       || (['failed', 'blocked', 'error'].includes(sessionSignal) ? 'var(--danger)' : 'var(--text-dim)')
       || 'var(--text-dim)';
     $('capTitle').textContent = active.intent ? oneLine(active.intent) : active.session_id;
-    const sm = sessionStatusMeta(active.status);
+    const sm = sessionStatusMeta(active.status, activeRunCount);
     $('capStatus').className = `bd ${sm[0]} cap-status`;
     $('capStatus').textContent = sm[1];
     sessionDot.style.setProperty('--c', sessionColor);
     sessionDot.classList.toggle('pulse', running);
-    const platform = run?.platform ? (TOOL_LABEL[run.platform] || run.platform) : '';
-    $('capSessionAgent').textContent = platform || 'Session';
+    const executor = runExecutorLabel(run);
+    $('capSessionAgent').textContent = executor || 'Session';
     const step = run && run.sequence != null && active.run_count
       ? `${run.sequence}/${active.run_count}`
       : `#${run?.sequence ?? '—'}`;
     sessionContextMeta = run ? `${step} · ${sm[1]}` : sm[1];
-    $('capSubT').textContent = run ? `${step} · ${run.command || 'run'}` : '等待 Run';
-    $('capAgo').textContent = run ? fmtAgo(run.started_at) : '';
+    $('capSubT').textContent = run ? `${step} · ${run.command || 'run'}` : t('capsule.waitingRun');
+    $('capAgo').textContent = run ? fmtAgo(runDisplayTime(run)) : '';
     if (run && run.sequence != null && active.run_count) {
       $('capProgress').hidden = false;
       progressBar.style.width = `${Math.min(100, Math.round((run.sequence / active.run_count) * 100))}%`;
@@ -3681,19 +3854,19 @@ function renderCapsule() {
       $('capProgress').hidden = true;
       progressBar.style.width = '0%';
     }
-    $('capSessionPanel').setAttribute('aria-label', `Session：${$('capTitle').textContent}，${sm[1]}`);
+    $('capSessionPanel').setAttribute('aria-label', t('capsule.sessionAria', { title: $('capTitle').textContent, status: sm[1] }));
   } else {
     $('capTitle').textContent = snapshot.workspace || 'Maestro';
     $('capStatus').className = 'bd bd-dim cap-status';
-    $('capStatus').textContent = '空闲';
+    $('capStatus').textContent = t('common.idle');
     sessionDot.style.setProperty('--c', 'var(--text-dim)');
     sessionDot.classList.remove('pulse');
     $('capSessionAgent').textContent = 'Session';
-    $('capSubT').textContent = '当前没有活动会话';
+    $('capSubT').textContent = t('capsule.noActiveSession');
     $('capAgo').textContent = '';
     $('capProgress').hidden = true;
     progressBar.style.width = '0%';
-    $('capSessionPanel').setAttribute('aria-label', '当前没有活动 Session');
+    $('capSessionPanel').setAttribute('aria-label', t('capsule.noActiveSessionAria'));
   }
 
   if (selectedCall) {
@@ -3703,7 +3876,7 @@ function renderCapsule() {
     $('capAgentDot').classList.toggle('pulse', running);
     $('capAgentDot').style.setProperty('--c', toolColor);
     $('capAgentCli').textContent = `${toolLabel} CLI`;
-    $('capAgentModel').textContent = selectedCall.model || '默认模型';
+    $('capAgentModel').textContent = selectedCall.model || t('calls.defaultModel');
     $('capAgentStatus').className = `bd ${callStatusClass(selectedCall)}`;
     $('capAgentStatus').textContent = callStatusLabel(selectedCall);
     const activityMs = Number(selectedCall.lastActivityMs);
@@ -3713,23 +3886,27 @@ function renderCapsule() {
     $('capAgentTime').textContent = fmtAgo(activityAt);
     $('capAgentBar').style.width = running ? '100%' : '0%';
     $('capAgentBar').style.background = toolColor;
-    $('capAgentPanel').setAttribute('aria-label', `${toolLabel} CLI，${selectedCall.model || '默认模型'}，${callStatusLabel(selectedCall)}`);
+    $('capAgentPanel').setAttribute('aria-label', t('capsule.agentAria', {
+      tool: toolLabel,
+      model: selectedCall.model || t('calls.defaultModel'),
+      status: callStatusLabel(selectedCall),
+    }));
   } else {
     $('capAgentDot').classList.remove('pulse');
     $('capAgentDot').style.setProperty('--c', 'var(--text-dim)');
     $('capAgentCli').textContent = 'Maestro CLI';
-    $('capAgentModel').textContent = '等待 Agent';
+    $('capAgentModel').textContent = t('capsule.waitingAgent');
     $('capAgentStatus').className = 'bd bd-dim';
-    $('capAgentStatus').textContent = '空闲';
+    $('capAgentStatus').textContent = t('common.idle');
     $('capAgentTime').textContent = '—';
     $('capAgentBar').style.width = '0%';
-    $('capAgentPanel').setAttribute('aria-label', '当前没有 Agent 动态');
+    $('capAgentPanel').setAttribute('aria-label', t('capsule.noAgentActivity'));
   }
 
   if (hasRunningAgent || dwelling) {
     setCapsulePane('agent');
     $('capContextLabel').textContent = 'AGENT';
-    $('capContextMeta').textContent = hasRunningAgent ? `${runningCalls.length} 运行中` : '刚刚完成';
+    $('capContextMeta').textContent = hasRunningAgent ? t('capsule.runningCount', { count: runningCalls.length }) : t('capsule.justCompleted');
     $('capContextDot').style.setProperty('--c', selectedCall ? (TOOL_COLORS[selectedCall.tool] || 'var(--ok)') : 'var(--ok)');
     $('capContextDot').classList.toggle('pulse', hasRunningAgent);
   } else {
@@ -3761,26 +3938,26 @@ function renderCapsule() {
 async function openEditor(kind, id) {
   try {
     await invoke('open_editor_tab', { kind, id });
-    $('liveStatus').textContent = '编辑器已打开';
+    $('liveStatus').textContent = t('status.editorOpened');
   } catch (err) {
-    $('liveStatus').textContent = `编辑器打开失败：${err && err.message ? err.message : err}`;
+    $('liveStatus').textContent = t('status.editorOpenFailed', { error: err && err.message ? err.message : err });
   }
 }
 
 /** 新建 md 知识条目（创建后直接打开到编辑器窗口） */
 async function createKnowledgeItem() {
-  const kind = window.prompt('条目类型（specs / memory / knowhow）：', 'specs');
+  const kind = window.prompt(t('editor.kindPrompt'), 'specs');
   if (!kind || !['specs', 'memory', 'knowhow'].includes(kind)) return;
-  const title = window.prompt('条目标题：');
+  const title = window.prompt(t('editor.titlePrompt'));
   if (!title) return;
   try {
     const id = await invoke('create_knowledge_item', { kind, title, content: '' });
     kbItemsPromise = null; // 条目列表失效，下次拉取
     delete detailCache['knowledge::all'];
-    $('liveStatus').textContent = `已创建 ${id}`;
+    $('liveStatus').textContent = t('status.created', { id });
     await openEditor(kind, id);
   } catch (err) {
-    $('liveStatus').textContent = `创建失败：${err && err.message ? err.message : err}`;
+    $('liveStatus').textContent = t('status.createFailed', { error: err && err.message ? err.message : err });
   }
 }
 
@@ -3806,16 +3983,16 @@ function openMdPreview(content, title) {
   const overlay = el('div', 'md-preview-overlay');
   overlay.setAttribute('role', 'dialog');
   overlay.setAttribute('aria-modal', 'true');
-  overlay.setAttribute('aria-label', `预览：${title || 'Markdown'}`);
+  overlay.setAttribute('aria-label', `${t('common.preview')}: ${title || 'Markdown'}`);
   const box = el('div', 'md-preview-box');
   const head = el('div', 'md-preview-head');
-  const h = el('div', 'md-preview-title', title || 'Markdown 预览');
+  const h = el('div', 'md-preview-title', title || `${t('common.preview')} Markdown`);
   h.title = title || '';
   head.appendChild(h);
   const close = el('button', 'chat-icon-btn md-preview-close', '');
   close.type = 'button';
-  close.title = '关闭预览（Esc）';
-  close.setAttribute('aria-label', '关闭预览');
+  close.title = `${t('common.close')} ${t('common.preview')} (Esc)`;
+  close.setAttribute('aria-label', `${t('common.close')} ${t('common.preview')}`);
   close.appendChild(svg('i-x', 13));
   close.addEventListener('click', closeMdPreview);
   head.appendChild(close);
@@ -3872,18 +4049,18 @@ function openGlobalSearch() {
   const overlay = el('div', 'md-preview-overlay gk-overlay');
   overlay.setAttribute('role', 'dialog');
   overlay.setAttribute('aria-modal', 'true');
-  overlay.setAttribute('aria-label', '全局搜索');
+  overlay.setAttribute('aria-label', t('search.global'));
   const box = el('div', 'gk-box');
   const head = el('div', 'gk-head');
   head.appendChild(svg('i-search', 13));
   const input = document.createElement('input');
   input.type = 'search';
-  input.placeholder = '搜索调用 / 会话 / 知识…';
-  input.setAttribute('aria-label', '全局搜索');
+  input.placeholder = t('search.globalPlaceholder');
+  input.setAttribute('aria-label', t('search.global'));
   input.autocomplete = 'off';
   input.spellcheck = false;
   head.appendChild(input);
-  head.appendChild(el('span', 'gk-hint', '↑↓ 选择 · Enter 打开 · Esc 关闭'));
+  head.appendChild(el('span', 'gk-hint', t('search.globalHint')));
   const body = el('div', 'gk-body');
   box.appendChild(head);
   box.appendChild(body);
@@ -3939,14 +4116,14 @@ async function renderGlobalSearch(body, rawQ) {
   const groups = [];
   const calls = (snapshot?.calls || []).filter((c) => matchCall(c, q)).slice(0, 6)
     .map((c) => mkItem(oneLine(c.prompt || c.execId), `${TOOL_LABEL[c.tool] || c.tool || 'Agent'} · ${callStatusLabel(c)}`, () => openDetail('call', c.execId)));
-  if (calls.length) groups.push(['Agent 调用', calls]);
+  if (calls.length) groups.push([t('sections.calls'), calls]);
   const sess = (snapshot?.sessions || []).filter((s) => matchSession(s, q)).slice(0, 6)
     .map((s) => mkItem(oneLine(s.intent || s.session_id), `${s.session_id}${s.status ? ' · ' + s.status : ''}`, () => openDetail('session', s.session_id)));
   if (sess.length) groups.push(['Session · Run', sess]);
   if (q) {
     const items = (await getKbItems() || []).filter((k) => matchKbItem(k, q)).slice(0, 6)
       .map((k) => mkItem(k.title || k.id, k.kind || '', () => openDetail('knowledge-item', `${k.kind}::${k.id}`)));
-    if (items.length) groups.push(['知识', items]);
+    if (items.length) groups.push([t('knowledge.knowledge'), items]);
   }
   // 异步返回后面板可能已关闭
   if (!body.isConnected) return;
@@ -3955,7 +4132,7 @@ async function renderGlobalSearch(body, rawQ) {
     body.appendChild(el('div', 'gk-group', label));
     for (const item of items) body.appendChild(item);
   }
-  if (!groups.length) body.appendChild(el('div', 'gk-empty', q ? '无匹配结果' : '暂无数据'));
+  if (!groups.length) body.appendChild(el('div', 'gk-empty', q ? t('search.noResults') : t('search.noData')));
   body.querySelector('.gk-item')?.classList.add('sel');
 }
 
@@ -3985,37 +4162,22 @@ function oneLine(s) {
 
 function fmtAgo(iso) {
   if (!iso) return '—';
-  const t = new Date(iso).getTime();
-  if (Number.isNaN(t)) return '—';
-  const diff = Date.now() - t;
-  if (diff < -60000) return '未来';
-  const m = Math.floor(diff / 60000);
-  if (m < 1) return '刚刚';
-  if (m < 60) return `${m} 分钟前`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h} 小时前`;
-  return `${Math.floor(h / 24)} 天前`;
+  return i18n.formatRelative(iso) || '—';
 }
 
 function fmtClock(epochSeconds) {
   if (!epochSeconds) return '—';
-  const d = new Date(epochSeconds * 1000);
-  if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleTimeString('zh-CN', { hour12: false });
+  return i18n.formatTime(epochSeconds) || '—';
 }
 
 function fmtClock2(iso) {
   if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleTimeString('zh-CN', { hour12: false });
+  return i18n.formatTime(iso);
 }
 
 function fmtFull(iso) {
   if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleString('zh-CN', { hour12: false });
+  return i18n.formatDateTime(iso);
 }
 
 /** 内容区底部渐隐（参考稿 #fade） */

@@ -1,15 +1,16 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="dark" />
-<title>Maestro Sidebar</title>
+<title data-i18n="app.title">Maestro Sidebar</title>
 <link rel="icon" href="icons.svg" type="image/svg+xml" />
 <link rel="stylesheet" href="styles.css" />
 <link rel="stylesheet" href="v2.css" />
 <link rel="stylesheet" href="themes.css" />
 <script src="md.js"></script>
+<script src="i18n.js"></script>
 <script src="app.js" defer></script>
 </head>
 <body data-theme="graphite" data-mode="card">
@@ -19,19 +20,19 @@
   <section class="setup" id="setup" hidden>
     <div class="setup-card">
       <div class="setup-logo">Maestro Sidebar</div>
-      <h1 class="setup-title">观察 Maestro 工作区</h1>
-      <p class="setup-desc">添加一个工程根目录（包含 <code>.workflow/</code>），之后可以在菜单中调整。</p>
-      <div class="setup-options" role="group" aria-label="接入方式">
+      <h1 class="setup-title" data-i18n="setup.title">观察 Maestro 工作区</h1>
+      <p class="setup-desc" data-i18n-html="setup.descriptionHtml">添加一个工程根目录（包含 <code>.workflow/</code>），之后可以在菜单中调整。</p>
+      <div class="setup-options" role="group" aria-label="接入方式" data-i18n-aria-label="setup.method">
         <button type="button" class="setup-option" id="btnScanExisting">
           <svg class="lucide" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-folder"/></svg>
-          <span class="setup-option-copy"><strong>选择工程目录</strong><small>自动发现其中的 .workflow 与 Agent 调用。</small></span>
+          <span class="setup-option-copy"><strong data-i18n="setup.selectRoot">选择工程目录</strong><small data-i18n="setup.selectRootDescription">自动发现其中的 .workflow 与 Agent 调用。</small></span>
         </button>
         <button type="button" class="setup-option" id="btnUseDefaults">
           <svg class="lucide" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-activity"/></svg>
-          <span class="setup-option-copy"><strong>使用默认位置</strong><small>扫描 ~/.maestro 关联的工作区（若有）。</small></span>
+          <span class="setup-option-copy"><strong data-i18n="setup.useDefaults">使用默认位置</strong><small data-i18n="setup.useDefaultsDescription">扫描 ~/.maestro 关联的工作区（若有）。</small></span>
         </button>
       </div>
-      <p class="setup-note" id="setupError" role="alert" hidden style="color:var(--danger)">目录无效，请重试。</p>
+      <p class="setup-note" id="setupError" role="alert" hidden style="color:var(--danger)" data-i18n="setup.invalidDirectory">目录无效，请重试。</p>
     </div>
   </section>
 
@@ -44,13 +45,13 @@
         <div class="cap-context" aria-live="polite">
           <span class="dot" id="capContextDot"></span>
           <strong id="capContextLabel">SESSION</strong>
-          <span class="cap-context-meta" id="capContextMeta">等待状态</span>
+          <span class="cap-context-meta" id="capContextMeta" data-i18n="capsule.waiting">等待状态</span>
         </div>
         <div class="cap-window-actions">
-          <button type="button" class="ib cap-restore" id="btnCapRestore" title="切回窗口" aria-label="切回完整窗口">
+          <button type="button" class="ib cap-restore" id="btnCapRestore" title="切回窗口" aria-label="切回完整窗口" data-i18n-title="capsule.restoreTitle" data-i18n-aria-label="capsule.restore">
             <svg class="lucide" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-restore"/></svg>
           </button>
-          <button type="button" class="ib cap-menu" id="btnCapMenu" title="胶囊菜单" aria-label="胶囊菜单" aria-expanded="false" aria-controls="capMenuPop" aria-haspopup="menu">
+          <button type="button" class="ib cap-menu" id="btnCapMenu" title="胶囊菜单" aria-label="胶囊菜单" data-i18n-title="capsule.menu" data-i18n-aria-label="capsule.menu" aria-expanded="false" aria-controls="capMenuPop" aria-haspopup="menu">
             <svg class="lucide" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-more"/></svg>
           </button>
         </div>
@@ -74,28 +75,28 @@
           <div class="cap-agent-row">
             <span class="dot" id="capAgentDot"></span>
             <strong class="cap-agent-cli" id="capAgentCli">Maestro CLI</strong>
-            <span class="bd bd-dim" id="capAgentStatus">空闲</span>
+            <span class="bd bd-dim" id="capAgentStatus" data-i18n="common.idle">空闲</span>
           </div>
           <div class="cap-agent-sub">
-            <span id="capAgentModel">等待 Agent</span>
+            <span id="capAgentModel" data-i18n="capsule.waitingAgent">等待 Agent</span>
             <span class="cap-divider" aria-hidden="true"></span>
             <span id="capAgentTime">—</span>
           </div>
           <div class="cap-agent-bar" aria-hidden="true"><i id="capAgentBar"></i></div>
         </div>
       </div>
-      <div class="cap-menu-pop" id="capMenuPop" role="menu" aria-label="胶囊窗口菜单" hidden>
+      <div class="cap-menu-pop" id="capMenuPop" role="menu" aria-label="胶囊窗口菜单" data-i18n-aria-label="capsule.windowMenu" hidden>
         <button type="button" class="mp-row setting" id="btnCapTop" role="menuitemcheckbox" aria-checked="false">
           <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-pin"/></svg>
-          <span>窗口置顶</span><i aria-hidden="true">关</i>
+          <span data-i18n="settings.alwaysOnTop">窗口置顶</span><i aria-hidden="true" data-i18n="common.off">关</i>
         </button>
         <button type="button" class="mp-row" id="btnCapHide" role="menuitem">
           <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-hide"/></svg>
-          <span>隐藏到托盘</span>
+          <span data-i18n="nav.hideToTray">隐藏到托盘</span>
         </button>
         <button type="button" class="mp-row danger" id="btnCapQuit" role="menuitem">
           <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-x"/></svg>
-          <span>退出</span>
+          <span data-i18n="settings.quit">退出</span>
         </button>
       </div>
     </div>
@@ -107,22 +108,22 @@
       <header class="topbar" data-tauri-drag-region>
         <span class="logo" aria-hidden="true">◆</span>
         <span class="tb-name">Maestro Sidebar</span>
-        <span class="chip" id="wsChip" title="工作区">—</span>
+        <span class="chip" id="wsChip" title="工作区" data-i18n-title="nav.workspace">—</span>
         <div class="tb-btns">
-          <button type="button" class="ib" id="btnRefresh" title="刷新快照" aria-label="刷新快照">
+          <button type="button" class="ib" id="btnRefresh" title="刷新快照" aria-label="刷新快照" data-i18n-title="nav.refresh" data-i18n-aria-label="nav.refresh">
             <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><use href="icons.svg#i-refresh"/></svg>
           </button>
-          <button type="button" class="ib" id="btnCapsuleQuick" title="切换到胶囊" aria-label="切换到胶囊">
+          <button type="button" class="ib" id="btnCapsuleQuick" title="切换到胶囊" aria-label="切换到胶囊" data-i18n-title="nav.capsule" data-i18n-aria-label="nav.capsule">
             <svg class="lucide" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-capsule"/></svg>
           </button>
           <span class="tb-div" aria-hidden="true"></span>
-          <button type="button" class="ib" id="btnMenu" title="菜单" aria-label="打开菜单" aria-expanded="false" aria-controls="menuPop" aria-haspopup="dialog">
+          <button type="button" class="ib" id="btnMenu" title="菜单" aria-label="打开菜单" data-i18n-title="nav.menu" data-i18n-aria-label="nav.openMenu" aria-expanded="false" aria-controls="menuPop" aria-haspopup="dialog">
             <svg class="lucide" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><use href="icons.svg#i-menu"/></svg>
           </button>
-          <button type="button" class="ib" id="btnHideWin" title="隐藏到托盘" aria-label="隐藏到托盘">
+          <button type="button" class="ib" id="btnHideWin" title="隐藏到托盘" aria-label="隐藏到托盘" data-i18n-title="nav.hideToTray" data-i18n-aria-label="nav.hideToTray">
             <svg class="lucide" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-hide"/></svg>
           </button>
-          <button type="button" class="ib" id="btnQuitWin" title="关闭（退出应用）" aria-label="关闭退出">
+          <button type="button" class="ib" id="btnQuitWin" title="关闭（退出应用）" aria-label="关闭退出" data-i18n-title="nav.quitTitle" data-i18n-aria-label="nav.quitAria">
             <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><use href="icons.svg#i-close"/></svg>
           </button>
         </div>
@@ -130,62 +131,70 @@
 
       <!-- 菜单 -->
       <div class="menu-scrim" id="menuScrim" hidden></div>
-      <div class="menu-pop" id="menuPop" role="dialog" aria-label="设置菜单" aria-modal="true" tabindex="-1" hidden>
+      <div class="menu-pop" id="menuPop" role="dialog" aria-label="设置菜单" data-i18n-aria-label="settings.menu" aria-modal="true" tabindex="-1" hidden>
         <div class="mp-group">
-          <div class="mp-label">窗口</div>
+          <div class="mp-label" data-i18n="settings.window">窗口</div>
           <button type="button" class="mp-row setting" id="btnTop" role="switch" aria-checked="false">
             <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-pin"/></svg>
-            <span>窗口置顶</span><i aria-hidden="true">关</i>
+            <span data-i18n="settings.alwaysOnTop">窗口置顶</span><i aria-hidden="true" data-i18n="common.off">关</i>
           </button>
           <button type="button" class="mp-row setting" id="btnAutoStart" role="switch" aria-checked="false">
             <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-power"/></svg>
-            <span>开机自启</span><i aria-hidden="true">关</i>
+            <span data-i18n="settings.autostart">开机自启</span><i aria-hidden="true" data-i18n="common.off">关</i>
           </button>
           <button type="button" class="mp-row" id="btnCapsule">
             <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-capsule"/></svg>
-            <span>切换到胶囊</span>
+            <span data-i18n="nav.capsule">切换到胶囊</span>
           </button>
           <button type="button" class="mp-row" id="btnHide">
             <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-hide"/></svg>
-            <span>隐藏到托盘</span>
+            <span data-i18n="nav.hideToTray">隐藏到托盘</span>
           </button>
         </div>
         <div class="mp-group">
-          <div class="mp-label">外观</div>
-          <div class="theme-row" id="themeRow" role="radiogroup" aria-label="界面主题">
-            <button type="button" class="theme-dot" data-theme="graphite" role="radio" aria-checked="false" title="石墨" aria-label="主题：石墨" tabindex="0"></button>
-            <button type="button" class="theme-dot" data-theme="mist" role="radio" aria-checked="false" title="雾白浅色" aria-label="主题：雾白浅色" tabindex="-1"></button>
-            <button type="button" class="theme-dot" data-theme="glass" role="radio" aria-checked="false" title="烟熏玻璃" aria-label="主题：烟熏玻璃" tabindex="-1"></button>
-            <button type="button" class="theme-dot" data-theme="ember" role="radio" aria-checked="false" title="余烬" aria-label="主题：余烬" tabindex="-1"></button>
-            <button type="button" class="theme-dot" data-theme="blueprint" role="radio" aria-checked="false" title="蓝图" aria-label="主题：蓝图" tabindex="-1"></button>
-            <button type="button" class="theme-dot" data-theme="ocean" role="radio" aria-checked="false" title="海洋" aria-label="主题：海洋" tabindex="-1"></button>
-            <button type="button" class="theme-dot" data-theme="sunset" role="radio" aria-checked="false" title="日落" aria-label="主题：日落" tabindex="-1"></button>
+          <div class="mp-label" data-i18n="settings.appearance">外观</div>
+          <label class="locale-row" for="localeSelect">
+            <span data-i18n="settings.language">语言</span>
+            <select id="localeSelect" aria-label="界面语言" data-i18n-aria-label="settings.languageLabel">
+              <option value="system" data-i18n="settings.languageSystem">跟随系统</option>
+              <option value="en" data-i18n="settings.languageEnglish">English</option>
+              <option value="zh-CN" data-i18n="settings.languageChinese">简体中文</option>
+            </select>
+          </label>
+          <div class="theme-row" id="themeRow" role="radiogroup" aria-label="界面主题" data-i18n-aria-label="settings.themeGroup">
+            <button type="button" class="theme-dot" data-theme="graphite" role="radio" aria-checked="false" title="石墨" aria-label="主题：石墨" data-theme-name-key="settings.themes.graphite" tabindex="0"></button>
+            <button type="button" class="theme-dot" data-theme="mist" role="radio" aria-checked="false" title="雾白浅色" aria-label="主题：雾白浅色" data-theme-name-key="settings.themes.mist" tabindex="-1"></button>
+            <button type="button" class="theme-dot" data-theme="glass" role="radio" aria-checked="false" title="烟熏玻璃" aria-label="主题：烟熏玻璃" data-theme-name-key="settings.themes.glass" tabindex="-1"></button>
+            <button type="button" class="theme-dot" data-theme="ember" role="radio" aria-checked="false" title="余烬" aria-label="主题：余烬" data-theme-name-key="settings.themes.ember" tabindex="-1"></button>
+            <button type="button" class="theme-dot" data-theme="blueprint" role="radio" aria-checked="false" title="蓝图" aria-label="主题：蓝图" data-theme-name-key="settings.themes.blueprint" tabindex="-1"></button>
+            <button type="button" class="theme-dot" data-theme="ocean" role="radio" aria-checked="false" title="海洋" aria-label="主题：海洋" data-theme-name-key="settings.themes.ocean" tabindex="-1"></button>
+            <button type="button" class="theme-dot" data-theme="sunset" role="radio" aria-checked="false" title="日落" aria-label="主题：日落" data-theme-name-key="settings.themes.sunset" tabindex="-1"></button>
           </div>
-          <button type="button" class="mp-row" id="btnWallpaper" aria-label="选择壁纸图片">
+          <button type="button" class="mp-row" id="btnWallpaper" aria-label="选择壁纸图片" data-i18n-aria-label="settings.chooseWallpaper">
             <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-image"/></svg>
-            <span>选择壁纸图片</span><span class="wp-name" id="wpName"></span>
+            <span data-i18n="settings.chooseWallpaper">选择壁纸图片</span><span class="wp-name" id="wpName"></span>
           </button>
           <div class="wp-slider-row" id="wpSliderRow" hidden>
-            <input type="range" id="wpOpacity" min="10" max="90" step="5" value="45" aria-label="壁纸不透明度" />
+            <input type="range" id="wpOpacity" min="10" max="90" step="5" value="45" aria-label="壁纸不透明度" data-i18n-aria-label="settings.wallpaperOpacity" />
             <span class="wp-val" id="wpVal">45%</span>
           </div>
           <button type="button" class="mp-row" id="btnWallpaperClear" hidden>
             <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-trash"/></svg>
-            <span>清除壁纸</span>
+            <span data-i18n="settings.clearWallpaper">清除壁纸</span>
           </button>
         </div>
         <div class="mp-group">
-          <div class="mp-label">工程</div>
+          <div class="mp-label" data-i18n="settings.projects">工程</div>
           <div id="rootList"></div>
           <button type="button" class="mp-row" id="btnAddRoot">
             <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-plus"/></svg>
-            <span>添加工程目录</span>
+            <span data-i18n="settings.addProject">添加工程目录</span>
           </button>
         </div>
         <div class="mp-group">
           <button type="button" class="mp-row danger" id="btnQuit">
             <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-x"/></svg>
-            <span>退出</span>
+            <span data-i18n="settings.quit">退出</span>
           </button>
         </div>
       </div>
@@ -195,9 +204,9 @@
         <!-- 详情视图（点击条目进入） -->
         <div class="detail-view" id="detailView" hidden>
           <div class="detail-head">
-            <button type="button" class="back-btn" id="btnBack" title="返回" aria-label="返回列表">
+            <button type="button" class="back-btn" id="btnBack" title="返回" aria-label="返回列表" data-i18n-title="common.back" data-i18n-aria-label="nav.backToList">
               <svg class="lucide" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-back"/></svg>
-              <span>返回</span>
+              <span data-i18n="common.back">返回</span>
             </button>
             <h1 class="detail-title" id="detailTitle" tabindex="-1"></h1>
             <span class="detail-kind" id="detailKind"></span>
@@ -205,9 +214,9 @@
           <!-- 详情页搜索栏（占位符随视图类型切换） -->
           <div class="detail-search" id="detailSearchRow" hidden>
             <svg class="lucide" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-search"/></svg>
-            <input type="search" id="detailSearch" placeholder="搜索…" aria-label="搜索详情内容" autocomplete="off" spellcheck="false" />
-            <button type="button" class="sec-search-clear" id="detailSearchClear" title="清除搜索" aria-label="清除搜索" hidden>×</button>
-            <button type="button" class="sem-toggle" id="semToggle" title="语义搜索（maestro search，含 wiki 与代码图谱）" aria-label="切换语义搜索" aria-pressed="false" hidden>语义</button>
+            <input type="search" id="detailSearch" placeholder="搜索…" aria-label="搜索详情内容" data-i18n-placeholder="common.search" data-i18n-aria-label="search.detailAria" autocomplete="off" spellcheck="false" />
+            <button type="button" class="sec-search-clear" id="detailSearchClear" title="清除搜索" aria-label="清除搜索" data-i18n-title="search.clear" data-i18n-aria-label="search.clear" hidden>×</button>
+            <button type="button" class="sem-toggle" id="semToggle" title="语义搜索（maestro search，含 wiki 与代码图谱）" aria-label="切换语义搜索" data-i18n="search.semantic" data-i18n-title="search.semanticTitle" data-i18n-aria-label="search.semanticAria" aria-pressed="false" hidden>语义</button>
             <span class="detail-search-count" id="detailSearchCount" hidden></span>
           </div>
           <div class="detail-body" id="detailBody" aria-busy="false"></div>
@@ -216,23 +225,23 @@
         <!-- 列表视图 -->
         <div id="listView">
         <!-- 顶部数据展示：实时运行（Agent/Session）+ 高频知识沉淀 -->
-        <section class="overview" id="overview" aria-label="运行概览">
+        <section class="overview" id="overview" aria-label="运行概览" data-i18n-aria-label="overview.aria">
           <div class="ov-card" id="ovRunning">
-            <button type="button" class="ov-head" id="ovRunningHead" title="点击查看全部会话" aria-label="查看全部会话">
+            <button type="button" class="ov-head" id="ovRunningHead" title="点击查看全部会话" aria-label="查看全部会话" data-i18n-title="overview.viewSessionsTitle" data-i18n-aria-label="overview.viewSessionsAria">
               <span class="ov-ic"><svg class="lucide" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-activity"/></svg></span>
-              <span class="ov-t">实时运行</span>
+              <span class="ov-t" data-i18n="overview.live">实时运行</span>
               <span class="ov-count" id="ovRunningCount">0</span>
             </button>
-            <div class="ov-stats" id="ovRunningStats" aria-label="运行数据统计"></div>
+            <div class="ov-stats" id="ovRunningStats" aria-label="运行数据统计" data-i18n-aria-label="overview.runtimeStats"></div>
             <div class="ov-body" id="ovRunningBody"></div>
           </div>
           <div class="ov-card" id="ovTopKb">
-            <button type="button" class="ov-head" id="ovTopKbHead" title="查看高频知识条目" aria-label="查看高频知识条目">
+            <button type="button" class="ov-head" id="ovTopKbHead" title="查看高频知识条目" aria-label="查看高频知识条目" data-i18n-title="overview.topKnowledgeTitle" data-i18n-aria-label="overview.topKnowledgeTitle">
               <span class="ov-ic"><svg class="lucide" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-trend"/></svg></span>
-              <span class="ov-t">高频知识</span>
+              <span class="ov-t" data-i18n="overview.topKnowledge">高频知识</span>
               <span class="ov-count" id="ovTopKbCount">0</span>
             </button>
-            <div class="ov-stats" id="ovTopKbStats" aria-label="知识数据统计"></div>
+            <div class="ov-stats" id="ovTopKbStats" aria-label="知识数据统计" data-i18n-aria-label="overview.knowledgeStats"></div>
             <div class="ov-body" id="ovTopKbBody"></div>
           </div>
         </section>
@@ -243,21 +252,21 @@
             <button type="button" class="sh" id="headCalls" data-sec="secCalls" aria-expanded="true" aria-controls="callsBody">
               <span class="chev"><svg class="lucide" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-chevron"/></svg></span>
               <span class="sh-ic"><svg class="lucide" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-activity"/></svg></span>
-              <span class="sh-t">Agent 调用</span><span class="pill" id="callsCount">0</span>
+              <span class="sh-t" data-i18n="sections.calls">Agent 调用</span><span class="pill" id="callsCount">0</span>
             </button>
-            <button type="button" class="sh-go" id="goCalls" title="进入全部 Agent 调用详情" aria-label="进入全部 Agent 调用详情">
+            <button type="button" class="sh-go" id="goCalls" title="进入全部 Agent 调用详情" aria-label="进入全部 Agent 调用详情" data-i18n-title="sections.callsDetailsTitle" data-i18n-aria-label="sections.callsDetailsAria">
               <svg class="lucide" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-list"/></svg>
-              <span>详情</span>
+              <span data-i18n="common.details">详情</span>
             </button>
           </div>
           <div class="sb" id="callsBody"><div class="sbi">
             <div class="sec-search">
               <svg class="lucide" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-search"/></svg>
-              <input type="search" id="callsSearch" placeholder="搜索 Agent 调用（提示词 / 模型 / 工具）" aria-label="搜索 Agent 调用" autocomplete="off" spellcheck="false" />
-              <button type="button" class="sec-search-clear" id="callsSearchClear" title="清除搜索" aria-label="清除搜索" hidden>×</button>
+              <input type="search" id="callsSearch" placeholder="搜索 Agent 调用（提示词 / 模型 / 工具）" aria-label="搜索 Agent 调用" data-i18n-placeholder="sections.callsSearch" data-i18n-aria-label="sections.callsSearchAria" autocomplete="off" spellcheck="false" />
+              <button type="button" class="sec-search-clear" id="callsSearchClear" title="清除搜索" aria-label="清除搜索" data-i18n-title="search.clear" data-i18n-aria-label="search.clear" hidden>×</button>
             </div>
             <div class="rows" id="callsList"></div>
-            <div class="empty" id="callsEmpty" hidden>暂无 Agent 调用</div>
+            <div class="empty" id="callsEmpty" hidden data-i18n="sections.noCalls">暂无 Agent 调用</div>
             <div class="sec-f" id="callsFoot" hidden></div>
           </div></div>
         </section>
@@ -268,21 +277,21 @@
             <button type="button" class="sh" id="headSessions" data-sec="secSess" aria-expanded="true" aria-controls="sessionsBody">
               <span class="chev"><svg class="lucide" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-chevron"/></svg></span>
               <span class="sh-ic"><svg class="lucide" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-session"/></svg></span>
-              <span class="sh-t">Session · Run</span><span class="pill" id="sessionsCount">0</span>
+              <span class="sh-t" data-i18n="sections.sessions">Session · Run</span><span class="pill" id="sessionsCount">0</span>
             </button>
-            <button type="button" class="sh-go" id="goSessions" title="进入全部会话详情" aria-label="进入全部会话详情">
+            <button type="button" class="sh-go" id="goSessions" title="进入全部会话详情" aria-label="进入全部会话详情" data-i18n-title="sections.sessionsDetailsTitle" data-i18n-aria-label="sections.sessionsDetailsAria">
               <svg class="lucide" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-list"/></svg>
-              <span>详情</span>
+              <span data-i18n="common.details">详情</span>
             </button>
           </div>
           <div class="sb" id="sessionsBody"><div class="sbi">
             <div class="sec-search">
               <svg class="lucide" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-search"/></svg>
-              <input type="search" id="sessionsSearch" placeholder="搜索会话（ID / 意图 / Run）" aria-label="搜索会话" autocomplete="off" spellcheck="false" />
-              <button type="button" class="sec-search-clear" id="sessionsSearchClear" title="清除搜索" aria-label="清除搜索" hidden>×</button>
+              <input type="search" id="sessionsSearch" placeholder="搜索会话（ID / 意图 / Run）" aria-label="搜索会话" data-i18n-placeholder="sections.sessionsSearch" data-i18n-aria-label="sections.sessionsSearchAria" autocomplete="off" spellcheck="false" />
+              <button type="button" class="sec-search-clear" id="sessionsSearchClear" title="清除搜索" aria-label="清除搜索" data-i18n-title="search.clear" data-i18n-aria-label="search.clear" hidden>×</button>
             </div>
             <div class="rows" id="sessionsList"></div>
-            <div class="empty" id="sessionsEmpty" hidden>暂无会话</div>
+            <div class="empty" id="sessionsEmpty" hidden data-i18n="sections.noSessions">暂无会话</div>
             <div class="sec-f" id="sessionsFoot" hidden></div>
           </div></div>
         </section>
@@ -293,18 +302,18 @@
             <button type="button" class="sh" id="headKnowledge" data-sec="secKb" aria-expanded="true" aria-controls="knowledgeBody">
               <span class="chev"><svg class="lucide" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-chevron"/></svg></span>
               <span class="sh-ic"><svg class="lucide" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-book"/></svg></span>
-              <span class="sh-t">知识积累</span><span class="pill" id="knowledgeTotal">0</span>
+              <span class="sh-t" data-i18n="sections.knowledge">知识积累</span><span class="pill" id="knowledgeTotal">0</span>
             </button>
-            <button type="button" class="sh-go" id="goKnowledge" title="进入知识条目详情" aria-label="进入知识条目详情">
+            <button type="button" class="sh-go" id="goKnowledge" title="进入知识条目详情" aria-label="进入知识条目详情" data-i18n-title="sections.knowledgeDetailsTitle" data-i18n-aria-label="sections.knowledgeDetailsAria">
               <svg class="lucide" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-list"/></svg>
-              <span>详情</span>
+              <span data-i18n="common.details">详情</span>
             </button>
           </div>
           <div class="sb" id="knowledgeBody"><div class="sbi">
             <div class="sec-search">
               <svg class="lucide" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="icons.svg#i-search"/></svg>
-              <input type="search" id="knowledgeSearch" placeholder="搜索知识条目（标题 / ID / 标签）" aria-label="搜索知识条目" autocomplete="off" spellcheck="false" />
-              <button type="button" class="sec-search-clear" id="knowledgeSearchClear" title="清除搜索" aria-label="清除搜索" hidden>×</button>
+              <input type="search" id="knowledgeSearch" placeholder="搜索知识条目（标题 / ID / 标签）" aria-label="搜索知识条目" data-i18n-placeholder="sections.knowledgeSearch" data-i18n-aria-label="sections.knowledgeSearchAria" autocomplete="off" spellcheck="false" />
+              <button type="button" class="sec-search-clear" id="knowledgeSearchClear" title="清除搜索" aria-label="清除搜索" data-i18n-title="search.clear" data-i18n-aria-label="search.clear" hidden>×</button>
             </div>
             <div id="kbBody"></div>
           </div></div>
@@ -320,11 +329,11 @@
         <span class="sb-status" id="liveStatus" role="status" aria-live="polite">实时监听</span>
         <span class="sb-time clk" id="clk">--:--:--</span>
         <span class="sb-spacer"></span>
-        <button type="button" class="sb-global" id="btnGlobal" title="单工程 / 全局模式" aria-label="切换单工程或全局模式" aria-pressed="false">
+        <button type="button" class="sb-global" id="btnGlobal" title="单工程 / 全局模式" aria-label="切换单工程或全局模式" data-i18n-title="workspace.globalToggleTitle" data-i18n-aria-label="workspace.globalToggleAria" aria-pressed="false">
           <span class="sb-global-ic" aria-hidden="true">◎</span>
-          <span class="sb-global-name" id="globalName">单工程</span>
+          <span class="sb-global-name" id="globalName" data-i18n="workspace.singleProject">单工程</span>
         </button>
-        <button type="button" class="sb-ws" id="btnWs" title="选择工作空间" aria-label="选择工作空间" aria-expanded="false" aria-controls="wsPop">
+        <button type="button" class="sb-ws" id="btnWs" title="选择工作空间" aria-label="选择工作空间" data-i18n-title="nav.selectWorkspace" data-i18n-aria-label="nav.selectWorkspace" aria-expanded="false" aria-controls="wsPop">
           <span class="sb-ws-dot" aria-hidden="true">◆</span>
           <span class="sb-ws-name" id="wsName">—</span>
           <span class="sb-ws-chev" aria-hidden="true">▾</span>
@@ -333,8 +342,8 @@
 
       <!-- 工作空间选择弹层 -->
       <div class="ws-pop" id="wsPop" hidden>
-        <div class="ws-pop-title">选择工作空间</div>
-        <div id="wsList" role="listbox" aria-label="工作空间列表"></div>
+        <div class="ws-pop-title" data-i18n="nav.selectWorkspace">选择工作空间</div>
+        <div id="wsList" role="listbox" aria-label="工作空间列表" data-i18n-aria-label="nav.workspaceList"></div>
       </div>
     </article>
   </div>

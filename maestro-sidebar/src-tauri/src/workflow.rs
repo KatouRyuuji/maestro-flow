@@ -24,7 +24,19 @@ pub struct RunSummary {
     pub status: String,
     pub verdict: Option<String>,
     pub command: Option<String>,
+    /// Legacy command-run execution platform. Canonical run/3.0 records use
+    /// actor_id instead and must not conflate actor identity with a platform.
     pub platform: Option<String>,
+    #[serde(default)]
+    pub actor_id: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub revision: Option<i64>,
+    #[serde(default)]
+    pub attempt: Option<i64>,
+    #[serde(default)]
+    pub retry_of_run_id: Option<String>,
     pub started_at: Option<String>,
     pub completed_at: Option<String>,
     pub duration_secs: Option<i64>,
@@ -54,6 +66,10 @@ pub struct SessionDetail {
     pub session: SessionSummary,
     pub runs: Vec<RunSummary>,
     pub orchestration: Option<serde_json::Value>,
+    /// Canonical session/3.0 decision references. Legacy sessions expose an
+    /// empty list because their decision model lives under orchestration.
+    #[serde(default)]
+    pub decisions: Vec<serde_json::Value>,
     pub boundary_contract: Option<serde_json::Value>,
     /// 会话级门禁注册表（gates.json；按 key 排序保证确定性）。
     pub gates: Vec<GateInfo>,
@@ -69,8 +85,20 @@ pub struct SessionSummary {
     pub status: String,
     /// 所属工程（state.json project_name；多工程合并时用于区分）
     pub project: Option<String>,
+    /// Full canonical active set. Legacy sessions contain zero or one entry.
+    #[serde(default)]
+    pub active_run_ids: Vec<String>,
+    /// Singular compatibility alias selected from the active set.
     pub active_run_id: Option<String>,
     pub latest_completed_run_id: Option<String>,
+    #[serde(default)]
+    pub orchestration_revision: Option<i64>,
+    #[serde(default)]
+    pub activity_revision: Option<i64>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
     pub run_count: usize,
     pub latest_run: Option<RunSummary>,
 }
@@ -126,6 +154,70 @@ fn detail_list(obj: &serde_json::Value, key: &str) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn timestamp_millis(value: &str) -> Option<i64> {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|timestamp| timestamp.timestamp_millis())
+}
+
+fn run_sort_timestamp(run: &RunSummary) -> Option<i64> {
+    [
+        run.created_at.as_deref(),
+        run.started_at.as_deref(),
+        run.completed_at.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(timestamp_millis)
+}
+
+fn run_sort_timestamp_option(run: &Option<RunSummary>) -> Option<i64> {
+    run.as_ref().and_then(run_sort_timestamp)
+}
+
+fn session_sort_timestamp(session: &SessionSummary) -> Option<i64> {
+    [session.updated_at.as_deref(), session.created_at.as_deref()]
+        .into_iter()
+        .flatten()
+        .find_map(timestamp_millis)
+        .or_else(|| run_sort_timestamp_option(&session.latest_run))
+}
+
+fn completed_run_sort_timestamp(run: &RunSummary) -> Option<i64> {
+    [
+        run.completed_at.as_deref(),
+        run.started_at.as_deref(),
+        run.created_at.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(timestamp_millis)
+}
+
+fn compare_runs(left: &RunSummary, right: &RunSummary) -> std::cmp::Ordering {
+    run_sort_timestamp(left)
+        .cmp(&run_sort_timestamp(right))
+        .then_with(|| left.run_id.cmp(&right.run_id))
+}
+
+fn is_completed_run(run: &RunSummary) -> bool {
+    matches!(
+        run.status.to_ascii_lowercase().as_str(),
+        "completed" | "done" | "sealed"
+    )
+}
+
+fn latest_completed_run_id(runs: &[RunSummary]) -> Option<String> {
+    runs.iter()
+        .filter(|run| is_completed_run(run))
+        .max_by(|left, right| {
+            completed_run_sort_timestamp(left)
+                .cmp(&completed_run_sort_timestamp(right))
+                .then_with(|| left.run_id.cmp(&right.run_id))
+        })
+        .map(|run| run.run_id.clone())
 }
 
 // ---------------------------------------------------------------------------
@@ -260,6 +352,11 @@ fn parse_run(raw: &serde_json::Value) -> RunSummary {
         verdict,
         command: command.and_then(|c| str_field(c, "name")),
         platform: str_field(raw, "resolved_platform"),
+        actor_id: str_field(raw, "actor_id"),
+        created_at: str_field(raw, "created_at"),
+        revision: raw.get("revision").and_then(|value| value.as_i64()),
+        attempt: raw.get("attempt").and_then(|value| value.as_i64()),
+        retry_of_run_id: str_field(raw, "retry_of_run_id"),
         started_at: started,
         completed_at: completed,
         duration_secs,
@@ -276,7 +373,8 @@ fn parse_run(raw: &serde_json::Value) -> RunSummary {
 
 /// run/3.0 解析：顶层字段直读；run 列表展示所需字段全部归一化到 RunSummary。
 fn parse_run_v3(raw: &serde_json::Value) -> RunSummary {
-    let started = str_field(raw, "started_at").or_else(|| str_field(raw, "created_at"));
+    let created = str_field(raw, "created_at");
+    let started = str_field(raw, "started_at");
     let completed = str_field(raw, "ended_at").or_else(|| str_field(raw, "sealed_at"));
     let duration_secs = match (&started, &completed) {
         (Some(s), Some(e)) => {
@@ -298,7 +396,12 @@ fn parse_run_v3(raw: &serde_json::Value) -> RunSummary {
         status: str_field(raw, "status").unwrap_or_else(|| "unknown".into()),
         verdict: str_field(raw, "verdict"),
         command: str_field(raw, "command"),
-        platform: str_field(raw, "actor_id"),
+        platform: None,
+        actor_id: str_field(raw, "actor_id"),
+        created_at: created,
+        revision: raw.get("revision").and_then(|value| value.as_i64()),
+        attempt: raw.get("attempt").and_then(|value| value.as_i64()),
+        retry_of_run_id: str_field(raw, "retry_of_run_id"),
         started_at: started,
         completed_at: completed,
         duration_secs,
@@ -355,34 +458,67 @@ fn v3_intent(v: &serde_json::Value) -> Option<String> {
     str_field(v, "objective")
 }
 
-/// session/3.0 的 active_run_id 改为 active_run_ids 数组（可能多个）。
-fn v3_active_run_id(v: &serde_json::Value) -> Option<String> {
-    v.get("active_run_ids")
-        .and_then(|a| a.as_array())
-        .and_then(|arr| arr.iter().find_map(|x| x.as_str().map(str::to_owned)))
+/// Return the complete active set for either schema generation.
+fn active_run_ids(v: &serde_json::Value) -> Vec<String> {
+    if is_session_v3(v) {
+        return v
+            .get("active_run_ids")
+            .and_then(|value| value.as_array())
+            .map(|items| items.iter().filter_map(as_str).collect())
+            .unwrap_or_default();
+    }
+    str_field(v, "active_run_id").into_iter().collect()
 }
 
-/// session/3.0 无 orchestration 对象：编排信息在 chain[]（步骤携带 run_ids 数组）。
-/// 归一化为前端已识别的 orchestration.chain 形状：每个步骤补 run_id = run_ids[0]。
-fn v3_orchestration(v: &serde_json::Value) -> Option<serde_json::Value> {
+/// Pick the most recently created/started active Run for consumers that still
+/// understand only one active_run_id. Unknown references remain plural-only
+/// because canonical hash ordering carries no chronology.
+fn compatible_active_run_id(v: &serde_json::Value, runs: &[RunSummary]) -> Option<String> {
+    if !is_session_v3(v) {
+        return str_field(v, "active_run_id");
+    }
+    let ids = active_run_ids(v);
+    runs.iter()
+        .filter(|run| ids.iter().any(|id| id == &run.run_id))
+        .max_by(|left, right| compare_runs(left, right))
+        .map(|run| run.run_id.clone())
+}
+
+/// session/3.0 stores a sorted set of Run IDs, not chronological history.
+/// Resolve the latest attempt from Run metadata and retain run_ids losslessly.
+fn v3_orchestration(v: &serde_json::Value, runs: &[RunSummary]) -> Option<serde_json::Value> {
     let chain = v.get("chain")?.as_array()?;
     let steps: Vec<serde_json::Value> = chain
         .iter()
         .map(|step| {
             let mut s = step.clone();
             if s.get("run_id").is_none() {
-                if let Some(first) = s
+                let ids: Vec<String> = s
                     .get("run_ids")
-                    .and_then(|r| r.as_array())
-                    .and_then(|a| a.first())
-                {
-                    s["run_id"] = first.clone();
+                    .and_then(|value| value.as_array())
+                    .map(|items| items.iter().filter_map(as_str).collect())
+                    .unwrap_or_default();
+                let latest = runs
+                    .iter()
+                    .filter(|run| ids.iter().any(|id| id == &run.run_id))
+                    .max_by(|left, right| {
+                        left.attempt
+                            .cmp(&right.attempt)
+                            .then_with(|| compare_runs(left, right))
+                    });
+                if let Some(latest) = latest {
+                    s["run_id"] = serde_json::Value::String(latest.run_id.clone());
                 }
             }
             s
         })
         .collect();
-    Some(serde_json::json!({ "engine": "chain-v3", "chain": steps }))
+    Some(serde_json::json!({
+        "engine": "chain-v3",
+        "orchestration_revision": v.get("orchestration_revision").cloned(),
+        "activity_revision": v.get("activity_revision").cloned(),
+        "chain": steps,
+    }))
 }
 
 /// session/3.0 无 boundary_contract 对象：objective 入 In Scope，DoD 独立字段。
@@ -411,35 +547,56 @@ pub fn scan_session_detail(wf_root: &Path, session_id: &str) -> Option<SessionDe
     let session_dir = wf_root.join("sessions").join(session_id);
     let session_json = read_json(&session_dir.join("session.json"))?;
     let is_v3 = is_session_v3(&session_json);
-    let runs = scan_runs(wf_root, session_id);
-    let (latest_run, run_count) = load_latest_run(&session_dir);
+    let (runs, run_count) = load_runs(&session_dir);
+    let latest_run = runs.last().cloned();
+    let all_active_run_ids = active_run_ids(&session_json);
     let status = effective_status(
         &str_field(&session_json, "status").unwrap_or_else(|| "unknown".into()),
         &latest_run,
         &session_dir,
+        is_v3,
     );
     // 工程归属：与 scan_sessions_impl 同源（state.json project_name），
     // 多工程合并时详情页可标注归属（原实现恒为 None）。
-    let project = read_json(&wf_root.join("state.json"))
-        .and_then(|v| str_field(&v, "project_name"));
+    let project =
+        read_json(&wf_root.join("state.json")).and_then(|v| str_field(&v, "project_name"));
     let session = SessionSummary {
         session_id: session_id.to_owned(),
         intent: str_field(&session_json, "intent").or_else(|| v3_intent(&session_json)),
         status,
         project,
-        active_run_id: str_field(&session_json, "active_run_id")
-            .or_else(|| v3_active_run_id(&session_json)),
-        latest_completed_run_id: str_field(&session_json, "latest_completed_run_id"),
+        active_run_ids: all_active_run_ids,
+        active_run_id: compatible_active_run_id(&session_json, &runs),
+        latest_completed_run_id: str_field(&session_json, "latest_completed_run_id")
+            .or_else(|| latest_completed_run_id(&runs)),
+        orchestration_revision: session_json
+            .get("orchestration_revision")
+            .and_then(|value| value.as_i64()),
+        activity_revision: session_json
+            .get("activity_revision")
+            .and_then(|value| value.as_i64()),
+        created_at: str_field(&session_json, "created_at"),
+        updated_at: str_field(&session_json, "updated_at"),
         run_count,
         latest_run,
+    };
+    let orchestration = if is_v3 {
+        v3_orchestration(&session_json, &runs)
+    } else {
+        session_json.get("orchestration").cloned()
     };
     Some(SessionDetail {
         session,
         runs,
-        orchestration: if is_v3 {
-            v3_orchestration(&session_json)
+        orchestration,
+        decisions: if is_v3 {
+            session_json
+                .get("decisions")
+                .and_then(|value| value.as_array())
+                .cloned()
+                .unwrap_or_default()
         } else {
-            session_json.get("orchestration").cloned()
+            Vec::new()
         },
         boundary_contract: if is_v3 {
             v3_boundary_contract(&session_json)
@@ -455,24 +612,33 @@ pub fn scan_session_detail(wf_root: &Path, session_id: &str) -> Option<SessionDe
     })
 }
 
-/// 读取会话 runs/ 下最新的 run.json。
-fn load_latest_run(session_dir: &Path) -> (Option<RunSummary>, usize) {
+/// Read and timestamp-sort every valid run.json. Hash-based v3 Run IDs have no
+/// chronology, so IDs are only a deterministic tie-breaker/fallback.
+fn load_runs(session_dir: &Path) -> (Vec<RunSummary>, usize) {
     let runs_dir = session_dir.join("runs");
     let Ok(entries) = fs::read_dir(&runs_dir) else {
-        return (None, 0);
+        return (Vec::new(), 0);
     };
-    let mut dirs: Vec<String> = entries
+    let dirs: Vec<String> = entries
         .flatten()
-        .filter(|e| e.path().is_dir())
-        .filter_map(|e| e.file_name().to_str().map(str::to_owned))
+        .filter(|entry| entry.path().is_dir())
+        .filter_map(|entry| entry.file_name().to_str().map(str::to_owned))
         .collect();
-    if dirs.is_empty() {
-        return (None, 0);
-    }
-    dirs.sort(); // run_id 按 YYYYMMDD-NNN-name 字典序即时间序
-    let latest = dirs.last().unwrap();
-    let run = read_json(&runs_dir.join(latest).join("run.json")).map(|v| parse_run(&v));
-    (run, dirs.len())
+    let run_count = dirs.len();
+    let mut runs: Vec<RunSummary> = dirs
+        .iter()
+        .filter_map(|dir| read_json(&runs_dir.join(dir).join("run.json")))
+        .map(|raw| parse_run(&raw))
+        .collect();
+    runs.sort_by(compare_runs);
+    (runs, run_count)
+}
+
+/// Read the chronologically latest valid run.json.
+#[cfg(test)]
+fn load_latest_run(session_dir: &Path) -> (Option<RunSummary>, usize) {
+    let (runs, run_count) = load_runs(session_dir);
+    (runs.last().cloned(), run_count)
 }
 
 // ---------------------------------------------------------------------------
@@ -492,8 +658,7 @@ pub fn scan_sessions_with_project(wf_root: &Path, project: Option<&str>) -> Vec<
 fn scan_sessions_impl(wf_root: &Path, project: Option<&str>) -> Vec<SessionSummary> {
     let project_name = match project {
         Some(name) => Some(name.to_string()),
-        None => read_json(&wf_root.join("state.json"))
-            .and_then(|v| str_field(&v, "project_name")),
+        None => read_json(&wf_root.join("state.json")).and_then(|v| str_field(&v, "project_name")),
     };
     let registry = read_registry(&wf_root.join("state.json"));
     let sessions_dir = wf_root.join("sessions");
@@ -529,7 +694,8 @@ fn scan_sessions_impl(wf_root: &Path, project: Option<&str>) -> Vec<SessionSumma
         .into_iter()
         .map(|(id, (intent, reg_status))| {
             let session_dir = sessions_dir.join(&id);
-            let (latest_run, run_count) = load_latest_run(&session_dir);
+            let (runs, run_count) = load_runs(&session_dir);
+            let latest_run = runs.last().cloned();
             let session_json = read_json(&session_dir.join("session.json"));
             let intent = session_json
                 .as_ref()
@@ -540,46 +706,82 @@ fn scan_sessions_impl(wf_root: &Path, project: Option<&str>) -> Vec<SessionSumma
                 .and_then(|v| str_field(v, "status"))
                 .or(reg_status)
                 .unwrap_or_else(|| "unknown".into());
+            let is_v3 = session_json.as_ref().map(is_session_v3).unwrap_or(false);
+            let all_active_run_ids = session_json
+                .as_ref()
+                .map(active_run_ids)
+                .unwrap_or_default();
             SessionSummary {
                 session_id: id,
                 intent,
-                // 展示状态：state.json/session.json 的 running 常为陈旧值（session 完成后未更新）；
-                // 以最新 run.json 的实际状态为准（运行时权威）。
-                status: effective_status(&raw_status, &latest_run, &session_dir),
+                // Legacy Session states can be stale and are reconciled from
+                // their latest Run. Canonical session/3.0 status is authority.
+                status: effective_status(&raw_status, &latest_run, &session_dir, is_v3),
                 project: project_name.clone(),
+                active_run_ids: all_active_run_ids,
                 active_run_id: session_json
                     .as_ref()
-                    .and_then(|v| str_field(v, "active_run_id").or_else(|| v3_active_run_id(v))),
+                    .and_then(|value| compatible_active_run_id(value, &runs)),
                 latest_completed_run_id: session_json
                     .as_ref()
-                    .and_then(|v| str_field(v, "latest_completed_run_id")),
+                    .and_then(|value| str_field(value, "latest_completed_run_id"))
+                    .or_else(|| latest_completed_run_id(&runs)),
+                orchestration_revision: session_json.as_ref().and_then(|value| {
+                    value
+                        .get("orchestration_revision")
+                        .and_then(|revision| revision.as_i64())
+                }),
+                activity_revision: session_json.as_ref().and_then(|value| {
+                    value
+                        .get("activity_revision")
+                        .and_then(|revision| revision.as_i64())
+                }),
+                created_at: session_json
+                    .as_ref()
+                    .and_then(|value| str_field(value, "created_at")),
+                updated_at: session_json
+                    .as_ref()
+                    .and_then(|value| str_field(value, "updated_at")),
                 run_count,
                 latest_run,
             }
         })
         .collect();
 
-    // 排序：运行中 > 暂停 > 失败/阻塞 > 已封存，组内按 session_id 倒序（新在前）
+    // Active execution first, then canonical Session activity timestamp.
     sessions.sort_by(|a, b| {
-        status_rank(&a.status)
-            .cmp(&status_rank(&b.status))
+        let rank = |session: &SessionSummary| {
+            if session.active_run_ids.is_empty() {
+                status_rank(&session.status)
+            } else {
+                0
+            }
+        };
+        rank(a)
+            .cmp(&rank(b))
+            .then_with(|| session_sort_timestamp(b).cmp(&session_sort_timestamp(a)))
             .then_with(|| b.session_id.cmp(&a.session_id))
     });
     sessions.truncate(40);
     sessions
 }
 
-/// 列表展示用状态：对 running/active 做最新 run 校正（陈旧 running 降级为实际状态）。
-/// 无 run 目录时：目录 24h 内有活动才视为真运行，否则视为陈旧（幽灵/已完成未更新的 session）。
-fn effective_status(raw: &str, latest: &Option<RunSummary>, dir: &Path) -> String {
+/// Derive a display status without overriding canonical session/3.0 authority.
+/// Legacy running/active states retain their compatibility reconciliation.
+fn effective_status(
+    raw: &str,
+    latest: &Option<RunSummary>,
+    dir: &Path,
+    is_v3_session: bool,
+) -> String {
     let s = raw.to_ascii_lowercase();
-    // session/3.0 状态词汇（open/completed/archived/failed）→ 展示状态：
-    // open 表示会话仍在进行（链未完结），archived 是终态。
-    if s == "open" {
-        return "active".into();
-    }
-    if s == "archived" {
-        return "sealed".into();
+    if is_v3_session {
+        return match s.as_str() {
+            // Read tolerance for retired pre-simplification documents.
+            "paused" => "open".into(),
+            "open" | "completed" | "archived" | "failed" => s,
+            _ => raw.to_string(),
+        };
     }
     if s != "running" && s != "active" && s != "executing" {
         return raw.to_string();
@@ -589,13 +791,17 @@ fn effective_status(raw: &str, latest: &Option<RunSummary>, dir: &Path) -> Strin
             // run.json 的 running 也会陈旧（会话中断后未 seal）：started 超过 2 小时无
             // 新活动即视为陈旧 → 已封存
             "running" | "executing" | "active" => {
-                let stale = run.started_at.as_deref().and_then(|iso| {
-                    chrono::DateTime::parse_from_rfc3339(iso).ok()
-                }).map(|t| {
-                    t.signed_duration_since(chrono::Utc::now())
-                        .num_minutes()
-                        .unsigned_abs() > 120
-                }).unwrap_or(false);
+                let stale = run
+                    .started_at
+                    .as_deref()
+                    .and_then(|iso| chrono::DateTime::parse_from_rfc3339(iso).ok())
+                    .map(|t| {
+                        t.signed_duration_since(chrono::Utc::now())
+                            .num_minutes()
+                            .unsigned_abs()
+                            > 120
+                    })
+                    .unwrap_or(false);
                 if stale {
                     "sealed".into()
                 } else {
@@ -605,6 +811,8 @@ fn effective_status(raw: &str, latest: &Option<RunSummary>, dir: &Path) -> Strin
             "sealed" | "completed" | "done" => "sealed".into(),
             "failed" | "blocked" => "blocked".into(),
             "paused" => "paused".into(),
+            "pending" => "pending".into(),
+            "cancelled" => "cancelled".into(),
             // 异常 run 状态：保持原始状态
             _ => raw.to_string(),
         },
@@ -627,30 +835,16 @@ fn effective_status(raw: &str, latest: &Option<RunSummary>, dir: &Path) -> Strin
 pub(crate) fn status_rank(status: &str) -> u8 {
     match status.to_ascii_lowercase().as_str() {
         "running" | "active" | "executing" => 0,
-        "paused" => 1,
+        "open" | "paused" => 1,
         "blocked" | "failed" => 2,
-        _ => 3, // sealed / completed / unknown
+        _ => 3, // archived / sealed / completed / unknown
     }
 }
 
 /// 读取某会话的完整 run 列表（供前端展开）。
 pub fn scan_runs(wf_root: &Path, session_id: &str) -> Vec<RunSummary> {
-    let runs_dir = wf_root.join("sessions").join(session_id).join("runs");
-    let Ok(entries) = fs::read_dir(&runs_dir) else {
-        return Vec::new();
-    };
-    let mut dirs: Vec<String> = entries
-        .flatten()
-        .filter(|e| e.path().is_dir())
-        .filter_map(|e| e.file_name().to_str().map(str::to_owned))
-        .collect();
-    dirs.sort();
-    dirs.iter()
-        .filter_map(|d| {
-            let raw = read_json(&runs_dir.join(d).join("run.json"))?;
-            Some(parse_run(&raw))
-        })
-        .collect()
+    let session_dir = wf_root.join("sessions").join(session_id);
+    load_runs(&session_dir).0
 }
 
 // ---------------------------------------------------------------------------
@@ -707,7 +901,11 @@ pub fn scan_run_artifacts(wf_root: &Path, session_id: &str, run_id: &str) -> Opt
             let preview = fs::read_to_string(f.path())
                 .map(|s| s.chars().take(OUTPUT_PREVIEW_CHARS).collect::<String>())
                 .unwrap_or_default();
-            out.outputs.push(RunArtifactFile { name, size, preview });
+            out.outputs.push(RunArtifactFile {
+                name,
+                size,
+                preview,
+            });
         }
     }
     let session_dir = wf_root.join("sessions").join(session_id);
@@ -879,13 +1077,17 @@ mod tests {
         assert_eq!(run.verdict.as_deref(), Some("done"));
         // run/3.0 的 command 是字符串（非对象）
         assert_eq!(run.command.as_deref(), Some("maestro"));
-        // actor_id 即执行者
-        assert_eq!(run.platform.as_deref(), Some("claude"));
+        // actor_id is identity, not a legacy execution platform.
+        assert_eq!(run.actor_id.as_deref(), Some("claude"));
+        assert_eq!(run.platform, None);
         assert_eq!(run.handoff_summary.as_deref(), Some("v3 run ok"));
         // 结束时间取 ended_at
         assert_eq!(run.completed_at.as_deref(), Some("2026-08-12T08:05:00Z"));
         assert_eq!(run.duration_secs, Some(240));
         assert_eq!(run.sequence, None);
+        assert_eq!(run.revision, Some(3));
+        assert_eq!(run.attempt, Some(1));
+        assert_eq!(run.retry_of_run_id, None);
         assert!(run.concerns.is_empty() && run.decisions.is_empty() && run.gate_ids.is_empty());
     }
 
@@ -968,11 +1170,14 @@ mod tests {
         assert_eq!(s.session_id, "s-v3");
         // objective → intent
         assert_eq!(s.intent.as_deref(), Some("v3 目标"));
-        // open → active（展示为运行中）
-        assert_eq!(s.status, "active");
+        // Canonical lifecycle status remains distinct from execution activity.
+        assert_eq!(s.status, "open");
         // active_run_ids[0] → active_run_id
         assert_eq!(s.active_run_id.as_deref(), Some("r-002"));
-        assert_eq!(s.latest_run.as_ref().and_then(|r| r.command.as_deref()), Some("verify"));
+        assert_eq!(
+            s.latest_run.as_ref().and_then(|r| r.command.as_deref()),
+            Some("verify")
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -1016,7 +1221,7 @@ mod tests {
         // completed → sealed（展示为已封存）
         assert_eq!(detail.session.status, "completed");
         assert_eq!(detail.session.active_run_id, None);
-        // 编排链：步骤补 run_id = run_ids[0]
+        // 编排链：保留全量 run_ids，兼容 run_id 指向最新追加的 retry。
         let orchestration = detail.orchestration.unwrap();
         assert_eq!(orchestration["engine"], "chain-v3");
         assert_eq!(orchestration["chain"][0]["run_id"], "r-001");
@@ -1032,6 +1237,230 @@ mod tests {
         assert_eq!(detail.runs.len(), 1);
         assert_eq!(detail.runs[0].verdict.as_deref(), Some("done"));
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn scan_v3_preserves_concurrency_retries_decisions_and_statuses() {
+        let root = tmp_dir("v3-current-state");
+        let wf = root.join(".workflow");
+        let session_dir = wf.join("sessions/hash-session");
+        for run_id in [
+            "z-started-running",
+            "y-ended-completed",
+            "a-created-pending",
+            "b-created-cancelled",
+        ] {
+            fs::create_dir_all(session_dir.join("runs").join(run_id)).unwrap();
+        }
+        fs::write(
+            session_dir.join("session.json"),
+            r#"{
+              "schema_version":"session/3.0",
+              "session_id":"hash-session",
+              "objective":"read canonical state",
+              "definition_of_done":"state is lossless",
+              "status":"open",
+              "orchestration_revision":7,
+              "activity_revision":11,
+              "chain":[{
+                "step_id":"retry-step","command":"verify","args":[],"status":"running",
+                "run_ids":["a-created-pending","z-started-running"],
+                "goal_ref":null,"decision_ref":"decision-gate","decision_refs":["decision-note"],"stage":"verify"
+              }],
+              "decisions":[{
+                "decision_id":"decision-gate","after_step_id":"retry-step",
+                "status":"open","evidence_refs":["EVD-1"]
+              }],
+              "active_run_ids":["a-created-pending","z-started-running"],
+              "artifacts_ref":"artifacts.json","evidence_ref":"evidence.json",
+              "created_at":"2026-08-12T08:00:00Z","updated_at":"2026-08-12T13:01:00Z",
+              "completed_at":null,"archived_at":null
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            session_dir.join("runs/z-started-running/run.json"),
+            r#"{"schema_version":"run/3.0","run_id":"z-started-running","status":"running","command":"verify","actor_id":"actor-old","revision":1,"attempt":1,"retry_of_run_id":null,"started_at":"2020-01-01T09:00:00Z"}"#,
+        )
+        .unwrap();
+        fs::write(
+            session_dir.join("runs/y-ended-completed/run.json"),
+            r#"{"schema_version":"run/3.0","run_id":"y-ended-completed","status":"completed","command":"verify","actor_id":"actor-done","ended_at":"2026-08-12T11:00:00Z"}"#,
+        )
+        .unwrap();
+        fs::write(
+            session_dir.join("runs/a-created-pending/run.json"),
+            r#"{"schema_version":"run/3.0","run_id":"a-created-pending","status":"pending","command":"verify","actor_id":"actor-next","revision":2,"attempt":2,"retry_of_run_id":"z-started-running","created_at":"2026-08-12T12:00:00Z"}"#,
+        )
+        .unwrap();
+        fs::write(
+            session_dir.join("runs/b-created-cancelled/run.json"),
+            r#"{"schema_version":"run/3.0","run_id":"b-created-cancelled","status":"cancelled","command":"verify","actor_id":"actor-cancel","created_at":"2026-08-12T13:00:00Z","ended_at":"2026-08-12T13:01:00Z"}"#,
+        )
+        .unwrap();
+
+        let detail = scan_session_detail(&wf, "hash-session").unwrap();
+        assert_eq!(
+            detail
+                .runs
+                .iter()
+                .map(|run| run.run_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "z-started-running",
+                "y-ended-completed",
+                "a-created-pending",
+                "b-created-cancelled"
+            ]
+        );
+        assert_eq!(detail.runs[0].status, "running");
+        assert_eq!(detail.runs[2].status, "pending");
+        assert_eq!(detail.runs[3].status, "cancelled");
+        assert_eq!(detail.runs[2].actor_id.as_deref(), Some("actor-next"));
+        assert_eq!(detail.runs[2].attempt, Some(2));
+        assert_eq!(
+            detail.runs[2].retry_of_run_id.as_deref(),
+            Some("z-started-running")
+        );
+        assert_eq!(detail.runs[2].platform, None);
+        assert_eq!(detail.session.status, "open");
+        assert_eq!(
+            detail.session.active_run_ids,
+            vec!["a-created-pending", "z-started-running"]
+        );
+        assert_eq!(
+            detail.session.active_run_id.as_deref(),
+            Some("a-created-pending")
+        );
+        assert_eq!(
+            detail.session.latest_completed_run_id.as_deref(),
+            Some("y-ended-completed")
+        );
+        assert_eq!(
+            detail.session.latest_run.as_ref().unwrap().status,
+            "cancelled"
+        );
+        assert_eq!(detail.session.orchestration_revision, Some(7));
+        assert_eq!(detail.session.activity_revision, Some(11));
+        assert_eq!(detail.decisions.len(), 1);
+        assert_eq!(detail.decisions[0]["decision_id"], "decision-gate");
+        let orchestration = detail.orchestration.unwrap();
+        assert_eq!(orchestration["orchestration_revision"], 7);
+        assert_eq!(orchestration["activity_revision"], 11);
+        assert_eq!(
+            orchestration["chain"][0]["run_ids"],
+            serde_json::json!(["a-created-pending", "z-started-running"])
+        );
+        assert_eq!(orchestration["chain"][0]["run_id"], "a-created-pending");
+        assert_eq!(orchestration["chain"][0]["decision_ref"], "decision-gate");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn scan_runs_uses_timestamps_with_deterministic_id_fallback() {
+        let root = tmp_dir("v3-run-sort");
+        let wf = root.join(".workflow");
+        let runs_dir = wf.join("sessions/s1/runs");
+        for run_id in ["z-no-time", "a-no-time", "z-older", "a-newer"] {
+            fs::create_dir_all(runs_dir.join(run_id)).unwrap();
+        }
+        fs::write(
+            runs_dir.join("z-no-time/run.json"),
+            r#"{"schema_version":"run/3.0","run_id":"z-no-time","status":"pending"}"#,
+        )
+        .unwrap();
+        fs::write(
+            runs_dir.join("a-no-time/run.json"),
+            r#"{"schema_version":"run/3.0","run_id":"a-no-time","status":"pending"}"#,
+        )
+        .unwrap();
+        fs::write(
+            runs_dir.join("z-older/run.json"),
+            r#"{"schema_version":"run/3.0","run_id":"z-older","status":"sealed","created_at":"2026-01-01T00:00:00Z"}"#,
+        )
+        .unwrap();
+        fs::write(
+            runs_dir.join("a-newer/run.json"),
+            r#"{"schema_version":"run/3.0","run_id":"a-newer","status":"sealed","created_at":"2026-02-01T00:00:00Z"}"#,
+        )
+        .unwrap();
+
+        let runs = scan_runs(&wf, "s1");
+        assert_eq!(
+            runs.iter()
+                .map(|run| run.run_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a-no-time", "z-no-time", "z-older", "a-newer"]
+        );
+        let (latest, count) = load_latest_run(&wf.join("sessions/s1"));
+        assert_eq!(count, 4);
+        assert_eq!(latest.unwrap().run_id, "a-newer");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn scan_sessions_orders_hash_ids_by_latest_run_timestamp() {
+        let root = tmp_dir("v3-session-sort");
+        let wf = root.join(".workflow");
+        for (session_id, run_id, created_at) in [
+            ("zzz-older-session", "a-hash", "2026-01-01T00:00:00Z"),
+            ("aaa-newer-session", "z-hash", "2026-02-01T00:00:00Z"),
+        ] {
+            let session_dir = wf.join("sessions").join(session_id);
+            fs::create_dir_all(session_dir.join("runs").join(run_id)).unwrap();
+            fs::write(
+                session_dir.join("session.json"),
+                format!(
+                    r#"{{"schema_version":"session/3.0","session_id":"{session_id}","objective":"sort","status":"completed","active_run_ids":[]}}"#
+                ),
+            )
+            .unwrap();
+            fs::write(
+                session_dir.join("runs").join(run_id).join("run.json"),
+                format!(
+                    r#"{{"schema_version":"run/3.0","run_id":"{run_id}","status":"sealed","created_at":"{created_at}"}}"#
+                ),
+            )
+            .unwrap();
+        }
+
+        let no_run_dir = wf.join("sessions/000-recent-no-run");
+        fs::create_dir_all(&no_run_dir).unwrap();
+        fs::write(
+            no_run_dir.join("session.json"),
+            r#"{"schema_version":"session/3.0","session_id":"000-recent-no-run","objective":"recent decision","status":"completed","active_run_ids":[],"created_at":"2026-03-01T00:00:00Z","updated_at":"2026-03-02T00:00:00Z"}"#,
+        )
+        .unwrap();
+
+        let sessions = scan_sessions(&wf);
+        assert_eq!(sessions.len(), 3);
+        assert_eq!(sessions[0].session_id, "000-recent-no-run");
+        assert_eq!(sessions[1].session_id, "aaa-newer-session");
+        assert_eq!(sessions[2].session_id, "zzz-older-session");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn parse_run_preserves_every_canonical_v3_status() {
+        for status in [
+            "pending",
+            "running",
+            "blocked",
+            "completed",
+            "failed",
+            "cancelled",
+            "sealed",
+        ] {
+            let run = parse_run(&serde_json::json!({
+                "schema_version": "run/3.0",
+                "run_id": format!("run-{status}"),
+                "status": status,
+                "actor_id": "actor-v3"
+            }));
+            assert_eq!(run.status, status);
+            assert_eq!(run.actor_id.as_deref(), Some("actor-v3"));
+            assert_eq!(run.platform, None);
+        }
     }
 
     #[test]
@@ -1067,8 +1496,7 @@ mod tests {
         let run = s.latest_run.as_ref().unwrap();
         assert_eq!(run.verdict.as_deref(), Some("ready"));
         assert_eq!(run.platform.as_deref(), Some("claude"));
-
-        let _ = fs::remove_dir_all(&root);
+        assert_eq!(run.actor_id, None);
     }
 
     #[test]
@@ -1135,8 +1563,16 @@ mod tests {
             "# Report\n\nsummary body",
         )
         .unwrap();
-        fs::write(wf.join("sessions/s1/runs/r1/outputs/findings.json"), "{\"a\":1}").unwrap();
-        fs::write(wf.join("sessions/s1/runs/r1/outputs/note.txt"), "hello preview").unwrap();
+        fs::write(
+            wf.join("sessions/s1/runs/r1/outputs/findings.json"),
+            "{\"a\":1}",
+        )
+        .unwrap();
+        fs::write(
+            wf.join("sessions/s1/runs/r1/outputs/note.txt"),
+            "hello preview",
+        )
+        .unwrap();
         fs::write(
             wf.join("sessions/s1/evidence.json"),
             r#"{"records":[{"id":"E1"},{"id":"E2"}]}"#,
@@ -1166,7 +1602,10 @@ mod tests {
         let wf = root.join(".workflow");
         fs::create_dir_all(wf.join("sessions/s1/runs/r1/outputs")).unwrap();
         fs::write(wf.join("sessions/s1/runs/r1/outputs/ok.json"), "fine").unwrap();
-        assert_eq!(read_run_output(&wf, "s1", "r1", "ok.json").as_deref(), Some("fine"));
+        assert_eq!(
+            read_run_output(&wf, "s1", "r1", "ok.json").as_deref(),
+            Some("fine")
+        );
         assert!(read_run_output(&wf, "s1", "r1", "../secret").is_none());
         assert!(read_run_output(&wf, "s1", "r1", "a/b").is_none());
         assert!(read_run_output(&wf, "s1", "r1", "..\\evil").is_none());

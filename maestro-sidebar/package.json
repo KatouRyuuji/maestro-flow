@@ -1,9 +1,10 @@
 {
   "name": "maestro-sidebar",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "常驻桌面的 Maestro 观察者 — Agent 调用 / Session·Run 状态 / 知识积累",
   "scripts": {
+    "test": "node --test src/tests/*.test.js",
     "tauri": "tauri",
     "dev": "tauri dev",
     "build": "tauri build"
