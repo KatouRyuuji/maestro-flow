@@ -12,8 +12,8 @@ Maestro-Flow installation has two steps: global CLI install and project initiali
 ## Quick Install
 
 ```bash
-# 1. Install the global CLI (this repo tracks 0.5.81)
-npm install -g maestro-flow@0.5.81
+# 1. Install the global CLI (this repo tracks 0.5.82)
+npm install -g maestro-flow@0.5.82
 
 # 2. Initialize the project (run in the project root)
 maestro install
@@ -182,7 +182,7 @@ maestro install --force --extra-mcp grok,cursor
 
 ## Grok Build
 
-Grok is a first-class host and a delegate backend. Install official `maestro-flow@0.5.81` first, then run `.\install.ps1` / `./install.sh` from the **repo root** (do not `cd repo/`). Five steps: deps → official version → Grok CLI → simulate → confirm. If the overlay is already applied and only assets are missing, run the same script again.
+Grok is a first-class host and a delegate backend. Install official `maestro-flow@0.5.82` first, then run `.\install.ps1` / `./install.sh` from the **repo root** (do not `cd repo/`). Five steps: deps → official version → Grok CLI → simulate → confirm. If the overlay is already applied and only assets are missing, run the same script again.
 
 ```bash
 # Install the Grok CLI (macOS / Linux)

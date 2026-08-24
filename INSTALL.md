@@ -1,6 +1,6 @@
 # Maestro Grok 适配版安装指南
 
-本仓库是 maestro-flow 的 **Grok Build** 适配层：先装官方 `maestro-flow@0.5.81`，再叠本项目的按文件补丁，使 Grok 成为一等宿主与 delegate 后端。
+本仓库是 maestro-flow 的 **Grok Build** 适配层：先装官方 `maestro-flow@0.5.82`，再叠本项目的按文件补丁，使 Grok 成为一等宿主与 delegate 后端。
 
 产品级安装说明（组件、平台、toggle、profile）见 `repo/guide/install-guide.md`。
 
@@ -8,10 +8,10 @@
 
 ## 应用场景
 
-1. 已经（或先）全局安装官方包：`npm install -g maestro-flow@0.5.81`
+1. 已经（或先）全局安装官方包：`npm install -g maestro-flow@0.5.82`
 2. 再在本仓库跑安装脚本，把本项目补丁叠到那个官方目录
 
-官方版本必须正好是 `0.5.81`。不一致会失败并提示你手装匹配版本，**不会** `npm i -g` 降级。源码比编译产物新时，一键脚本会先 `npm run build` 再覆盖。
+官方版本必须正好是 `0.5.82`。不一致会失败并提示你手装匹配版本，**不会** `npm i -g` 降级。源码比编译产物新时，一键脚本会先 `npm run build` 再覆盖。
 
 ---
 
@@ -19,7 +19,7 @@
 
 在**要写入项目资产的目录**跑（一般是你的项目根；本适配仓库则是仓库根）。不要 `cd repo/` 再跑：项目 `.grok/` 跟调用时的 cwd，不是脚本所在目录。
 
-官方包已经是 `0.5.81`、补丁已经叠上、只缺 `.grok/rules/maestro.md` 时，也可以直接再跑一次。脚本会再覆盖一遍（幂等），然后跑 `maestro install` 写资产。
+官方包已经是 `0.5.82`、补丁已经叠上、只缺 `.grok/rules/maestro.md` 时，也可以直接再跑一次。脚本会再覆盖一遍（幂等），然后跑 `maestro install` 写资产。
 
 ```powershell
 # Windows（在本仓库根即可）
@@ -36,7 +36,7 @@
 
 按提示确认即可。脚本会：检查官方 `maestro-flow` 版本 → 叠 Grok 按文件覆盖 → 写全局 MCP / 宿主资产 → 给调用方当前目录（或 `--path`）写 `.grok/`。
 
-官方包未装、或版本不等于本仓库（当前 `0.5.81`）会失败并提示手动安装，**不会** `npm i -g` 自动降级。
+官方包未装、或版本不等于本仓库（当前 `0.5.82`）会失败并提示手动安装，**不会** `npm i -g` 自动降级。
 
 常用标志：`--dry-run` 只检查不写盘；`-y` 跳过确认；`--rebuild` 强制重编译；`--path <dir>` 覆盖项目资产目录。
 
@@ -50,7 +50,7 @@
 |----|------|------------|
 | Node.js | 能跑脚本即可装覆盖；推荐 ≥ 22.19（`repo/package.json` `engines.node`） | **没有 Node 或低于 22** 会停。22.14 这类 22.x 旧补丁只警告，Grok 覆盖仍装 |
 | npm | 能执行 `npm install -g` | 没有 npm 会停 |
-| 官方 Maestro | 必须已安装且版本等于本仓库（当前 `0.5.81`） | 未安装或版本不一致会失败并提示手动安装；**不会** `npm i -g` 降级 |
+| 官方 Maestro | 必须已安装且版本等于本仓库（当前 `0.5.82`） | 未安装或版本不一致会失败并提示手动安装；**不会** `npm i -g` 降级 |
 | Grok Build CLI | [官方安装](https://docs.x.ai/build/overview)，然后 `grok login` 或设置 `XAI_API_KEY` | 脚本不代装，只警告；装完才能派活 |
 
 ```bash
@@ -124,7 +124,7 @@ macOS / Linux：用 nvm 或 fnm 安装 22.19+，例如 `nvm install 22`。
 PowerShell 里 `--components` 的逗号列表必须加引号，否则会被拆成多个参数。
 
 ```powershell
-npm install -g maestro-flow@0.5.81
+npm install -g maestro-flow@0.5.82
 cd repo
 npm install
 npm run build
@@ -218,7 +218,7 @@ maestro install
 覆盖没有单独回滚命令。恢复官方文件：
 
 ```bash
-npm install -g maestro-flow@0.5.81
+npm install -g maestro-flow@0.5.82
 ```
 
 卸 Maestro 资产（保留 `.workflow/` 项目数据）：

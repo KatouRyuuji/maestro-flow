@@ -40,13 +40,13 @@
 ## 安装
 
 ```bash
-npm install -g maestro-flow@0.5.81
+npm install -g maestro-flow@0.5.82
 maestro install          # 交互式选择安装组件
 ```
 
 需要 Node.js ≥ 22.19 和至少一个宿主 CLI：[Claude Code](https://docs.anthropic.com/en/docs/claude-code)（默认）和/或 [Grok Build](https://docs.x.ai/build/overview)。多 Agent 工作流还可选装 Codex CLI、agy CLI。
 
-Grok 一等适配：先装官方 `maestro-flow@0.5.81`，再在**仓库根**（不要 `cd repo/`）跑 `.\install.ps1` / `./install.sh`（可用 `--path`）。项目指令落到 `.grok/rules/maestro.md`；旧 `.grok/AGENTS.md` 里的 Maestro 段会在重装时剥离。官方版本不一致会失败，不会自动降级。补丁已叠、只缺项目资产时，再跑一次同一脚本即可。项目级 MCP / hooks 需在该目录信任 Grok 文件夹（交互确认或 `/hooks-trust`）；用户级 `maestro-tools` 不依赖信任。详见仓库根 `INSTALL.md`。产品安装细节见 [安装指南](guide/install-guide.md)。
+Grok 一等适配：先装官方 `maestro-flow@0.5.82`，再在**仓库根**（不要 `cd repo/`）跑 `.\install.ps1` / `./install.sh`（可用 `--path`）。项目指令落到 `.grok/rules/maestro.md`；旧 `.grok/AGENTS.md` 里的 Maestro 段会在重装时剥离。官方版本不一致会失败，不会自动降级。补丁已叠、只缺项目资产时，再跑一次同一脚本即可。项目级 MCP / hooks 需在该目录信任 Grok 文件夹（交互确认或 `/hooks-trust`）；用户级 `maestro-tools` 不依赖信任。详见仓库根 `INSTALL.md`。产品安装细节见 [安装指南](guide/install-guide.md)。
 
 装完命令只教 v3：`maestro session open` → `maestro run next` → `maestro run complete --advance` → `maestro session complete`。
 

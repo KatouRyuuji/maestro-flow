@@ -22,7 +22,7 @@ function filePatch(rel, { source = null, markers = [] } = {}) {
   return { from: rel, to: rel, kind: 'file', source, markers };
 }
 
-/** Files this project must land on official 0.5.81. kind is always file. */
+/** Files this project must land on official 0.5.82. kind is always file. */
 export const APPLY_ENTRIES = [
   filePatch(join('dashboard', 'dist-server', 'dashboard', 'src', 'server', 'agents', 'grok-adapter.js'), {
     source: join('dashboard', 'src', 'server', 'agents', 'grok-adapter.ts'),
