@@ -10,6 +10,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { invalidateSearchIndex } from '../search/daemon-client.js';
+import { logHookError, logHookWarn } from './hook-logger.js';
 import { kgSyncGuard } from '../utils/cooldown-guard.js';
 import {
   getGitHead,
@@ -403,9 +404,7 @@ function recordFailure(projectRoot: string, startedAt: number, error: unknown): 
 }
 
 function debugError(error: unknown): void {
-  if (process.env.MAESTRO_DEBUG === '1') {
-    console.error(`[kg-sync] sync failed: ${error instanceof Error ? error.message : error}`);
-  }
+  logHookError('kg-sync', error, { message: 'sync failed' });
 }
 
 function scheduleDerivedIndexes(projectRoot: string, filesChanged: number): void {
@@ -414,9 +413,7 @@ function scheduleDerivedIndexes(projectRoot: string, filesChanged: number): void
   import('../graph/kg/engine.js').then(({ MaestroGraph }) =>
     MaestroGraph.open(projectRoot).then(graph =>
       graph.buildCodeEmbeddings().catch((error: unknown) => {
-        if (process.env.MAESTRO_DEBUG === '1') {
-          console.warn(`[kg-sync] code embedding build failed: ${error instanceof Error ? error.message : error}`);
-        }
+        logHookWarn('kg-sync', `code embedding build failed: ${error instanceof Error ? error.message : error}`);
       }).finally(() => graph.close())
     )
   ).catch(() => {});

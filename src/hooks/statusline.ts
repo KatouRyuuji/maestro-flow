@@ -29,6 +29,7 @@ import { readCoordBridge } from './coordinator-tracker.js';
 import { resolveSelf } from '../tools/team-members.js';
 import { readRecentActivity, type ActivityEvent } from '../tools/team-activity.js';
 import { findWorkspaceRoot } from './workspace.js';
+import { buildHookErrorAlertSegment } from './hook-logger.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -727,6 +728,7 @@ export function formatStatusline(data: StatuslineInput): string {
   const coord = session ? buildCoordinatorSegment(session) : '';
   const task  = session ? readCurrentTask(session) : '';
   const team  = session ? buildTeamSegment(session) : '';
+  const alert = session ? buildHookErrorAlertSegment(session) : '';
   const git   = readGitInfo(dir);
 
   let usedPct = 0;
@@ -735,8 +737,9 @@ export function formatStatusline(data: StatuslineInput): string {
     if (session) writeBridge(session, remaining, usedPct);
   }
 
-  // ---- Segment group A: Model | Coord | Task | Team ----
+  // ---- Segment group A: Alert | Model | Coord | Task | Team ----
   const segA: Segment[] = [];
+  if (alert) segA.push({ key: 'ctxAlert', text: alert });
   segA.push({ key: 'model', text: `${ICONS.model} ${model}` });
   if (coord) segA.push({ key: 'coord', text: `${ICONS.coord} ${coord}` });
   if (task)  segA.push({ key: 'task',  text: `${ICONS.task} ${task}` });

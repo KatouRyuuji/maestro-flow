@@ -9,6 +9,7 @@
 import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { isDeprecatedKnowledgeEntry } from '../utils/knowledge-lifecycle.js';
+import { logHookWarn } from './hook-logger.js';
 
 export interface WikiCategoryResult {
   content: string;
@@ -70,7 +71,7 @@ export function loadWikiIndex(projectPath: string): ParsedWikiIndex | null {
   try {
     index = JSON.parse(raw);
   } catch (err) {
-    console.warn(`[wiki-role-loader] Corrupt wiki-index.json at ${indexPath}: ${(err as Error).message}`);
+    logHookWarn('wiki-role-loader', `Corrupt wiki-index.json at ${indexPath}: ${(err as Error).message}`);
     index = null;
   }
 

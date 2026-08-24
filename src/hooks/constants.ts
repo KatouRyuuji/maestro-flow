@@ -113,6 +113,9 @@ export const GIT_ICONS = {
   behind:   '↓',
 } as const;
 
+/** Hook error alert icon (same glyph in Nerd Font and Unicode sets) */
+export const ALERT_ICON = '⚠';
+
 // ---------------------------------------------------------------------------
 // Context thresholds for statusline bar color
 // ---------------------------------------------------------------------------
