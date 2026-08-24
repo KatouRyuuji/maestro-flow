@@ -51,6 +51,8 @@
     "build:arch-kb": "node scripts/build-arch-kb-index.mjs",
     "dev": "tsc --watch",
     "start": "node bin/maestro.js",
+    "apply-to-official": "node scripts/apply-to-official.mjs",
+    "build:dashboard": "cd dashboard && npx vite build",
     "mcp": "node bin/maestro-mcp.js",
     "test": "vitest run",
     "test:kg": "vitest run src/graph",

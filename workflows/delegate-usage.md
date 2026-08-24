@@ -66,7 +66,7 @@ Bash({ command: "maestro delegate \"...\" --to gemini --mode analysis", run_in_b
 
 gemini→`gem`, qwen→`qwn`, codex→`cdx`, claude→`cld`, opencode→`opc`, grok→`grk`
 
-> Grok note: `grok` headless runs are single-turn — `maestro delegate message <id>` `inject` delivery is not supported (same as gemini/qwen); use `--delivery after_complete` for chained tasks. Requires `XAI_API_KEY` or prior `grok login`.
+> Grok note: `maestro delegate message <id>` `inject` works by stopping the current headless turn and respawning with `grok --continue` (plus Maestro history `--resume`). `--delivery after_complete` still works for post-success chaining. Requires `XAI_API_KEY` or prior `grok login`.
 
 ### Resume
 

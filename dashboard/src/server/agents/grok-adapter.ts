@@ -117,6 +117,8 @@ export class GrokAdapter extends BaseAgentAdapter {
   private readonly promptFiles = new Map<string, string>();
   /** Thought deltas are accumulated and flushed as a single thinking entry */
   private readonly thoughtBuffers = new Map<string, string>();
+  /** Bumps on each spawn of a processId so a previous child's exit cannot tear down the replacement. */
+  private readonly spawnGenerations = new Map<string, number>();
 
   constructor(executable = 'grok') {
     super();
@@ -132,6 +134,9 @@ export class GrokAdapter extends BaseAgentAdapter {
     // Validate before any side effects (prompt file creation) so a rejected
     // config never leaks temp files.
     this.assertValidModel(config.model);
+    const generation = (this.spawnGenerations.get(processId) ?? 0) + 1;
+    this.spawnGenerations.set(processId, generation);
+    this.stoppedEmitted.delete(processId);
 
     // Prompt goes through a temp file: grok takes it as a flag value, and
     // delegate prompts can exceed OS command-line limits / break quoting.
@@ -188,7 +193,7 @@ export class GrokAdapter extends BaseAgentAdapter {
         onStaleDetected: (message) =>
           this.emitEntry(processId, EntryNormalizer.error(processId, message, 'stream_stale')),
         isStopped: () => this.stoppedEmitted.has(processId),
-        emitStopped: (reason) => this.emitStopped(processId, reason),
+        emitStopped: (reason) => this.emitStopped(processId, reason, generation),
       }),
       staleTimeoutMs,
     );
@@ -214,12 +219,12 @@ export class GrokAdapter extends BaseAgentAdapter {
     // handlers run first.
     rl.on('close', () => {
       setTimeout(() => {
-        this.emitStopped(processId, 'stdout closed (readline fallback)');
+        this.emitStopped(processId, 'stdout closed (readline fallback)', generation);
       }, 500);
     });
 
     // Process exit handling
-    this.setupProcessListeners(child, processId);
+    this.setupProcessListeners(child, processId, generation);
 
     // Store references
     this.childProcesses.set(processId, child);
@@ -273,13 +278,37 @@ export class GrokAdapter extends BaseAgentAdapter {
   }
 
   protected async doSendMessage(
-    _processId: string,
-    _content: string,
+    processId: string,
+    content: string,
   ): Promise<void> {
-    // Grok headless mode is single-turn: the prompt is fixed at spawn time.
-    throw new Error(
-      '[grok] Follow-up messages are not supported in streaming-json mode',
-    );
+    const previous = this.getProcess(processId);
+    if (!previous) {
+      throw new Error(`[grok] Cannot send follow-up: process ${processId} not found`);
+    }
+
+    // Invalidate the current child's stopped handler before killing it, so
+    // its exit cannot remove the process we are about to respawn.
+    this.spawnGenerations.set(processId, (this.spawnGenerations.get(processId) ?? 0) + 1);
+    this.stoppedEmitted.delete(processId);
+
+    const child = this.childProcesses.get(processId);
+    if (child) {
+      await new Promise<void>((resolve) => {
+        const done = (): void => resolve();
+        child.once('exit', done);
+        child.once('close', done);
+        void this.doStop(processId).catch(done);
+        setTimeout(done, 6000);
+      });
+    }
+
+    const nextConfig: AgentConfig = {
+      ...previous.config,
+      prompt: content,
+      metadata: { ...previous.config.metadata, continueSession: true },
+    };
+    const next = await this.doSpawn(processId, nextConfig);
+    Object.assign(previous, next);
   }
 
   protected async doRespondApproval(_decision: ApprovalDecision): Promise<void> {
@@ -443,6 +472,10 @@ export class GrokAdapter extends BaseAgentAdapter {
       args.push('-m', config.model);
     }
 
+    if (config.metadata?.continueSession === true) {
+      args.push('--continue');
+    }
+
     if (config.approvalMode === 'auto') {
       args.push('--always-approve');
     } else {
@@ -477,7 +510,10 @@ export class GrokAdapter extends BaseAgentAdapter {
     }
   }
 
-  private emitStopped(processId: string, reason: string): void {
+  private emitStopped(processId: string, reason: string, generation?: number): void {
+    if (generation !== undefined && this.spawnGenerations.get(processId) !== generation) {
+      return;
+    }
     if (this.stoppedEmitted.has(processId)) return;
     this.stoppedEmitted.add(processId);
 
@@ -496,12 +532,12 @@ export class GrokAdapter extends BaseAgentAdapter {
     this.removeProcess(processId);
   }
 
-  private setupProcessListeners(child: ChildProcess, processId: string): void {
+  private setupProcessListeners(child: ChildProcess, processId: string, generation: number): void {
     child.on('exit', (code: number | null, signal: string | null) => {
       const reason = signal
         ? `Terminated by signal: ${signal}`
         : `Exited with code: ${code ?? 'unknown'}`;
-      this.emitStopped(processId, reason);
+      this.emitStopped(processId, reason, generation);
     });
 
     // Fallback: 'close' fires after exit + stdio close — covers edge cases
@@ -510,7 +546,7 @@ export class GrokAdapter extends BaseAgentAdapter {
       const reason = signal
         ? `Terminated by signal: ${signal}`
         : `Exited with code: ${code ?? 'unknown'}`;
-      this.emitStopped(processId, reason);
+      this.emitStopped(processId, reason, generation);
     });
 
     child.on('error', (err: Error) => {

@@ -257,9 +257,51 @@ describe('GrokAdapter', () => {
     expect(entries.filter((entry) => entry.type === 'assistant_message')).toHaveLength(1);
   });
 
-  it('rejects follow-up messages', async () => {
+  it('restarts follow-up messages with --continue', async () => {
+    spawnMock.mockImplementation(() => {
+      child = createFakeChild();
+      return child;
+    });
+    killProcessTreeMock.mockImplementation(() => {
+      child.emit('exit', 0, null);
+    });
+
     const process = await adapter.spawn(baseConfig());
-    await expect(adapter.sendMessage(process.id, 'follow up')).rejects.toThrow(/not supported/);
+    await adapter.sendMessage(process.id, 'follow up');
+
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    const secondArgs = spawnMock.mock.calls[1][1] as string[];
+    expect(secondArgs).toContain('--continue');
+    expect(writeFileSpy).toHaveBeenLastCalledWith(
+      expect.any(String),
+      'follow up',
+      expect.objectContaining({ encoding: 'utf-8' }),
+    );
+  });
+
+  it('ignores a previous turn stdout-close fallback after follow-up restart', async () => {
+    spawnMock.mockImplementation(() => {
+      child = createFakeChild();
+      return child;
+    });
+    killProcessTreeMock.mockImplementation(() => {
+      child.emit('exit', 0, null);
+    });
+
+    const process = await adapter.spawn(baseConfig());
+    await adapter.sendMessage(process.id, 'follow up');
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    expect(adapter.getProcess(process.id)?.status).toBe('running');
+  });
+
+  it('passes --continue when continueSession metadata is set', async () => {
+    await adapter.spawn({
+      ...baseConfig(),
+      metadata: { continueSession: true },
+    });
+    const args = spawnMock.mock.calls[0][1] as string[];
+    expect(args).toContain('--continue');
   });
 
   it('passes --permission-mode dontAsk when approvalMode is not auto', async () => {

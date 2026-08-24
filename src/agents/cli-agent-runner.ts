@@ -589,6 +589,9 @@ export class CliAgentRunner {
       settingsFile: options.settingsFile?.replace(/^~(?=[\\/])/, homedir()),
       reasoningEffort: options.reasoningEffort,
       streamTimeoutMs: options.streamTimeout,
+      ...(options.resume
+        ? { metadata: { continueSession: true } }
+        : {}),
       ...(options.proxyEnv && Object.keys(options.proxyEnv).length > 0
         ? { env: options.proxyEnv }
         : {}),
