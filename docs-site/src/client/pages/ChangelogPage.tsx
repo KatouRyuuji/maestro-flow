@@ -17,6 +17,16 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    version: '0.5.82',
+    date: '2026-08',
+    changes: [
+      { type: 'feat', text_en: 'Plan publish now runs as a v3 producer Run over session/3.0 + run/3.0: the plan command opens a Session with an inline chain step and publishes the plan through the canonical run-v3 lifecycle, so plan authorship is recorded with the same authority, identity and recovery semantics as any other Run — Execution-era lease and legacy v2 paths are rejected at the coordinator fence', text_zh: 'Plan publish 现作为 v3 生产者 Run 运行于 session/3.0 + run/3.0：plan 命令开启带内联 chain step 的 Session 并通过规范 run-v3 生命周期发布计划，使计划撰写与任意其他 Run 享有相同的权威、身份与恢复语义——Execution 时代 lease 与 legacy v2 路径在 coordinator 栅栏处被拒绝' },
+      { type: 'refactor', text_en: 'Hook errors and warnings are centralized into a never-throwing JSONL sink at ~/.maestro/logs/hooks-error.log (with rotation and MAESTRO_DEBUG echo), replacing ad-hoc console.error/stderr writes across kg-sync, kg-auto-init, team-monitor and wiki-role-loader; the statusline renders a ⚠N alert segment for unread hook errors so failures surface instead of being lost in stderr noise', text_zh: 'Hook 错误与告警集中到 ~/.maestro/logs/hooks-error.log 的 never-throwing JSONL 接收器（带轮转与 MAESTRO_DEBUG 回显），取代 kg-sync、kg-auto-init、team-monitor 与 wiki-role-loader 中零散的 console.error/stderr 写入；statusline 渲染 ⚠N 告警段以呈现未读 hook 错误，使失败不再湮没于 stderr 噪音' },
+      { type: 'refactor', text_en: 'MCP tool access is enforced through a single immutable policy snapshot shared by ListTools and CallTool: discovery and execution reference the same allow-list, so a hidden-but-registered tool can no longer be invoked by guessing its name — an unauthorized CallTool returns an isError response without invoking the handler', text_zh: 'MCP 工具访问通过 ListTools 与 CallTool 共享的单一不可变策略快照强制执行：发现与执行引用同一 allow-list，已注册但未列出的工具无法靠猜名调用——未授权 CallTool 返回 isError 响应且不触发处理器' },
+      { type: 'refactor', text_en: 'Manifest cleanup now treats markers as proof of section ownership rather than file ownership: a mixed user+Maestro file whose content drifted after install has its Maestro sections removed while all user content outside the markers is preserved, instead of being wholesale preserved and leaving stale Maestro content behind', text_zh: 'Manifest 清理现将 marker 视作 section 所有权证明而非整文件所有权：安装后被用户改动过的混合文件会移除其 Maestro section 同时保留 marker 之外的全部用户内容，而非整文件保留并残留陈旧 Maestro 内容' },
+    ],
+  },
+  {
     version: '0.5.81',
     date: '2026-08',
     changes: [
