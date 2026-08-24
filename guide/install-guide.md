@@ -381,7 +381,7 @@ Grok 是一等宿主与 delegate 后端。安装后可在 Grok TUI 中使用 Mae
 本仓库适配层推荐交互安装（先官方 `maestro-flow@0.5.82`，再覆盖 + Grok 资产 / MCP）：
 
 ```powershell
-# Windows：在仓库根跑，不要 cd repo/
+# Windows：在仓库根跑
 .\install.ps1
 ```
 

@@ -2,7 +2,7 @@
 
 本仓库是 maestro-flow 的 **Grok Build** 适配层：先装官方 `maestro-flow@0.5.82`，再叠本项目的按文件补丁，使 Grok 成为一等宿主与 delegate 后端。
 
-产品级安装说明（组件、平台、toggle、profile）见 `repo/guide/install-guide.md`。
+产品级安装说明（组件、平台、toggle、profile）见 `guide/install-guide.md`。
 
 ---
 
@@ -17,7 +17,7 @@
 
 ## 最短路径
 
-在**要写入项目资产的目录**跑（一般是你的项目根；本适配仓库则是仓库根）。不要 `cd repo/` 再跑：项目 `.grok/` 跟调用时的 cwd，不是脚本所在目录。
+在**要写入项目资产的目录**跑（一般是你的项目根；本适配仓库则是仓库根）：项目 `.grok/` 跟调用时的 cwd，不是脚本所在目录。
 
 官方包已经是 `0.5.82`、补丁已经叠上、只缺 `.grok/rules/maestro.md` 时，也可以直接再跑一次。脚本会再覆盖一遍（幂等），然后跑 `maestro install` 写资产。
 
@@ -125,7 +125,7 @@ PowerShell 里 `--components` 的逗号列表必须加引号，否则会被拆�
 
 ```powershell
 npm install -g maestro-flow@0.5.82
-cd repo
+# 以下在本仓库根执行
 npm install
 npm run build
 npm run build:dashboard
@@ -197,10 +197,9 @@ maestro delegate "读 README 并总结" --to grok --mode analysis
 
 ## 备选：直接使用本仓库 CLI
 
-不经过官方包时，在 `repo/` 构建后：
+不经过官方包时，在本仓库根构建后：
 
 ```bash
-cd repo
 npm install
 npm run build
 npm run build:dashboard
