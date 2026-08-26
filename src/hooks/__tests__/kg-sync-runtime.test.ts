@@ -653,9 +653,12 @@ describe('KG sync runtime', () => {
     expect(releaseKgSyncWorkerToken({
       ...first.token,
       // NTFS inos are 64-bit and can exceed Number.MAX_SAFE_INTEGER, where
-      // `inode + 1` silently rounds back to the same value. A constant is
-      // guaranteed to differ from any real ino.
-      generation: { ...first.token.generation, inode: 1 },
+      // `inode + 1` silently rounds back to the same value. Pick a constant
+      // that provably differs from the real ino on any filesystem.
+      generation: {
+        ...first.token.generation,
+        inode: first.token.generation.inode === 1 ? 2 : 1,
+      },
     })).toBe(false);
     expect(existsSync(kgSyncWorkerMarkerPath(project))).toBe(true);
     expect(releaseKgSyncWorkerToken(first.token)).toBe(true);
