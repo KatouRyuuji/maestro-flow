@@ -309,7 +309,7 @@ export function acquireKgSyncWorkerToken(
     throw new UnsafeKgSyncWorkerMarkerError(resolved.workflowPath, 'marker parent is missing');
   }
 
-  const result = withWorkerMarkerMutationGuard(resolved, () => {
+  const result = withWorkerMarkerMutationGuard(resolved, (guard) => {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       assertStableWorkerMarkerParent(resolved);
       const read = readWorkerMarkerFile(resolved.markerPath);
@@ -338,6 +338,7 @@ export function acquireKgSyncWorkerToken(
       if (read.status === 'missing' || read.stat === null) {
         throw new UnsafeKgSyncWorkerMarkerError(resolved.markerPath, 'marker generation is unavailable');
       }
+      assertMutationGuardOwnership(guard);
       unlinkWorkerMarkerGeneration(resolved, read.stat);
     }
     throw new UnsafeKgSyncWorkerMarkerError(
@@ -381,12 +382,13 @@ export function releaseKgSyncWorkerToken(token: KgSyncWorkerToken): boolean {
   try {
     const resolved = resolveSafeWorkerMarkerPaths(token.projectRoot, false);
     if (resolved.parent === null || resolved.markerPath !== token.path) return false;
-    return withWorkerMarkerMutationGuard(resolved, () => {
+    return withWorkerMarkerMutationGuard(resolved, (guard) => {
       assertStableWorkerMarkerParent(resolved);
       const read = readWorkerMarkerFile(resolved.markerPath);
       if (read.status !== 'read' || !matchesTokenGeneration(token, read.stat)) return false;
       const owner = parseKgSyncWorkerMarker(read.raw);
       if (!owner || owner.legacy || owner.pid !== token.pid || owner.token !== token.token) return false;
+      assertMutationGuardOwnership(guard);
       unlinkWorkerMarkerGeneration(resolved, read.stat);
       return true;
     });
@@ -534,12 +536,12 @@ function assertStableWorkerMarkerParent(paths: SafeWorkerMarkerPaths): void {
   }
 }
 
-function withWorkerMarkerMutationGuard<T>(paths: SafeWorkerMarkerPaths, fn: () => T): T {
+function withWorkerMarkerMutationGuard<T>(paths: SafeWorkerMarkerPaths, fn: (guard: MutationGuard) => T): T {
   const guard = acquireMutationGuard(paths);
   let result: T | undefined;
   let primaryError: unknown;
   try {
-    result = fn();
+    result = fn(guard);
   } catch (error) {
     primaryError = error;
   }
@@ -639,6 +641,37 @@ function reclaimStaleMutationGuard(path: string, now: number): boolean {
     return true;
   } catch {
     return false; // Another contender reclaimed or recreated it first.
+  }
+}
+
+/**
+ * Fencing check before a destructive protected write: the guard may have
+ * been reclaimed and recreated while this holder was suspended mid-section,
+ * so ownership is re-verified between marker validation and the mutation
+ * itself. The remaining check-then-act window is two adjacent syscalls,
+ * which the filesystem cannot narrow further. Creation needs no fence (wx
+ * is atomic) and refresh is already fenced by the stricter marker owner
+ * comparison — unlink is the only destructive write.
+ */
+function assertMutationGuardOwnership(guard: MutationGuard): void {
+  try {
+    const current = lstatSync(guard.path);
+    if (!sameFilesystemEntry(guard.directory, current) || !current.isDirectory()) {
+      throw new Error('guard generation changed');
+    }
+    const owner = parseMutationGuardOwner(readBoundedRegularFile(
+      guard.ownerPath,
+      MUTATION_GUARD_OWNER_MAX_BYTES,
+    ).raw);
+    if (!owner || owner.token !== guard.token || owner.pid !== process.pid) {
+      throw new Error('guard owner changed');
+    }
+  } catch (error) {
+    if (error instanceof UnsafeKgSyncWorkerMarkerError) throw error;
+    throw new UnsafeKgSyncWorkerMarkerError(
+      guard.path,
+      'mutation guard ownership lost before protected write',
+    );
   }
 }
 
