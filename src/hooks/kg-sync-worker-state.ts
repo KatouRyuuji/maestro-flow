@@ -26,6 +26,9 @@ const MUTATION_GUARD_WAIT_MS = 2_000;
 const MUTATION_GUARD_OWNER_MAX_BYTES = 1_024;
 const MUTATION_GUARD_NAME = '.kg-sync-worker-mutation.lock';
 const MUTATION_GUARD_OWNER_NAME = 'owner.json';
+/** A guard older than this can only belong to a crashed holder: the protected
+ *  marker mutation completes in well under a second. */
+const MUTATION_GUARD_STALE_MS = DEFAULT_KG_SYNC_WORKER_STALE_MS;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export type KgSyncWorkerMode = 'worker' | 'maintenance';
@@ -592,8 +595,41 @@ function acquireMutationGuard(paths: SafeWorkerMarkerPaths): MutationGuard {
         'mutation guard is malformed or requires manual cleanup',
       );
     }
+    if (reclaimStaleMutationGuard(paths.guardPath, Date.now())) {
+      continue;
+    }
     if (Date.now() >= deadline) throw new KgSyncWorkerMutationBusyError(paths.guardPath);
     sleepSync(10);
+  }
+}
+
+/**
+ * Reclaims a guard whose owner record is intact but older than the lease.
+ * PID liveness is intentionally not consulted: a reused PID would look alive
+ * and deadlock the guard forever — the same finite-lease rationale as
+ * isReclaimableInspection. Future timestamps (negative age) never reclaim.
+ * Returns true only when both entries were removed; on any race the caller
+ * simply re-enters the wait loop.
+ */
+function reclaimStaleMutationGuard(path: string, now: number): boolean {
+  const ownerPath = join(path, MUTATION_GUARD_OWNER_NAME);
+  let owner: { pid: number; token: string; created_at: number } | null = null;
+  try {
+    owner = parseMutationGuardOwner(readBoundedRegularFile(
+      ownerPath,
+      MUTATION_GUARD_OWNER_MAX_BYTES,
+    ).raw);
+  } catch {
+    return false; // Unreadable owners take the 'unsafe' path — never reclaim.
+  }
+  if (!owner) return false;
+  if (!(now - owner.created_at >= MUTATION_GUARD_STALE_MS)) return false;
+  try {
+    unlinkSync(ownerPath);
+    rmdirSync(path);
+    return true;
+  } catch {
+    return false; // Another contender reclaimed or recreated it first.
   }
 }
 
