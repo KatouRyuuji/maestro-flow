@@ -462,6 +462,42 @@ describe('KG sync runtime', () => {
     expect(lstatSync(guardPath).isDirectory()).toBe(true);
   });
 
+  it('fences a holder whose guard is reclaimed mid-section', () => {
+    const project = root();
+    const path = kgSyncWorkerMarkerPath(project);
+    const base = Date.now();
+    const deadToken = '11111111-1111-4111-8111-111111111111';
+    writeFileSync(path, serializeKgSyncWorkerMarker(424242, deadToken, base - 200, 'worker'));
+    const staleTime = new Date(base - 200);
+    utimesSync(path, staleTime, staleTime);
+    const guardPath = join(project, '.workflow', '.kg-sync-worker-mutation.lock');
+
+    // isPidLive fires inside the critical section, right before the stale
+    // marker would be unlinked. Swap the guard there to simulate a
+    // competitor reclaiming it while this holder is suspended.
+    expect(() => acquireKgSyncWorkerToken(project, 'worker', {
+      staleMs: 100,
+      isPidLive: () => {
+        rmSync(guardPath, { recursive: true, force: true });
+        mkdirSync(guardPath);
+        writeFileSync(join(guardPath, 'owner.json'), JSON.stringify({
+          schema_version: 'kg-sync-worker-mutation-guard/1.0',
+          pid: process.pid,
+          token: '99999999-9999-4999-8999-999999999999',
+          created_at: Date.now(),
+        }));
+        return false; // dead marker owner → reclaimable
+      },
+    })).toThrow('guard release both failed');
+
+    // The fence must fire before the destructive unlink: without it the
+    // stale marker is removed and a new one created inside the stolen
+    // section, and the guard swap is only detected on release.
+    expect(readFileSync(path, 'utf8')).toContain(deadToken);
+
+    rmSync(guardPath, { recursive: true });
+  });
+
   it('serializes a stale reclaim against a deterministic second contender', async () => {
     const project = root();
     const path = kgSyncWorkerMarkerPath(project);
@@ -616,7 +652,10 @@ describe('KG sync runtime', () => {
     expect(existsSync(kgSyncWorkerMarkerPath(project))).toBe(true);
     expect(releaseKgSyncWorkerToken({
       ...first.token,
-      generation: { ...first.token.generation, inode: first.token.generation.inode + 1 },
+      // NTFS inos are 64-bit and can exceed Number.MAX_SAFE_INTEGER, where
+      // `inode + 1` silently rounds back to the same value. A constant is
+      // guaranteed to differ from any real ino.
+      generation: { ...first.token.generation, inode: 1 },
     })).toBe(false);
     expect(existsSync(kgSyncWorkerMarkerPath(project))).toBe(true);
     expect(releaseKgSyncWorkerToken(first.token)).toBe(true);
