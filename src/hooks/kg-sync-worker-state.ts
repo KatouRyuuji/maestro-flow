@@ -595,6 +595,15 @@ function acquireMutationGuard(paths: SafeWorkerMarkerPaths): MutationGuard {
         'mutation guard is malformed or requires manual cleanup',
       );
     }
+    // A directory without a readable owner is transient while a competitor is
+    // between mkdir and owner write (or mid-reclaim); only report it as
+    // malformed once the deadline expires with no owner appearing.
+    if (state === 'owner-missing' && Date.now() >= deadline) {
+      throw new UnsafeKgSyncWorkerMarkerError(
+        paths.guardPath,
+        'mutation guard is malformed or requires manual cleanup',
+      );
+    }
     if (reclaimStaleMutationGuard(paths.guardPath, Date.now())) {
       continue;
     }
@@ -651,7 +660,7 @@ function releaseMutationGuard(paths: SafeWorkerMarkerPaths, guard: MutationGuard
   assertStableWorkerMarkerParent(paths);
 }
 
-function inspectMutationGuard(path: string): 'busy' | 'unsafe' {
+function inspectMutationGuard(path: string): 'busy' | 'unsafe' | 'owner-missing' {
   try {
     const stat = lstatSync(path);
     if (stat.isSymbolicLink() || !stat.isDirectory()) return 'unsafe';
@@ -659,8 +668,11 @@ function inspectMutationGuard(path: string): 'busy' | 'unsafe' {
       join(path, MUTATION_GUARD_OWNER_NAME),
       MUTATION_GUARD_OWNER_MAX_BYTES,
     ).raw);
+    // A present but unparseable owner is genuinely malformed; a missing one
+    // is transient (mid-creation or mid-reclaim).
     return owner ? 'busy' : 'unsafe';
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'owner-missing';
     return 'unsafe';
   }
 }
