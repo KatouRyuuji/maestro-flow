@@ -20,7 +20,8 @@ import type { CoordBridgeData } from '../hooks/coordinator-tracker.js';
 
 interface HookGroup {
   matcher?: string;
-  hooks: Array<{ type: string; command: string }>;
+  // type:"http" webhook hooks 只有 url 没有 command，command 必须可选
+  hooks: Array<{ type: string; command?: string; url?: string }>;
 }
 
 export interface ClaudeSettings {
@@ -207,8 +208,9 @@ export function removeMaestroHooks(settings: ClaudeSettings, hookNames?: string[
     if (!groups) continue;
     for (const group of groups) {
       group.hooks = group.hooks.filter((h) => {
-        if (targets) return ![...targets].some((needle) => h.command.includes(needle));
-        return !h.command.includes(HOOK_MARKER);
+        const command = h.command ?? '';
+        if (targets) return ![...targets].some((needle) => command.includes(needle));
+        return !command.includes(HOOK_MARKER);
       });
     }
     settings.hooks[eventKey] = groups.filter((g) => g.hooks.length > 0) as never;
@@ -272,7 +274,10 @@ function findHookInSettings(settings: ClaudeSettings, hookName: string): boolean
   for (const eventKey of ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Notification', 'SessionStart', 'Stop'] as const) {
     const groups = settings.hooks[eventKey] as HookGroup[] | undefined;
     if (!groups) continue;
-    if (groups.some((g) => g.hooks.some((h) => h.command.includes(`hooks run ${hookName}`) || h.command.includes(`hook-runner.js") ${hookName}`) || h.command.includes(`hook-runner.js" ${hookName}`)))) {
+    if (groups.some((g) => g.hooks.some((h) => {
+      const command = h.command ?? '';
+      return command.includes(`hooks run ${hookName}`) || command.includes(`hook-runner.js") ${hookName}`) || command.includes(`hook-runner.js" ${hookName}`);
+    }))) {
       return true;
     }
   }
@@ -390,7 +395,8 @@ export function installHooksByLevel(
 
 interface CodexHookGroup {
   matcher?: string;
-  hooks: Array<{ type: string; command: string; statusMessage?: string; timeout?: number }>;
+  // type:"http" webhook hooks 只有 url 没有 command，command 必须可选
+  hooks: Array<{ type: string; command?: string; url?: string; statusMessage?: string; timeout?: number }>;
 }
 
 interface CodexHooksFile {
@@ -429,8 +435,9 @@ export function removeCodexMaestroHooks(hooksFile: CodexHooksFile, hookNames?: s
     if (!groups) continue;
     for (const group of groups) {
       group.hooks = group.hooks.filter((h) => {
-        if (targets) return ![...targets].some((needle) => h.command.includes(needle));
-        return !h.command.includes(HOOK_MARKER);
+        const command = h.command ?? '';
+        if (targets) return ![...targets].some((needle) => command.includes(needle));
+        return !command.includes(HOOK_MARKER);
       });
     }
     hooksFile.hooks[eventKey] = groups.filter((g) => g.hooks.length > 0) as never;
@@ -1547,7 +1554,7 @@ export function registerHooksCommand(program: Command): void {
         for (const name of Object.keys(CODEX_HOOK_DEFS)) {
           const def = CODEX_HOOK_DEFS[name];
           const groups = (hf.hooks?.[def.event] as CodexHookGroup[] | undefined) ?? [];
-          const installed = groups.some((g) => g.hooks.some((h) => h.command.includes(`hooks run ${name}`)));
+          const installed = groups.some((g) => g.hooks.some((h) => (h.command ?? '').includes(`hooks run ${name}`)));
           console.log(`    ${name}: ${installed ? 'installed' : 'not installed'}`);
         }
       }

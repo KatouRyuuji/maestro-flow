@@ -81,6 +81,10 @@ export const APPLY_ENTRIES = [
     source: join('src', 'run', 'v3', 'mutation-engine.ts'),
     markers: ['knowledge reconciliation failed'],
   }),
+  filePatch(join('dist', 'src', 'commands', 'hooks.js'), {
+    source: join('src', 'commands', 'hooks.ts'),
+    markers: ["h.command ?? ''"],
+  }),
   filePatch(join('dist', 'src', 'commands', 'run-v3.js'), {
     source: join('src', 'commands', 'run-v3.ts'),
     markers: ['generateV3RunKnowledgeReconciliation'],
