@@ -60,7 +60,12 @@ describe('KG sync runtime', () => {
   }
 
   afterEach(() => {
-    for (const value of roots.splice(0)) rmSync(value, { recursive: true, force: true });
+    // Windows 上被测 worker 可能仍持有目录句柄，直接 rm 报 EPERM——加重试
+    for (const value of roots.splice(0)) {
+      try {
+        rmSync(value, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      } catch { /* 清理失败不阻塞测试结果 */ }
+    }
   });
 
   it('parses modified, untracked, deleted, copy and both rename paths from NUL porcelain', () => {
