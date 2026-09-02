@@ -588,6 +588,13 @@ function convertTextStandard(
   return `---\n${newFm}\n---\n${newBody}`;
 }
 
+/** 引号是否被转义:前置反斜杠为奇数个才算转义(偶数个是字面反斜杠,引号闭合)。 */
+function isQuoteEscaped(text: string, index: number): boolean {
+  let backslashes = 0;
+  for (let k = index - 1; k >= 0 && text[k] === '\\'; k--) backslashes++;
+  return backslashes % 2 === 1;
+}
+
 /**
  * 把 `{...}` 内部文本按顶层逗号切成 key: value 字段。
  * 值原样保留(字面量/表达式/多行均可),brace/paren 深度跟踪防误切。
@@ -600,7 +607,7 @@ function splitTopLevelFields(inner: string): Array<{ key: string; value: string 
   for (let i = 0; i < inner.length; i++) {
     const ch = inner[i];
     if (inStr) {
-      if (ch === inStr && inner[i - 1] !== '\\') inStr = null;
+      if (ch === inStr && !isQuoteEscaped(inner, i)) inStr = null;
       continue;
     }
     if (ch === '"' || ch === "'" || ch === '`') { inStr = ch; continue; }
@@ -643,7 +650,7 @@ function rewriteAgentCallSitesGrok(body: string): string {
     for (; j < body.length; j++) {
       const ch = body[j];
       if (inStr) {
-        if (ch === inStr && body[j - 1] !== '\\') inStr = null;
+        if (ch === inStr && !isQuoteEscaped(body, j)) inStr = null;
         continue;
       }
       if (ch === '"' || ch === "'" || ch === '`') { inStr = ch; continue; }

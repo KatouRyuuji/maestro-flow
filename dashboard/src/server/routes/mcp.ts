@@ -6,7 +6,7 @@
  * Codex (config.toml), and enterprise managed-mcp.json.
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync, realpathSync } from 'node:fs';
-import { join, dirname, isAbsolute, relative, resolve } from 'node:path';
+import { join, dirname, basename, isAbsolute, relative, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { execSync } from 'node:child_process';
 import { Hono } from 'hono';
@@ -660,8 +660,21 @@ export function createMcpRoutes(): Hono {
       // 绑定在本次授权的项目路径内,拒绝越界根。realpath 解符号链接——
       // 否则 project/link → outside 可绕过相对路径检查
       if (scope === 'project' && projectPath?.trim()) {
+        // 最近已存在祖先 realpath + 拼回缺失尾段:不存在的尾段也可能
+        // 穿过符号链接目录,不能做纯词法 resolve 兜底
         const toReal = (p: string): string => {
-          try { return realpathSync(p); } catch { return resolve(p); }
+          const missing: string[] = [];
+          let cursor = resolve(p);
+          for (;;) {
+            try {
+              const real = realpathSync(cursor);
+              return missing.length > 0 ? join(real, ...missing) : real;
+            } catch { /* 向上一级找已存在祖先 */ }
+            const parent = dirname(cursor);
+            if (parent === cursor) return resolve(p); // 理论上到不了:根永远存在
+            missing.unshift(basename(cursor));
+            cursor = parent;
+          }
         };
         const rel = relative(toReal(projectPath), toReal(projectRoot));
         if (rel.startsWith('..') || isAbsolute(rel)) {

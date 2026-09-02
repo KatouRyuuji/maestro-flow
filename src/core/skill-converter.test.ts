@@ -249,4 +249,11 @@ describe('Grok platform conversion', () => {
     expect(converted).toContain('prompt: "x"');
     expect(converted).toContain('team_name: "t1"');
   });
+
+  it('treats a quote after an even run of backslashes as the string end', () => {
+    // 文本为 Agent({ prompt: "C:\\" }):引号前两个反斜杠是字面量,引号闭合
+    const source = 'Agent({ prompt: "C:\\\\" })';
+    const converted = transformContentForPlatform(source, 'grok');
+    expect(converted).toContain('spawn_subagent({ prompt: "C:\\\\" })');
+  });
 });
