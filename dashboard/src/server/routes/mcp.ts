@@ -5,7 +5,7 @@
  * Manages MCP server configs across Claude (.claude.json, .mcp.json),
  * Codex (config.toml), and enterprise managed-mcp.json.
  */
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { join, dirname, isAbsolute, relative, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { execSync } from 'node:child_process';
@@ -657,9 +657,13 @@ export function createMcpRoutes(): Hono {
     const projectRoot = typeof envInput.projectRoot === 'string' ? envInput.projectRoot : undefined;
     if (projectRoot) {
       // MAESTRO_PROJECT_ROOT 决定 MCP 进程根与默认允许目录;项目级安装必须
-      // 绑定在本次授权的项目路径内,拒绝越界根
+      // 绑定在本次授权的项目路径内,拒绝越界根。realpath 解符号链接——
+      // 否则 project/link → outside 可绕过相对路径检查
       if (scope === 'project' && projectPath?.trim()) {
-        const rel = relative(resolve(projectPath), resolve(projectRoot));
+        const toReal = (p: string): string => {
+          try { return realpathSync(p); } catch { return resolve(p); }
+        };
+        const rel = relative(toReal(projectPath), toReal(projectRoot));
         if (rel.startsWith('..') || isAbsolute(rel)) {
           return c.json({ error: 'projectRoot must be within projectPath' }, 400);
         }

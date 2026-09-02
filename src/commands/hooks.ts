@@ -15,10 +15,8 @@ import { resolveWorkspace } from '../hooks/workspace.js';
 import type { CoordBridgeData } from '../hooks/coordinator-tracker.js';
 import { maestroHookCommand, maestroStatuslineCommand } from '../core/mcp-launch.js';
 import {
-  createManifest,
-  findManifest,
   recordGenericHooks,
-  saveManifest,
+  updateManifest,
   type HookRecord,
 } from '../core/manifest.js';
 
@@ -33,16 +31,15 @@ function syncGenericHooksManifest(platformId: string, record: HookRecord, projec
   // targetPath 必须与 install 流程的 findManifest 查找键一致：global 用 paths.home（~/.maestro），
   // 不是 homedir()——否则会写出 install 流程读不到的平行 manifest 家族
   const targetPath = project ? process.cwd() : paths.home;
-  // expectedPriorId fencing:并发 install(如 --target grok 与 --target cursor 同时)
-  // 从同一快照出发会互相覆盖记录;冲突时重载最新 manifest 重放记录后重试一次
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const prior = findManifest(scope, targetPath);
-      const manifest = prior ?? createManifest(scope, targetPath);
+  try {
+    // 读-改-写在同一把 manifest 锁内串行化:并发 install(如 --target grok
+    // 与 --target cursor 同时)不会互相覆盖 generic-hook 记录
+    updateManifest(scope, targetPath, (manifest) => {
       recordGenericHooks(manifest, platformId, record);
-      saveManifest(manifest, { expectedPriorId: prior?.id ?? null });
-      return;
-    } catch { /* 并发冲突重载重试;其余失败 best-effort */ }
+    });
+  } catch (err) {
+    // manifest 同步失败不影响 hooks 安装本身,但不静默——留可诊断线索
+    console.warn(`[maestro] manifest 同步失败(hooks 已安装,仅勾选状态未记录): ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
