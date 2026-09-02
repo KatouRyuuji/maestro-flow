@@ -436,7 +436,7 @@ env = { MAESTRO_ENABLED_TOOLS = "write_file,edit_file,read_file,read_many_files,
 enabled = true
 ```
 
-Windows 上 `command` 为 `"cmd"`，`args` 为 `["/c", "maestro-mcp"]`。写入器只替换 `maestro-tools` 这一节，保留其余配置与注释。
+Windows 上 `command` 为当前 `node.exe`，`args` 为 `maestro-mcp.js` 的绝对路径，避免 `cmd /c maestro-mcp.cmd` 弹出控制台窗口。写入器只替换 `maestro-tools` 这一节，保留其余配置与注释。
 
 ### 验证
 

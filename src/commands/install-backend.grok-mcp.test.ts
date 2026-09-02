@@ -55,6 +55,14 @@ describe('grok MCP target (toml-mcp-servers)', () => {
     expect(content).toContain('[mcp_servers.maestro-tools]');
     expect(content).toContain('enabled = true');
     expect(content).toMatch(/env = \{ MAESTRO_ENABLED_TOOLS = "read_file,write_file", MAESTRO_PROJECT_ROOT = ".*" \}/);
+    if (process.platform === 'win32') {
+      expect(content).toContain(`command = ${JSON.stringify(process.execPath)}`);
+      expect(content).toContain('maestro-mcp.js');
+      expect(content).not.toContain('command = "cmd"');
+    } else {
+      expect(content).toContain('command = "maestro-mcp"');
+      expect(content).toContain('args = []');
+    }
   });
 
   it('creates the config file from scratch when missing', () => {
@@ -135,6 +143,7 @@ describe('grok MCP target (toml-mcp-servers)', () => {
     expect(content.match(/\[mcp_servers\.maestro-tools\]/g)).toHaveLength(1);
     expect(content).not.toContain('[mcp_servers.maestro-tools.env]');
     expect(content).toContain('MAESTRO_ENABLED_TOOLS = "read_file,delegate"');
+    expect(content).not.toContain('command = "cmd"');
     expect(content).not.toContain('MAESTRO_ENABLED_TOOLS = "read_file,write_file"');
     expect(content).toContain('[models]\ndefault = "grok-4.6"');
     expect(content).toContain('[mcp_servers.other]\ncommand = "/bin/other"');

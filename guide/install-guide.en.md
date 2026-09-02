@@ -352,7 +352,7 @@ env = { MAESTRO_ENABLED_TOOLS = "write_file,edit_file,read_file,read_many_files,
 enabled = true
 ```
 
-On Windows, `command` is `"cmd"` and `args` is `["/c", "maestro-mcp"]`. The writer replaces only the `maestro-tools` table and keeps the rest of the file.
+On Windows, `command` is the current `node.exe` and `args` is the absolute path to `maestro-mcp.js`, so hosts do not spawn `cmd /c maestro-mcp.cmd` (which flashes a console window). The writer replaces only the `maestro-tools` table and keeps the rest of the file.
 
 ### Verify
 

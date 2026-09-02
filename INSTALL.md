@@ -119,7 +119,7 @@ macOS / Linux：用 nvm 或 fnm 安装 22.19+，例如 `nvm install 22`。
 
 ## 分步安装（备用）
 
-覆盖脚本只替换清单里的已编译文件（Grok adapter / 安装落点 / 本项目的 v3 hook 与知识可见性补丁），**不整树替换** `dist/` / Dashboard，也**不改**官方 `node_modules` 依赖。官方目录会留下 `.maestro-grok-overlay.json` 方便核对叠了哪些文件。官方版本不一致时直接失败。
+覆盖脚本只替换清单里的已编译文件（Grok adapter / 安装落点 / 本项目的 v3 hook 与知识可见性补丁 / hooks 遍历 http webhook 兼容补丁），**不整树替换** `dist/` / Dashboard，也**不改**官方 `node_modules` 依赖。官方目录会留下 `.maestro-grok-overlay.json` 方便核对叠了哪些文件。官方版本不一致时直接失败。
 
 PowerShell 里 `--components` 的逗号列表必须加引号，否则会被拆成多个参数。
 
@@ -167,7 +167,7 @@ maestro session complete
 
 斜杠命令（`/maestro`、`/maestro-ralph`）内部走同一套 v3 生命周期。不要开新的 maestro session 去「试安装」。
 
-MCP 段按节合并，只替换 `maestro-tools`。Grok 若把 `env` 改写成嵌套表，重装会整段替换，不留孤儿节。Windows 上 `command = "cmd"`、`args = ["/c", "maestro-mcp"]`。
+MCP 段按节合并，只替换 `maestro-tools`。Grok 若把 `env` 改写成嵌套表，重装会整段替换，不留孤儿节。Windows 上 `command` 为当前 `node.exe`，`args` 为 `maestro-mcp.js` 的绝对路径，避免 `cmd /c maestro-mcp.cmd` 弹出控制台窗口。
 
 ```bash
 grok inspect
@@ -192,6 +192,7 @@ maestro delegate "读 README 并总结" --to grok --mode analysis
 6. **知识库 `maestro kg init`** 依赖本机 Node 的 SQLite FTS5。部分 Windows Node 发行版没有 `fts5` 模块；这不影响 Grok 安装与派活。
 7. **旧 `.grok/AGENTS.md` 迁移**：写入 `rules/maestro.md` 时剥离旧文件里的 Maestro 段，不整文件删除用户正文。
 8. **文件夹信任**：一键脚本只检测并提示，不自动写入 `trusted_folders.toml`。
+9. **http webhook hook 兼容**：覆盖清单含 `dist/src/commands/hooks.js`。官方 hooks 遍历对 `h.command` 直接调 `includes`，遇到 `type:"http"`（只有 `url`、没有 `command`）的第三方 webhook hook 会崩溃并卡在安装「hooks」步；补丁改为 `(h.command ?? '')` 守卫，http hook 不匹配 maestro 标记，既不崩溃也不误删。
 
 ---
 

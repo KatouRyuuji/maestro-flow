@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, cpSync } from 'node:fs';
 import { execSync } from 'node:child_process';
+import { resolveMaestroMcpLaunch } from '../../../../src/core/mcp-launch.js';
 // ---------------------------------------------------------------------------
 // Addon Registry — inline to avoid circular build dependency
 // ---------------------------------------------------------------------------
@@ -244,15 +245,15 @@ export function createInstallRoutes(): Hono {
       // Register MCP config if requested
       let mcpRegistered = false;
       if (mcpConfig?.enabled && components.includes('mcp')) {
-        const isWin = process.platform === 'win32';
         const env: Record<string, string> = {
           MAESTRO_ENABLED_TOOLS: mcpConfig.enabledTools?.join(',') ?? 'write_file,edit_file,read_file,read_many_files,team_msg,store_knowhow,delegate',
         };
         if (mcpConfig.projectRoot) env.MAESTRO_PROJECT_ROOT = mcpConfig.projectRoot;
 
+        const launch = resolveMaestroMcpLaunch();
         const serverConfig = {
-          command: isWin ? 'cmd' : 'npx',
-          args: isWin ? ['/c', 'npx', '-y', 'maestro-mcp'] : ['-y', 'maestro-mcp'],
+          command: launch.command,
+          args: launch.args,
           env,
         };
 

@@ -34,6 +34,7 @@ import {
   stripLegacyGrokAgentsAtGrokDir,
 } from '../core/grok-legacy-agents.js';
 import { COMPONENT_DEFS, type ComponentDef } from '../core/component-defs.js';
+import { resolveMaestroMcpLaunch } from '../core/mcp-launch.js';
 import {
   HOOK_LEVELS,
   HOOK_LEVEL_DESCRIPTIONS,
@@ -186,18 +187,17 @@ export function addMcpServer(
   enabledTools: string[],
   projectRoot?: string,
 ): string | null {
-  const isWin = process.platform === 'win32';
   const env: Record<string, string> = {
     MAESTRO_ENABLED_TOOLS: enabledTools.join(','),
   };
   if (projectRoot) env.MAESTRO_PROJECT_ROOT = projectRoot;
 
-  // Use the maestro-mcp binary exposed by the globally installed maestro-flow package.
-  // On Windows, npm generates maestro-mcp.cmd shim resolved via cmd.exe; on Unix, it's
-  // symlinked onto PATH directly.
+  // Unix: PATH `maestro-mcp`. Windows: node.exe + maestro-mcp.js (not cmd /c
+  // maestro-mcp.cmd — that flashes a console window when hosts pipe stdio).
+  const launch = resolveMaestroMcpLaunch();
   const serverConfig = {
-    command: isWin ? 'cmd' : 'maestro-mcp',
-    args: isWin ? ['/c', 'maestro-mcp'] : [],
+    command: launch.command,
+    args: launch.args,
     env,
   };
 
@@ -427,7 +427,6 @@ export function addCodexMcpServer(
   enabledTools: string[],
   projectRoot?: string,
 ): string | null {
-  const isWin = process.platform === 'win32';
   const fp = getCodexConfigPath(scope, projectPath);
 
   try {
@@ -440,8 +439,7 @@ export function addCodexMcpServer(
     content = removeCodexMcpBlock(content);
 
     // Build TOML block
-    const command = isWin ? 'cmd' : 'maestro-mcp';
-    const args = isWin ? '["/c", "maestro-mcp"]' : '[]';
+    const launch = resolveMaestroMcpLaunch();
     const envLines = [`MAESTRO_ENABLED_TOOLS = "${enabledTools.join(',')}"`];
     if (projectRoot) {
       envLines.push(`MAESTRO_PROJECT_ROOT = "${projectRoot.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`);
@@ -450,8 +448,8 @@ export function addCodexMcpServer(
     const block = [
       '',
       `[mcp_servers.maestro-tools]`,
-      `command = "${command}"`,
-      `args = ${args}`,
+      `command = ${tomlBasicString(launch.command)}`,
+      `args = [${launch.args.map(tomlBasicString).join(', ')}]`,
       '',
       `[mcp_servers.maestro-tools.env]`,
       ...envLines,
@@ -911,15 +909,15 @@ function buildServerConfig(
   projectRoot: string | undefined,
   format: McpFormat,
 ): Record<string, unknown> {
-  const isWin = process.platform === 'win32';
   const env: Record<string, string> = {
     MAESTRO_ENABLED_TOOLS: enabledTools.join(','),
   };
   if (projectRoot) env.MAESTRO_PROJECT_ROOT = projectRoot;
 
+  const launch = resolveMaestroMcpLaunch();
   const base: Record<string, unknown> = {
-    command: isWin ? 'cmd' : 'maestro-mcp',
-    args: isWin ? ['/c', 'maestro-mcp'] : [],
+    command: launch.command,
+    args: launch.args,
     env,
   };
 
@@ -950,14 +948,13 @@ function tomlBasicString(value: string): string {
 
 /** Render the `[mcp_servers.maestro-tools]` TOML table (trailing newline included) */
 function buildTomlServerSection(enabledTools: string[], projectRoot?: string): string {
-  const isWin = process.platform === 'win32';
-  const args = isWin ? ['/c', 'maestro-mcp'] : [];
+  const launch = resolveMaestroMcpLaunch();
   const envPairs = [`MAESTRO_ENABLED_TOOLS = ${tomlBasicString(enabledTools.join(','))}`];
   if (projectRoot) envPairs.push(`MAESTRO_PROJECT_ROOT = ${tomlBasicString(projectRoot)}`);
   return [
     `[mcp_servers.${MAESTRO_MCP_SERVER_NAME}]`,
-    `command = ${tomlBasicString(isWin ? 'cmd' : 'maestro-mcp')}`,
-    `args = [${args.map(tomlBasicString).join(', ')}]`,
+    `command = ${tomlBasicString(launch.command)}`,
+    `args = [${launch.args.map(tomlBasicString).join(', ')}]`,
     `env = { ${envPairs.join(', ')} }`,
     'enabled = true',
     '',
