@@ -41,6 +41,11 @@ maestro install
 > 共享运行时（`workflows` / `prepare` / `templates` / `overlays` / `arch-kb`）始终写入 `~/.maestro/`。
 > `.workflow/` 是项目数据目录（specs、knowhow），不是安装目标。
 
+> **`maestro explore` 需要额外配置（可选）**：它是独立的 OpenAI 兼容 API 通道，
+> 需自行创建 `~/.maestro/api.json`（`model` + `baseUrl` + `apiKey`，格式见 `guide/explore-guide.md`）。
+> 安装器不会也不应生成该文件；不配置时 explore 报 "No endpoints configured"，属预期状态。
+> 零配置替代：`maestro search`、Grep/rg、宿主原生 `Agent()`、`maestro delegate`。
+
 ### 加法语义（v0.5.50+）
 
 安装采用**加法语义**——只添加、不删除。已存在的组件文件保留不覆盖，manifest 记录 `knownComponentIds` 跟踪所有曾安装过的组件。

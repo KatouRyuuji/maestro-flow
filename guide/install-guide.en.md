@@ -41,6 +41,12 @@ maestro install
 > Shared runtime files (`workflows` / `prepare` / `templates` / `overlays` / `arch-kb`) always go to `~/.maestro/`.
 > `.workflow/` is project data (specs, knowhow), not an install target.
 
+> **`maestro explore` needs extra (optional) configuration**: it is a separate OpenAI-compatible
+> API channel and requires `~/.maestro/api.json` (`model` + `baseUrl` + `apiKey`; format in
+> `guide/explore-guide.en.md`). The installer neither creates nor should create that file.
+> Without it, explore reports "No endpoints configured" — that is expected, not a bug.
+> Zero-config alternatives: `maestro search`, Grep/rg, native host `Agent()`, `maestro delegate`.
+
 ### Additive semantics (v0.5.50+)
 
 Install is **additive** — it adds, it does not delete. Existing component files are kept; the manifest tracks `knownComponentIds`.
