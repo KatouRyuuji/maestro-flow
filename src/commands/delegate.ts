@@ -535,6 +535,8 @@ export function registerDelegateCommand(program: Command): void {
                 workDir,
                 backend,
                 ...(request.sessionId ? { sessionId: request.sessionId } : {}),
+                // child-reap 归因:与 detached 路径一致记录 maestro session
+                ...(process.env.MAESTRO_SESSION_ID ? { maestroSessionId: process.env.MAESTRO_SESSION_ID } : {}),
               },
             });
           } catch {
@@ -580,6 +582,7 @@ export function registerDelegateCommand(program: Command): void {
                 workDir,
                 backend,
                 ...(request.sessionId ? { sessionId: request.sessionId } : {}),
+                ...(process.env.MAESTRO_SESSION_ID ? { maestroSessionId: process.env.MAESTRO_SESSION_ID } : {}),
               },
             });
           } catch {

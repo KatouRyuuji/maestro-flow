@@ -186,4 +186,41 @@ describe('Grok platform conversion', () => {
     const converted = transformContentForPlatform('maestro run brief run-1 --session demo', 'grok');
     expect(converted).toContain('--platform grok');
   });
+
+  it('maps Agent() fields per TOOL_FIELD_MAP: background rename, name/model/mode dropped', () => {
+    const source = 'Agent({ prompt: "do it", description: "d", subagent_type: "worker", run_in_background: true, name: "w1", model: "grok-4", mode: "write" })';
+    const converted = transformContentForPlatform(source, 'grok');
+    expect(converted).toContain('spawn_subagent({');
+    expect(converted).toContain('prompt: "do it"');
+    expect(converted).toContain('subagent_type: "worker"');
+    expect(converted).toContain('background: true');
+    expect(converted).not.toContain('run_in_background');
+    expect(converted).not.toContain('name:');
+    expect(converted).not.toContain('model:');
+    expect(converted).not.toContain('mode:');
+  });
+
+  it('adds grok subagent tools to restricted allowed-tools when body calls Agent()', () => {
+    const source = [
+      '---',
+      'name: demo',
+      'allowed-tools: Read, Grep',
+      '---',
+      'Run Agent({ prompt: "x", subagent_type: "w" }) now.',
+    ].join('\n');
+    const converted = transformContentForPlatform(source, 'grok');
+    expect(converted).toContain('spawn_subagent');
+    expect(converted).toContain('get_command_or_subagent_output');
+    expect(converted).toContain('kill_command_or_subagent');
+    expect(converted).toContain('wait_commands_or_subagents');
+    expect(converted).toContain('read_file');
+    // frontmatter 已映射,正文裸 Agent( 不残留
+    expect(converted).not.toMatch(/\bAgent\s*\(/);
+  });
+
+  it('keeps unrestricted frontmatter without allowed-tools untouched by subagent injection', () => {
+    const source = ['---', 'name: demo', '---', 'plain body'].join('\n');
+    const converted = transformContentForPlatform(source, 'grok');
+    expect(converted).not.toContain('spawn_subagent');
+  });
 });

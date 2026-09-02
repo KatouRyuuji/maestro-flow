@@ -588,6 +588,66 @@ function convertTextStandard(
   return `---\n${newFm}\n---\n${newBody}`;
 }
 
+/**
+ * Agent() 调用点按 TOOL_FIELD_MAP.Agent.grok 逐字段重写:
+ * run_in_background→background,name/model/mode 等不支持字段丢弃;
+ * 残余裸 `Agent(` 统一改名为 grok 原生工具。
+ */
+function rewriteAgentCallSitesGrok(body: string): string {
+  const fm = TOOL_FIELD_MAP.Agent.grok;
+  return body
+    .replace(/Agent\s*\(\s*(\{[^}]*\})\s*\)/g, (_full, inner: string) => {
+      const fields: string[] = [];
+      for (const [srcKey, mapped] of Object.entries(fm.fields)) {
+        const m = inner.match(new RegExp(`\\b${srcKey}\\s*[:=]\\s*("[^"]*"|'[^']*'|true|false)`));
+        if (!m || mapped === null) continue;
+        fields.push(`${mapped}: ${m[1]}`);
+      }
+      return `${fm.tool}({ ${fields.join(', ')} })`;
+    })
+    .replace(/\bAgent\s*\(/g, `${fm.tool}(`);
+}
+
+/**
+ * Grok 转换:字段级 Agent() 重写 + 受限 allowed-tools 按正文检测补子代理工具。
+ * bodyReplacements 里的 `Agent(`→`spawn_subagent(` 兜底盘在此之后执行,不再命中。
+ */
+function convertTextGrok(
+  content: string,
+  profile: ConversionProfile,
+  isSkillOrCommand = true,
+): string {
+  const { frontmatter, body } = splitFrontmatter(content);
+
+  let hasAgent = false;
+  if (isSkillOrCommand) {
+    hasAgent = detectAgentCalls(body).length > 0 || /\bAgent\s*\(/.test(body);
+  }
+
+  const convertedBody = applyBodyReplacements(rewriteAgentCallSitesGrok(body), profile);
+
+  let newFrontmatter: ParsedFrontmatter | null = null;
+  if (frontmatter) {
+    const fmOut = { ...frontmatter };
+    if (fmOut['allowed-tools']) {
+      const r = rewriteAllowedToolsAgy(fmOut['allowed-tools'], profile, hasAgent);
+      if (r) {
+        if (r.hasAgent || hasAgent) {
+          for (const t of profile.subagentTools) {
+            if (!r.tools.includes(t)) r.tools.push(t);
+          }
+          r.tools.sort();
+        }
+        fmOut['allowed-tools'] = r.tools;
+      }
+    }
+    newFrontmatter = fmOut;
+  }
+
+  const fmBlock = newFrontmatter ? serializeFrontmatter(newFrontmatter) : '';
+  return fmBlock + stripToolTags(convertedBody);
+}
+
 function convertTextCodex(
   content: string,
   profile: ConversionProfile,
@@ -1405,7 +1465,7 @@ const AGENTS_STANDARD_PROFILE: ConversionProfile = {
 
 const GROK_TASK_TRACKING_BLOCK = `<task_tracking>
 
-Grok 无独立 task 跟踪工具（无 update_plan / create_task / track_tasks）。Session/Step 进度以 session artifacts 为权威状态。仅在用户明确要求时使用 goal 工具：\`create_goal({ objective, token_budget? })\` / \`update_goal({ status })\` / \`get_goal({})\`（单一活跃 goal）。
+Grok 无独立 task 跟踪工具（无 update_plan / create_task / track_tasks）。Session/Step 进度以 session artifacts 为权威状态。仅在用户明确要求、或 step 声明 \`goal: true\`（视为工作流显式授权）时使用 goal 工具：\`create_goal({ objective, token_budget? })\` / \`update_goal({ status })\` / \`get_goal({})\`（单一活跃 goal）。
 
 </task_tracking>`;
 
@@ -1678,7 +1738,7 @@ export function transformContentForPlatform(
     case 'pi':
       return stripToolTags(convertTextPi(content, PI_PROFILE, true));
     case 'grok':
-      return stripToolTags(convertTextStandard(content, GROK_PROFILE));
+      return convertTextGrok(content, GROK_PROFILE);
   }
 }
 
@@ -1750,7 +1810,7 @@ export function buildGrokSkills(
   claudeDir: string,
   targetDir: string,
 ): { files: number } {
-  const stats = buildSkillsOnly(claudeDir, targetDir, GROK_PROFILE, convertTextStandard);
+  const stats = buildSkillsOnly(claudeDir, targetDir, GROK_PROFILE, convertTextGrok);
   return { files: stats.files };
 }
 
@@ -1759,7 +1819,7 @@ export function buildGrokAgents(
   claudeDir: string,
   targetDir: string,
 ): { files: number } {
-  const stats = buildAgentsOnly(claudeDir, targetDir, GROK_PROFILE, convertTextStandard);
+  const stats = buildAgentsOnly(claudeDir, targetDir, GROK_PROFILE, convertTextGrok);
   return { files: stats.files };
 }
 

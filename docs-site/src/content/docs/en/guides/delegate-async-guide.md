@@ -119,7 +119,7 @@ Prefix: gemini→`gem`, qwen→`qwn`, codex→`cdx`, claude→`cld`, opencode→
 | cancel | — | ✅ |
 | message inject | — | ✅ |
 | message after_complete | — | ✅ |
-| MCP tool equivalents | — | ✅ (6 tools) |
+| MCP tool equivalents | — | ✅ (`delegate` tool) |
 | MCP channel notifications | — | ✅ |
 | Snapshot (latest output preview) | — | ✅ |
 

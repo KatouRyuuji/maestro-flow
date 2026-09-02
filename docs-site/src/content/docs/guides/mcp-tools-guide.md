@@ -296,6 +296,7 @@ MCP Server (stdio) -> ToolRegistry
   +-- edit_file / write_file / read_file / read_many_files  (文件操作)
   +-- team_msg / team_mailbox / team_task / team_agent      (团队协作)
   +-- store_knowhow                                         (知识复用)
+  +-- delegate                                              (任务委派)
 ```
 
 **适配**: Zod schema 校验 -> `{success, result, error}` -> `ccwResultToMcp()` -> MCP `{content, isError}`

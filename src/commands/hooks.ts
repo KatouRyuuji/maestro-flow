@@ -29,15 +29,21 @@ import {
  * 记录失败不影响 hooks 本身的安装结果。
  */
 function syncGenericHooksManifest(platformId: string, record: HookRecord, project?: boolean): void {
-  try {
-    const scope = project ? 'project' : 'global';
-    // targetPath 必须与 install 流程的 findManifest 查找键一致：global 用 paths.home（~/.maestro），
-    // 不是 homedir()——否则会写出 install 流程读不到的平行 manifest 家族
-    const targetPath = project ? process.cwd() : paths.home;
-    const manifest = findManifest(scope, targetPath) ?? createManifest(scope, targetPath);
-    recordGenericHooks(manifest, platformId, record);
-    saveManifest(manifest);
-  } catch { /* manifest 同步是 best-effort */ }
+  const scope = project ? 'project' : 'global';
+  // targetPath 必须与 install 流程的 findManifest 查找键一致：global 用 paths.home（~/.maestro），
+  // 不是 homedir()——否则会写出 install 流程读不到的平行 manifest 家族
+  const targetPath = project ? process.cwd() : paths.home;
+  // expectedPriorId fencing:并发 install(如 --target grok 与 --target cursor 同时)
+  // 从同一快照出发会互相覆盖记录;冲突时重载最新 manifest 重放记录后重试一次
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const prior = findManifest(scope, targetPath);
+      const manifest = prior ?? createManifest(scope, targetPath);
+      recordGenericHooks(manifest, platformId, record);
+      saveManifest(manifest, { expectedPriorId: prior?.id ?? null });
+      return;
+    } catch { /* 并发冲突重载重试;其余失败 best-effort */ }
+  }
 }
 
 // ---------------------------------------------------------------------------

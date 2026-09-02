@@ -183,12 +183,13 @@ spawn_subagent({ prompt: "<full task prompt>", description: "<3-5 words>", subag
 
 ## Plan Tracking
 
-- Track task/step progress with `update_plan({ explanation?, plan: [{ step, status }] })`: submit the full step array each time; status: `pending` | `in_progress` | `completed`. The authoritative state lives in session artifacts.
+- Grok has no dedicated plan/task tracking tool (no `update_plan` / `create_task` / `track_tasks`). Session/Step progress lives in session artifacts as the authoritative state — maintain checklists as plain text in artifacts, never call unavailable planning tools.
 
 ## Goal Tools (unrelated to task tracking)
 
 - Signatures: `create_goal({ objective, token_budget? })`, `update_goal({ status: "complete" | "blocked" })`, `get_goal({})`.
-- **Only use when the user explicitly requests creating a Goal**: single active goal; never infer creation from ordinary tasks; report final token usage to the user upon completion.
+- **Only use when the user explicitly requests creating a Goal, or a workflow step declares `goal: true`**: single active goal; never infer creation from ordinary tasks; report final token usage to the user upon completion.
+- A step marked `goal: true` is explicit workflow authorization: create the session goal with `create_goal`, track progress and token budget with `get_goal`, and close it with `update_goal({ status: "complete" })` (or `"blocked"` when stuck).
 
 ## Knowledge System
 

@@ -16,7 +16,7 @@
  * 那是宿主内核的事；这里只做 Maestro 侧记账与自有资源回收。
  */
 
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, ftruncateSync, openSync, readdirSync, readFileSync, rmSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 
@@ -149,19 +149,32 @@ function compactNotifyFiles(report: ReapReport): void {
   }
   for (const f of files) {
     const path = join(dir, f);
+    // 共享 tmpdir 安全:O_NOFOLLOW 拒符号链接、O_NONBLOCK 防 FIFO 阻塞;
+    // 读写都走同一 fd,不经路径二次解析,杜绝交换攻击(CWE-59/CWE-400)
+    let fd: number;
     try {
-      const lines = readFileSync(path, 'utf8').split('\n').filter(Boolean);
+      fd = openSync(path, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    } catch {
+      continue;
+    }
+    try {
+      if (!fstatSync(fd).isFile()) continue;
+      const lines = readFileSync(fd, 'utf8').split('\n').filter(Boolean);
       const unread = lines.filter((line) => {
         try { return !(JSON.parse(line) as { read?: boolean }).read; } catch { return true; }
       });
       if (unread.length === lines.length) continue; // 无已读项
       if (unread.length === 0) {
+        // unlink 不跟随最终符号链接,删的是条目本身
         rmSync(path, { force: true });
       } else {
-        writeFileSync(path, unread.join('\n') + '\n', 'utf8');
+        ftruncateSync(fd, 0);
+        writeSync(fd, unread.join('\n') + '\n', 0, 'utf8');
       }
       report.compactedNotifyFiles.push(f);
-    } catch { /* 单文件失败不阻塞其余 */ }
+    } catch { /* 单文件失败不阻塞其余 */ } finally {
+      try { closeSync(fd); } catch { /* 已关闭则忽略 */ }
+    }
   }
 }
 
