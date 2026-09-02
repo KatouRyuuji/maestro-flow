@@ -134,6 +134,16 @@ describe('markRecordStopped', () => {
     const records = [makeRunning({ status: 'stopped', stopped_at: NOW })];
     expect(markRecordStopped(records, { agentId: null, agentType: null, now: NOW })).toBe(false);
   });
+
+  it('requireIdentity: refuses blind recency fallback (cross-session safety)', () => {
+    const records = [makeRunning({ id: 'c1', platform_handle: { agent_id: null, agent_type: 'explore', job_id: null } })];
+    // 无 id、无 type 命中时，requireIdentity 禁止兜底误标
+    expect(markRecordStopped(records, { agentId: null, agentType: 'plan', now: NOW }, { requireIdentity: true })).toBe(false);
+    expect(records[0].status).toBe('running');
+    // 有 type 命中时正常标记
+    expect(markRecordStopped(records, { agentId: null, agentType: 'explore', now: NOW }, { requireIdentity: true })).toBe(true);
+    expect(records[0].status).toBe('stopped');
+  });
 });
 
 describe('purgeRecords', () => {

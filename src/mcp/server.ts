@@ -53,28 +53,27 @@ export async function startMcpServer(): Promise<void> {
   _server = server;
 
   // DIAGNOSTIC: capture client capabilities/version after handshake completes.
-  // Compare two CC startup modes:
-  //   1) plain `claude` (or `claude mcp add maestro`)
-  //   2) `claude --dangerously-load-development-channels server:maestro`
-  // and diff the two files to learn whether CC announces a channel-aware
-  // reciprocal capability the server can detect.
-  server.oninitialized = () => {
-    try {
-      const dir = join(paths.data, 'async');
-      mkdirSync(dir, { recursive: true });
-      const file = join(dir, `client-handshake-${process.pid}.json`);
-      writeFileSync(file, JSON.stringify({
-        pid: process.pid,
-        ppid: process.ppid,
-        ssePort: process.env.CLAUDE_CODE_SSE_PORT ?? null,
-        capturedAt: new Date().toISOString(),
-        clientVersion: server.getClientVersion() ?? null,
-        clientCapabilities: server.getClientCapabilities() ?? null,
-      }, null, 2), 'utf-8');
-    } catch {
-      // best-effort
-    }
-  };
+  // 默认关闭（曾在每次 init 落一个 client-handshake-<pid>.json，堆积数百个残骸文件）；
+  // 需要对比 CC 启动模式时用 MAESTRO_DEBUG_HANDSHAKE=1 显式开启。
+  if (process.env.MAESTRO_DEBUG_HANDSHAKE === '1') {
+    server.oninitialized = () => {
+      try {
+        const dir = join(paths.data, 'async');
+        mkdirSync(dir, { recursive: true });
+        const file = join(dir, `client-handshake-${process.pid}.json`);
+        writeFileSync(file, JSON.stringify({
+          pid: process.pid,
+          ppid: process.ppid,
+          ssePort: process.env.CLAUDE_CODE_SSE_PORT ?? null,
+          capturedAt: new Date().toISOString(),
+          clientVersion: server.getClientVersion() ?? null,
+          clientCapabilities: server.getClientCapabilities() ?? null,
+        }, null, 2), 'utf-8');
+      } catch {
+        // best-effort
+      }
+    };
+  }
 
   server.setRequestHandler(ListToolsRequestSchema, async () => toolHandlers.list());
 

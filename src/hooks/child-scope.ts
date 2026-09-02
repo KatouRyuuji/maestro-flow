@@ -12,6 +12,9 @@
  * 设计原则：
  *   - Fail-open：任何异常静默通过，绝不阻塞宿主工具调用与会话（同 team-monitor）。
  *   - 一行一事：{paths.data}/child-scope/{host}/{host_session_id}.jsonl，rename 原子写。
+ *     并发说明：并行子代理同时 Stop 时多个 hook 进程读-改-写同一文件存在竞态，
+ *     可能丢失个别 mark 事件（fail-open 语义，方案层面接受）——丢失的 running
+ *     记录会在 30min 后标 orphan 自愈，不演化为永久脏状态。
  *   - 观察与回收解耦：登记只记账；SessionEnd/StopCancelled 才调 reapBestEffort
  *     回收 Maestro 拥有的资源（delegate job / team member / 死 team 目录）。
  *   - Purge 对齐 delegate-broker：终态 2h 清除，running 超 30min 标 orphan。
@@ -164,6 +167,7 @@ export function registerRecord(
 export function markRecordStopped(
   records: ChildRecord[],
   ctx: { agentId: string | null; agentType: string | null; now: string },
+  opts?: { requireIdentity?: boolean },
 ): boolean {
   const candidates = records.filter((r) => r.status === 'running' || r.status === 'orphan');
   let target: ChildRecord | undefined;
@@ -171,7 +175,8 @@ export function markRecordStopped(
   if (!target && ctx.agentType) {
     target = [...candidates].reverse().find((r) => r.platform_handle.agent_type === ctx.agentType);
   }
-  if (!target) target = candidates[candidates.length - 1];
+  // requireIdentity：跨会话回标时禁止盲兜底（见 markStoppedAcrossFiles）
+  if (!target && !opts?.requireIdentity) target = candidates[candidates.length - 1];
   if (!target) return false;
   target.status = 'stopped';
   target.stopped_at = ctx.now;
@@ -218,12 +223,17 @@ function saveRecords(file: string, records: ChildRecord[]): void {
   renameSync(tmp, file);
 }
 
-/** Grok 的 SubagentStop/子 SessionEnd 在子会话内触发（sessionId 是子的），需跨文件回找父会话登记。 */
+/**
+ * Grok 的 SubagentStop/子 SessionEnd 在子会话内触发（sessionId 是子的），需跨文件回找父会话登记。
+ * 跨会话回标必须持有身份线索（agentId 或 agentType）才允许命中——
+ * 禁止无差别兜底：否则会把**另一个并行父会话**的同类型 running 记录误标 stopped。
+ */
 function markStoppedAcrossFiles(
   host: string,
   ownFile: string,
   ctx: { agentId: string | null; agentType: string | null; now: string },
 ): boolean {
+  if (!ctx.agentId && !ctx.agentType) return false;
   let files: string[];
   try {
     files = readdirSync(registryDir(host)).filter((f) => f.endsWith('.jsonl'));
@@ -235,7 +245,7 @@ function markStoppedAcrossFiles(
     if (file === ownFile) continue;
     const records = loadRecords(file);
     purgeRecords(records, Date.now());
-    if (markRecordStopped(records, ctx)) {
+    if (markRecordStopped(records, ctx, { requireIdentity: true })) {
       try { saveRecords(file, records); } catch { /* fail-open */ }
       return true;
     }
