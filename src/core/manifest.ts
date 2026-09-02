@@ -344,7 +344,7 @@ export function deleteManifest(manifest: Manifest): void {
 const PRESERVE = new Set(['settings.json', 'settings.local.json']);
 
 /** Files that should have maestro content removed via tag injection instead of being deleted entirely. */
-const CONTENT_MANAGED = new Set(['CLAUDE.md', 'AGENTS.md', 'GEMINI.md', 'copilot-instructions.md']);
+const CONTENT_MANAGED = new Set(['CLAUDE.md', 'AGENTS.md', 'GEMINI.md', 'copilot-instructions.md', 'maestro.md']);
 
 /**
  * Remove maestro-injected content from a doc file using `<!-- maestro:start/end -->` markers.

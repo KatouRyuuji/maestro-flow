@@ -10,6 +10,7 @@ import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { execSync } from 'node:child_process';
 import { Hono } from 'hono';
+import { resolveMaestroMcpLaunch } from '../../../../src/core/mcp-launch.js';
 import * as TemplateStore from './mcp-templates-store.js';
 
 // ---------------------------------------------------------------------------
@@ -639,23 +640,23 @@ export function createMcpRoutes(): Hono {
     const enabledToolsRaw = envInput.enabledTools;
     let enabledToolsEnv: string;
     if (enabledToolsRaw === undefined || enabledToolsRaw === null) {
-      enabledToolsEnv = 'write_file,edit_file,read_file,read_many_files,team_msg,store_knowhow';
+      enabledToolsEnv = 'write_file,edit_file,read_file,read_many_files,team_msg,store_knowhow,delegate';
     } else if (Array.isArray(enabledToolsRaw)) {
       enabledToolsEnv = enabledToolsRaw.filter((t): t is string => typeof t === 'string').join(',');
     } else if (typeof enabledToolsRaw === 'string') {
       enabledToolsEnv = enabledToolsRaw;
     } else {
-      enabledToolsEnv = 'write_file,edit_file,read_file,read_many_files,team_msg,store_knowhow';
+      enabledToolsEnv = 'write_file,edit_file,read_file,read_many_files,team_msg,store_knowhow,delegate';
     }
 
-    const isWin = process.platform === 'win32';
     const env: Record<string, string> = { MAESTRO_ENABLED_TOOLS: enabledToolsEnv };
     const projectRoot = typeof envInput.projectRoot === 'string' ? envInput.projectRoot : undefined;
     if (projectRoot) env.MAESTRO_PROJECT_ROOT = projectRoot;
 
+    const launch = resolveMaestroMcpLaunch();
     const mcpConfig: Record<string, unknown> = {
-      command: isWin ? 'cmd' : 'npx',
-      args: isWin ? ['/c', 'npx', '-y', 'maestro-mcp'] : ['-y', 'maestro-mcp'],
+      command: launch.command,
+      args: launch.args,
       env,
     };
 

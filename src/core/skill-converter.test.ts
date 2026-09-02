@@ -146,3 +146,44 @@ On callback: consume result`;
     expect(converted.match(/--platform pi/g)).toHaveLength(3);
   });
 });
+
+describe('Grok platform conversion', () => {
+  it('rewrites Claude tool calls to grok-native tools', () => {
+    const source = [
+      'Agent({ description: "x", prompt: "do it" })',
+      'Read({ file_path: "a.ts" })',
+      'Write({ file_path: "b.ts" })',
+      'Edit({ file_path: "c.ts" })',
+      'Bash({ command: "ls" })',
+      'Grep({ pattern: "foo" })',
+      'Glob({ pattern: "*.ts" })',
+    ].join('\n');
+
+    const converted = transformContentForPlatform(source, 'grok');
+
+    expect(converted).toContain('spawn_subagent(');
+    expect(converted).toContain('read_file(');
+    expect(converted).toContain('write_file(');
+    expect(converted).toContain('search_replace(');
+    expect(converted).toContain('run_terminal_command(');
+    expect(converted).toContain('grep(');
+    expect(converted).toContain('list_dir(');
+    expect(converted).not.toContain('delegate_subagent');
+    expect(converted).not.toContain('spawn_agent(');
+  });
+
+  it('maps other-platform subagent tool names to grok-native ones', () => {
+    const source = 'use delegate_subagent / spawn_agent then wait_agent and interrupt_agent';
+    const converted = transformContentForPlatform(source, 'grok');
+    expect(converted).toContain('spawn_subagent');
+    expect(converted).toContain('get_command_or_subagent_output');
+    expect(converted).toContain('kill_command_or_subagent');
+    expect(converted).not.toContain('delegate_subagent');
+    expect(converted).not.toContain('wait_agent');
+  });
+
+  it('binds --platform grok on run content-loading commands', () => {
+    const converted = transformContentForPlatform('maestro run brief run-1 --session demo', 'grok');
+    expect(converted).toContain('--platform grok');
+  });
+});
