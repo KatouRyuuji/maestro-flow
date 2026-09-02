@@ -124,7 +124,7 @@ export const useInstallStore = create<InstallStore>((set, get) => ({
   selectedComponents: new Set<string>(),
   backup: true,
   mcpEnabled: true,
-  enabledTools: new Set(MCP_TOOLS),
+  enabledTools: new Set(MCP_TOOLS_DEFAULT_ENABLED),
   detecting: false,
   installing: false,
   result: null,

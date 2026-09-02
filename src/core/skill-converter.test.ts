@@ -223,4 +223,30 @@ describe('Grok platform conversion', () => {
     const converted = transformContentForPlatform(source, 'grok');
     expect(converted).not.toContain('spawn_subagent');
   });
+
+  it('preserves expression and multiline Agent() values, renames mapped keys', () => {
+    const source = [
+      'Agent({',
+      '  prompt: buildPrompt({ topic: "t" }),',
+      '  subagent_type: workerType,',
+      '  run_in_background: enabled,',
+      '  model: preferredModel,',
+      '})',
+    ].join('\n');
+    const converted = transformContentForPlatform(source, 'grok');
+    expect(converted).toContain('spawn_subagent({');
+    expect(converted).toContain('prompt: buildPrompt({ topic: "t" })');
+    expect(converted).toContain('subagent_type: workerType');
+    expect(converted).toContain('background: enabled');
+    expect(converted).not.toContain('run_in_background');
+    expect(converted).not.toContain('preferredModel');
+  });
+
+  it('keeps unknown Agent() fields verbatim instead of dropping them', () => {
+    const source = 'Agent({ prompt: "x", team_name: "t1" })';
+    const converted = transformContentForPlatform(source, 'grok');
+    expect(converted).toContain('spawn_subagent({');
+    expect(converted).toContain('prompt: "x"');
+    expect(converted).toContain('team_name: "t1"');
+  });
 });

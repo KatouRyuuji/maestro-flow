@@ -589,23 +589,82 @@ function convertTextStandard(
 }
 
 /**
+ * 把 `{...}` 内部文本按顶层逗号切成 key: value 字段。
+ * 值原样保留(字面量/表达式/多行均可),brace/paren 深度跟踪防误切。
+ */
+function splitTopLevelFields(inner: string): Array<{ key: string; value: string }> {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  let inStr: string | null = null;
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (inStr) {
+      if (ch === inStr && inner[i - 1] !== '\\') inStr = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === '`') { inStr = ch; continue; }
+    if (ch === '{' || ch === '(' || ch === '[') depth++;
+    else if (ch === '}' || ch === ')' || ch === ']') depth--;
+    else if (ch === ',' && depth === 0) {
+      parts.push(inner.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(inner.slice(start));
+  const fields: Array<{ key: string; value: string }> = [];
+  for (const part of parts) {
+    const m = part.match(/^\s*([A-Za-z_][\w]*)\s*[:=]\s*([\s\S]*?)\s*$/);
+    if (m) fields.push({ key: m[1], value: m[2] });
+  }
+  return fields;
+}
+
+/**
  * Agent() 调用点按 TOOL_FIELD_MAP.Agent.grok 逐字段重写:
- * run_in_background→background,name/model/mode 等不支持字段丢弃;
+ * run_in_background→background,name/model/mode 等不支持字段丢弃,
+ * 未知字段与表达式值原样保留(不产生丢弃字段后的空调用);
  * 残余裸 `Agent(` 统一改名为 grok 原生工具。
  */
 function rewriteAgentCallSitesGrok(body: string): string {
   const fm = TOOL_FIELD_MAP.Agent.grok;
-  return body
-    .replace(/Agent\s*\(\s*(\{[^}]*\})\s*\)/g, (_full, inner: string) => {
-      const fields: string[] = [];
-      for (const [srcKey, mapped] of Object.entries(fm.fields)) {
-        const m = inner.match(new RegExp(`\\b${srcKey}\\s*[:=]\\s*("[^"]*"|'[^']*'|true|false)`));
-        if (!m || mapped === null) continue;
-        fields.push(`${mapped}: ${m[1]}`);
+  let out = '';
+  let i = 0;
+  const callRe = /\bAgent\s*\(\s*\{/g;
+  for (;;) {
+    callRe.lastIndex = i;
+    const m = callRe.exec(body);
+    if (!m) { out += body.slice(i); break; }
+    const objStart = m.index + m[0].length - 1; // 指向 {
+    // 平衡扫描找匹配的 }(跳过字符串字面量)
+    let depth = 0;
+    let j = objStart;
+    let inStr: string | null = null;
+    for (; j < body.length; j++) {
+      const ch = body[j];
+      if (inStr) {
+        if (ch === inStr && body[j - 1] !== '\\') inStr = null;
+        continue;
       }
-      return `${fm.tool}({ ${fields.join(', ')} })`;
-    })
-    .replace(/\bAgent\s*\(/g, `${fm.tool}(`);
+      if (ch === '"' || ch === "'" || ch === '`') { inStr = ch; continue; }
+      if (ch === '{') depth++;
+      else if (ch === '}') { depth--; if (depth === 0) break; }
+    }
+    if (depth !== 0) { out += body.slice(i); break; } // 未闭合,放弃改写
+    let k = j + 1;
+    while (k < body.length && /\s/.test(body[k])) k++;
+    if (body[k] !== ')') { out += body.slice(i, k); i = k; continue; }
+
+    const mapped: string[] = [];
+    for (const f of splitTopLevelFields(body.slice(objStart + 1, j))) {
+      const target: string | null | undefined = fm.fields[f.key];
+      if (target === null) continue; // grok 不支持的字段,丢弃
+      mapped.push(`${target ?? f.key}: ${f.value}`); // 未知字段原样保留
+    }
+    out += body.slice(i, m.index) + `${fm.tool}({ ${mapped.join(', ')} })`;
+    i = k + 1;
+  }
+  return out.replace(/\bAgent\s*\(/g, `${fm.tool}(`);
 }
 
 /**
