@@ -130,6 +130,11 @@ function buildJobMetadata(request: DelegateExecutionRequest, workerPid?: number)
   if (request.sessionId) {
     metadata.sessionId = request.sessionId;
   }
+  // child-reap 归因：记录调用方 maestro session（若有），供 session complete / SessionEnd 回收
+  const maestroSessionId = process.env.MAESTRO_SESSION_ID;
+  if (maestroSessionId) {
+    metadata.maestroSessionId = maestroSessionId;
+  }
   if (workerPid !== undefined) {
     metadata.workerPid = workerPid;
   }

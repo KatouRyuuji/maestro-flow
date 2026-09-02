@@ -76,19 +76,12 @@ Before implementation, always:
 
 ## Delegate & CLI
 
-- **Delegate Usage**: @~/.maestro/workflows/delegate-usage.md
 - **CLI Endpoints Config**: @~/.maestro/cli-tools.json
 
+`maestro delegate "<PROMPT>" --to <tool> --mode analysis|write` — dispatch tasks to external CLI tools (claude, codex, grok; see cli-tools.json for enabled set).
+Always `run_in_background: true`. Full guide: `cat ~/.maestro/workflows/delegate-usage.md`
+
 **Strictly follow the cli-tools.json configuration**
-
-## Agent Invocation & Join
-
-Structured concurrency: when your scope ends, every subagent you spawned must be `joined | stopped | cancelled` — never fire-and-forget.
-
-- **Default: synchronous `Agent()`** (`run_in_background: false`). The call blocks and returns the child's final result; prefer this unless parallelism is genuinely required.
-- **Background `Agent()` ⇒ must join in this turn.** Collect every background agent's result with the host's wait/notification flow before you finish; never end a turn (or stop) with your own background agents still running. A failed or timed-out parallel worker must be stopped/collected too — do not drop it on first error.
-- **Never use a `Stop` hook to "wait for running subagents"** (registry drift turns it into an infinite loop, Claude Code #58637). Join is the model's job, not the hook's.
-- **Agent Teams**: before ending, send `shutdown_request` to each teammate and `TeamDelete` the team. Do not assume `SubagentStop` fires for team members — it can be skipped (#44971).
 
 ## Explore
 
@@ -145,7 +138,7 @@ EXPECTED: file:line list with the SQL string
 
 ### Cross-Search
 
-For important searches, run 2-3 prompts from different angles concurrently; Claude cross-validates results.
+For important searches, run 2-3 prompts from different angles concurrently; the main agent cross-validates results.
 
 **Split by angle, not by keyword:**
 
@@ -171,6 +164,31 @@ Bash({ command: "maestro explore \"FIND: ...\nSCOPE: ...\"" })
 ```
 
 Session: `maestro explore show` / `maestro explore output <id>`
+
+## Agent Invocation & Join
+
+Structured concurrency: when your scope ends, every subagent you spawned must be `joined | stopped | cancelled` — never fire-and-forget. Spawn subagents with the native `spawn_subagent` tool only. Do NOT use `spawn_agent` / `wait_agent` / `list_agents` / `interrupt_agent` / `delegate_subagent` — those are Codex tools and do not exist in this host. `Task` is an alias of `spawn_subagent`; the same rules apply.
+
+```ts
+spawn_subagent({ prompt: "<full task prompt>", description: "<3-5 words>", subagent_type: "general-purpose", background: false })
+```
+
+- **Default: foreground spawn (`background: false`).** The call blocks and returns the child's final result directly — the parent scope cannot end while the child runs. This is the structured-concurrency default.
+- **Background spawn ⇒ must join, then reap.** `background: true` returns a subagent ID immediately; before ending your turn you MUST:
+  1. Wait: `get_command_or_subagent_output(task_id, timeout_ms)` — on timeout, wait again until the status is terminal;
+  2. Kill if still running when you must give up: `kill_command_or_subagent(task_id)`;
+  3. Never end a turn while a background subagent you spawned is still running.
+- **Parallel waves**: the parent session spawns all workers itself, then joins them with `wait_commands_or_subagents({ task_ids: [...], mode: "wait_all", timeout_ms })` (max 20 IDs; `wait_any` returns on the first completion). A failed or timed-out worker must still be awaited or killed — never drop the rest on first error.
+- **No nested spawning**: maximum depth is 1 — a subagent's own `spawn_subagent` call fails with a depth-limit error. Wave fan-out always happens in the parent session; a subagent that needs a wave returns a `needs_wave` declaration for its parent to execute.
+
+## Plan Tracking
+
+- Track task/step progress with `update_plan({ explanation?, plan: [{ step, status }] })`: submit the full step array each time; status: `pending` | `in_progress` | `completed`. The authoritative state lives in session artifacts.
+
+## Goal Tools (unrelated to task tracking)
+
+- Signatures: `create_goal({ objective, token_budget? })`, `update_goal({ status: "complete" | "blocked" })`, `get_goal({})`.
+- **Only use when the user explicitly requests creating a Goal**: single active goal; never infer creation from ordinary tasks; report final token usage to the user upon completion.
 
 ## Knowledge System
 
