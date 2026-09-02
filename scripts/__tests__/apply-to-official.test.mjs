@@ -93,6 +93,11 @@ describe('apply-to-official', () => {
       'knowledge-v3.js',
       'mutation-engine.js',
       'run-v3.js',
+      'InstallFlow.js',
+      'useInstallFlowState.js',
+      'mcp-launch.js',
+      'skill-converter.js',
+      'grok-instructions.md',
     ];
     for (const name of required) {
       expect(APPLY_ENTRIES.some((entry) => entry.from.replace(/\\/g, '/').endsWith(name))).toBe(true);

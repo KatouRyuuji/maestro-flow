@@ -65,6 +65,29 @@ export const APPLY_ENTRIES = [
     source: join('workflows', 'delegate-usage.md'),
     markers: ['grok'],
   }),
+  // 交互式安装 TUI:官方平台列表没有 grok,必须覆盖列表组件与状态钩子
+  filePatch(join('dist', 'src', 'tui', 'install-ui', 'InstallFlow.js'), {
+    source: join('src', 'tui', 'install-ui', 'InstallFlow.tsx'),
+    markers: ['Grok Build'],
+  }),
+  filePatch(join('dist', 'src', 'tui', 'install-ui', 'useInstallFlowState.js'), {
+    source: join('src', 'tui', 'install-ui', 'useInstallFlowState.ts'),
+    markers: ["'grok', '.grok'"],
+  }),
+  // install-backend/component-defs 的运行时依赖:官方包缺失或非 grok 版本,必须一并覆盖
+  filePatch(join('dist', 'src', 'core', 'mcp-launch.js'), {
+    source: join('src', 'core', 'mcp-launch.ts'),
+    markers: ['resolveMaestroMcpLaunch'],
+  }),
+  filePatch(join('dist', 'src', 'core', 'skill-converter.js'), {
+    source: join('src', 'core', 'skill-converter.ts'),
+    markers: ['GROK_PROFILE'],
+  }),
+  // grok 组件 contextSource 指向该文件,官方包没有
+  filePatch(join('workflows', 'grok-instructions.md'), {
+    source: join('workflows', 'grok-instructions.md'),
+    markers: ['grok'],
+  }),
   filePatch(join('dist', 'src', 'hooks', 'session-context.js'), {
     source: join('src', 'hooks', 'session-context.ts'),
     markers: ['session/3.0'],
