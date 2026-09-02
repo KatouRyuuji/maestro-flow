@@ -367,7 +367,7 @@ maestro install --import ./team-profile.json
 
 在交互式安装向导中，Extra MCP 步骤可选择注册到上述目标。每个目标支持全局和项目两种范围（`roo` 仅项目级）。
 
-MCP 工具列表（6 个）：`write_file`, `edit_file`, `read_file`, `read_many_files`, `team_msg`, `store_knowhow`
+MCP 工具列表（7 个）：`write_file`, `edit_file`, `read_file`, `read_many_files`, `team_msg`, `store_knowhow`, `delegate`（任务委派，默认只读模式）
 
 非交互示例：
 
@@ -415,7 +415,7 @@ irm https://x.ai/cli/install.ps1 | iex
 
 ```bash
 # 全新机器请同时带上 workflows,prepare,ref,arch-kb,templates,overlays
-maestro install --force --components grok-context,grok-md-chinese,grok-skills,grok-agents --extra-mcp grok
+maestro install --force --components workflows,prepare,ref,arch-kb,templates,overlays,grok-context,grok-md-chinese,grok-skills,grok-agents --extra-mcp grok
 ```
 
 | 组件 ID | 落点 |

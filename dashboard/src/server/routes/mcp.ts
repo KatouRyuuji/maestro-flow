@@ -6,7 +6,7 @@
  * Codex (config.toml), and enterprise managed-mcp.json.
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, isAbsolute, relative, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { execSync } from 'node:child_process';
 import { Hono } from 'hono';
@@ -637,21 +637,35 @@ export function createMcpRoutes(): Hono {
     const projectPath = body.projectPath as string | undefined;
     const envInput = (typeof body.env === 'object' && body.env ? body.env : body) as Record<string, unknown>;
 
+    const scope = rawScope === 'global' || rawScope === 'project' ? rawScope : (projectPath ? 'project' : 'global');
+
     const enabledToolsRaw = envInput.enabledTools;
+    // 默认 allowlist 不含 delegate:派发能力(含 write 模式)需调用方显式开启
+    const DEFAULT_ENABLED_TOOLS = 'write_file,edit_file,read_file,read_many_files,team_msg,store_knowhow';
     let enabledToolsEnv: string;
     if (enabledToolsRaw === undefined || enabledToolsRaw === null) {
-      enabledToolsEnv = 'write_file,edit_file,read_file,read_many_files,team_msg,store_knowhow,delegate';
+      enabledToolsEnv = DEFAULT_ENABLED_TOOLS;
     } else if (Array.isArray(enabledToolsRaw)) {
       enabledToolsEnv = enabledToolsRaw.filter((t): t is string => typeof t === 'string').join(',');
     } else if (typeof enabledToolsRaw === 'string') {
       enabledToolsEnv = enabledToolsRaw;
     } else {
-      enabledToolsEnv = 'write_file,edit_file,read_file,read_many_files,team_msg,store_knowhow,delegate';
+      enabledToolsEnv = DEFAULT_ENABLED_TOOLS;
     }
 
     const env: Record<string, string> = { MAESTRO_ENABLED_TOOLS: enabledToolsEnv };
     const projectRoot = typeof envInput.projectRoot === 'string' ? envInput.projectRoot : undefined;
-    if (projectRoot) env.MAESTRO_PROJECT_ROOT = projectRoot;
+    if (projectRoot) {
+      // MAESTRO_PROJECT_ROOT 决定 MCP 进程根与默认允许目录;项目级安装必须
+      // 绑定在本次授权的项目路径内,拒绝越界根
+      if (scope === 'project' && projectPath?.trim()) {
+        const rel = relative(resolve(projectPath), resolve(projectRoot));
+        if (rel.startsWith('..') || isAbsolute(rel)) {
+          return c.json({ error: 'projectRoot must be within projectPath' }, 400);
+        }
+      }
+      env.MAESTRO_PROJECT_ROOT = projectRoot;
+    }
 
     const launch = resolveMaestroMcpLaunch();
     const mcpConfig: Record<string, unknown> = {
@@ -660,7 +674,6 @@ export function createMcpRoutes(): Hono {
       env,
     };
 
-    const scope = rawScope === 'global' || rawScope === 'project' ? rawScope : (projectPath ? 'project' : 'global');
     if (scope === 'project') {
       if (!projectPath?.trim()) return c.json({ error: 'projectPath required for project scope' }, 400);
       return c.json(addProjectServer(projectPath, 'maestro-tools', mcpConfig));

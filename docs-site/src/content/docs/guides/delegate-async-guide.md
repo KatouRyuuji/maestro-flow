@@ -120,7 +120,7 @@ queued → running → completed
 | cancel | — | ✓ |
 | message 注入 | — | ✓ |
 | message after_complete | — | ✓ |
-| MCP 工具等价 | — | ✓（6 个工具） |
+| MCP 工具等价 | — | ✓（`delegate` 工具） |
 | MCP channel 通知 | — | ✓ |
 | Snapshot（最新输出预览） | — | ✓ |
 

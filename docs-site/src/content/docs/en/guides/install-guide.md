@@ -193,7 +193,7 @@ irm https://x.ai/cli/install.ps1 | iex
 
 # Install Maestro Grok assets + MCP
 # Fresh machines should also include workflows,prepare,ref,arch-kb,templates,overlays
-maestro install --force --components grok-context,grok-md-chinese,grok-skills,grok-agents --extra-mcp grok
+maestro install --force --components workflows,prepare,ref,arch-kb,templates,overlays,grok-context,grok-md-chinese,grok-skills,grok-agents --extra-mcp grok
 ```
 
 Destinations: `.grok/rules/maestro.md`, `.grok/skills/`, `.grok/agents/` (not `AGENTS.md`). Reinstall strips leftover Maestro sections from `.grok/AGENTS.md`. Project assets go to the caller cwd (`--path` supported). A mismatched official version fails; it does not auto-downgrade. After install, teach only v3: `session open` → `run next` → `run complete --advance` → `session complete`. Authenticate with `grok login` or `XAI_API_KEY`. Verify:

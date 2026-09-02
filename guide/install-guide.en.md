@@ -284,7 +284,7 @@ In addition to Claude Code, `maestro install` supports registering the MCP serve
 
 In the interactive install wizard, the Extra MCP step lets you select which targets to register. Each target supports both global and project scopes (`roo` is project-only).
 
-MCP tools (6): `write_file`, `edit_file`, `read_file`, `read_many_files`, `team_msg`, `store_knowhow`
+MCP tools (7): `write_file`, `edit_file`, `read_file`, `read_many_files`, `team_msg`, `store_knowhow`, `delegate` (task delegation, read-only by default)
 
 Non-interactive example:
 
@@ -332,7 +332,7 @@ In interactive `maestro install`, tick platform `grok` and the Grok Extra MCP ta
 
 ```bash
 # Fresh machines should also include workflows,prepare,ref,arch-kb,templates,overlays
-maestro install --force --components grok-context,grok-md-chinese,grok-skills,grok-agents --extra-mcp grok
+maestro install --force --components workflows,prepare,ref,arch-kb,templates,overlays,grok-context,grok-md-chinese,grok-skills,grok-agents --extra-mcp grok
 ```
 
 | Component ID | Destination |

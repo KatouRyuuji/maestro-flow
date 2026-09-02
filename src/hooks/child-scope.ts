@@ -227,6 +227,10 @@ function saveRecords(file: string, records: ChildRecord[]): void {
  * Grok 的 SubagentStop/子 SessionEnd 在子会话内触发（sessionId 是子的），需跨文件回找父会话登记。
  * 跨会话回标必须持有身份线索（agentId 或 agentType）才允许命中——
  * 禁止无差别兜底：否则会把**另一个并行父会话**的同类型 running 记录误标 stopped。
+ *
+ * agentType 不是跨会话身份：两个并行父会话可能各有一条同类型 running。
+ * agentType-only 匹配只有在**全表唯一**时才回标；不唯一则保留记录，
+ * 等稳定身份（agentId）或孤儿清理（30min）处理。
  */
 function markStoppedAcrossFiles(
   host: string,
@@ -240,17 +244,45 @@ function markStoppedAcrossFiles(
   } catch {
     return false;
   }
+
+  const isLive = (r: ChildRecord): boolean => r.status === 'running' || r.status === 'orphan';
+
+  // agentId 是稳定身份：命中即唯一，直接回标
+  if (ctx.agentId) {
+    for (const f of files) {
+      const file = join(registryDir(host), f);
+      if (file === ownFile) continue;
+      const records = loadRecords(file);
+      purgeRecords(records, Date.now());
+      const target = records.find((r) => isLive(r) && r.platform_handle.agent_id === ctx.agentId);
+      if (!target) continue;
+      target.status = 'stopped';
+      target.stopped_at = ctx.now;
+      try { saveRecords(file, records); } catch { /* fail-open */ }
+      return true;
+    }
+    return false;
+  }
+
+  // agentType-only：先收集全部匹配，唯一才回标
+  const hits: Array<{ file: string; records: ChildRecord[]; target: ChildRecord }> = [];
   for (const f of files) {
     const file = join(registryDir(host), f);
     if (file === ownFile) continue;
     const records = loadRecords(file);
     purgeRecords(records, Date.now());
-    if (markRecordStopped(records, ctx, { requireIdentity: true })) {
-      try { saveRecords(file, records); } catch { /* fail-open */ }
-      return true;
+    for (const r of records) {
+      if (isLive(r) && r.platform_handle.agent_type === ctx.agentType) {
+        hits.push({ file, records, target: r });
+      }
     }
   }
-  return false;
+  if (hits.length !== 1) return false;
+  const hit = hits[0];
+  hit.target.status = 'stopped';
+  hit.target.stopped_at = ctx.now;
+  try { saveRecords(hit.file, hit.records); } catch { /* fail-open */ }
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -339,7 +371,10 @@ export function listLiveChildren(host: string, hostSessionId: string): ChildReco
   try {
     const file = registryFile(host, hostSessionId);
     if (!existsSync(file)) return [];
-    return loadRecords(file).filter((r) => r.status === 'running');
+    const nowMs = Date.now();
+    // 只读路径不落盘,但同样应用孤儿龄规则:漏标 stop 的 running
+    // 超过 ORPHAN_RUNNING_MS 不计入 live,否则 statusline 会永久显示
+    return loadRecords(file).filter((r) => r.status === 'running' && ageMs(r, nowMs) <= ORPHAN_RUNNING_MS);
   } catch {
     return [];
   }

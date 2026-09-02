@@ -10,7 +10,9 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const home = process.env.MAESTRO_HOME ?? mkdtempSync(join(tmpdir(), 'maestro-test-home-'));
+// 无条件新建临时目录:继承的 MAESTRO_HOME 可能指向真实 home,
+// 下面的 specs 占位写入会对真实目录抛 EISDIR,不存在则抛 ENOENT
+const home = mkdtempSync(join(tmpdir(), 'maestro-test-home-'));
 process.env.MAESTRO_HOME = home;
 
 // loadSpecs 的全局层（paths.specs）无条件包含且 auto-seed 覆盖全部 category——

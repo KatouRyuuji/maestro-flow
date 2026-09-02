@@ -276,7 +276,7 @@ Hand a task to an external CLI agent (Grok / Gemini / Claude / Codex, etc.). **D
 
 </details>
 
-New installs include `delegate` in the Extra MCP allowlist. Existing installs must re-run `maestro install --extra-mcp grok` (or add `delegate` to `MAESTRO_ENABLED_TOOLS`).
+New installs include `delegate` in the Extra MCP allowlist. Existing installs must re-run `maestro install --force --extra-mcp grok` (or add `delegate` to `MAESTRO_ENABLED_TOOLS`).
 
 ---
 

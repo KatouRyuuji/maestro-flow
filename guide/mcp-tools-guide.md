@@ -276,7 +276,7 @@ Maestro MCP 服务器暴露内置工具，供 Claude Code、Grok、Codex 等 AI 
 
 </details>
 
-新安装默认把 `delegate` 写入 Extra MCP 白名单。旧安装需重跑 `maestro install --extra-mcp grok`（或把 `delegate` 加进 `MAESTRO_ENABLED_TOOLS`）。
+新安装默认把 `delegate` 写入 Extra MCP 白名单。旧安装需重跑 `maestro install --force --extra-mcp grok`（或把 `delegate` 加进 `MAESTRO_ENABLED_TOOLS`）。
 
 ---
 

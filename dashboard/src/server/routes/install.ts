@@ -245,8 +245,9 @@ export function createInstallRoutes(): Hono {
       // Register MCP config if requested
       let mcpRegistered = false;
       if (mcpConfig?.enabled && components.includes('mcp')) {
+        // 默认 allowlist 不含 delegate:派发能力(含 write 模式)需调用方经 enabledTools 显式开启
         const env: Record<string, string> = {
-          MAESTRO_ENABLED_TOOLS: mcpConfig.enabledTools?.join(',') ?? 'write_file,edit_file,read_file,read_many_files,team_msg,store_knowhow,delegate',
+          MAESTRO_ENABLED_TOOLS: mcpConfig.enabledTools?.join(',') ?? 'write_file,edit_file,read_file,read_many_files,team_msg,store_knowhow',
         };
         if (mcpConfig.projectRoot) env.MAESTRO_PROJECT_ROOT = mcpConfig.projectRoot;
 

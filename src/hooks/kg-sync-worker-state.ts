@@ -8,6 +8,8 @@ import {
   openSync,
   readSync,
   realpathSync,
+  renameSync,
+  rmSync,
   rmdirSync,
   unlinkSync,
   utimesSync,
@@ -621,6 +623,12 @@ function acquireMutationGuard(paths: SafeWorkerMarkerPaths): MutationGuard {
  * isReclaimableInspection. Future timestamps (negative age) never reclaim.
  * Returns true only when both entries were removed; on any race the caller
  * simply re-enters the wait loop.
+ *
+ * 回收协议（认领→复核→删除）：先把 guard 目录 rename 到唯一认领名——
+ * rename 是原子操作，只有一个回收者能成功，且此后原路径立即可被他人重建。
+ * 随后复核认领目录里的 owner 与先前观测到的过期代际一致才删除；
+ * 不一致说明原持有者已收尾、该路径被重建过，把目录放回原位（失败则由
+ * assertMutationGuardOwnership 的 fencing 兜底，绝不误删新一代）。
  */
 function reclaimStaleMutationGuard(path: string, now: number): boolean {
   const ownerPath = join(path, MUTATION_GUARD_OWNER_NAME);
@@ -635,12 +643,29 @@ function reclaimStaleMutationGuard(path: string, now: number): boolean {
   }
   if (!owner) return false;
   if (!(now - owner.created_at >= MUTATION_GUARD_STALE_MS)) return false;
+
+  const claimPath = `${path}.reclaim-${process.pid}-${randomUUID().slice(0, 8)}`;
   try {
-    unlinkSync(ownerPath);
-    rmdirSync(path);
+    renameSync(path, claimPath);
+  } catch {
+    return false; // 已被其他回收者认领,或原持有者已收尾删除
+  }
+  try {
+    const claimed = parseMutationGuardOwner(readBoundedRegularFile(
+      join(claimPath, MUTATION_GUARD_OWNER_NAME),
+      MUTATION_GUARD_OWNER_MAX_BYTES,
+    ).raw);
+    if (!claimed || claimed.token !== owner.token || claimed.created_at !== owner.created_at) {
+      // 代际已变:放回原位;原位被占则留给 fencing 兜底
+      try { renameSync(claimPath, path); } catch { /* 新一代已在原位 */ }
+      return false;
+    }
+    rmSync(claimPath, { recursive: true, force: true });
     return true;
   } catch {
-    return false; // Another contender reclaimed or recreated it first.
+    // 复核读取失败:目录身份不明,放回原位保守处理
+    try { renameSync(claimPath, path); } catch { /* 新一代已在原位 */ }
+    return false;
   }
 }
 

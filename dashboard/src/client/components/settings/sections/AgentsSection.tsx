@@ -95,6 +95,13 @@ const AGENT_FIELD_CONFIG: Partial<Record<AgentType, AgentFieldConfig>> = {
     showBaseUrl: false,
     showSettingsFile: false,
   },
+  grok: {
+    apiKeyLabel: 'xAI API Key',
+    apiKeyPlaceholder: 'xai-...',
+    apiKeyEnvHint: 'XAI_API_KEY',
+    showBaseUrl: false,
+    showSettingsFile: false,
+  },
 };
 
 const AGENT_TYPES: { type: AgentType; label: string }[] = [

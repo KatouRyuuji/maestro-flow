@@ -198,7 +198,7 @@ irm https://x.ai/cli/install.ps1 | iex
 
 # 安装 Maestro 的 Grok 资产 + MCP
 # 全新机器请同时带上 workflows,prepare,ref,arch-kb,templates,overlays
-maestro install --force --components grok-context,grok-md-chinese,grok-skills,grok-agents --extra-mcp grok
+maestro install --force --components workflows,prepare,ref,arch-kb,templates,overlays,grok-context,grok-md-chinese,grok-skills,grok-agents --extra-mcp grok
 ```
 
 资产落点：`.grok/rules/maestro.md`、`.grok/skills/`、`.grok/agents/`（不是 `AGENTS.md`）。重装会剥离旧 `.grok/AGENTS.md` 里的 Maestro 段。项目资产写到调用方当前目录，可用 `--path`。官方版本不一致会失败，不会自动降级。装完只教 v3：`session open` → `run next` → `run complete --advance` → `session complete`。认证用 `grok login` 或 `XAI_API_KEY`。验证：
