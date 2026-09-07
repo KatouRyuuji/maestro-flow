@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { transformContentForPlatform } from './skill-converter.js';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { buildCursorSkills, transformContentForPlatform } from './skill-converter.js';
 
 describe('Pi Maestro platform conversion', () => {
   it('binds platform on Session and Run creation and content-loading commands', () => {
@@ -283,11 +295,44 @@ describe('Cursor platform conversion', () => {
     expect(converted).toContain('update_task({ status: "completed" })');
     expect(converted).not.toContain('保持 active 以刷新外观');
     expect(converted).not.toContain('TaskCreate');
+    expect(converted).not.toContain('Grok 原生');
   });
 
   it('binds --platform cursor on run content-loading commands', () => {
     const converted = transformContentForPlatform('maestro run brief run-1 --session demo', 'cursor');
     expect(converted).toContain('--platform cursor');
+  });
+
+  it('replaces a skill junction so Cursor writes do not land in another host', () => {
+    const root = mkdtempSync(join(tmpdir(), 'maestro-cursor-junc-'));
+    try {
+      const claudeDir = join(root, '.claude');
+      mkdirSync(join(claudeDir, 'commands'), { recursive: true });
+      writeFileSync(
+        join(claudeDir, 'commands', 'maestro.md'),
+        '<task_tracking>\nold\n</task_tracking>\n',
+        'utf8',
+      );
+      const shared = join(root, 'claude-skills', 'maestro');
+      mkdirSync(shared, { recursive: true });
+      writeFileSync(join(shared, 'SKILL.md'), 'CLAUDE CANARY\n', 'utf8');
+      const cursorSkills = join(root, 'cursor-skills');
+      mkdirSync(cursorSkills, { recursive: true });
+      const cursorMaestro = join(cursorSkills, 'maestro');
+      symlinkSync(shared, cursorMaestro, process.platform === 'win32' ? 'junction' : 'dir');
+
+      buildCursorSkills(claudeDir, cursorSkills);
+
+      expect(readFileSync(join(shared, 'SKILL.md'), 'utf8')).toBe('CLAUDE CANARY\n');
+      expect(existsSync(cursorMaestro)).toBe(true);
+      expect(lstatSync(cursorMaestro).isSymbolicLink()).toBe(false);
+      const out = readFileSync(join(cursorMaestro, 'SKILL.md'), 'utf8');
+      expect(out).toContain('Goal 跟 Cursor 原生');
+      expect(out).not.toContain('CLAUDE CANARY');
+      expect(out).not.toContain('Grok 原生');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

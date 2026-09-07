@@ -10,9 +10,11 @@
 
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  rmdirSync,
   writeFileSync,
 } from 'node:fs';
 import { join, dirname, basename, relative } from 'node:path';
@@ -55,8 +57,17 @@ interface ConversionProfile {
 // Utilities
 // ---------------------------------------------------------------------------
 
+/** Create `dir`. If it is a junction/symlink, replace it so writes stay local. */
 function ensureDir(dir: string): void {
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  try {
+    if (lstatSync(dir).isSymbolicLink()) {
+      rmdirSync(dir);
+    }
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== 'ENOENT') throw error;
+  }
+  mkdirSync(dir, { recursive: true });
 }
 
 function walkFiles(dir: string, acc: string[] = []): string[] {
