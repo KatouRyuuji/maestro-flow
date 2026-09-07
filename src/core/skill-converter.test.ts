@@ -256,4 +256,38 @@ describe('Grok platform conversion', () => {
     const converted = transformContentForPlatform(source, 'grok');
     expect(converted).toContain('spawn_subagent({ prompt: "C:\\\\" })');
   });
+
+  it('keeps Grok-native /goal clear rules', () => {
+    const converted = transformContentForPlatform('<task_tracking>\nold\n</task_tracking>', 'grok');
+    expect(converted).toContain('/goal clear');
+    expect(converted).toContain('不要再 `create_goal`');
+    expect(converted).not.toContain('保持 active 以刷新外观');
+  });
 });
+
+describe('Cursor platform conversion', () => {
+  it('keeps Cursor-native /goal rules and does not remap tasks onto Goal', () => {
+    const source = [
+      '<task_tracking>',
+      'TaskCreate session goal',
+      '</task_tracking>',
+      '',
+      'Then TaskCreate({ subject: "Step 1" }) and TaskUpdate({ status: "completed" }).',
+    ].join('\n');
+
+    const converted = transformContentForPlatform(source, 'cursor');
+
+    expect(converted).toContain('Goal 跟 Cursor 原生');
+    expect(converted).toContain('用户清除或关闭 Goal 后');
+    expect(converted).toContain('create_task({ subject: "Step 1" })');
+    expect(converted).toContain('update_task({ status: "completed" })');
+    expect(converted).not.toContain('保持 active 以刷新外观');
+    expect(converted).not.toContain('TaskCreate');
+  });
+
+  it('binds --platform cursor on run content-loading commands', () => {
+    const converted = transformContentForPlatform('maestro run brief run-1 --session demo', 'cursor');
+    expect(converted).toContain('--platform cursor');
+  });
+});
+

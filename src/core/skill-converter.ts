@@ -1519,6 +1519,37 @@ const AGENTS_STANDARD_PROFILE: ConversionProfile = {
 };
 
 // ---------------------------------------------------------------------------
+// Cursor profile — Agents Standard tools; Goal stays on Cursor-native /goal
+// ---------------------------------------------------------------------------
+
+const CURSOR_TASK_TRACKING_BLOCK = `<task_tracking>
+
+Goal 跟 Cursor 原生 \`/goal\` 走。Maestro 不改 Goal 行为。
+只有用户 \`/goal <objective>\` 或明确要求时才 \`CreateGoal\` 一次。
+\`UpdateGoal({ status: "complete" })\` 只在真正完成时；\`UpdateGoal({ status: "active" })\` 只在用户暂停后要求继续时。
+用户清除或关闭 Goal 后不要 \`CreateGoal\` / \`UpdateGoal\`，外观必须保持消失。
+不要用 \`UpdateGoal\` 刷新外观。Task 镜像仍用 \`create_task\` / \`update_task\`，不要把 task 当成 Goal。
+
+</task_tracking>`;
+
+const CURSOR_PROFILE: ConversionProfile = {
+  ...AGENTS_STANDARD_PROFILE,
+  bodyReplacements: AGENTS_STANDARD_PROFILE.bodyReplacements.map((pair): BodyReplacement => {
+    const [pattern, replacement] = pair;
+    if (pattern.source.includes('task_tracking')) {
+      return [pattern, CURSOR_TASK_TRACKING_BLOCK];
+    }
+    if (typeof replacement === 'string' && replacement.includes('--platform agents-standard')) {
+      return [pattern, replacement.replace('--platform agents-standard', '--platform cursor')];
+    }
+    if (typeof replacement === 'string' && replacement === 'maestro skills --platform agent') {
+      return [pattern, 'maestro skills --platform cursor'];
+    }
+    return pair;
+  }),
+};
+
+// ---------------------------------------------------------------------------
 // Grok profile — xAI Grok Build native tools
 //
 // Grok 原生工具集（docs/user-guide）：read_file / write_file / search_replace /
@@ -1531,7 +1562,10 @@ const AGENTS_STANDARD_PROFILE: ConversionProfile = {
 
 const GROK_TASK_TRACKING_BLOCK = `<task_tracking>
 
-Grok 无独立 task 跟踪工具（无 update_plan / create_task / track_tasks）。Session/Step 进度以 session artifacts 为权威状态。仅在用户明确要求、或 step 声明 \`goal: true\`（视为工作流显式授权）时使用 goal 工具：\`create_goal({ objective, token_budget? })\` / \`update_goal({ status })\` / \`get_goal({})\`（单一活跃 goal）。
+Goal 跟 Grok 原生 \`/goal\` 走：\`/goal <objective>\`、\`status\`、\`pause\`、\`resume\`、\`clear\`。Maestro 不改 Goal 行为。
+Grok 无独立 task 跟踪工具。Session/Step 进度以 session artifacts 为权威状态。
+只有用户已经用 \`/goal\` 武装过时，才用 \`create_goal\` / \`update_goal\` / \`get_goal\`。
+用户 \`/goal clear\` 或 pause 后不要再 \`create_goal\` / \`update_goal\`，外观必须保持消失。
 
 </task_tracking>`;
 
@@ -1776,7 +1810,7 @@ function buildCodexAgentsToml(
 // ---------------------------------------------------------------------------
 
 /** Supported platform identifiers for runtime content transformation. */
-export type TargetPlatform = 'claude' | 'codex' | 'agy' | 'agents-standard' | 'pi' | 'grok';
+export type TargetPlatform = 'claude' | 'codex' | 'agy' | 'agents-standard' | 'pi' | 'grok' | 'cursor';
 
 /** Strip [@tag] authoring markers — they're source-only anchors, not LLM content. */
 function stripToolTags(text: string): string {
@@ -1805,6 +1839,8 @@ export function transformContentForPlatform(
       return stripToolTags(convertTextPi(content, PI_PROFILE, true));
     case 'grok':
       return convertTextGrok(content, GROK_PROFILE);
+    case 'cursor':
+      return stripToolTags(convertTextStandard(content, CURSOR_PROFILE));
   }
 }
 
@@ -1886,6 +1922,28 @@ export function buildGrokAgents(
   targetDir: string,
 ): { files: number } {
   const stats = buildAgentsOnly(claudeDir, targetDir, GROK_PROFILE, convertTextGrok);
+  return { files: stats.files };
+}
+
+/** Build Cursor skills (commands + skills). Goal stays on Cursor-native /goal. */
+export function buildCursorSkills(
+  claudeDir: string,
+  targetDir: string,
+): { files: number } {
+  const stats = buildSkillsOnly(claudeDir, targetDir, CURSOR_PROFILE, (content, profile) =>
+    convertTextStandard(content, profile),
+  );
+  return { files: stats.files };
+}
+
+/** Build Cursor agents only — no skills/commands. */
+export function buildCursorAgents(
+  claudeDir: string,
+  targetDir: string,
+): { files: number } {
+  const stats = buildAgentsOnly(claudeDir, targetDir, CURSOR_PROFILE, (content, profile) =>
+    convertTextStandard(content, profile),
+  );
   return { files: stats.files };
 }
 

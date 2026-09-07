@@ -33,6 +33,7 @@ import {
   transformContentForPlatform,
   type TargetPlatform,
 } from '../core/skill-converter.js';
+import { resolveGoalModeForHost } from './goal-mode.js';
 import { deriveHandoff, readReportFrontmatter } from './report.js';
 import {
   artifactRepublishReceiptPath,
@@ -4409,64 +4410,6 @@ export function summarizeRunMode(raw: string): string {
   return lines.slice(0, 8).join('\n');
 }
 
-// ---------------------------------------------------------------------------
-// Goal mode — prepare frontmatter 声明 `goal: true` 的 step，加载时按平台附带
-// goal 设置提示词。Goal 工具是 LLM 内置工具，不检测可用性——LLM 能调就调。
-// ---------------------------------------------------------------------------
-
-const GOAL_MODE_BLOCKS: Partial<Record<TargetPlatform, string>> = {
-  claude: [
-    'Goal 模式（该 step 声明 goal 标志）：',
-    '1. Session 创建后，输出 Goal Prompt 供用户设定终止条件（非阻塞，继续执行）：',
-    '   📋 可随时复制以下 /goal 设定终止条件（执行过程中输入即可）：',
-    '   /goal 完成以下子目标：',
-    '   {逐条列出 decomposition.goals 中 status!=superseded 的 id: goal — 完成条件: done_when}',
-    '   直到 session 的 decomposition.goals 全部 done 且 chain steps 全部 sealed 才停。',
-    '2. 用户输入 /goal 后由 harness 管理终止条件，LLM 无需额外操作。',
-    '3. 若用户未输入 /goal，不影响执行流程。',
-  ].join('\n'),
-  codex: [
-    'Goal 模式（该 step 声明 goal 标志）：',
-    '1. Session 创建后 call `create_goal({ objective: "{intent}", success_criteria: [decomposition.goals 各 done_when] })`；单一活跃 goal，若已有未完成 goal 先收口。',
-    '2. 过程中可用 `get_goal({})` 查看进度与剩余 token 预算。',
-    '3. 全部子目标完成时 `update_goal({ status: "complete" })`；阻塞时 `update_goal({ status: "blocked" })`。',
-    '4. 完成后向用户报告最终状态。',
-  ].join('\n'),
-  pi: [
-    'Goal 模式（该 step 声明 goal 标志）：',
-    '1. Session 创建后 call `goal({ action: "create", objective: "{intent}" })`。',
-    '2. 过程中可用 `goal({ action: "get" })` 查看状态。',
-    '3. 全部子目标完成时 `goal({ action: "complete", summary: "..." })`。',
-  ].join('\n'),
-  'agents-standard': [
-    'Goal 模式（该 step 声明 goal 标志）：',
-    '1. Session 创建后 call `create_task({ subject: "Session: {intent}", description: "完成条件: {decomposition.goals 各 done_when 汇总}" })` 作为 session goal。',
-    '2. 各子目标完成时 update_task 标记 completed。',
-    '3. 全部完成时 update_task session goal 为 completed。',
-  ].join('\n'),
-  grok: [
-    'Goal 模式（该 step 声明 goal 标志）：',
-    '1. Session 创建后 call `create_goal({ objective: "{intent}", success_criteria: [decomposition.goals 各 done_when] })`；单一活跃 goal，若已有未完成 goal 先收口。',
-    '2. 过程中可用 `get_goal({})` 查看进度与剩余 token 预算。',
-    '3. 全部子目标完成时 `update_goal({ status: "complete" })`；阻塞时 `update_goal({ status: "blocked" })`。',
-    '4. 完成后向用户报告最终状态。',
-  ].join('\n'),
-};
-
-function extractGoalFlag(raw: string): boolean {
-  const fm = raw.match(/^---\s*\r?\n([\s\S]*?)\r?\n---/);
-  if (!fm) return false;
-  return /^goal:\s*true\s*$/m.test(fm[1]);
-}
-
-function resolveGoalMode(
-  prepareRaw: string | undefined,
-  platform: TargetPlatform,
-): { platform: string; instructions: string } | null {
-  if (!prepareRaw || !extractGoalFlag(prepareRaw)) return null;
-  const block = GOAL_MODE_BLOCKS[platform];
-  return block ? { platform, instructions: block } : null;
-}
 
 /**
  * Read-only prior-step context for `run prepare --session`: the latest completed
@@ -4698,7 +4641,7 @@ export function prepareStep(
       ? { path: content.runMode.path, summary: summarizeRunMode(content.runMode.raw) }
       : null,
     refs: content.refs,
-    goal_mode: resolveGoalMode(content.prepare?.raw, platform ?? 'claude'),
+    goal_mode: resolveGoalModeForHost(content.prepare?.raw, platform ?? 'claude'),
   };
   if (sessionId) {
     result.previous = preparePreviousContext(projectRoot, stepName, sessionId);
@@ -4723,7 +4666,7 @@ export function skillContent(
       ? { path: content.workflow.path, content: tx(content.workflow.raw) }
       : null,
     refs: content.refs,
-    goal_mode: resolveGoalMode(content.prepare?.raw, platform ?? 'claude'),
+    goal_mode: resolveGoalModeForHost(content.prepare?.raw, platform ?? 'claude'),
   };
 }
 
@@ -4866,7 +4809,7 @@ export function briefRun(
         ? { path: content.runMode.path, hash: protocolSha256(content.runMode.raw) }
         : null,
       refs: content.refs,
-      goal_mode: resolveGoalMode(content.prepare?.raw, resolvedPlatform),
+      goal_mode: resolveGoalModeForHost(content.prepare?.raw, resolvedPlatform),
       freshness,
     },
     execution_contract: executionContract,

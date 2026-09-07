@@ -699,6 +699,10 @@ function makeExtraPlatformDefs(entry: PlatformRegistryEntry): ComponentDef[] {
           const { buildGrokSkills } = require('./skill-converter.js');
           return buildGrokSkills(claudeDir, targetDir);
         }
+        if (id === 'cursor') {
+          const { buildCursorSkills } = require('./skill-converter.js');
+          return buildCursorSkills(claudeDir, targetDir);
+        }
         const { buildAgentsStandardSkills } = require('./skill-converter.js');
         return buildAgentsStandardSkills(claudeDir, targetDir);
       },
@@ -723,6 +727,10 @@ function makeExtraPlatformDefs(entry: PlatformRegistryEntry): ComponentDef[] {
         if (id === 'grok') {
           const { buildGrokAgents } = require('./skill-converter.js');
           return buildGrokAgents(claudeDir, targetDir);
+        }
+        if (id === 'cursor') {
+          const { buildCursorAgents } = require('./skill-converter.js');
+          return buildCursorAgents(claudeDir, targetDir);
         }
         const { buildAgentsStandardAgents } = require('./skill-converter.js');
         return buildAgentsStandardAgents(claudeDir, targetDir);

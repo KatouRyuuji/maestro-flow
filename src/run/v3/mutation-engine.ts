@@ -43,6 +43,7 @@ import {
   type DiscoveredArtifact,
 } from '../artifacts.js';
 import { hashCommandContract, resolveCommandSource, resolveStepContent } from '../contract.js';
+import { resolveGoalModeForHost, type GoalMode } from '../goal-mode.js';
 import { readReportFrontmatter, type ReportFrontmatter } from '../report.js';
 import { createRevisionConflictError, V3StructuredError } from './errors.js';
 import {
@@ -975,6 +976,11 @@ export interface V3BirthPacket extends V3NextContract {
   upstream: Record<string, { artifact_id: string; path: string; kind: string; status: 'sealed' | 'draft' }>;
   /** Command guidance snapshot (prepare/workflow/run-mode hashes); null when no source resolves. */
   guidance: GuidanceSnapshot | null;
+  /**
+   * Native-host Goal instructions when prepare declares `goal: true`.
+   * Cursor host (`CURSOR_AGENT=1`) gets Cursor /goal rules, not Claude's paste prompt.
+   */
+  goal_mode: GoalMode | null;
   /** Knowledge delta handle; candidates are staged by `run complete`, so this may be empty at birth. */
   knowledge_context: { path: string; revision: number; candidate_count: number } | null;
   brief: { command: string };
@@ -1035,6 +1041,10 @@ export function v3BirthPacket(store: SessionStore, session: SessionStateV30, run
     }),
     upstream,
     guidance: buildV3GuidanceSnapshot(store, run.command),
+    goal_mode: resolveGoalModeForHost(
+      resolveStepContent(store.projectRoot, run.command).prepare?.raw,
+      'claude',
+    ),
     knowledge_context: delta
       ? {
           path: runKnowledgeDeltaPath(store, session.session_id, run.run_id),
