@@ -98,6 +98,12 @@ describe('apply-to-official', () => {
       'mcp-launch.js',
       'skill-converter.js',
       'grok-instructions.md',
+      'goal-mode.js',
+      'runtime.js',
+      'task-tracking.md',
+      'maestro-odyssey.md',
+      'statusline-enable.logic.js',
+      'InstallConfirm.js',
     ];
     for (const name of required) {
       expect(APPLY_ENTRIES.some((entry) => entry.from.replace(/\\/g, '/').endsWith(name))).toBe(true);

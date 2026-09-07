@@ -27,6 +27,8 @@ export interface InstallFlowConfig {
   extraMcpTargetIds: ExtraMcpTargetId[];
   genericHookLevels: Record<string, HookLevel>;
   installStatusline: boolean;
+  /** False when Claude Code is not selected — confirm page omits Statusline. */
+  statuslineApplicable?: boolean;
   statuslineTheme: string;
   hookLevel: HookLevel;
   componentCount: number;

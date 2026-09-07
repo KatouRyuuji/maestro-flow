@@ -3,6 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import type { HookLevel } from '../../commands/hooks.js';
 import type { HooksSelection } from './HooksConfig.js';
 import type { InstallFlowConfig } from './types.js';
+import { statuslineConfirmKind } from './statusline-enable.logic.js';
 import { t } from '../../i18n/index.js';
 import { C, SYM, BORDER } from '../shared/index.js';
 
@@ -66,9 +67,15 @@ export function InstallConfirm({ config, onConfirm, onBack }: InstallConfirmProp
     willInstall.push({ label: 'MCP Server', value: `${config.mcpToolCount} tools` });
   } else { skipped.push('MCP Server'); }
 
-  if (config.installStatusline) {
+  const statuslineRow = statuslineConfirmKind({
+    claudeSelected: config.statuslineApplicable !== false,
+    willInstall: config.installStatusline,
+  });
+  if (statuslineRow === 'install') {
     willInstall.push({ label: 'Statusline', value: `${config.statuslineTheme} theme` });
-  } else { skipped.push('Statusline'); }
+  } else if (statuslineRow === 'skipped') {
+    skipped.push('Statusline');
+  }
 
   if (config.installCodexHooks) {
     willInstall.push({ label: 'Codex Hooks', value: hookSummary(config.codexHooksSelection, config.codexHookLevel) });

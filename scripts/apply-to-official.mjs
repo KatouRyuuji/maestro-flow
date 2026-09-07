@@ -112,6 +112,36 @@ export const APPLY_ENTRIES = [
     source: join('src', 'commands', 'run-v3.ts'),
     markers: ['generateV3RunKnowledgeReconciliation'],
   }),
+  // Goal：mutation-engine / runtime 依赖；clear 后不得重建
+  filePatch(join('dist', 'src', 'run', 'goal-mode.js'), {
+    source: join('src', 'run', 'goal-mode.ts'),
+    markers: ['外观必须保持消失'],
+  }),
+  filePatch(join('dist', 'src', 'run', 'runtime.js'), {
+    source: join('src', 'run', 'runtime.ts'),
+    markers: ['resolveGoalModeForHost'],
+  }),
+  filePatch(join('workflows', 'task-tracking.md'), {
+    source: join('workflows', 'task-tracking.md'),
+    markers: ['clear 后不要重建'],
+  }),
+  filePatch(join('.claude', 'commands', 'maestro-odyssey.md'), {
+    source: join('.claude', 'commands', 'maestro-odyssey.md'),
+    markers: ['用户 clear 之后外观必须保持消失'],
+  }),
+  filePatch(join('.codex', 'skills', 'maestro-odyssey', 'SKILL.md'), {
+    source: join('.codex', 'skills', 'maestro-odyssey', 'SKILL.md'),
+    markers: ['用户 clear 之后外观必须保持消失'],
+  }),
+  // Statusline 默认开启：useInstallFlowState 依赖此模块
+  filePatch(join('dist', 'src', 'tui', 'install-ui', 'statusline-enable.logic.js'), {
+    source: join('src', 'tui', 'install-ui', 'statusline-enable.logic.ts'),
+    markers: ['defaultStatuslineEnabled'],
+  }),
+  filePatch(join('dist', 'src', 'tui', 'install-ui', 'InstallConfirm.js'), {
+    source: join('src', 'tui', 'install-ui', 'InstallConfirm.tsx'),
+    markers: ['statuslineConfirmKind'],
+  }),
 ];
 
 export const OVERLAY_MANIFEST_REL = '.maestro-grok-overlay.json';
