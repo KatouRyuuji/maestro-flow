@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { scanComponents, countExistingTargetFiles, MCP_TOOLS, COMPONENT_DEFS, migrateComponentIds, type ExtraMcpTargetId, type ComponentDef } from '../../commands/install-backend.js';
 import { detectStatusline, getHooksForLevel, getAllHookNames, type HookLevel } from '../../commands/hooks.js';
-import { findManifest, type Manifest } from '../../core/manifest.js';
+import { findManifest, uniqueExtraMcpTargetIds, type Manifest } from '../../core/manifest.js';
 import { exportProfile, importProfile, listProfiles, configToProfile, profileToStateValues } from '../../core/install-profile.js';
 import { paths } from '../../config/paths.js';
 import { buildGroupedHubItems } from './GroupedHub.js';
@@ -366,7 +366,7 @@ export function useInstallFlowState(opts: UseInstallFlowStateOptions) {
 
   // --- Extra MCP ---
   const [extraMcpTargetIds, setExtraMcpTargetIds] = useState<ExtraMcpTargetId[]>(
-    () => (lastManifest?.mcp?.extras?.map((e) => e.targetId as ExtraMcpTargetId)) ?? [],
+    () => uniqueExtraMcpTargetIds(lastManifest?.mcp?.extras) as ExtraMcpTargetId[],
   );
 
   // --- Statusline ---

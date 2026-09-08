@@ -27,6 +27,7 @@ import {
   selectToolByRole,
   type CliToolsConfig,
 } from '../config/cli-tools-config.js';
+import { resolveAgentRepositoryContext } from '../repository/context.js';
 import {
   deriveDelegateStatus,
 } from '../utils/cli-format.js';
@@ -104,15 +105,32 @@ async function opRun(
   }
 
   const execId = p.id?.trim() ? normalizeDelegateExecId(p.id) : generateCliExecId(selected.name);
+  let repositoryContext;
+  try {
+    repositoryContext = resolveAgentRepositoryContext(workDir, {
+      allowLegacyReadFallback: mode === 'analysis',
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { success: false, error: `Repository context resolution failed: ${message}` };
+  }
+  if (mode === 'write' && (!repositoryContext.currentRepoId || !repositoryContext.identityPersisted)) {
+    return {
+      success: false,
+      error: 'Write delegation requires a persisted host-owned repository identity.',
+    };
+  }
+
   const request: DelegateExecutionRequest = {
     prompt: p.prompt,
     tool: selected.name,
     mode,
     model: p.model ?? selected.entry.primaryModel,
-    workDir,
+    workDir: repositoryContext.currentProjectRoot,
     execId,
     backend: 'direct',
     role: p.role,
+    repositoryContext,
   };
 
   const launch = deps.launch ?? launchDetachedDelegateWorker;

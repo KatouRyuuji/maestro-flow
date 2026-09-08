@@ -233,9 +233,26 @@ export function recordCodexMcp(manifest: Manifest, record: McpRecord): void {
   manifest.mcp.codex = record;
 }
 
+export function uniqueExtraMcpRecords(records: ExtraMcpRecord[] | undefined): ExtraMcpRecord[] {
+  const byId = new Map<string, ExtraMcpRecord>();
+  for (const record of records ?? []) {
+    byId.set(record.targetId, record);
+  }
+  return [...byId.values()];
+}
+
+export function uniqueExtraMcpTargetIds(records: ExtraMcpRecord[] | undefined): string[] {
+  return uniqueExtraMcpRecords(records).map((record) => record.targetId);
+}
+
 export function recordExtraMcp(manifest: Manifest, record: ExtraMcpRecord): void {
   manifest.mcp ??= {};
   manifest.mcp.extras ??= [];
+  const idx = manifest.mcp.extras.findIndex((entry) => entry.targetId === record.targetId);
+  if (idx >= 0) {
+    manifest.mcp.extras[idx] = record;
+    return;
+  }
   manifest.mcp.extras.push(record);
 }
 

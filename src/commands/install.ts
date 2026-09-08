@@ -481,7 +481,7 @@ async function forceInstall(
 ): Promise<void> {
   const { executeInstallPipeline } = await import('../core/install-executor.js');
   const { migrateComponentIds, partitionRequestedComponentIds } = await import('./install-backend.js');
-  const { findManifest } = await import('../core/manifest.js');
+  const { findManifest, uniqueExtraMcpTargetIds } = await import('../core/manifest.js');
   const { paths } = await import('../config/paths.js');
 
   console.error(t.install.forceVersion.replace('{version}', version));
@@ -613,7 +613,7 @@ async function forceInstall(
     ? []
     : opts.extraMcp
     ? opts.extraMcp.split(',').map(s => s.trim()) as ExtraMcpTargetId[]
-    : (prior?.mcp?.extras?.map((entry) => entry.targetId as ExtraMcpTargetId) ?? []);
+    : (uniqueExtraMcpTargetIds(prior?.mcp?.extras) as ExtraMcpTargetId[]);
 
   const installPluginClaude = pluginClaudeRequested;
   const installPluginCodex = pluginCodexRequested;

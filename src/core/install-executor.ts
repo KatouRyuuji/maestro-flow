@@ -411,7 +411,7 @@ export async function executeInstallPipeline(opts: ExecutorOptions): Promise<Ins
   // --- Extra MCP ---
   if (config.installExtraMcp && config.extraMcpTargetIds.length > 0) {
     progress('extraMcp', 'active', 'Registering targets...');
-    for (const targetId of config.extraMcpTargetIds) {
+    for (const targetId of [...new Set(config.extraMcpTargetIds)]) {
       if (cancelled()) throw new CancelledError();
       const path = addExtraMcpServer(
         targetId, config.mode, config.projectPath,
