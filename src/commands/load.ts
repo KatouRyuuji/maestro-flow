@@ -9,42 +9,80 @@
  */
 
 import type { Command } from 'commander';
+import { readFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 
+import {
+  requireArchKbIndex,
+  resolveArchKbContentPath,
+  type ArchKbEntry,
+} from '../arch-kb/index.js';
 import { truncate } from '../utils/cli-format.js';
+import { AsyncResourceSlot } from '../utils/async-resource-slot.js';
 import { isDeprecatedKnowledgeEntry } from '../utils/knowledge-lifecycle.js';
 import type { WikiIndexer } from '#maestro-dashboard/wiki/wiki-indexer.js';
 import type { WikiEntry, WikiIndex } from '#maestro-dashboard/wiki/wiki-types.js';
+import { isRepositoryApplicable } from '../repository/applicability.js';
 import { loadWorkspaceConfig, resolveWorkspaceLinks } from '../config/index.js';
+import { resolveRepositoryContext, type RepositoryContext } from '../repository/context.js';
+import { spawnDaemon, tryDaemonLoad } from '../search/daemon-client.js';
+import type { DaemonLoadSelection } from '../search/load-selection.js';
+import { loadSpecWikiEntries } from '../tools/spec-wiki-loader.js';
 
-const VALID_TYPES = ['spec', 'knowhow', 'note', 'domain', 'issue', 'project', 'roadmap', 'session', 'scratch'] as const;
+const VALID_TYPES = ['spec', 'knowhow', 'note', 'domain', 'issue', 'project', 'roadmap', 'session', 'scratch', 'template'] as const;
 type LoadType = (typeof VALID_TYPES)[number];
 
-let _indexer: WikiIndexer | null = null;
-let _indexerRoot: string | null = null;
+const indexerSlot = new AsyncResourceSlot<string, WikiIndexer>();
 
-async function getIndexer(projectRoot?: string): Promise<WikiIndexer> {
-  const root = resolve(projectRoot ?? '.');
-  if (_indexer && _indexerRoot === root) return _indexer;
-  if (_indexerRoot !== root) {
-    _indexer = null;
-    _indexerRoot = root;
-  }
-  const { WikiIndexer: Cls } = await import('#maestro-dashboard/wiki/wiki-indexer.js');
-  const workflowRoot = resolve(root, '.workflow');
-  const projectPath = root;
-  const wsConfig = loadWorkspaceConfig(projectPath);
-  const resolved = resolveWorkspaceLinks(projectPath, wsConfig);
-  const linkedWorkspaces = resolved
+function resolveWikiAuthority(current: RepositoryContext) {
+  const linkedWorkspaces = resolveWorkspaceLinks(
+    current.projectRoot,
+    loadWorkspaceConfig(current.projectRoot),
+  )
     .filter(lw => lw.valid)
-    .map(lw => ({ name: lw.name, workflowRoot: lw.workflowRoot, shareTypes: lw.share }));
-  _indexer = new Cls({ workflowRoot, linkedWorkspaces });
-  return _indexer;
+    .map(lw => ({
+      name: lw.name,
+      workflowRoot: lw.workflowRoot,
+      shareTypes: lw.share,
+      repoId: lw.repoId,
+      repoName: lw.repoName,
+      workspaceFence: lw.repoId ? `repo:${lw.repoId}` : `linked:${lw.name}`,
+    }));
+  const repository = {
+    repoId: current.repoId,
+    repoName: current.repoName,
+    alias: current.alias,
+    workspaceFence: current.repoId ? `repo:${current.repoId}` : undefined,
+  };
+  return {
+    linkedWorkspaces,
+    repository,
+    authorityKey: JSON.stringify({ linkedWorkspaces, repository }),
+  };
 }
 
-/** Shared indexer accessor for knowledge signal-id validation (K8). */
-export async function getWikiIndexer(projectRoot?: string): Promise<WikiIndexer> {
-  return getIndexer(projectRoot);
+/** Run one operation while holding the cached reader's lifecycle lease. */
+export async function withWikiIndexer<T>(
+  projectRoot: string | undefined,
+  operation: (indexer: WikiIndexer) => Promise<T>,
+): Promise<T> {
+  const root = resolve(projectRoot ?? '.');
+  const current = resolveRepositoryContext('current', { projectRoot: root });
+  const { linkedWorkspaces, repository, authorityKey } = resolveWikiAuthority(current);
+  const key = JSON.stringify({ workflowRoot: current.workflowRoot, authorityKey });
+  return indexerSlot.run(
+    key,
+    async () => {
+      const { WikiIndexer: Cls } = await import('#maestro-dashboard/wiki/wiki-indexer.js');
+      return new Cls({
+        workflowRoot: current.workflowRoot,
+        linkedWorkspaces,
+        repository,
+        role: 'reader',
+      });
+    },
+    operation,
+  );
 }
 
 function matchesType(entry: WikiEntry, type: LoadType): boolean {
@@ -122,6 +160,11 @@ function entryToJson(e: WikiEntry, brief: boolean): Record<string, unknown> {
   const base: Record<string, unknown> = {
     id: e.id, type: e.type, title: e.title,
     category: e.category, updated: e.updated,
+    repoId: e.repoId ?? e.source.repoId ?? null,
+    repoName: e.repoName ?? e.source.repoName ?? null,
+    alias: e.alias ?? e.source.alias ?? null,
+    workspaceFence: e.workspaceFence ?? e.source.workspaceFence ?? null,
+    appliesToRepoIds: e.appliesToRepoIds ?? null,
   };
   if (brief) {
     base.summary = e.summary;
@@ -134,6 +177,118 @@ function entryToJson(e: WikiEntry, brief: boolean): Record<string, unknown> {
     codePaths: e.ext?.codePaths ?? null,
     editedFiles: e.ext?.editedFiles ?? null,
   };
+}
+
+interface TemplateLoadOptions {
+  category?: string;
+  keyword?: string;
+  tag?: string;
+  list?: boolean;
+  limit?: string;
+  json?: boolean;
+}
+
+function templateEntryToJson(
+  entry: ArchKbEntry,
+  body?: string,
+): Record<string, unknown> {
+  return {
+    id: entry.id,
+    type: entry.type,
+    title: entry.title,
+    category: 'arch-kb',
+    summary: entry.summary,
+    slug: entry.slug,
+    keywords: entry.keywords,
+    sections: entry.sections,
+    path: entry.path,
+    referenceOnly: true,
+    ...(body === undefined ? {} : { body }),
+  };
+}
+
+function loadArchitectureTemplates(opts: TemplateLoadOptions, ids: string[]): void {
+  const index = requireArchKbIndex();
+  const templates = index.entries.filter(entry => entry.type === 'template');
+  const byId = (id: string): ArchKbEntry | undefined =>
+    templates.find(entry => entry.id === id || entry.slug === id);
+  const isList = opts.list === true;
+  let entries: ArchKbEntry[];
+
+  if (ids.length > 0) {
+    entries = ids.map(byId).filter((entry): entry is ArchKbEntry => entry !== undefined);
+    const missing = ids.filter(id => !byId(id));
+    if (missing.length > 0) {
+      console.error(`Not found: ${missing.join(', ')}`);
+      process.exitCode = 1;
+    }
+  } else {
+    entries = [...templates];
+    if (opts.category && opts.category !== 'arch-kb') entries = [];
+    if (opts.keyword) {
+      const keyword = opts.keyword.toLowerCase();
+      entries = entries.filter(entry =>
+        entry.title.toLowerCase().includes(keyword)
+        || entry.summary.toLowerCase().includes(keyword)
+        || entry.slug.toLowerCase().includes(keyword)
+        || entry.keywords.some(value => value.toLowerCase().includes(keyword))
+      );
+    }
+    if (opts.tag) {
+      const tag = opts.tag.toLowerCase();
+      entries = entries.filter(entry => entry.keywords.some(value => value.toLowerCase() === tag));
+    }
+    entries.sort((left, right) => left.title.localeCompare(right.title));
+    const defaultLimit = isList ? 20 : 10;
+    const parsedLimit = opts.limit ? Number.parseInt(opts.limit, 10) : defaultLimit;
+    const limit = Math.max(1, Math.min(Number.isFinite(parsedLimit) ? parsedLimit : defaultLimit, 500));
+    entries = entries.slice(0, limit);
+  }
+
+  if (entries.length === 0) {
+    console.error('No entries found.');
+    if (ids.length > 0) process.exitCode = 1;
+    return;
+  }
+
+  if (isList) {
+    if (opts.json) {
+      console.log(JSON.stringify({
+        totalLoaded: entries.length,
+        entries: entries.map(entry => templateEntryToJson(entry)),
+      }, null, 2));
+      return;
+    }
+    console.log(`template: ${entries.length} entries`);
+    for (const entry of entries) {
+      console.log(`  [template]  ${entry.id}  ${truncate(entry.title, 50)}`);
+    }
+    return;
+  }
+
+  const loaded = entries.flatMap(entry => {
+    const contentPath = resolveArchKbContentPath(entry.path);
+    if (!contentPath) {
+      console.error(`Source file not found: ${entry.id} (${entry.path})`);
+      process.exitCode = 1;
+      return [];
+    }
+    return [{ entry, body: readFileSync(contentPath, 'utf-8') }];
+  });
+  if (loaded.length === 0) return;
+
+  if (opts.json) {
+    console.log(JSON.stringify({
+      totalLoaded: loaded.length,
+      entries: loaded.map(({ entry, body }) => templateEntryToJson(entry, body)),
+    }, null, 2));
+    return;
+  }
+
+  const sections = loaded.map(({ entry, body }) =>
+    `## [template] [arch-kb] ${entry.title}\n\n${body}\n\n[source: ${entry.path}]`
+  );
+  console.log(`# Loaded ${loaded.length} entries\n\n---\n\n${sections.join('\n\n---\n\n')}`);
 }
 
 export async function recordLoadedKnowledge(entries: WikiEntry[]): Promise<void> {
@@ -186,6 +341,24 @@ export async function recordLoadedKnowledge(entries: WikiEntry[]): Promise<void>
   }
 }
 
+const DAEMON_LOAD_BUDGET_MS = 1_500;
+
+function wikiIndexFromDaemon(entries: WikiEntry[], generatedAt?: number): WikiIndex {
+  const byId = Object.create(null) as Record<string, WikiEntry>;
+  const byType = Object.create(null) as WikiIndex['byType'];
+  for (const entry of entries) {
+    byId[entry.id] = entry;
+    (byType[entry.type] ??= []).push(entry);
+  }
+  return {
+    entries,
+    byId,
+    byType,
+    backlinks: Object.create(null) as Record<string, string[]>,
+    generatedAt: Number.isFinite(generatedAt) ? generatedAt! : Date.now(),
+  };
+}
+
 export function registerLoadCommand(program: Command): void {
   program
     .command('load')
@@ -197,6 +370,7 @@ export function registerLoadCommand(program: Command): void {
     .option('--tag <tag>', 'Filter entries by exact tag match')
     .option('--list', 'List matching entries (compact, no body)')
     .option('--scope <scope>', 'Spec scope: project|global|team|personal (default: project)')
+    .option('--repo <selector>', 'Target repository (current, ID, linked alias, or unique name)')
     .option('--limit <n>', 'Max entries (default: 20 for --list, 10 for load)', '')
     .option('--include-deprecated', 'Include deprecated/superseded entries')
     .option('--json', 'Output as JSON')
@@ -215,26 +389,86 @@ export function registerLoadCommand(program: Command): void {
       const includeDeprecated = opts.includeDeprecated === true;
       const ids: string[] = opts.id ? opts.id.split(',').map((s: string) => s.trim()).filter(Boolean) : [];
 
-      // --type spec (non-list, no specific IDs): delegate to spec-loader
-      if (type === 'spec' && !isList && ids.length === 0) {
-        await loadBySpecCategory(opts);
+      // Architecture templates are global read-only references, not Wiki entries.
+      // Keep this path independent from repository resolution, the daemon, and
+      // project knowledge-consumption attribution.
+      if (type === 'template') {
+        loadArchitectureTemplates(opts, ids);
         return;
       }
 
-      const indexer = await getIndexer();
-      const index = await indexer.get();
+      let currentRepository: RepositoryContext;
+      let targetRepository: RepositoryContext;
+      try {
+        currentRepository = resolveRepositoryContext('current', { projectRoot: process.cwd() });
+        targetRepository = opts.repo
+          ? resolveRepositoryContext(opts.repo, { projectRoot: currentRepository.projectRoot })
+          : currentRepository;
+      } catch (error) {
+        console.error(`Error: ${(error as Error).message}`);
+        process.exitCode = 1;
+        return;
+      }
+
+      // --type spec (non-list, no specific IDs): delegate to spec-loader
+      if (type === 'spec' && !isList && ids.length === 0) {
+        await loadBySpecCategory(opts, targetRepository);
+        return;
+      }
+
       const defaultLimit = isList ? 20 : 10;
       const parsedLimit = opts.limit ? Number.parseInt(opts.limit, 10) : defaultLimit;
       const limit = Math.max(1, Math.min(Number.isFinite(parsedLimit) ? parsedLimit : defaultLimit, 500));
+
+      let index: WikiIndex;
+      if (type === 'spec' && ids.length > 0) {
+        // Canonical spec IDs are file-backed. Scan only the bounded spec scopes
+        // instead of asking the daemon for the full Wiki index (which can turn
+        // a telemetry-only KG update into a whole-corpus rebuild).
+        index = wikiIndexFromDaemon(await loadSpecWikiEntries(targetRepository));
+      } else {
+        const { authorityKey } = resolveWikiAuthority(currentRepository);
+        const selection: DaemonLoadSelection = {
+          type,
+          ...(ids.length > 0 ? { ids } : {}),
+          ...(opts.category ? { category: opts.category } : {}),
+          ...(opts.keyword ? { keyword: opts.keyword } : {}),
+          ...(opts.tag ? { tag: opts.tag } : {}),
+          includeDeprecated,
+          limit,
+          projection: isList ? 'metadata' : 'full',
+          ...(targetRepository.repoId ? { applicableRepoId: targetRepository.repoId } : {}),
+          ...(opts.repo && targetRepository.repoId ? { targetRepoId: targetRepository.repoId } : {}),
+          ...(opts.repo && !targetRepository.repoId ? { targetAlias: targetRepository.alias } : {}),
+          originExplicit: Boolean(opts.repo),
+        };
+        const daemonResult = await tryDaemonLoad(
+          currentRepository.workflowRoot,
+          { timeoutMs: DAEMON_LOAD_BUDGET_MS, authorityKey, selection },
+        );
+        if (daemonResult?.ok && Array.isArray(daemonResult.entries)) {
+          index = wikiIndexFromDaemon(daemonResult.entries, daemonResult.generatedAt);
+        } else {
+          index = await withWikiIndexer(undefined, indexer => indexer.get());
+          // `load` used to remain permanently cold because only `search` spawned
+          // the resident indexer. Warm future load/search calls after this safe
+          // read-only fallback; spawn arbitration keeps concurrent callers single.
+          spawnDaemon(currentRepository.workflowRoot).catch(() => {});
+        }
+      }
       let entries: WikiEntry[];
 
       if (ids.length > 0) {
         entries = ids
-          .map(id => findEntry(index, id, type))
-          .filter((e): e is WikiEntry => e !== null && (includeDeprecated || !isDeprecatedKnowledgeEntry(e)));
+          .map(id => findEntryForRepository(index, id, type, targetRepository, Boolean(opts.repo)))
+          .filter((e): e is WikiEntry => e !== null
+            && (includeDeprecated || !isDeprecatedKnowledgeEntry(e))
+            && entryMatchesRepository(e, targetRepository, Boolean(opts.repo)));
         const missing = ids.filter(id => {
-          const entry = findEntry(index, id, type);
-          return !entry || (!includeDeprecated && isDeprecatedKnowledgeEntry(entry));
+          const entry = findEntryForRepository(index, id, type, targetRepository, Boolean(opts.repo));
+          return !entry
+            || (!includeDeprecated && isDeprecatedKnowledgeEntry(entry))
+            || !entryMatchesRepository(entry, targetRepository, Boolean(opts.repo));
         });
         if (missing.length > 0) {
           const suffix = includeDeprecated ? '' : ' (use --include-deprecated to load retired entries)';
@@ -242,7 +476,9 @@ export function registerLoadCommand(program: Command): void {
         }
       } else {
         let pool = index.entries.filter(e =>
-          matchesType(e, type) && (includeDeprecated || !isDeprecatedKnowledgeEntry(e))
+          matchesType(e, type)
+          && (includeDeprecated || !isDeprecatedKnowledgeEntry(e))
+          && entryMatchesRepository(e, targetRepository, Boolean(opts.repo))
         );
 
         if (opts.category) {
@@ -252,7 +488,9 @@ export function registerLoadCommand(program: Command): void {
           const kw = opts.keyword.toLowerCase();
           pool = pool.filter(e =>
             e.title.toLowerCase().includes(kw) ||
-            e.body.toLowerCase().includes(kw),
+            // A selected metadata projection intentionally omits bodies. An
+            // absent body may have been the server-side keyword match.
+            typeof e.body !== 'string' || e.body.toLowerCase().includes(kw),
           );
         }
         if (opts.tag) {
@@ -307,17 +545,63 @@ export function registerLoadCommand(program: Command): void {
     });
 }
 
-async function loadBySpecCategory(opts: Record<string, unknown>): Promise<void> {
+function findEntryForRepository(
+  index: WikiIndex,
+  id: string,
+  type: LoadType,
+  target: RepositoryContext,
+  originExplicit: boolean,
+): WikiEntry | null {
+  const direct = findEntry(index, id, type);
+  if (direct && entryMatchesRepository(direct, target, originExplicit)) return direct;
+  if (!originExplicit) return direct;
+  const lower = id.toLowerCase();
+  return index.entries.find(entry => {
+    if (!entryMatchesRepository(entry, target, true) || !matchesType(entry, type)) return false;
+    const entryId = entry.id.toLowerCase();
+    return entryId === lower || entryId.endsWith(`:${lower}`);
+  }) ?? null;
+}
+
+function entryMatchesRepository(
+  entry: WikiEntry,
+  target: RepositoryContext,
+  originExplicit: boolean,
+): boolean {
+  if (!isRepositoryApplicable(entry, target.repoId)) return false;
+  if (!originExplicit) return true;
+  if (target.repoId) return (entry.repoId ?? entry.source.repoId) === target.repoId;
+  return (entry.alias ?? entry.source.alias) === target.alias;
+}
+
+async function loadBySpecCategory(
+  opts: Record<string, unknown>,
+  targetRepository: RepositoryContext,
+): Promise<void> {
   const { loadSpecs } = await import('../tools/spec-loader.js');
   const projectPath = process.cwd();
   const wsConfig = loadWorkspaceConfig(projectPath);
   const resolved = resolveWorkspaceLinks(projectPath, wsConfig);
+  const explicitRepo = typeof opts.repo === 'string';
   const linkedSpecs = resolved
-    .filter(lw => lw.valid && lw.share.includes('spec'))
-    .map(lw => ({ name: lw.name, specsDir: join(lw.workflowRoot, 'specs') }));
+    .filter(lw => lw.valid && (lw.share.includes('spec') || lw.share.includes('knowhow')))
+    .filter(lw => !explicitRepo
+      || (targetRepository.repoId ? lw.repoId === targetRepository.repoId : lw.name === targetRepository.alias))
+    .map(lw => ({
+      name: lw.name,
+      specsDir: join(lw.workflowRoot, 'specs'),
+      includeSpecs: lw.share.includes('spec'),
+      knowhowDir: lw.share.includes('knowhow') ? join(lw.workflowRoot, 'knowhow') : undefined,
+      repoId: lw.repoId,
+      repoName: lw.repoName,
+      workspaceFence: lw.repoId ? `repo:${lw.repoId}` : `linked:${lw.name}`,
+    }));
   const loaderOpts = {
     ...(linkedSpecs.length > 0 ? { linkedWorkspaces: linkedSpecs } : {}),
     includeDeprecated: opts.includeDeprecated === true,
+    applicableRepoId: targetRepository.repoId,
+    includeProject: !explicitRepo || targetRepository.relation === 'current',
+    includeGlobal: !explicitRepo || targetRepository.relation === 'current',
   };
 
   const scope = (opts.scope as string | undefined) ?? 'project';

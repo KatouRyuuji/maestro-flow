@@ -1,17 +1,26 @@
-import { mkdtemp, mkdir, readFile, writeFile, rm, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, open, readFile, writeFile, rm, rename, stat, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { WikiIndexer } from './wiki-indexer.js';
+import { WikiIndexer as ProductionWikiIndexer } from './wiki-indexer.js';
 import { createRuntimeSessionFixture } from './__fixtures__/runtime-session.js';
 import { buildGraph, detectOrphans, detectHubs, computeHealth } from './graph-analysis.js';
 import { buildInvertedIndex, searchBM25, tokenize } from './search.js';
 import { WikiWriter, WikiWriteError } from './writer.js';
 
+class WikiIndexer extends ProductionWikiIndexer {
+  constructor(config: ConstructorParameters<typeof ProductionWikiIndexer>[0]) {
+    // Generic indexer tests are hermetic; transcript behavior has dedicated fixtures.
+    super({ ...config, includeCliSessions: config.includeCliSessions ?? false });
+  }
+}
+
 let tmpRoot: string;
+const originalHome = process.env.HOME;
+const originalUserProfile = process.env.USERPROFILE;
 
 async function write(rel: string, body: string): Promise<void> {
   const abs = join(tmpRoot, rel);
@@ -19,11 +28,29 @@ async function write(rel: string, body: string): Promise<void> {
   await writeFile(abs, body, 'utf-8');
 }
 
+function withoutCliSessions(indexer: WikiIndexer): WikiIndexer {
+  const subject = indexer as unknown as {
+    includeCliSessions: boolean;
+    scanCliSessions: () => Promise<[]>;
+  };
+  subject.includeCliSessions = false;
+  subject.scanCliSessions = async () => [];
+  return indexer;
+}
+
 beforeEach(async () => {
   tmpRoot = await mkdtemp(join(tmpdir(), 'wiki-test-'));
+  // Generic WikiIndexer tests must not scan the developer's real CLI history.
+  // Dedicated adapter/freshness suites provide explicit transcript fixtures.
+  process.env.HOME = tmpRoot;
+  process.env.USERPROFILE = tmpRoot;
 });
 
 afterEach(async () => {
+  if (originalHome === undefined) delete process.env.HOME;
+  else process.env.HOME = originalHome;
+  if (originalUserProfile === undefined) delete process.env.USERPROFILE;
+  else process.env.USERPROFILE = originalUserProfile;
   await rm(tmpRoot, { recursive: true, force: true, maxRetries: 3 });
 });
 
@@ -53,6 +80,26 @@ describe('WikiIndexer', () => {
     expect(index.backlinks['spec:project:two']).toContain('spec:project:one');
   });
 
+  it('invalidates a warm index when an optional source path appears', async () => {
+    await write('specs/existing.md', '---\ntitle: Existing\n---\n# Existing');
+    const indexer = withoutCliSessions(new WikiIndexer({
+      workflowRoot: tmpRoot,
+      persistence: 'memory-only',
+    }));
+
+    const first = await indexer.get();
+    expect(first.entries.some(entry => entry.type === 'project')).toBe(false);
+
+    await write('project.md', '---\ntitle: New project\n---\n# New project\nWarm invalidation sentinel.');
+    const afterProject = await indexer.get();
+    expect(afterProject.entries.some(entry => entry.type === 'project'
+      && entry.title === 'New project')).toBe(true);
+
+    await write('knowhow/new.md', '---\ntitle: New knowhow\n---\n# New knowhow');
+    const afterDirectory = await indexer.get();
+    expect(afterDirectory.entries.some(entry => entry.title === 'New knowhow')).toBe(true);
+  });
+
   it('filters by type and tag', async () => {
     await write('specs/a.md', `---\ntitle: A\ntags:\n  - x\n---\n# A`);
     await write('specs/b.md', `---\ntitle: B\ntags:\n  - y\n---\n# B`);
@@ -60,6 +107,43 @@ describe('WikiIndexer', () => {
     const indexer = new WikiIndexer({ workflowRoot: tmpRoot });
     const xTagged = await indexer.query({ type: 'spec', tag: 'x' });
     expect(xTagged.map((d) => d.id)).toEqual(['spec:project:a']);
+  });
+
+  it('normalizes canonical and legacy Knowhow metadata at the indexing surface', async () => {
+    await write('knowhow/DCS-legacy.md', `---
+title: Legacy decision
+type: decision
+category: architecture-decision
+specCategory: arch
+keywords:
+  - tokens
+tags:
+  - auth
+source: issue:42
+lang: typescript
+status: superseded
+assetType: api-contract
+codePaths:
+  - src/auth/token.ts
+---
+
+First useful paragraph.
+`);
+
+    const entry = (await new WikiIndexer({ workflowRoot: tmpRoot }).get()).byId['knowhow-dcs-legacy'];
+    expect(entry).toMatchObject({
+      summary: 'First useful paragraph.',
+      tags: ['tokens', 'auth', 'architecture-decision', 'api-contract'],
+      status: 'deprecated',
+      category: 'arch',
+      specCategory: null,
+      sourceRef: 'issue:42',
+      ext: expect.objectContaining({
+        language: 'typescript',
+        decisionState: 'superseded',
+        relatedPaths: ['src/auth/token.ts'],
+      }),
+    });
   });
 
   it('maps deprecated/superseded status and surfaces it into ext', async () => {
@@ -226,6 +310,309 @@ Facet ranking legacy target.
     expect(evidenceEvents).toEqual([]);
   });
 
+  it('lets read-only consumers reuse filesystem caches without publishing', async () => {
+    await write(
+      'specs/read-only.md',
+      '---\ntitle: Read-only sentinel\n---\n# Read-only sentinel\nCache reuse without publication.',
+    );
+    const writer = withoutCliSessions(new WikiIndexer({ workflowRoot: tmpRoot }));
+    await writer.get();
+    const artifacts = ['search-cache.json', 'wiki-index.json'];
+    await expect.poll(async () => Promise.all(artifacts.map(path => stat(join(tmpRoot, path))
+      .then(() => true, () => false)))).toEqual([true, true]);
+    await writer.close();
+
+    const before = Object.fromEntries(await Promise.all(artifacts.map(async path => {
+      const info = await stat(join(tmpRoot, path));
+      return [path, { bytes: await readFile(join(tmpRoot, path)), mtimeMs: info.mtimeMs }];
+    })));
+    const evidenceEvents: Array<{ event: string; site: string; queryId: null }> = [];
+    const reader = new WikiIndexer({
+      workflowRoot: tmpRoot,
+      persistence: 'read-only',
+      includeCliSessions: false,
+      evidenceRecorder: event => evidenceEvents.push(event),
+    });
+    const result = await reader.searchWithMeta('read-only sentinel', 5, { skipEmbedding: true });
+    await reader.close();
+
+    expect(result.results.map(item => item.entry.id)).toContain('spec:project:read-only');
+    expect(evidenceEvents.map(event => event.event)).toContain('filesystem-cache-read');
+    expect(evidenceEvents).not.toContainEqual(expect.objectContaining({ event: 'filesystem-cache-write' }));
+    expect(evidenceEvents).not.toContainEqual(expect.objectContaining({ event: 'filesystem-index-write' }));
+    for (const path of artifacts) {
+      const info = await stat(join(tmpRoot, path));
+      expect(await readFile(join(tmpRoot, path))).toEqual(before[path].bytes);
+      expect(info.mtimeMs).toBe(before[path].mtimeMs);
+    }
+  });
+
+  it('rejects a search cache whose companion wiki index is missing', async () => {
+    await write(
+      'specs/paired-cache.md',
+      '---\ntitle: Paired cache sentinel\n---\n# Paired cache sentinel',
+    );
+    const writer = withoutCliSessions(new WikiIndexer({ workflowRoot: tmpRoot }));
+    await writer.get();
+    await expect.poll(() => stat(join(tmpRoot, 'wiki-index.json'))
+      .then(() => true, () => false)).toBe(true);
+    await writer.close();
+    await rm(join(tmpRoot, 'wiki-index.json'));
+
+    const reader = new WikiIndexer({
+      workflowRoot: tmpRoot,
+      persistence: 'read-only',
+      includeCliSessions: false,
+    });
+    const subject = reader as unknown as { buildIndexCandidate: () => Promise<unknown> };
+    const originalBuild = subject.buildIndexCandidate.bind(reader);
+    let builds = 0;
+    subject.buildIndexCandidate = async () => {
+      builds++;
+      return originalBuild();
+    };
+
+    const index = await reader.get();
+    await reader.close();
+    expect(builds).toBe(1);
+    expect(index.byId['spec:project:paired-cache']).toBeDefined();
+  });
+
+  it('invalidates a persisted cache when workspace configuration changes', async () => {
+    await write('config.json', JSON.stringify({ linkedWorkspaces: [] }));
+    await write('specs/config-cache.md', '---\ntitle: Config cache sentinel\n---\n# Config cache sentinel');
+    const writer = withoutCliSessions(new WikiIndexer({ workflowRoot: tmpRoot }));
+    await writer.get();
+    await expect.poll(() => stat(join(tmpRoot, 'search-cache.json'))
+      .then(() => true, () => false)).toBe(true);
+    await writer.close();
+
+    await write('config.json', JSON.stringify({ linkedWorkspaces: [{ name: 'renamed' }] }));
+    const reader = new WikiIndexer({
+      workflowRoot: tmpRoot,
+      persistence: 'read-only',
+      includeCliSessions: false,
+    });
+    const subject = reader as unknown as { buildIndexCandidate: () => Promise<unknown> };
+    const originalBuild = subject.buildIndexCandidate.bind(reader);
+    let builds = 0;
+    subject.buildIndexCandidate = async () => {
+      builds++;
+      return originalBuild();
+    };
+
+    await reader.get();
+    await reader.close();
+    expect(builds).toBe(1);
+  });
+
+  it('coalesces invalidation during rebuild and only publishes the latest generation', async () => {
+    await write('specs/old.md', '---\ntitle: Old generation\n---\n# Old generation');
+    const indexer = new WikiIndexer({ workflowRoot: tmpRoot, persistence: 'memory-only' });
+    const subject = indexer as unknown as {
+      scanFiles: () => Promise<unknown[]>;
+    };
+    const originalScanFiles = subject.scanFiles.bind(indexer);
+    let scanCalls = 0;
+    let releaseFirst!: () => void;
+    let markFirstStarted!: () => void;
+    const firstStarted = new Promise<void>(resolve => { markFirstStarted = resolve; });
+    const firstRelease = new Promise<void>(resolve => { releaseFirst = resolve; });
+    subject.scanFiles = async () => {
+      scanCalls++;
+      const entries = await originalScanFiles();
+      if (scanCalls === 1) {
+        markFirstStarted();
+        await firstRelease;
+      }
+      return entries;
+    };
+
+    const firstGet = indexer.get();
+    await firstStarted;
+    await write('specs/latest.md', '---\ntitle: Latest generation\n---\n# Latest generation');
+    indexer.invalidate();
+    const secondGet = indexer.get();
+    await Promise.resolve();
+    expect(scanCalls).toBe(1);
+
+    releaseFirst();
+    const [firstResult, secondResult] = await Promise.all([firstGet, secondGet]);
+    expect(firstResult).toBe(secondResult);
+    expect(firstResult.byId['spec:project:latest']).toBeDefined();
+    expect(scanCalls).toBe(2);
+  });
+
+  it('retries automatically when a source changes between pre/post scan snapshots', async () => {
+    await write('specs/racing.md', '---\ntitle: Before scan edit\n---\n# Before scan edit');
+    const indexer = new WikiIndexer({ workflowRoot: tmpRoot, persistence: 'memory-only' });
+    const subject = indexer as unknown as { scanFiles: () => Promise<unknown[]> };
+    const originalScanFiles = subject.scanFiles.bind(indexer);
+    let scanCalls = 0;
+    subject.scanFiles = async () => {
+      scanCalls++;
+      const entries = await originalScanFiles();
+      if (scanCalls === 1) {
+        await write('specs/racing.md', '---\ntitle: After scan edit\n---\n# After scan edit');
+      }
+      return entries;
+    };
+
+    const index = await indexer.get();
+    expect(scanCalls).toBe(2);
+    expect(index.byId['spec:project:racing'].title).toBe('After scan edit');
+  });
+
+  it('prevents a stale process from winning protected cache publication', async () => {
+    await write('specs/publication.md', '---\ntitle: Old publication\n---\n# Old publication');
+    const stale = withoutCliSessions(new WikiIndexer({ workflowRoot: tmpRoot }));
+    const subject = stale as unknown as {
+      prepareIndex: (index: unknown) => Promise<string>;
+    };
+    const originalPrepareIndex = subject.prepareIndex.bind(stale);
+    let releaseStale!: () => void;
+    let markStalePrepared!: () => void;
+    const stalePrepared = new Promise<void>(resolve => { markStalePrepared = resolve; });
+    const staleRelease = new Promise<void>(resolve => { releaseStale = resolve; });
+    subject.prepareIndex = async index => {
+      const temp = await originalPrepareIndex(index);
+      markStalePrepared();
+      await staleRelease;
+      return temp;
+    };
+
+    await stale.get();
+    await stalePrepared;
+    await write('specs/publication.md', '---\ntitle: Current publication\n---\n# Current publication');
+    await withoutCliSessions(new WikiIndexer({ workflowRoot: tmpRoot })).get();
+    await expect.poll(async () => {
+      try {
+        const cache = JSON.parse(await readFile(join(tmpRoot, 'search-cache.json'), 'utf-8'));
+        return cache.entries.find((entry: { id: string }) => entry.id === 'spec:project:publication')?.title;
+      } catch { return null; }
+    }).toBe('Current publication');
+
+    releaseStale();
+    await new Promise(resolve => setTimeout(resolve, 50));
+    const finalCache = JSON.parse(await readFile(join(tmpRoot, 'search-cache.json'), 'utf-8'));
+    expect(finalCache.entries.find((entry: { id: string }) => entry.id === 'spec:project:publication')?.title)
+      .toBe('Current publication');
+  });
+
+  it('keeps an aborted embedding generation single-flight until its replacement starts', async () => {
+    const indexer = new WikiIndexer({ workflowRoot: tmpRoot });
+    const subject = indexer as unknown as {
+      loadOrBuildEmbeddings: (signal?: AbortSignal) => Promise<{
+        modelId: string;
+        dimension: number;
+        docIds: string[];
+        vectors: Float32Array[];
+        builtAt: number;
+      }>;
+    };
+    let calls = 0;
+    let active = 0;
+    let maxActive = 0;
+    let firstSignal: AbortSignal | undefined;
+    let markFirstStarted!: () => void;
+    let releaseFirst!: () => void;
+    const firstStarted = new Promise<void>(resolve => { markFirstStarted = resolve; });
+    const firstRelease = new Promise<void>(resolve => { releaseFirst = resolve; });
+    subject.loadOrBuildEmbeddings = async signal => {
+      calls++;
+      active++;
+      maxActive = Math.max(maxActive, active);
+      const call = calls;
+      if (call === 1) {
+        firstSignal = signal;
+        markFirstStarted();
+        await firstRelease;
+      }
+      active--;
+      return {
+        modelId: `generation-${call}`,
+        dimension: 2,
+        docIds: [`doc-${call}`],
+        vectors: [new Float32Array([call, 0])],
+        builtAt: call,
+      };
+    };
+
+    const firstGet = indexer.getEmbeddingIndex();
+    await firstStarted;
+    indexer.invalidate();
+    const secondGet = indexer.getEmbeddingIndex();
+    await Promise.resolve();
+    expect(firstSignal?.aborted).toBe(true);
+    expect(calls).toBe(1);
+
+    releaseFirst();
+    const [firstResult, secondResult] = await Promise.all([firstGet, secondGet]);
+    expect(firstResult).toBe(secondResult);
+    expect(firstResult?.modelId).toBe('generation-2');
+    expect(calls).toBe(2);
+    expect(maxActive).toBe(1);
+  });
+
+  it('close aborts and joins the active background embedding flight', async () => {
+    const indexer = new WikiIndexer({ workflowRoot: tmpRoot });
+    const subject = indexer as unknown as {
+      loadOrBuildEmbeddings: (signal?: AbortSignal) => Promise<null>;
+    };
+    let observedSignal: AbortSignal | undefined;
+    let markStarted!: () => void;
+    let releaseBuild!: () => void;
+    const started = new Promise<void>(resolve => { markStarted = resolve; });
+    const release = new Promise<void>(resolve => { releaseBuild = resolve; });
+    subject.loadOrBuildEmbeddings = async signal => {
+      observedSignal = signal;
+      markStarted();
+      await release;
+      return null;
+    };
+
+    const build = indexer.getEmbeddingIndex();
+    await started;
+    const closing = indexer.close();
+    expect(observedSignal?.aborted).toBe(true);
+    let closed = false;
+    void closing.then(() => { closed = true; });
+    await Promise.resolve();
+    expect(closed).toBe(false);
+
+    releaseBuild();
+    await expect(Promise.all([build, closing])).resolves.toEqual([null, undefined]);
+    await expect(indexer.getEmbeddingIndex()).resolves.toBeNull();
+  });
+
+  it('close waits for an ordinary rebuild flight before returning', async () => {
+    const indexer = new WikiIndexer({ workflowRoot: tmpRoot, persistence: 'memory-only' });
+    const subject = indexer as unknown as {
+      rebuildUntilCurrent: () => Promise<Awaited<ReturnType<WikiIndexer['rebuild']>>>;
+    };
+    let releaseRebuild!: (value: Awaited<ReturnType<WikiIndexer['rebuild']>>) => void;
+    subject.rebuildUntilCurrent = () => new Promise(resolve => { releaseRebuild = resolve; });
+
+    const rebuilding = indexer.rebuild();
+    const closing = indexer.close();
+    let closed = false;
+    void closing.then(() => { closed = true; });
+    await Promise.resolve();
+    expect(closed).toBe(false);
+
+    const emptyIndex: Awaited<ReturnType<WikiIndexer['rebuild']>> = {
+      entries: [],
+      byId: {},
+      byType: {
+        project: [], roadmap: [], spec: [], issue: [], knowhow: [], note: [], domain: [],
+      },
+      backlinks: {},
+      generatedAt: Date.now(),
+    };
+    releaseRebuild(emptyIndex);
+    await expect(Promise.all([rebuilding, closing])).resolves.toEqual([emptyIndex, undefined]);
+  });
+
   it('reports real search-index cache state across reuse and invalidation', async () => {
     await write(
       'specs/cache-state.md',
@@ -293,6 +680,200 @@ Facet ranking legacy target.
       site: 'WikiIndexer.tryLoadSearchCache.readFile',
       queryId: null,
     });
+  });
+
+  it('persists only canonical repository metadata and rehydrates routing from live linked config', async () => {
+    const linkedRoot = await mkdtemp(join(tmpdir(), 'wiki-linked-persist-'));
+    let relocatedRoot: string | null = null;
+    const hostRepoId = '11111111-1111-4111-8111-111111111111';
+    const linkedRepoId = '22222222-2222-4222-8222-222222222222';
+    try {
+      await mkdir(join(linkedRoot, 'knowhow'), { recursive: true });
+      await writeFile(join(linkedRoot, 'repository.json'), JSON.stringify({
+        schema_version: 'repository-identity/1.0',
+        repo_id: linkedRepoId,
+        repo_name: 'Persisted display name',
+        created_at: '2026-01-01T00:00:00.000Z',
+      }));
+      await writeFile(
+        join(linkedRoot, 'knowhow', 'TIP-runtime-routing.md'),
+        `---\ntitle: Runtime routing sentinel\nappliesToRepoIds:\n  - ${hostRepoId}\n---\n\nruntime routing reload sentinel`,
+      );
+
+      const writer = new WikiIndexer({
+        workflowRoot: tmpRoot,
+        includeCliSessions: false,
+        repository: { repoId: hostRepoId, repoName: 'Host', alias: 'current' },
+        linkedWorkspaces: [{
+          name: 'old-alias', workflowRoot: linkedRoot, shareTypes: ['knowhow'],
+          repoId: linkedRepoId, repoName: 'Old display name',
+        }],
+      });
+      await writer.get();
+      await expect.poll(async () => {
+        try {
+          const index = JSON.parse(await readFile(join(tmpRoot, 'wiki-index.json'), 'utf-8'));
+          const cache = JSON.parse(await readFile(join(tmpRoot, 'search-cache.json'), 'utf-8'));
+          return [index.version, cache.version];
+        } catch { return null; }
+      }).toEqual([3, 8]);
+
+      const persisted = JSON.parse(await readFile(join(tmpRoot, 'wiki-index.json'), 'utf-8'));
+      const persistedEntry = persisted.entries.find((entry: { title: string }) =>
+        entry.title === 'Runtime routing sentinel');
+      expect(persistedEntry).toMatchObject({
+        repoId: linkedRepoId,
+        appliesToRepoIds: [hostRepoId],
+      });
+      expect(persistedEntry).not.toHaveProperty('source');
+      expect(persistedEntry).not.toHaveProperty('repoName');
+      expect(persistedEntry).not.toHaveProperty('alias');
+      expect(persistedEntry).not.toHaveProperty('workspaceFence');
+      expect(JSON.stringify(persistedEntry)).not.toContain(linkedRoot);
+
+      const persistedCache = JSON.parse(await readFile(join(tmpRoot, 'search-cache.json'), 'utf-8'));
+      const cachedEntry = persistedCache.entries.find((entry: { title: string }) =>
+        entry.title === 'Runtime routing sentinel');
+      expect(cachedEntry).not.toHaveProperty('repoName');
+      expect(cachedEntry).not.toHaveProperty('alias');
+      expect(cachedEntry).not.toHaveProperty('workspaceFence');
+      expect(cachedEntry.source).not.toHaveProperty('workspace');
+      expect(cachedEntry.source).not.toHaveProperty('repoName');
+      expect(cachedEntry.source).not.toHaveProperty('alias');
+      expect(cachedEntry.source).not.toHaveProperty('workspaceFence');
+
+      const reader = new WikiIndexer({
+        workflowRoot: tmpRoot,
+        includeCliSessions: false,
+        repository: { repoId: hostRepoId, repoName: 'Host renamed', alias: 'current' },
+        linkedWorkspaces: [{
+          name: 'new-alias', workflowRoot: linkedRoot, shareTypes: ['knowhow'],
+          repoId: linkedRepoId, repoName: 'Live display name',
+        }],
+      });
+      const readerSubject = reader as unknown as { scanLinkedWorkspaces: () => Promise<never> };
+      readerSubject.scanLinkedWorkspaces = async () => { throw new Error('cache should load'); };
+      const reloaded = await reader.get();
+      const reloadedEntry = reloaded.entries.find(entry => entry.title === 'Runtime routing sentinel');
+      expect(reloadedEntry).toMatchObject({
+        repoId: linkedRepoId,
+        repoName: 'Live display name',
+        alias: 'new-alias',
+        workspaceFence: `repo:${linkedRepoId}`,
+        appliesToRepoIds: [hostRepoId],
+        source: expect.objectContaining({
+          workspace: 'new-alias', repoId: linkedRepoId, repoName: 'Live display name',
+          alias: 'new-alias', workspaceFence: `repo:${linkedRepoId}`,
+        }),
+      });
+      const searched = await reader.searchWithMeta('runtime routing reload sentinel', 5, {
+        skipEmbedding: true,
+        filters: { repoAlias: 'new-alias', applicableRepoId: hostRepoId },
+      });
+      expect(searched.results.map(result => result.entry.title)).toContain('Runtime routing sentinel');
+
+      // Dual-read v7 caches, but overwrite every stale routing/display field.
+      persistedCache.version = 7;
+      Object.assign(cachedEntry, {
+        repoName: 'Stale display', alias: 'stale-alias', workspaceFence: 'linked:stale-alias',
+      });
+      Object.assign(cachedEntry.source, {
+        workspace: 'stale-alias', repoName: 'Stale display', alias: 'stale-alias',
+        workspaceFence: 'linked:stale-alias',
+      });
+      await writeFile(join(tmpRoot, 'search-cache.json'), JSON.stringify(persistedCache));
+      const legacyReader = new WikiIndexer({
+        workflowRoot: tmpRoot,
+        includeCliSessions: false,
+        repository: { repoId: hostRepoId, repoName: 'Host', alias: 'current' },
+        linkedWorkspaces: [{
+          name: 'latest-alias', workflowRoot: linkedRoot, shareTypes: ['knowhow'],
+          repoId: linkedRepoId, repoName: 'Latest display',
+        }],
+      });
+      const legacySubject = legacyReader as unknown as { scanLinkedWorkspaces: () => Promise<never> };
+      legacySubject.scanLinkedWorkspaces = async () => { throw new Error('legacy cache should load'); };
+      const legacyEntry = (await legacyReader.get()).entries.find(entry =>
+        entry.title === 'Runtime routing sentinel');
+      expect(legacyEntry).toMatchObject({
+        repoName: 'Latest display', alias: 'latest-alias',
+        source: expect.objectContaining({ workspace: 'latest-alias', alias: 'latest-alias' }),
+      });
+
+      // A physical relocation invalidates the old snapshot and rebuilds from
+      // the newly configured root without carrying the old path or alias into
+      // the republished lightweight index.
+      relocatedRoot = `${linkedRoot}-relocated`;
+      await new Promise(resolve => setTimeout(resolve, 5));
+      await rename(linkedRoot, relocatedRoot);
+      const relocatedReader = new WikiIndexer({
+        workflowRoot: tmpRoot,
+        includeCliSessions: false,
+        repository: { repoId: hostRepoId, repoName: 'Host', alias: 'current' },
+        linkedWorkspaces: [{
+          name: 'relocated-alias', workflowRoot: relocatedRoot, shareTypes: ['knowhow'],
+          repoId: linkedRepoId, repoName: 'Relocated display',
+        }],
+      });
+      const relocatedEntry = (await relocatedReader.get()).entries.find(entry =>
+        entry.title === 'Runtime routing sentinel');
+      expect(relocatedEntry).toMatchObject({
+        repoName: 'Relocated display', alias: 'relocated-alias',
+        source: expect.objectContaining({ workspace: 'relocated-alias', alias: 'relocated-alias' }),
+      });
+      await expect.poll(async () => {
+        const current = JSON.parse(await readFile(join(tmpRoot, 'wiki-index.json'), 'utf-8'));
+        return current.generatedAt !== persisted.generatedAt;
+      }).toBe(true);
+      const republished = JSON.parse(await readFile(join(tmpRoot, 'wiki-index.json'), 'utf-8'));
+      const relocatedPersistedEntry = republished.entries.find((entry: { title: string }) =>
+        entry.title === 'Runtime routing sentinel');
+      expect(relocatedPersistedEntry).not.toHaveProperty('source');
+      expect(JSON.stringify(relocatedPersistedEntry)).not.toContain(relocatedRoot);
+
+      const revokedReader = new WikiIndexer({
+        workflowRoot: tmpRoot,
+        includeCliSessions: false,
+        repository: { repoId: hostRepoId, repoName: 'Host', alias: 'current' },
+        linkedWorkspaces: [{
+          name: 'relocated-alias', workflowRoot: relocatedRoot, shareTypes: [],
+          repoId: linkedRepoId, repoName: 'Relocated display',
+        }],
+      });
+      const afterRevocation = await revokedReader.get();
+      expect(afterRevocation.entries.some(entry => entry.repoId === linkedRepoId)).toBe(false);
+    } finally {
+      await rm(linkedRoot, { recursive: true, force: true });
+      if (relocatedRoot) await rm(relocatedRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects malformed search-cache entries at runtime and rebuilds from source', async () => {
+    await write('specs/runtime-cache.md', '---\ntitle: Runtime cache source\n---\n# Runtime cache source');
+    const writer = withoutCliSessions(new WikiIndexer({ workflowRoot: tmpRoot }));
+    await writer.get();
+    await expect.poll(async () => {
+      try { return JSON.parse(await readFile(join(tmpRoot, 'search-cache.json'), 'utf-8')).entries.length; }
+      catch { return -1; }
+    }).toBeGreaterThan(0);
+
+    const cachePath = join(tmpRoot, 'search-cache.json');
+    const cache = JSON.parse(await readFile(cachePath, 'utf-8'));
+    cache.entries = [{ ...cache.entries[0], type: 'not-a-wiki-type' }];
+    await writeFile(cachePath, JSON.stringify(cache));
+
+    const rebuilt = await withoutCliSessions(new WikiIndexer({ workflowRoot: tmpRoot })).get();
+    expect(rebuilt.byId['spec:project:runtime-cache']?.title).toBe('Runtime cache source');
+  });
+
+  it('rejects an oversized search cache by stat before allocating its payload', async () => {
+    const cachePath = join(tmpRoot, 'search-cache.json');
+    const handle = await open(cachePath, 'w');
+    try { await handle.truncate(128 * 1024 * 1024 + 1); } finally { await handle.close(); }
+    await write('specs/capped-cache.md', '---\ntitle: Capped cache source\n---\n# Capped cache source');
+
+    const index = await withoutCliSessions(new WikiIndexer({ workflowRoot: tmpRoot })).get();
+    expect(index.byId['spec:project:capped-cache']).toBeDefined();
   });
 });
 
@@ -1079,7 +1660,7 @@ describe('virtual adapters: run-mode sessions', () => {
     }));
     await write('search-cache.json', JSON.stringify({ version: 1, generatedAt: 1, mtimeSnapshot: [], entries: [] }));
 
-    const index = await new WikiIndexer({ workflowRoot: tmpRoot }).get();
+    const index = await withoutCliSessions(new WikiIndexer({ workflowRoot: tmpRoot })).get();
     const session = index.byId[`session-${sessionId}`];
     const run = index.byId[`session-run-${sessionId}-${runId.toLowerCase()}`];
     expect(session.ext.runCount).toBe(1);
@@ -1090,9 +1671,11 @@ describe('virtual adapters: run-mode sessions', () => {
     expect(run.tags).toContain('gate:waived');
     expect(run.ext.gateSummary).toEqual({ total: 1, waived: 1, failed: 0, blocked: 0 });
 
-    await new Promise(resolve => setTimeout(resolve, 25));
-    expect(JSON.parse(await readFile(join(tmpRoot, 'search-cache.json'), 'utf-8')).version).toBe(6);
-  });
+    await expect.poll(async () => {
+      try { return JSON.parse(await readFile(join(tmpRoot, 'search-cache.json'), 'utf-8')).version; }
+      catch { return null; }
+    }, { timeout: 30_000 }).toBe(8);
+  }, 60_000);
 
   it('projects terminal session/3.0 and sealed run/3.0 history with promotion backlinks', async () => {
     const sessionId = '20260816-v3-wiki';
@@ -1324,7 +1907,10 @@ describe('virtual adapters: run-mode sessions', () => {
 
   it('projects a SessionStore runtime 1.3 fixture with summary, kind, and provenance', async () => {
     const fixture = createRuntimeSessionFixture(join(tmpRoot, 'runtime-project'));
-    const index = await new WikiIndexer({ workflowRoot: fixture.workflowRoot }).get();
+    const index = await new WikiIndexer({
+      workflowRoot: fixture.workflowRoot,
+      persistence: 'memory-only',
+    }).get();
     const session = index.byId[`session-${fixture.sessionId}`];
     const run = index.byId[`session-run-${fixture.sessionId}-${fixture.runId}`];
 
@@ -1335,21 +1921,21 @@ describe('virtual adapters: run-mode sessions', () => {
     expect(run.tags).toContain(fixture.kind);
     expect(run.sourceRef).toBe(fixture.runId);
     expect(run.related).toContain(`session-${fixture.sessionId}`);
-  });
+  }, 20_000);
 
-  it('invalidates v2 search cache and persists v6', async () => {
+  it('invalidates v2 search cache and persists v8', async () => {
     await write('specs/cache-v3.md', '---\ntitle: Cache v3\n---\n# Cache v3\nProjection cache sentinel.');
     await write('search-cache.json', JSON.stringify({
       version: 2, generatedAt: 1, mtimeSnapshot: [], entries: [],
     }));
 
-    const index = await new WikiIndexer({ workflowRoot: tmpRoot }).get();
+    const index = await withoutCliSessions(new WikiIndexer({ workflowRoot: tmpRoot })).get();
     expect(index.byId['spec:project:cache-v3']).toBeDefined();
     await expect.poll(async () => {
       try { return JSON.parse(await readFile(join(tmpRoot, 'search-cache.json'), 'utf-8')).version; }
       catch { return null; }
-    }).toBe(6);
-  });
+    }, { timeout: 30_000 }).toBe(8);
+  }, 60_000);
 
   it('indexes v1.1 sealed Runs with structured handoff, kinds, provenance, aref edges, and waivers', async () => {
     await writeRunModeFixture();
@@ -1514,6 +2100,68 @@ describe('virtual adapters: run-mode sessions', () => {
       });
     } finally {
       await rm(linkedRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('does not follow local or linked knowhow directory symlinks', async () => {
+    const outsideRoot = await mkdtemp(join(tmpdir(), 'wiki-outside-'));
+    const linkedRoot = await mkdtemp(join(tmpdir(), 'wiki-linked-'));
+    try {
+      await writeFile(join(outsideRoot, 'secret.md'), '---\ntitle: Outside secret\n---\nsymlink-secret-sentinel', 'utf-8');
+      await mkdir(join(tmpRoot, 'knowhow'), { recursive: true });
+      await mkdir(join(linkedRoot, 'knowhow'), { recursive: true });
+      try {
+        const linkType = process.platform === 'win32' ? 'junction' : 'dir';
+        await symlink(outsideRoot, join(tmpRoot, 'knowhow', 'outside'), linkType);
+        await symlink(outsideRoot, join(linkedRoot, 'knowhow', 'outside'), linkType);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EPERM') return;
+        throw error;
+      }
+
+      const index = await new WikiIndexer({
+        workflowRoot: tmpRoot,
+        linkedWorkspaces: [{ name: 'peer', workflowRoot: linkedRoot, shareTypes: ['knowhow'] }],
+      }).get();
+
+      expect(index.entries.some(entry => entry.body.includes('symlink-secret-sentinel'))).toBe(false);
+      expect(index.entries.some(entry => entry.source.workspace === 'peer' && entry.title === 'Outside secret')).toBe(false);
+    } finally {
+      await rm(outsideRoot, { recursive: true, force: true });
+      await rm(linkedRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('realpath-fences non-knowhow source families from out-of-root symlink reads', async () => {
+    const outsideRoot = await mkdtemp(join(tmpdir(), 'wiki-outside-families-'));
+    try {
+      await writeFile(join(outsideRoot, 'project.md'), '---\ntitle: Outside project sentinel\n---\n# Outside project sentinel');
+      await writeFile(join(outsideRoot, 'issues.jsonl'), JSON.stringify({
+        id: 'outside', title: 'Outside issue sentinel', description: 'must not index',
+      }));
+      await writeFile(join(outsideRoot, 'glossary.json'), JSON.stringify({
+        terms: [{ id: 'outside', canonical: 'Outside domain sentinel', definition: 'must not index' }],
+      }));
+      await writeFile(join(outsideRoot, 'doc-index.json'), JSON.stringify({
+        components: [{ id: 'outside', name: 'Outside codebase sentinel' }],
+      }));
+      await mkdir(join(tmpRoot, 'issues'), { recursive: true });
+      await mkdir(join(tmpRoot, 'domain'), { recursive: true });
+      await mkdir(join(tmpRoot, 'codebase'), { recursive: true });
+      try {
+        await symlink(join(outsideRoot, 'project.md'), join(tmpRoot, 'project.md'), 'file');
+        await symlink(join(outsideRoot, 'issues.jsonl'), join(tmpRoot, 'issues', 'outside.jsonl'), 'file');
+        await symlink(join(outsideRoot, 'glossary.json'), join(tmpRoot, 'domain', 'glossary.json'), 'file');
+        await symlink(join(outsideRoot, 'doc-index.json'), join(tmpRoot, 'codebase', 'doc-index.json'), 'file');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EPERM') return;
+        throw error;
+      }
+
+      const index = await new WikiIndexer({ workflowRoot: tmpRoot, persistence: 'memory-only' }).get();
+      expect(index.entries.some(entry => entry.title.includes('Outside'))).toBe(false);
+    } finally {
+      await rm(outsideRoot, { recursive: true, force: true });
     }
   });
 

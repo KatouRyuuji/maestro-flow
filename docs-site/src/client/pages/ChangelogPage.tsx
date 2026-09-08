@@ -17,6 +17,47 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    version: '0.5.86',
+    date: '2026-09',
+    changes: [
+      { type: 'feat', text_en: 'Knowledge evidence anchors now accept :start-end line ranges in addition to :line and :line:column, so session-source candidates can reference contiguous code blocks precisely', text_zh: 'Knowledge 证据锚点现除 :line 与 :line:column 外还支持 :start-end 行范围，使基于会话的候选可精确引用连续代码块' },
+      { type: 'fix', text_en: 'The --session option error message now clearly states it expects an existing Maestro Workflow Session ID, not a Pi chat or session-history ID, and suggests --channel when no Session is available', text_zh: '--session 选项错误信息现明确说明其需要的是已存在的 Maestro Workflow Session ID，而非 Pi 聊天或 session-history ID，并在无可用 Session 时提示使用 --channel' },
+    ],
+  },
+  {
+    version: '0.5.85',
+    date: '2026-09',
+    changes: [
+      { type: 'feat', text_en: 'Governed exact search and request diagnostics: maestro search --exact runs through the bundled @vscode/ripgrep with deterministic relative filePath/line/column/preview results that never enter ranking or fusion, while opt-in --diagnostics emits bounded, request-scoped attribution (phases, fallback reasons, provider/cache/embedding state) so every result can be traced to daemon, indexer or fallback without changing the default contract', text_zh: '受治理的精确搜索与请求级诊断：maestro search --exact 经内置 @vscode/ripgrep 执行，返回确定性的相对 filePath/行/列/预览结果且永不进入排序或融合；可选的 --diagnostics 输出有界、请求级归因（阶段、回退原因、provider/缓存/embedding 状态），使每条结果都能追溯到 daemon、索引器或回退来源，而默认契约不变' },
+      { type: 'feat', text_en: 'Wiki cache publication is now single-writer: the search daemon holds a file-based publisher lease (acquire/release/dead-holder reclaim) while Dashboard routes serve read-only unless no daemon owner exists; indexer roles (reader/publisher/hermetic) replace the old persistence flags, and fail-closed experiments ship opt-in — content-addressed source-manifest incremental indexing, structured embedding fragments that collapse back to their parent entry, a 4-minute transcript reconciliation timer, and a v9 compiled-postings cache that stays v7/v8/v9 read-compatible', text_zh: 'Wiki 缓存发布现为单写者：搜索 daemon 持有基于文件的发布租约（获取/释放/持锁者死亡回收），Dashboard 路由在无 daemon 属主时只读；索引器角色（reader/publisher/hermetic）取代旧的持久化标志，并默认关闭地提供 fail-closed 实验——基于内容寻址 source manifest 的增量索引、可折叠回父条目的结构化 embedding 片段、4 分钟转录协调定时器、以及保持 v7/v8/v9 读兼容的 v9 compiled-postings 缓存' },
+      { type: 'feat', text_en: 'Arch-KB template loading works without a daemon (maestro load --type template over the arch-kb index plus a new spec-wiki loader), ranking evaluation widens to structured-fragment qrels lanes with hash-fenced baselines, and the generated search adapter contract now emits SEARCH_MEASUREMENT_LANES with release-machine corpus validation', text_zh: 'Arch-KB 模板加载不再依赖 daemon（maestro load --type template 基于 arch-kb 索引，另有新的 spec-wiki loader）；排序评测扩展到结构化片段 qrels 通道并哈希围栏基线；生成的搜索适配器契约现输出 SEARCH_MEASUREMENT_LANES 并由 release-machine 校验语料' },
+      { type: 'refactor', text_en: 'Impeccable is restructured from flat phase files into a self-contained distributable skill bundle: workflows/impeccable ships SKILL.md 4.1.3 + reference/ (native and degraded variants) + live/detector/hook scripts with LICENSE/NOTICE/UPSTREAM provenance, resolves exclusively from Maestro-owned paths with external install/update forbidden, and gains four role agents (asset-producer, documenter, finish-reviewer, manual-edit-applier) with bundle-integrity tests', text_zh: 'Impeccable 由扁平阶段文件重构为自包含、可随 Maestro 分发的技能包：workflows/impeccable 携带 SKILL.md 4.1.3 + reference/（含 native 与 degraded 变体）+ live/detector/hook 脚本及 LICENSE/NOTICE/UPSTREAM 来源说明，仅从 Maestro 自有路径解析、禁止外部安装/更新，并新增四个角色代理（asset-producer、documenter、finish-reviewer、manual-edit-applier）与包完整性测试' },
+      { type: 'chore', text_en: 'Architecture templates become reference-only global evidence: an architecture_template_evidence envelope (status, template_id, disposition, applies_to) threads through analyze/brainstorm/blueprint/grill/plan/review and every agent mirror, with a shared ownership rule in templates/search-tools.md, new template fields in task.json/plan.json, and README/guide updates for the search surface', text_zh: '架构模板被定位为仅供引用的全局证据：architecture_template_evidence 信封（status/template_id/disposition/applies_to）贯通 analyze/brainstorm/blueprint/grill/plan/review 与全部代理镜像，templates/search-tools.md 定义共享所有权规则，task.json/plan.json 新增模板字段，README 与 guide 同步更新搜索面说明' },
+    ],
+  },
+  {
+    version: '0.5.84',
+    date: '2026-09',
+    changes: [
+      { type: 'feat', text_en: 'Repository identity is now a first-class host-owned authority across workspace resolution, agent delegation, MCP access, knowledge tools, and team operations, with stable repository manifests and explicit applicability checks instead of caller-supplied trust', text_zh: '仓库身份现已成为 workspace 解析、Agent 委派、MCP 访问、知识工具与团队操作中的一等主机权威：通过稳定 repository manifest 与显式适用性检查，取代对调用方输入的信任' },
+      { type: 'feat', text_en: 'Knowledge and Spec lifecycles now use canonical metadata, repository-aware loading and search, staged cross-repository promotion, read-only audit, and reviewed normalization; run ledgers preserve promotion evidence and repository boundaries end to end', text_zh: 'Knowledge 与 Spec 生命周期现采用规范元数据、仓库感知加载与搜索、跨仓库分阶段晋升、只读审计和经审查的归一化；Run ledger 端到端保留晋升证据与仓库边界' },
+      { type: 'feat', text_en: 'Search and wiki indexing enforce repository applicability while improving cache invalidation, daemon cleanup, embedding disposal, snapshot performance, result metadata integrity, and Windows reliability across source and packaged-install probes', text_zh: '搜索与 Wiki 索引现强制仓库适用性，同时改进缓存失效、守护进程清理、embedding 释放、快照性能、结果元数据完整性，以及源码和打包安装探针在 Windows 上的可靠性' },
+      { type: 'fix', text_en: 'UI codify now stages governed knowledge candidates, validates returned candidate IDs, reports failures explicitly, and defers linking until canonical promotion instead of writing predicted knowledge paths directly', text_zh: 'UI codify 现对受治理的知识候选进行暂存、校验返回的 candidate ID、显式报告失败，并将链接延后至规范晋升完成后，而不再直接写入预测的知识路径' },
+      { type: 'chore', text_en: 'The test harness is partitioned into normal, heavy, and Node lanes with environment cleanup and stronger release-machine verification, reducing process contention while preserving exhaustive release gates', text_zh: '测试框架拆分为 normal、heavy 与 Node 分道，并加入环境清理和更强的 release-machine 验证，在保持完整发布门禁的同时减少进程争用' },
+    ],
+  },
+  {
+    version: '0.5.83',
+    date: '2026-08',
+    changes: [
+      { type: 'feat', text_en: 'Search daemon moves to an authenticated protocol v2: the daemon descriptor becomes a per-process identity (instanceId + protocol tag) instead of a bare PID, so stale or foreign descriptors are never trusted for search or shutdown and only the owning process may delete its descriptor; requests/responses are bounded (64 KiB in / 16 MiB out, 4096-char queries, 500 results) and the daemon drains gracefully instead of dying mid-request. Wiki indexer and embedding stores are hardened with ownership-checked cleanup, spawn locking, and a much wider test surface across dashboard workspace and search', text_zh: '搜索守护进程升级为带认证的 protocol v2：守护进程描述符从裸 PID 变为逐进程身份（instanceId + 协议标签），陈旧或外来描述符不再被信任用于搜索或关闭，且只有属主进程可删除其描述符；请求/响应有界（入 64 KiB / 出 16 MiB、4096 字符查询、500 条结果），守护进程优雅排空而非请求中猝死。Wiki 索引器与 embedding 存储加固：所有权校验清理、spawn 锁、dashboard workspace 与 search 测试面大幅扩展' },
+      { type: 'fix', text_en: 'Legacy SQLite artifact family is bounded: an oversized active WAL is refused before the legacy migration path opens the database, and better-sqlite3 unavailability is guarded in tests so the migration path degrades predictably instead of reading a corrupted artifact', text_zh: '遗留 SQLite 产物族被约束：legacy 迁移路径打开数据库前先拒绝过大的活动 WAL，并在测试中防护 better-sqlite3 不可用，使迁移路径可预测地降级而非读取损坏产物' },
+      { type: 'fix', text_en: 'Wiki index refreshes regain cold-build speed and hermetic release probes while preserving warm-cache correctness: bounded synchronous snapshots reduce Windows latency, negative source sentinels detect newly created optional files/directories, and transient gate cleanup handles are retried', text_zh: 'Wiki 索引刷新同时恢复冷构建性能、发布探针隔离性与暖缓存正确性：有界同步快照降低 Windows 延迟，缺失源哨兵可检测后创建的可选文件/目录，门禁清理中的瞬时句柄占用会安全重试' },
+      { type: 'fix', text_en: 'Kimi Code CLI installs now target the current .kimi-code config directory instead of the outdated .kimi-code-cli, across component definitions, the interactive install UI, the install guide, and reinstall tests', text_zh: 'Kimi Code CLI 安装现指向当前 .kimi-code 配置目录而非过时的 .kimi-code-cli，覆盖组件定义、交互式安装 UI、安装指南与重装测试' },
+      { type: 'refactor', text_en: 'maestro-impeccable is rewritten as a thin Maestro adapter over the installed Impeccable skill: Impeccable owns design semantics, setup, routing, references, detector behavior and bounded verification, while Maestro adds the canonical Session/Run lifecycle, progress tracking, consistent status presentation, and the optional --codify extension loaded phase-wise; the copied command routing/chain tables are retired', text_zh: 'maestro-impeccable 重写为基于已安装 Impeccable skill 的薄适配器：Impeccable 负责设计语义、设置、路由、引用、检测器行为与有界验证，Maestro 提供规范 Session/Run 生命周期、进度跟踪、一致的状态呈现与按阶段加载的可选 --codify 扩展；复制的命令路由/链表退役' },
+    ],
+  },
+  {
     version: '0.5.82',
     date: '2026-08',
     changes: [

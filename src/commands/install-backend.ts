@@ -20,6 +20,7 @@ import {
   rmSync,
 } from 'node:fs';
 import { paths } from '../config/paths.js';
+import { resolveAgentRepositoryContext } from '../repository/context.js';
 import {
   addFile,
   addDir,
@@ -177,6 +178,15 @@ export function getClaudeMcpConfigPath(scope: 'global' | 'project', projectPath:
     : join(homedir(), '.claude.json');
 }
 
+export function buildMcpRepositoryEnv(projectRoot: string | undefined): Record<string, string> {
+  if (!projectRoot) return {};
+  const context = resolveAgentRepositoryContext(projectRoot, { allowLegacyReadFallback: true });
+  return {
+    MAESTRO_PROJECT_ROOT: context.currentProjectRoot,
+    ...(context.currentRepoId ? { MAESTRO_REPO_ID: context.currentRepoId } : {}),
+  };
+}
+
 /**
  * Register the maestro MCP server in Claude's config. Returns the path that
  * was written on success, or null on failure.
@@ -187,10 +197,11 @@ export function addMcpServer(
   enabledTools: string[],
   projectRoot?: string,
 ): string | null {
+  const bindingRoot = projectRoot ?? (scope === 'project' ? projectPath : undefined);
   const env: Record<string, string> = {
     MAESTRO_ENABLED_TOOLS: enabledTools.join(','),
+    ...buildMcpRepositoryEnv(bindingRoot),
   };
-  if (projectRoot) env.MAESTRO_PROJECT_ROOT = projectRoot;
 
   // Unix: PATH `maestro-mcp`. Windows: node.exe + maestro-mcp.js (not cmd /c
   // maestro-mcp.cmd — that flashes a console window when hosts pipe stdio).
@@ -440,9 +451,11 @@ export function addCodexMcpServer(
 
     // Build TOML block
     const launch = resolveMaestroMcpLaunch();
+    const bindingRoot = projectRoot ?? (scope === 'project' ? projectPath : undefined);
+    const repositoryEnv = buildMcpRepositoryEnv(bindingRoot);
     const envLines = [`MAESTRO_ENABLED_TOOLS = "${enabledTools.join(',')}"`];
-    if (projectRoot) {
-      envLines.push(`MAESTRO_PROJECT_ROOT = "${projectRoot.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`);
+    for (const [name, value] of Object.entries(repositoryEnv)) {
+      envLines.push(`${name} = "${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`);
     }
 
     const block = [
@@ -911,8 +924,8 @@ function buildServerConfig(
 ): Record<string, unknown> {
   const env: Record<string, string> = {
     MAESTRO_ENABLED_TOOLS: enabledTools.join(','),
+    ...buildMcpRepositoryEnv(projectRoot),
   };
-  if (projectRoot) env.MAESTRO_PROJECT_ROOT = projectRoot;
 
   const launch = resolveMaestroMcpLaunch();
   const base: Record<string, unknown> = {
@@ -1042,11 +1055,12 @@ export function addExtraMcpServer(
     const dir = dirname(fp);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
+    const bindingRoot = projectRoot ?? (scope === 'project' ? projectPath : undefined);
     if (spec.format === 'toml-mcp-servers') {
-      return addTomlMcpServer(fp, enabledTools, projectRoot) ? fp : null;
+      return addTomlMcpServer(fp, enabledTools, bindingRoot) ? fp : null;
     }
 
-    const serverConfig = buildServerConfig(enabledTools, projectRoot, spec.format);
+    const serverConfig = buildServerConfig(enabledTools, bindingRoot, spec.format);
     const containerKey = spec.format === 'json-vscode-servers' ? 'servers' : 'mcpServers';
 
     let data: Record<string, unknown> = {};

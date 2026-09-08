@@ -60,11 +60,23 @@ describe('KG sync runtime', () => {
   }
 
   afterEach(() => {
-    // Windows 上被测 worker 可能仍持有目录句柄，直接 rm 报 EPERM——加重试
+    const cleanupErrors: unknown[] = [];
     for (const value of roots.splice(0)) {
+      // Windows can briefly retain a just-closed SQLite file. Retry boundedly,
+      // but keep persistent cleanup errors visible and attempt every root.
       try {
-        rmSync(value, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-      } catch { /* 清理失败不阻塞测试结果 */ }
+        rmSync(value, {
+          recursive: true,
+          force: true,
+          maxRetries: process.platform === 'win32' ? 10 : 0,
+          retryDelay: 25,
+        });
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(cleanupErrors, 'Failed to clean KG sync runtime fixtures');
     }
   });
 
@@ -657,12 +669,11 @@ describe('KG sync runtime', () => {
     expect(existsSync(kgSyncWorkerMarkerPath(project))).toBe(true);
     expect(releaseKgSyncWorkerToken({
       ...first.token,
-      // NTFS inos are 64-bit and can exceed Number.MAX_SAFE_INTEGER, where
-      // `inode + 1` silently rounds back to the same value. Pick a constant
-      // that provably differs from the real ino on any filesystem.
       generation: {
         ...first.token.generation,
-        inode: first.token.generation.inode === 1 ? 2 : 1,
+        // Windows file IDs can exceed Number.MAX_SAFE_INTEGER, where +1 may
+        // round back to the same value. Use a guaranteed-distinct sentinel.
+        inode: first.token.generation.inode === 0 ? 1 : 0,
       },
     })).toBe(false);
     expect(existsSync(kgSyncWorkerMarkerPath(project))).toBe(true);
@@ -727,6 +738,13 @@ describe('KG sync runtime', () => {
     });
     expect(getSyncStateHealth(project)).toMatchObject({ status: 'error', stale: true });
     expect(kgSyncGuard.shouldRun(cooldownKey)).toBe(true);
+
+    // A failed worker open must release DatabaseSync before callers delete a
+    // broken database and retry. Keeping this assertion inside the test makes
+    // a leaked handle the primary failure rather than an afterEach EBUSY.
+    const dbPath = join(project, '.workflow', 'kg', 'maestro.db');
+    rmSync(dbPath);
+    writeFileSync(dbPath, 'retry-fixture');
   });
 
   it('waits for a live owner without deleting its marker', async () => {

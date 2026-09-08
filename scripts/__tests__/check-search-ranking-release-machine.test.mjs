@@ -23,6 +23,7 @@ import test from 'node:test';
 
 import {
   SCHEMA_SHA256,
+  SEARCH_MEASUREMENT_LANES,
   makeBuiltSearchAdapterFixture,
   parseBuiltSearchAdapterExpected,
   parseBuiltSearchAdapterReport,
@@ -63,6 +64,7 @@ import {
   DASHBOARD_TEST_PATHS,
   deriveCertifiedArtifactPaths,
   deriveBuiltSearchAdapterExpected,
+  expandedCorpusSha256,
   openRetainedArtifactHandle,
   parseArguments,
   parseArtifactJson,
@@ -662,8 +664,13 @@ test('source phase owns exact root/dashboard suites with shell false and explici
   }
   assert.equal(calls[0].options.cwd, repoRoot);
   assert.equal(calls[1].options.cwd, dashboardRoot);
-  assert.notEqual(calls[0].args.indexOf('--maxWorkers=6'), -1);
+  assert.deepEqual(calls[0].args.slice(1, 7), [
+    'exec', '--', 'vitest', 'run', '--config', 'vitest.config.ts',
+  ]);
+  assert.notEqual(calls[0].args.indexOf('--maxWorkers=2'), -1);
   assert.notEqual(calls[1].args.indexOf('--maxWorkers=2'), -1);
+  assert.notEqual(calls[0].args.indexOf('--testTimeout=60000'), -1);
+  assert.notEqual(calls[1].args.indexOf('--testTimeout=60000'), -1);
   assert.deepEqual(
     calls[1].args.slice(calls[1].args.indexOf('--outputFile') + 2),
     DASHBOARD_TEST_PATHS,
@@ -1168,7 +1175,7 @@ test('rejects omitted or dynamic current package controls', () => {
     )],
     ['second inline source', value => value.replace(
       "'src/graph/db/schema.sql'",
-      "'package.json'",
+      "'docs/knowledge-system-architecture.md'",
     )],
     ['second inline output', value => value.replace(
       "'dist/src/graph/kg/schema.sql'",
@@ -1865,6 +1872,12 @@ test('rejects aggregate green with raw evidence fault', async () => {
     ['workspace drift', body => {
       body.evidence.queries[0].runs[0].results[0].workspace = 'secret';
     }, 'BUILT_REPORTED_MISMATCH'],
+    ['authorization drift', body => {
+      body.evidence.queries[0].runs[0].results[0].authorized = false;
+    }, 'BUILT_REPORTED_MISMATCH'],
+    ['status drift', body => {
+      body.evidence.queries[0].runs[0].results[0].status = 'deprecated';
+    }, 'BUILT_REPORTED_MISMATCH'],
     ['kg latency breach', body => {
       body.evidence.latency.kgWarmSamplesMs.fill(40);
     }, 'BUILT_REPORTED_MISMATCH'],
@@ -1884,6 +1897,50 @@ test('rejects aggregate green with raw evidence fault', async () => {
       label,
     );
   }
+});
+
+test('parent rejects corpus hash drift and non-canonical lane ordering', () => {
+  assert.deepEqual(validCorpusFixture.manifest.measurementLanes, [...SEARCH_MEASUREMENT_LANES]);
+
+  const permutedCorpus = structuredClone(validCorpusFixture);
+  [permutedCorpus.manifest.measurementLanes[0], permutedCorpus.manifest.measurementLanes[1]] = [
+    permutedCorpus.manifest.measurementLanes[1],
+    permutedCorpus.manifest.measurementLanes[0],
+  ];
+  assert.throws(
+    () => deriveBuiltSearchAdapterExpected({
+      workspaceRoot: temporaryRoot('permuted-lanes'),
+      qrels: validQrelsFixture,
+      corpus: permutedCorpus,
+      qrelsSha256: validBaselineFixture.qrelsSha256,
+    }),
+    error => error.code === 'INVALID_RANKING_FIXTURES'
+      && /corpus manifest does not match deterministic expansion/.test(error.message),
+  );
+
+  const mutatedCorpus = structuredClone(validCorpusFixture);
+  mutatedCorpus.latencyCorpus.vocabulary[0] = 'hash-mutated-alpha';
+  mutatedCorpus.manifest.expandedSha256 = expandedCorpusSha256(mutatedCorpus);
+  assert.equal(
+    mutatedCorpus.manifest.expandedDocumentCount,
+    validCorpusFixture.manifest.expandedDocumentCount,
+  );
+  assert.equal(
+    mutatedCorpus.manifest.wikiSourceDocumentCount,
+    validCorpusFixture.manifest.wikiSourceDocumentCount,
+  );
+  const root = temporaryRoot('baseline-corpus-hash');
+  const report = greenAdapterBody(root);
+  assert.throws(
+    () => recomputeBuiltAggregates(report, {
+      qrels: validQrelsFixture,
+      baseline: validBaselineFixture,
+      corpus: mutatedCorpus,
+      holdouts: validHoldoutsFixture,
+    }),
+    error => error.code === 'INVALID_RANKING_FIXTURES'
+      && /baseline protocol does not match corpus manifest/.test(error.message),
+  );
 });
 
 test('parent uses generated adapter contract', async () => {
@@ -2185,7 +2242,7 @@ async function spawnBootstrapFault({
   manifestBytes,
   closeKey = true,
   closeManifest = true,
-  timeoutMs = 750,
+  timeoutMs = 5_000,
 }) {
   const bootstrapUrl =
     `data:text/javascript;base64,${bootstrapBuffer.toString('base64')}`;

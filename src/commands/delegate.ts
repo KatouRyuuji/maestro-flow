@@ -5,6 +5,8 @@
 import { spawn, type SpawnOptions } from 'node:child_process';
 import { readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { resolve, join } from 'node:path';
+import type { AgentRepositoryContext } from '../../shared/agent-types.js';
+import { resolveAgentRepositoryContext } from '../repository/context.js';
 import { Command, Option } from 'commander';
 import { CliAgentRunner } from '../agents/cli-agent-runner.js';
 import { CliHistoryStore, type EntryLike } from '../agents/cli-history-store.js';
@@ -65,6 +67,8 @@ export interface DelegateExecutionRequest {
   streamTimeout?: number;
   /** Proxy environment variables resolved from cli-tools.json proxy config */
   proxyEnv?: Record<string, string>;
+  /** Host-owned actor repository authority. */
+  repositoryContext: AgentRepositoryContext;
 }
 
 interface ChildProcessLike {
@@ -130,6 +134,10 @@ function buildJobMetadata(request: DelegateExecutionRequest, workerPid?: number)
   if (request.sessionId) {
     metadata.sessionId = request.sessionId;
   }
+  metadata.repositoryContext = request.repositoryContext as unknown as JsonObject;
+  metadata.repoId = request.repositoryContext.currentRepoId;
+  metadata.repoName = request.repositoryContext.currentRepoName;
+  metadata.projectRoot = request.repositoryContext.currentProjectRoot;
   // child-reap 归因：记录调用方 maestro session（若有），供 session complete / SessionEnd 回收
   const maestroSessionId = process.env.MAESTRO_SESSION_ID;
   if (maestroSessionId) {
@@ -193,6 +201,10 @@ export function launchDetachedDelegateWorker(
     const env = {
       ...(options.env ?? process.env),
       MAESTRO_DISABLE_DASHBOARD_BRIDGE: '1',
+      MAESTRO_PROJECT_ROOT: request.repositoryContext.currentProjectRoot,
+      ...(request.repositoryContext.currentRepoId
+        ? { MAESTRO_REPO_ID: request.repositoryContext.currentRepoId }
+        : {}),
     };
     const child = spawnProcess(process.execPath, args, {
       cwd: request.workDir,
@@ -479,12 +491,28 @@ export function registerDelegateCommand(program: Command): void {
           }
         }
       }
+      let repositoryContext: AgentRepositoryContext;
+      try {
+        repositoryContext = resolveAgentRepositoryContext(workDir, {
+          allowLegacyReadFallback: mode === 'analysis',
+        });
+      } catch (error) {
+        console.error(`Repository context resolution failed: ${error instanceof Error ? error.message : String(error)}`);
+        process.exit(1);
+        return;
+      }
+      if (mode === 'write' && (!repositoryContext.currentRepoId || !repositoryContext.identityPersisted)) {
+        console.error('Write delegation requires a persisted host-owned repository identity.');
+        process.exit(1);
+        return;
+      }
+
       const request: DelegateExecutionRequest = {
         prompt,
         tool: toolName,
         mode,
         model,
-        workDir,
+        workDir: repositoryContext.currentProjectRoot,
         rule: opts.rule,
         execId,
         resume,
@@ -497,6 +525,7 @@ export function registerDelegateCommand(program: Command): void {
         reasoningEffort,
         streamTimeout,
         proxyEnv,
+        repositoryContext,
       };
 
       try {
@@ -532,8 +561,12 @@ export function registerDelegateCommand(program: Command): void {
               jobMetadata: {
                 tool: toolName,
                 mode,
-                workDir,
+                workDir: request.workDir,
                 backend,
+                repositoryContext: repositoryContext as unknown as JsonObject,
+                repoId: repositoryContext.currentRepoId,
+                repoName: repositoryContext.currentRepoName,
+                projectRoot: repositoryContext.currentProjectRoot,
                 ...(request.sessionId ? { sessionId: request.sessionId } : {}),
                 // child-reap 归因:与 detached 路径一致记录 maestro session
                 ...(process.env.MAESTRO_SESSION_ID ? { maestroSessionId: process.env.MAESTRO_SESSION_ID } : {}),
@@ -579,8 +612,12 @@ export function registerDelegateCommand(program: Command): void {
               jobMetadata: {
                 tool: toolName,
                 mode,
-                workDir,
+                workDir: request.workDir,
                 backend,
+                repositoryContext: repositoryContext as unknown as JsonObject,
+                repoId: repositoryContext.currentRepoId,
+                repoName: repositoryContext.currentRepoName,
+                projectRoot: repositoryContext.currentProjectRoot,
                 ...(request.sessionId ? { sessionId: request.sessionId } : {}),
                 ...(process.env.MAESTRO_SESSION_ID ? { maestroSessionId: process.env.MAESTRO_SESSION_ID } : {}),
               },

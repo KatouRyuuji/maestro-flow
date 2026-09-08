@@ -26,7 +26,8 @@ Thumbs.db
 # Local tool/workflow state (not for distribution)
 .ace-tool/
 .ccw/
-.workflow/
+.workflow/*
+!.workflow/repository.json
 !.workflow/collab/
 .workflow/collab/*
 !.workflow/collab/overlays/
@@ -80,3 +81,6 @@ dashboard/coverage/
 /artifacts/
 /test-ui/
 /ref/sidebar.html
+
+# Research checkouts under ref/ (vendored reference material only; no nested clones)
+ref/zvec-grep/

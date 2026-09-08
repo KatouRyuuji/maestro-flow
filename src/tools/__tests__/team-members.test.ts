@@ -18,10 +18,6 @@ import { execSync } from 'node:child_process';
 //
 // These tests isolate the project root via MAESTRO_PROJECT_ROOT so that
 // getProjectRoot() from path-validator points at a fresh tmp dir per test.
-// The module is re-imported inside each test via dynamic import AFTER the
-// env var is set; dynamic import with a cache-busting query string gives us
-// a clean module cache between tests so the constants resolved inside the
-// module (if any) are picked up fresh each time.
 // ---------------------------------------------------------------------------
 
 let tmpDir: string;

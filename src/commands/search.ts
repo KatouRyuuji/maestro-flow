@@ -14,6 +14,7 @@
  */
 
 import type { Command } from 'commander';
+import { existsSync } from 'node:fs';
 import { basename, extname, resolve } from 'node:path';
 
 import { truncate, extractSnippet, highlightTerms } from '../utils/cli-format.js';
@@ -27,9 +28,37 @@ import type {
   WikiNodeType,
   WikiSearchFilters,
 } from '#maestro-dashboard/wiki/wiki-types.js';
+import { isRepositoryApplicable } from '../repository/applicability.js';
 import { loadWorkspaceConfig, resolveWorkspaceLinks } from '../config/index.js';
+import { resolveRepositoryContext, type RepositoryContext } from '../repository/context.js';
 import { searchArchKb, tokenize as tokenizeArchKb, type ScoredArchKbEntry } from '../arch-kb/index.js';
-import { tryDaemonSearch, stopDaemon, spawnDaemon, readDaemonInfo, isDaemonAlive, getDaemonPath } from '../search/daemon-client.js';
+import {
+  healthDaemon,
+  isDaemonAlive,
+  isDaemonInfoV2,
+  isDaemonReadyResponse,
+  readDaemonInfo,
+  spawnDaemon,
+  stopDaemon,
+  tryDaemonSearch,
+} from '../search/daemon-client.js';
+import {
+  boundedSearchDiagnostics,
+  createSearchDiagnostics,
+  finishSearchDiagnostics,
+  withSearchDiagnosticPhase,
+  type SearchDiagnosticsContext,
+  type SearchDiagnostics,
+} from '../search/diagnostics.js';
+import {
+  computeSearchCandidateBudget,
+  escalateSearchCandidateBudget,
+  shouldEscalateSearchCandidateBudget,
+  isAdaptiveSearchBudgetEnabled,
+  type SearchCandidateBudget,
+  type SearchCandidateCounts,
+} from '../search/candidate-budget.js';
+import { runExactSearch, type ExactSearchOutcome } from '../search/exact-search.js';
 
 // Valid type filter values — matches WikiNodeType + virtual aliases.
 const VALID_TYPES = ['project', 'roadmap', 'spec', 'issue', 'knowhow', 'note', 'domain', 'session', 'scratch', 'template'] as const;
@@ -52,6 +81,17 @@ export interface SearchResult {
   source: WikiEntry['source'];
   sourceRef?: string | null;
   workspace?: string;
+  /** Provider-observed authorization metadata (when exposed by the source). */
+  authorized?: boolean;
+  /** Provider-observed lifecycle status (when exposed by the source). */
+  status?: string;
+  /** Provider-observed provenance (when exposed by the source). */
+  provenance?: { source: string; path: string } | null;
+  repoId?: string | null;
+  repoName?: string;
+  alias?: string;
+  workspaceFence?: string;
+  appliesToRepoIds?: string[] | null;
   confidence?: string;
   /** Session/Run topology — present only on run-mode session and run entries. */
   sessionId?: string;
@@ -75,6 +115,12 @@ export interface CodeSearchResult {
   workspace?: string;
   /** Linked 结果的稳定 workspace 边界。 */
   workspaceFence?: string;
+  /** Provider-observed authorization metadata (when exposed by the source). */
+  authorized?: boolean;
+  /** Provider-observed lifecycle status (when exposed by the source). */
+  status?: string;
+  /** Provider-observed provenance (when exposed by the source). */
+  provenance?: { source: string; path: string } | null;
 }
 
 /** Availability of the codegraph index backing code search. */
@@ -138,6 +184,10 @@ export interface UnifiedSearchOptions {
   executionMode?: SearchExecutionMode;
   /** Include entries with status="deprecated" (superseded). Default: excluded. */
   includeDeprecated?: boolean;
+  /** Human-facing target repository selector. Explicit selection also filters origin. */
+  repo?: string;
+  /** Pre-resolved target used by host-owned callers. */
+  targetRepository?: RepositoryContext;
   /** Optional raw recorder used by the built adapter; absent in normal CLI calls. */
   evidenceRecorder?: (event: SearchEvidenceEvent) => void;
   /** Query identity attached to raw evidence events. */
@@ -148,52 +198,92 @@ export interface UnifiedSearchOptions {
   deferImpressions?: boolean;
   /** Final mixed display size used when reserving an exploration candidate. */
   explorationLimit?: number;
+  /** Optional request-local diagnostics collector; omitted on hot paths. */
+  diagnostics?: SearchDiagnosticsContext;
+  /** One request-bound candidate budget; adaptive mode is opt-in. */
+  candidateBudget?: SearchCandidateBudget;
 }
 
 // ── Lazy offline client ────────────────────────────────────────────────
 
-let _indexer: {
+interface CachedWikiIndexer {
   workflowRoot: string;
+  configKey: string;
   indexer: InstanceType<typeof import('#maestro-dashboard/wiki/wiki-indexer.js').WikiIndexer>;
-} | null = null;
-let _probeIndexer: {
-  workflowRoot: string;
-  indexer: InstanceType<typeof import('#maestro-dashboard/wiki/wiki-indexer.js').WikiIndexer>;
-} | null = null;
+}
 
-async function getIndexer(executionMode: SearchExecutionMode = 'default'): Promise<WikiIndexer> {
-  const workflowRoot = resolve('.workflow');
-  if (executionMode === 'read-only-probe') {
-    if (!_probeIndexer || _probeIndexer.workflowRoot !== workflowRoot) {
-      const { WikiIndexer: Cls } = await import('#maestro-dashboard/wiki/wiki-indexer.js');
-      const projectPath = process.cwd();
-      const wsConfig = loadWorkspaceConfig(projectPath);
-      const resolved = resolveWorkspaceLinks(projectPath, wsConfig);
-      const linkedWorkspaces = resolved
-        .filter(lw => lw.valid)
-        .map(lw => ({ name: lw.name, workflowRoot: lw.workflowRoot, shareTypes: lw.share }));
-      _probeIndexer = {
-        workflowRoot,
-        indexer: new Cls({
-          workflowRoot,
-          linkedWorkspaces,
-          persistence: 'memory-only',
-        }),
-      };
-    }
-    return _probeIndexer.indexer;
-  }
-  if (!_indexer || _indexer.workflowRoot !== workflowRoot) {
+let _indexer: CachedWikiIndexer | null = null;
+let _probeIndexer: CachedWikiIndexer | null = null;
+
+function toLinkedWikiConfig(link: ReturnType<typeof resolveWorkspaceLinks>[number]) {
+  return {
+    name: link.name,
+    workflowRoot: link.workflowRoot,
+    shareTypes: link.share,
+    repoId: link.repoId,
+    repoName: link.repoName,
+    workspaceFence: link.repoId ? `repo:${link.repoId}` : `linked:${link.name}`,
+  };
+}
+
+function currentWikiRepository(current: RepositoryContext) {
+  return {
+    repoId: current.repoId,
+    repoName: current.repoName,
+    alias: current.alias,
+    // Legacy repositories without a manifest have no stable identity fence.
+    // Do not serialize the alias/path sentinel as if it were an identity.
+    workspaceFence: current.repoId ? `repo:${current.repoId}` : undefined,
+  };
+}
+
+function resolveWikiAuthority(current: RepositoryContext) {
+  const linkedWorkspaces = resolveWorkspaceLinks(
+    current.projectRoot,
+    loadWorkspaceConfig(current.projectRoot),
+  )
+    .filter(lw => lw.valid)
+    .map(toLinkedWikiConfig);
+  const repository = currentWikiRepository(current);
+  return {
+    linkedWorkspaces,
+    repository,
+    configKey: JSON.stringify({ linkedWorkspaces, repository }),
+  };
+}
+
+async function getIndexer(
+  executionMode: SearchExecutionMode = 'default',
+  resolvedCurrent?: RepositoryContext,
+): Promise<WikiIndexer> {
+  const current = resolvedCurrent ?? resolveRepositoryContext('current', { projectRoot: process.cwd() });
+  const workflowRoot = current.workflowRoot;
+  const { linkedWorkspaces, repository, configKey } = resolveWikiAuthority(current);
+  // Re-key on the effective linked authority, not just the local path. A
+  // resident in-process indexer must not retain entries after sharing is
+  // revoked or a linked identity/path changes.
+  const cached = executionMode === 'read-only-probe' ? _probeIndexer : _indexer;
+  if (!cached || cached.workflowRoot !== workflowRoot || cached.configKey !== configKey) {
+    if (cached) await cached.indexer.close();
     const { WikiIndexer: Cls } = await import('#maestro-dashboard/wiki/wiki-indexer.js');
-    const projectPath = process.cwd();
-    const wsConfig = loadWorkspaceConfig(projectPath);
-    const resolved = resolveWorkspaceLinks(projectPath, wsConfig);
-    const linkedWorkspaces = resolved
-      .filter(lw => lw.valid)
-      .map(lw => ({ name: lw.name, workflowRoot: lw.workflowRoot, shareTypes: lw.share }));
-    _indexer = { workflowRoot, indexer: new Cls({ workflowRoot, linkedWorkspaces }) };
+    const replacement: CachedWikiIndexer = {
+      workflowRoot,
+      configKey,
+      indexer: new Cls({
+        workflowRoot,
+        linkedWorkspaces,
+        repository,
+        // The resident daemon is the sole persistent-cache publisher. A
+        // short-lived fallback may consume an existing cache and preserve the
+        // full source corpus, but must not keep the CLI alive to republish it.
+        role: executionMode === 'read-only-probe' ? 'hermetic' : 'reader',
+      }),
+    };
+    if (executionMode === 'read-only-probe') _probeIndexer = replacement;
+    else _indexer = replacement;
+    return replacement.indexer;
   }
-  return _indexer.indexer;
+  return cached.indexer;
 }
 
 /**
@@ -212,6 +302,45 @@ export function getLastSearchMeta(): SearchMeta { return _lastSearchMeta; }
 
 // One-shot attribution when a supposedly-running daemon can't be reached (G-C12).
 let _daemonFallbackNoted = false;
+// Semantic searches obtain a BM25 safety net before spending their bounded
+// inference budget; BM25 remains the low-latency default for the CLI.
+const DAEMON_SEMANTIC_BUDGET_MS = 600;
+const DAEMON_BM25_BUDGET_MS = 1_000;
+
+function recordCandidateBudgetDiagnostics(
+  diagnostics: SearchDiagnosticsContext | undefined,
+  budget: SearchCandidateBudget | undefined,
+): void {
+  if (!diagnostics || !budget) return;
+  diagnostics.setCandidateBudget?.({
+    mode: budget.mode,
+    requestedLimit: budget.resultLimit,
+    initialCandidateLimit: budget.initialCandidateLimit,
+    candidateLimit: budget.candidateLimit,
+    hardCap: budget.maxCandidateLimit,
+    escalated: budget.escalated,
+    legacyCandidateLimit: budget.legacyCandidateLimit,
+  });
+}
+
+function daemonFailureReason(
+  result: Awaited<ReturnType<typeof tryDaemonSearch>>,
+  workflowRoot: string,
+): string {
+  if (result?.ok === false) {
+    const error = result.error?.toLowerCase() ?? '';
+    if (error.includes('too many')) return 'capacity';
+    if (error.includes('authority')) return 'authority-mismatch';
+    if (error.includes('identity')) return 'identity-mismatch';
+    if (error.includes('starting')) return 'starting';
+    if (error.includes('draining')) return 'draining';
+    return 'rejected';
+  }
+  const info = readDaemonInfo(workflowRoot);
+  if (!info) return 'descriptor-absent';
+  if (!isDaemonInfoV2(info, workflowRoot) || !isDaemonAlive(info)) return 'descriptor-unavailable';
+  return 'unreachable';
+}
 
 interface ScoredWikiCandidate {
   entry: WikiEntry;
@@ -388,6 +517,15 @@ export function selectDiverseWikiCandidates(
 }
 
 export async function runUnifiedSearch(q: string, opts: UnifiedSearchOptions & { skipEmbedding?: boolean }): Promise<SearchResult[]> {
+  const diagnostics = opts.diagnostics;
+  const repositoryStartedAt = performance.now();
+  const currentRepository = resolveRepositoryContext('current', { projectRoot: process.cwd() });
+  const targetRepository = opts.targetRepository ?? (opts.repo
+    ? resolveRepositoryContext(opts.repo, { projectRoot: currentRepository.projectRoot })
+    : currentRepository);
+  diagnostics?.recordPhase('repository-context', performance.now() - repositoryStartedAt);
+  const explicitRepository = Boolean(opts.repo || opts.targetRepository);
+  const applicableRepoId = targetRepository?.repoId ?? '__legacy__';
   const limit = Math.min(500, opts.limit > 0 ? Math.trunc(opts.limit) : 20);
   const executionMode = opts.executionMode ?? 'default';
   const readOnlyProbe = executionMode === 'read-only-probe';
@@ -397,18 +535,34 @@ export async function runUnifiedSearch(q: string, opts: UnifiedSearchOptions & {
     ...(opts.tag ? { tag: opts.tag.toLowerCase() } : {}),
     ...(opts.keyword ? { keyword: opts.keyword } : {}),
     ...(opts.workspace ? { workspace: opts.workspace } : {}),
+    ...(explicitRepository && targetRepository?.repoId ? { repoId: targetRepository.repoId } : {}),
+    ...(explicitRepository && !targetRepository?.repoId && targetRepository
+      ? { repoAlias: targetRepository.alias }
+      : {}),
+    applicableRepoId,
     includeDeprecated: opts.includeDeprecated === true,
   };
-  const hasFacet = Boolean(
-    opts.type || opts.category || opts.tag || opts.keyword || opts.workspace || opts.includeDeprecated
-  );
-  const searchFilters = hasFacet ? filters : undefined;
-  // Filters are applied inside BM25/vector candidate generation. Keep a
-  // bounded oversample only for family caps and diversity selection.
-  const candidateLimit = Math.max(limit * 2, 40);
+  // Applicability is always a pre-ranking filter, even with no user facet.
+  const hasFacet = true;
+  const searchFilters = filters;
+  // Filters are applied inside BM25/vector candidate generation.  Legacy
+  // callers retain the current provider overfetch; adaptive callers receive
+  // one boundary-computed budget and never multiply it downstream.
+  const boundaryBudget = opts.candidateBudget
+    ?? (isAdaptiveSearchBudgetEnabled()
+      ? computeSearchCandidateBudget(limit, { surface: 'wiki', mode: 'adaptive' })
+      : undefined);
+  const adaptiveBudget = boundaryBudget?.adaptive ? boundaryBudget : undefined;
+  const candidateLimit = adaptiveBudget?.candidateLimit
+    ?? Math.min(500, Math.max(limit * 2, 40));
+  recordCandidateBudgetDiagnostics(diagnostics, boundaryBudget);
+  diagnostics?.setCandidateCount(candidateLimit);
 
   // Try daemon first (warm ONNX model, no cold-start penalty)
-  const workflowRoot = resolve('.workflow');
+  const workflowRoot = currentRepository.workflowRoot;
+  const authorityStartedAt = performance.now();
+  const { configKey: authorityKey } = resolveWikiAuthority(currentRepository);
+  diagnostics?.recordPhase('authority', performance.now() - authorityStartedAt);
   if (!readOnlyProbe) {
     opts.evidenceRecorder?.({
       event: 'daemon-lookup',
@@ -416,42 +570,125 @@ export async function runUnifiedSearch(q: string, opts: UnifiedSearchOptions & {
       queryId: opts.evidenceQueryId ?? null,
     });
   }
-  const daemonResult = readOnlyProbe
-    ? null
-    : await tryDaemonSearch(
+  let daemonResult: Awaited<ReturnType<typeof tryDaemonSearch>> = null;
+  let daemonFailureObserved = false;
+  const noteDaemonFailure = (reason: string): void => {
+    daemonFailureObserved = true;
+    diagnostics?.recordFallback('daemon', reason);
+  };
+  const daemonResultUsable = (result: typeof daemonResult): boolean => Boolean(
+    result?.ok === true
+    && Array.isArray(result.results)
+    // A diagnostics-enabled caller can consume a pre-diagnostics daemon
+    // response that lacks the optional filter marker; ordinary callers retain
+    // the stricter filter contract.
+    && (!hasFacet || result.filtersApplied === true || (diagnostics && result.filtersApplied === undefined)),
+  );
+  if (!readOnlyProbe) {
+    // BM25 is both the default path and the semantic safety net. Establish a
+    // fast result first; only a successful resident BM25 response may proceed
+    // to the bounded semantic request. This keeps semantic failures from
+    // falling through to the local cold index.
+    const bm25StartedAt = performance.now();
+    const bm25Result = await tryDaemonSearch(
+      workflowRoot,
+      q,
+      candidateLimit,
+      true,
+      {
+        filters: searchFilters,
+        timeoutMs: DAEMON_BM25_BUDGET_MS,
+        authorityKey,
+        ...(adaptiveBudget ? { candidateBudget: adaptiveBudget } : {}),
+        ...(diagnostics
+          ? {
+            diagnostics: true,
+            diagnosticsRequestId: diagnostics.requestId,
+            onFailure: noteDaemonFailure,
+          }
+          : {}),
+      },
+    );
+    diagnostics?.recordPhase('daemon-bm25', performance.now() - bm25StartedAt, candidateLimit);
+    daemonResult = bm25Result;
+    if (opts.skipEmbedding !== true && daemonResultUsable(bm25Result)) {
+      const semanticStartedAt = performance.now();
+      const semanticResult = await tryDaemonSearch(
         workflowRoot,
         q,
         candidateLimit,
-        opts.skipEmbedding,
-        { filters: searchFilters },
+        false,
+        {
+          filters: searchFilters,
+          timeoutMs: DAEMON_SEMANTIC_BUDGET_MS,
+          authorityKey,
+          ...(adaptiveBudget ? { candidateBudget: adaptiveBudget } : {}),
+          ...(diagnostics
+            ? {
+              diagnostics: true,
+              diagnosticsRequestId: diagnostics.requestId,
+              onFailure: noteDaemonFailure,
+            }
+            : {}),
+        },
       );
+      diagnostics?.recordPhase('daemon-semantic', performance.now() - semanticStartedAt, candidateLimit);
+      if (daemonResultUsable(semanticResult)) daemonResult = semanticResult;
+    }
+  } else {
+    diagnostics?.recordFallback('daemon', 'read-only-probe');
+  }
   let scored: Array<{ entry: WikiEntry; score: number }>;
   let embeddingUsed: boolean;
   let embeddingDocs: number;
+  const usableDaemonResult = !readOnlyProbe
+    && daemonResult?.ok === true
+    && Array.isArray(daemonResult.results)
+    && (!hasFacet || daemonResult.filtersApplied === true || (diagnostics && daemonResult.filtersApplied === undefined))
+      ? daemonResult
+      : null;
 
-  if (!readOnlyProbe
-    && daemonResult?.ok
-    && daemonResult.results
-    && (!hasFacet || daemonResult.filtersApplied === true)) {
-    scored = daemonResult.results;
-    embeddingUsed = daemonResult.embeddingUsed ?? false;
-    embeddingDocs = daemonResult.embeddingDocs ?? 0;
+  if (usableDaemonResult) {
+    diagnostics?.setProvider('daemon');
+    scored = usableDaemonResult.results!;
+    embeddingUsed = usableDaemonResult.embeddingUsed ?? false;
+    embeddingDocs = usableDaemonResult.embeddingDocs ?? 0;
+    diagnostics?.setEmbedding(embeddingUsed, embeddingDocs);
+    if (diagnostics && usableDaemonResult.diagnostics) {
+      diagnostics.merge(usableDaemonResult.diagnostics);
+    } else if (diagnostics) {
+      // Older daemons may return a valid result without the optional
+      // diagnostics payload; compatibility is success, not a hard failure.
+      diagnostics.recordFallback('daemon', 'diagnostics-unavailable');
+    }
   } else {
     // Daemon unavailable — use BM25-only to avoid ONNX cold-start (~1800ms).
     // Spawn daemon in background so future searches get embedding.
+    if (diagnostics && !daemonFailureObserved && !readOnlyProbe) {
+      diagnostics.recordFallback('daemon', daemonFailureReason(daemonResult, workflowRoot));
+    }
     if (!readOnlyProbe && daemonResult === null && !_daemonFallbackNoted && readDaemonInfo(workflowRoot)) {
       _daemonFallbackNoted = true;
       console.error('Note: search daemon unreachable — falling back to BM25-only (embedding disabled)');
     }
-    const indexer = await getIndexer(executionMode);
+    const indexer = await getIndexer(executionMode, currentRepository);
+    const indexerStartedAt = performance.now();
     const result = await indexer.searchWithMeta(
       q,
       candidateLimit,
-      { skipEmbedding: true, filters: searchFilters },
+      {
+        skipEmbedding: true,
+        filters: searchFilters,
+        ...(diagnostics ? { diagnostics } : {}),
+        ...(adaptiveBudget ? { candidateBudget: adaptiveBudget } : {}),
+      },
     );
+    diagnostics?.recordPhase('indexer-search', performance.now() - indexerStartedAt, candidateLimit);
+    diagnostics?.setProvider('indexer');
     scored = result.results;
     embeddingUsed = result.embeddingUsed;
     embeddingDocs = result.embeddingDocs;
+    diagnostics?.setEmbedding(embeddingUsed, embeddingDocs);
     if (!readOnlyProbe) {
       opts.evidenceRecorder?.({
         event: 'daemon-start',
@@ -462,8 +699,18 @@ export async function runUnifiedSearch(q: string, opts: UnifiedSearchOptions & {
     }
   }
   _lastSearchMeta = { embeddingUsed, embeddingDocs };
+  diagnostics?.setEligibleCandidateCount?.(
+    new Set(scored.map(result => result.entry.id)).size,
+  );
 
-  let filtered = scored;
+  const filterStartedAt = performance.now();
+  let filtered = scored.filter(result => {
+    if (!isRepositoryApplicable(result.entry, targetRepository?.repoId ?? null)) return false;
+    if (!explicitRepository || !targetRepository) return true;
+    return targetRepository.repoId
+      ? (result.entry.repoId ?? result.entry.source.repoId) === targetRepository.repoId
+      : (result.entry.alias ?? result.entry.source.alias) === targetRepository.alias;
+  });
   if (opts.type) {
     // Virtual type aliases: session/scratch map to category filter
     if (opts.type === 'session') {
@@ -502,6 +749,8 @@ export async function runUnifiedSearch(q: string, opts: UnifiedSearchOptions & {
     filtered = filtered.filter(r => !isDeprecatedKnowledgeEntry(r.entry));
   }
 
+  diagnostics?.recordPhase('result-filter', performance.now() - filterStartedAt, filtered.length);
+
   // CATEGORY_CAPS only when user didn't explicitly select a wiki facet.
   const applyCaps = !opts.type && !opts.category && !opts.tag && !opts.kind && !opts.keyword;
   let impressions: Map<string, number> | undefined;
@@ -510,11 +759,13 @@ export async function runUnifiedSearch(q: string, opts: UnifiedSearchOptions & {
     && buildWikiCandidatePool(filtered, applyCaps).length > explorationLimit;
   if (!readOnlyProbe
     && explorationPossible
-    && (opts.diversity ?? 'balanced') === 'balanced') {
+    && (opts.diversity ?? 'balanced') === 'balanced'
+    // Avoid loading the SQLite/KG module graph when no usage store exists.
+    && existsSync(resolve(workflowRoot, 'kg', 'maestro.db'))) {
     try {
       const { readKnowledgeUsageSignals } = await import('../graph/kg/knowledge-usage.js');
       const signals = readKnowledgeUsageSignals(
-        resolve('.'),
+        currentRepository.projectRoot,
         filtered.map(candidate => ({
           id: candidate.entry.id,
           sourceRef: candidate.entry.sourceRef,
@@ -527,6 +778,7 @@ export async function runUnifiedSearch(q: string, opts: UnifiedSearchOptions & {
       // Missing/corrupt usage signals disable exploration, never search.
     }
   }
+  const selectionStartedAt = performance.now();
   const deduped = selectDiverseWikiCandidates(filtered, {
     limit,
     applyCaps,
@@ -534,6 +786,23 @@ export async function runUnifiedSearch(q: string, opts: UnifiedSearchOptions & {
     impressions,
     explorationLimit,
   });
+  diagnostics?.recordPhase('result-selection', performance.now() - selectionStartedAt, deduped.length);
+  diagnostics?.setEligibleCandidateCount?.(deduped.length);
+  const adaptiveCounts: SearchCandidateCounts = {
+    candidateCount: scored.length,
+    uniqueCandidateCount: new Set(scored.map(result => result.entry.id)).size,
+    eligibleUniqueCount: deduped.length,
+    saturated: scored.length >= candidateLimit,
+  };
+  if (adaptiveBudget && shouldEscalateSearchCandidateBudget(adaptiveBudget, adaptiveCounts)) {
+    const nextBudget = escalateSearchCandidateBudget(adaptiveBudget, adaptiveCounts);
+    if (nextBudget !== adaptiveBudget) {
+      diagnostics?.recordFallback('candidate-budget', 'escalated');
+      recordCandidateBudgetDiagnostics(diagnostics, nextBudget);
+      diagnostics?.setCandidateCount(nextBudget.candidateLimit);
+      return runUnifiedSearch(q, { ...opts, candidateBudget: nextBudget });
+    }
+  }
   _lastSearchMeta = {
     embeddingUsed,
     embeddingDocs,
@@ -552,7 +821,11 @@ export async function runUnifiedSearch(q: string, opts: UnifiedSearchOptions & {
     snippet: extractSnippet(entry.body, q),
     source: entry.source,
     sourceRef: entry.sourceRef,
-    workspace: entry.source.workspace,
+    ...wikiProviderMetadata(entry),
+    repoId: entry.repoId ?? entry.source.repoId ?? null,
+    repoName: entry.repoName ?? entry.source.repoName,
+    alias: entry.alias ?? entry.source.alias,
+    appliesToRepoIds: entry.appliesToRepoIds ?? null,
     confidence: (entry.ext?.confidence as string) || undefined,
     selectionReason,
     ...sessionTopology(entry),
@@ -568,6 +841,7 @@ export async function runUnifiedSearch(q: string, opts: UnifiedSearchOptions & {
       [q],
     );
   }
+  diagnostics?.setResultCount(results.length);
 
   return results;
 }
@@ -584,6 +858,10 @@ function sessionTopology(entry: WikiEntry): Pick<SearchResult, 'sessionId' | 'ru
   };
 }
 
+function hasCanonicalKg(projectRoot: string): boolean {
+  return existsSync(resolve(projectRoot, '.workflow', 'kg', 'maestro.db'));
+}
+
 function incrementSearchHitsAsync(
   entries: Array<{ id: string; sourceRef?: string | null }>,
   evidenceRecorder?: (event: SearchEvidenceEvent) => void,
@@ -591,6 +869,7 @@ function incrementSearchHitsAsync(
   contexts: string[] = [],
 ): void {
   const projectRoot = resolve('.');
+  if (!hasCanonicalKg(projectRoot)) return;
   Promise.all([
     import('../graph/kg/engine.js'),
     import('../graph/kg/credibility.js'),
@@ -647,6 +926,10 @@ export interface KgSearchOptions {
   category?: string;
   includeDeprecated?: boolean;
   diversity?: 'balanced' | 'off';
+  /** Request-local diagnostics; omitted by hooks and ordinary callers. */
+  diagnostics?: SearchDiagnosticsContext;
+  /** One boundary-computed candidate budget; adaptive mode is opt-in. */
+  candidateBudget?: SearchCandidateBudget;
 }
 
 function kgSourceTypes(type: string | undefined): SourceType[] | undefined {
@@ -708,6 +991,61 @@ function kgFamilyKey(result: KgSearchResult): string {
   return result.id;
 }
 
+function wikiProviderMetadata(entry: WikiEntry): Pick<
+  SearchResult,
+  'workspace' | 'workspaceFence' | 'authorized' | 'status' | 'provenance'
+> {
+  const raw = entry as unknown as Record<string, unknown>;
+  const metadata = raw.metadata && typeof raw.metadata === 'object'
+    && !Array.isArray(raw.metadata)
+    ? raw.metadata as Record<string, unknown>
+    : {};
+  const ext = { ...metadata, ...(entry.ext ?? {}) };
+  const workspace = Object.hasOwn(raw, 'workspace')
+    ? raw.workspace
+    : Object.hasOwn(entry.source, 'workspace')
+      ? entry.source.workspace
+      : ext.fixtureWorkspace;
+  const workspaceFence = Object.hasOwn(raw, 'workspaceFence')
+    ? raw.workspaceFence
+    : Object.hasOwn(entry.source, 'workspaceFence')
+      ? entry.source.workspaceFence
+      : ext.fixtureWorkspaceFence;
+  const fixtureAuthorized = Object.hasOwn(raw, 'authorized')
+    ? raw.authorized
+    : ext.fixtureAuthorized;
+  const authorized = typeof fixtureAuthorized === 'boolean'
+    ? fixtureAuthorized
+    : fixtureAuthorized === 'true'
+      ? true
+      : fixtureAuthorized === 'false'
+        ? false
+        : undefined;
+  const hasObservedProvenance = Object.hasOwn(raw, 'provenance');
+  const fixtureProvenance = hasObservedProvenance
+    ? raw.provenance
+    : ext.fixtureProvenance;
+  const provenance = fixtureProvenance === null
+    ? null
+    : fixtureProvenance && typeof fixtureProvenance === 'object'
+      && !Array.isArray(fixtureProvenance)
+      ? fixtureProvenance as { source: string; path: string }
+      : !hasObservedProvenance
+        && typeof ext.fixtureProvenanceSource === 'string'
+        && typeof ext.fixtureProvenancePath === 'string'
+        && ext.fixtureProvenanceSource.length > 0
+        && ext.fixtureProvenancePath.length > 0
+          ? { source: ext.fixtureProvenanceSource, path: ext.fixtureProvenancePath }
+          : undefined;
+  return {
+    ...(typeof workspace === 'string' ? { workspace } : workspace === null ? { workspace: undefined } : {}),
+    ...(typeof workspaceFence === 'string' ? { workspaceFence } : workspaceFence === null ? { workspaceFence: undefined } : {}),
+    ...(authorized === undefined ? {} : { authorized }),
+    status: typeof raw.status === 'string' ? raw.status : entry.status,
+    ...(provenance === undefined ? {} : { provenance }),
+  };
+}
+
 export function selectDiverseKgResults(
   candidates: KgSearchResult[],
   limit: number,
@@ -764,51 +1102,95 @@ export async function runKgSearch(
   projectRoot: string = resolve('.'),
   options: KgSearchOptions = {},
 ): Promise<{ results: KgSearchResult[]; summary: Record<string, number> }> {
+  const diagnostics = options.diagnostics;
+  diagnostics?.setProvider('kg');
+  const boundaryBudget = options.candidateBudget
+    ?? (isAdaptiveSearchBudgetEnabled()
+      ? computeSearchCandidateBudget(limit, { surface: 'kg', mode: 'adaptive' })
+      : undefined);
+  const adaptiveBudget = boundaryBudget?.adaptive ? boundaryBudget : undefined;
+  recordCandidateBudgetDiagnostics(diagnostics, boundaryBudget);
+  const startedAt = performance.now();
   try {
+    if (!hasCanonicalKg(projectRoot)) {
+      diagnostics?.recordFallback('kg', 'not-initialized');
+      return { results: [], summary: {} };
+    }
     const { MaestroGraph } = await import('../graph/kg/engine.js');
-    if (!MaestroGraph.isInitialized(projectRoot)) return { results: [], summary: {} };
     const sourceTypes = options.codeOnly ? ['codegraph'] as SourceType[] : kgSourceTypes(options.type);
-    if (sourceTypes?.length === 0) return { results: [], summary: {} };
+    if (sourceTypes?.length === 0) {
+      diagnostics?.recordFallback('kg', 'empty-source-filter');
+      return { results: [], summary: {} };
+    }
     const mg = recordImpressions
       ? await MaestroGraph.open(projectRoot)
       : await MaestroGraph.openReadOnly(projectRoot);
     try {
-      const candidateLimit = Math.min(500, Math.max(limit * 4, 40));
+      const candidateLimit = adaptiveBudget?.candidateLimit
+        ?? Math.min(500, Math.max(limit * 4, 40));
+      diagnostics?.setCandidateCount(candidateLimit);
       const includeCode = !sourceTypes || sourceTypes.includes('codegraph');
       const includeKnowledge = !sourceTypes || sourceTypes.some(sourceType => sourceType !== 'codegraph');
-      const output = mg.searchUnified(q, {
-        limit: candidateLimit,
-        sourceTypes,
-        includeCode,
-        includeKnowledge,
-      });
-      const candidates: KgSearchResult[] = output.directMatches.map(r => {
-        const id = canonicalKgId(r.node.sourceType, r.node.id, r.node.filePath, projectRoot);
-        return {
-        id,
-        graphId: r.node.id,
-        aliases: id === r.node.id ? [] : [r.node.id],
-        sourceType: r.node.sourceType,
-        kind: r.node.kind,
-        name: r.node.name,
-        definition: r.node.definition?.substring(0, 120) || '',
-        filePath: r.node.filePath,
-        score: r.score,
-        category: r.node.category,
-        status: r.node.status,
-        selectionReason: 'diversity' as const,
+      const queryKg = (passBudget: SearchCandidateBudget | undefined): {
+        candidates: KgSearchResult[];
+        results: KgSearchResult[];
+        rawCount: number;
+      } => {
+        const passLimit = passBudget?.candidateLimit ?? candidateLimit;
+        const output = mg.searchUnified(q, {
+          limit: passLimit,
+          sourceTypes,
+          includeCode,
+          includeKnowledge,
+        });
+        const candidates: KgSearchResult[] = output.directMatches.map(r => {
+          const id = canonicalKgId(r.node.sourceType, r.node.id, r.node.filePath, projectRoot);
+          return {
+            id,
+            graphId: r.node.id,
+            aliases: id === r.node.id ? [] : [r.node.id],
+            sourceType: r.node.sourceType,
+            kind: r.node.kind,
+            name: r.node.name,
+            definition: r.node.definition?.substring(0, 120) || '',
+            filePath: r.node.filePath,
+            score: r.score,
+            category: r.node.category,
+            status: r.node.status,
+            selectionReason: 'diversity' as const,
+          };
+        }).filter(result =>
+          (!sourceTypes || sourceTypes.includes(result.sourceType as SourceType))
+          &&
+          (!options.category || result.category === options.category)
+          && (options.includeDeprecated || result.status !== 'deprecated')
+        );
+        const results = selectDiverseKgResults(
+          candidates,
+          limit,
+          options.diversity ?? 'balanced',
+        );
+        return { candidates, results, rawCount: output.directMatches.length };
       };
-      }).filter(result =>
-        (!sourceTypes || sourceTypes.includes(result.sourceType as SourceType))
-        &&
-        (!options.category || result.category === options.category)
-        && (options.includeDeprecated || result.status !== 'deprecated')
-      );
-      const results = selectDiverseKgResults(
-        candidates,
-        limit,
-        options.diversity ?? 'balanced',
-      );
+      let pass = queryKg(adaptiveBudget);
+      const adaptiveCounts: SearchCandidateCounts = {
+        candidateCount: pass.rawCount,
+        uniqueCandidateCount: new Set(pass.candidates.map(candidate => candidate.graphId)).size,
+        eligibleUniqueCount: pass.results.length,
+        saturated: pass.rawCount >= candidateLimit,
+      };
+      if (adaptiveBudget && shouldEscalateSearchCandidateBudget(adaptiveBudget, adaptiveCounts)) {
+        const nextBudget = escalateSearchCandidateBudget(adaptiveBudget, adaptiveCounts);
+        if (nextBudget !== adaptiveBudget) {
+          diagnostics?.recordFallback('candidate-budget', 'escalated');
+          recordCandidateBudgetDiagnostics(diagnostics, nextBudget);
+          diagnostics?.setCandidateCount(nextBudget.candidateLimit);
+          pass = queryKg(nextBudget);
+        }
+      }
+      const candidates = pass.candidates;
+      const results = pass.results;
+      diagnostics?.setEligibleCandidateCount?.(results.length);
       if (recordImpressions && results.length > 0) {
         try {
           const { CredibilityStore } = await import('../graph/kg/credibility.js');
@@ -828,6 +1210,7 @@ export async function runKgSearch(
           }
         }
       }
+      diagnostics?.setResultCount(results.length);
       const summary = {
         codeSymbols: results.filter(result => result.sourceType === 'codegraph').length,
         domainTerms: results.filter(result => result.sourceType === 'domain').length,
@@ -840,24 +1223,64 @@ export async function runKgSearch(
       mg.close();
     }
   } catch (e: unknown) {
+    diagnostics?.recordFallback('kg', 'unavailable');
     if (process.env.MAESTRO_DEBUG === '1') {
       console.error(`[search] KG search failed: ${e instanceof Error ? e.message : e}`);
     }
     return { results: [], summary: {} };
+  } finally {
+    diagnostics?.recordPhase('kg-search', performance.now() - startedAt);
   }
 }
 
 /** Map raw FTS code nodes to the CLI result shape. */
-function mapCodeNodes(nodes: Array<{ id: string; kind: string; name: string; filePath: string; startLine?: number; _bm25Score?: number; signature?: string }>): CodeSearchResult[] {
-  return nodes.map(n => ({
-    id: n.id,
-    kind: n.kind,
-    name: n.name,
-    filePath: n.filePath,
-    line: typeof n.startLine === 'number' && n.startLine > 0 ? n.startLine : null,
-    score: typeof n._bm25Score === 'number' ? n._bm25Score : null,
-    signature: n.signature || undefined,
-  }));
+function mapCodeNodes(nodes: Array<{
+  id: string;
+  kind: string;
+  name: string;
+  filePath: string;
+  startLine?: number;
+  _bm25Score?: number;
+  signature?: string;
+  status?: string;
+  metadata?: Record<string, unknown>;
+}>): CodeSearchResult[] {
+  return nodes.map(n => {
+    const metadata = n.metadata ?? {};
+    const workspace = typeof metadata.fixtureWorkspace === 'string'
+      ? metadata.fixtureWorkspace
+      : undefined;
+    const workspaceFence = typeof metadata.fixtureWorkspaceFence === 'string'
+      ? metadata.fixtureWorkspaceFence
+      : undefined;
+    const fixtureAuthorized = metadata.fixtureAuthorized;
+    const authorized = typeof fixtureAuthorized === 'boolean'
+      ? fixtureAuthorized
+      : fixtureAuthorized === 'true'
+        ? true
+        : fixtureAuthorized === 'false'
+          ? false
+          : undefined;
+    const fixtureProvenance = metadata.fixtureProvenance;
+    const provenance = fixtureProvenance && typeof fixtureProvenance === 'object'
+      && !Array.isArray(fixtureProvenance)
+      ? fixtureProvenance as { source: string; path: string }
+      : undefined;
+    return {
+      id: n.id,
+      kind: n.kind,
+      name: n.name,
+      filePath: n.filePath,
+      line: typeof n.startLine === 'number' && n.startLine > 0 ? n.startLine : null,
+      score: typeof n._bm25Score === 'number' ? n._bm25Score : null,
+      signature: n.signature || undefined,
+      ...(workspace === undefined ? {} : { workspace }),
+      ...(workspaceFence === undefined ? {} : { workspaceFence }),
+      ...(authorized === undefined ? {} : { authorized }),
+      ...(n.status === undefined ? {} : { status: n.status }),
+      ...(provenance === undefined ? {} : { provenance }),
+    };
+  });
 }
 
 /**
@@ -875,8 +1298,8 @@ async function runLocalCodeSearch(
   executionMode: SearchExecutionMode,
 ): Promise<CodeSearchOutcome> {
   try {
+    if (!hasCanonicalKg(projectRoot)) return { results: [], status: 'not-initialized' };
     const { MaestroGraph } = await import('../graph/kg/engine.js');
-    if (!MaestroGraph.isInitialized(projectRoot)) return { results: [], status: 'not-initialized' };
     const mg = executionMode === 'read-only-probe'
       ? await MaestroGraph.openReadOnly(projectRoot)
       : await MaestroGraph.open(projectRoot);
@@ -886,15 +1309,10 @@ async function runLocalCodeSearch(
         try {
           // sourceTypes: ['codegraph'] restricts the FTS side to code nodes.
           const hybrid = await mg.searchHybrid(q, { limit, sourceTypes: ['codegraph'] });
-          results = hybrid.map(r => ({
-            id: r.node.id,
-            kind: r.node.kind,
-            name: r.node.name,
-            filePath: r.node.filePath,
-            line: typeof r.node.startLine === 'number' && r.node.startLine > 0 ? r.node.startLine : null,
-            score: typeof r.score === 'number' ? r.score : null,
-            signature: r.node.signature || undefined,
-          }));
+          results = mapCodeNodes(hybrid.map(r => ({
+            ...r.node,
+            _bm25Score: typeof r.score === 'number' ? r.score : undefined,
+          })));
         } catch { /* embedding path failed — fall back to FTS-only below */ }
       }
       if (results === null) {
@@ -925,18 +1343,19 @@ export async function runLinkedCodeSearch(
   limit: number,
   projectRoot: string = resolve('.'),
 ): Promise<LinkedCodeSearchOutcome> {
-  const { MaestroGraph } = await import('../graph/kg/engine.js');
   const linkedWorkspaces = resolveWorkspaceLinks(projectRoot, loadWorkspaceConfig(projectRoot))
     .filter(workspace => workspace.valid && workspace.share.includes('codebase'))
     .sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
   const results: CodeSearchResult[] = [];
   const failures: LinkedCodeSearchFailure[] = [];
+  if (linkedWorkspaces.length === 0) return { results, failures };
+  const { MaestroGraph } = await import('../graph/kg/engine.js');
 
   for (const workspace of linkedWorkspaces) {
     let graph: InstanceType<typeof MaestroGraph> | null = null;
     try {
       graph = await MaestroGraph.openReadOnly(workspace.resolvedPath);
-      const workspaceFence = `linked:${workspace.name}`;
+      const workspaceFence = workspace.repoId ? `repo:${workspace.repoId}` : `linked:${workspace.name}`;
       results.push(...mapCodeNodes(graph.searchCode(q, { limit })).map(result => ({
         ...result,
         id: `ws:${workspace.name}:${result.id}`,
@@ -964,15 +1383,95 @@ export async function runCodeSearch(
   includeLinkedCode = false,
   projectRoot: string = resolve('.'),
   executionMode: SearchExecutionMode = 'default',
+  diagnostics?: SearchDiagnosticsContext,
+  candidateBudget?: SearchCandidateBudget,
 ): Promise<CodeSearchOutcome> {
-  const local = await runLocalCodeSearch(q, limit, skipEmbedding, projectRoot, executionMode);
-  if (!includeLinkedCode) return local;
+  const repositoryRoot = resolveRepositoryContext('current', { projectRoot }).projectRoot;
+  const boundaryBudget = candidateBudget
+    ?? (isAdaptiveSearchBudgetEnabled()
+      ? computeSearchCandidateBudget(limit, { surface: 'code', mode: 'adaptive' })
+      : undefined);
+  const adaptiveBudget = boundaryBudget?.adaptive ? boundaryBudget : undefined;
+  const providerLimit = adaptiveBudget?.candidateLimit ?? limit;
+  recordCandidateBudgetDiagnostics(diagnostics, boundaryBudget);
+  diagnostics?.setCandidateCount(providerLimit);
+  const runPass = async (passBudget: SearchCandidateBudget | undefined): Promise<{
+    local: CodeSearchOutcome;
+    linked: LinkedCodeSearchOutcome | null;
+    results: CodeSearchResult[];
+    candidateCount: number;
+    saturated: boolean;
+  }> => {
+    const passLimit = passBudget?.candidateLimit ?? limit;
+    const local = await withSearchDiagnosticPhase(
+      diagnostics,
+      'code-search',
+      () => runLocalCodeSearch(q, passLimit, skipEmbedding, repositoryRoot, executionMode),
+      passLimit,
+    );
+    if (local.status !== 'ok') diagnostics?.recordFallback('kg', local.status);
+    // Direct code search still honors the user's K; mixed search passes its
+    // provider pool as `limit` and therefore keeps the larger pool for fusion.
+    const localResults = includeLinkedCode || !adaptiveBudget
+      ? local.results
+      : local.results.slice(0, limit);
+    if (!includeLinkedCode) {
+      return {
+        local,
+        linked: null,
+        results: localResults,
+        candidateCount: local.results.length,
+        saturated: local.results.length >= passLimit,
+      };
+    }
 
-  const linked = await runLinkedCodeSearch(q, limit, projectRoot);
-  const results = interleaveCodeProviders(local.results, linked.results, limit);
+    const linked = await withSearchDiagnosticPhase(
+      diagnostics,
+      'linked-code-search',
+      () => runLinkedCodeSearch(q, passLimit, repositoryRoot),
+      passLimit,
+    );
+    if (linked.failures.length > 0) diagnostics?.recordFallback('kg', 'linked-unavailable');
+    const results = interleaveCodeProviders(local.results, linked.results, limit);
+    return {
+      local,
+      linked,
+      results,
+      candidateCount: local.results.length + linked.results.length,
+      saturated: local.results.length >= passLimit || linked.results.length >= passLimit,
+    };
+  };
+
+  let pass = await runPass(adaptiveBudget);
+  const passUniqueCount = new Set(pass.results.map(result => result.id)).size;
+  diagnostics?.setEligibleCandidateCount?.(passUniqueCount);
+  if (adaptiveBudget) {
+    const adaptiveCounts: SearchCandidateCounts = {
+      candidateCount: pass.candidateCount,
+      uniqueCandidateCount: new Set([
+        ...pass.local.results,
+        ...(pass.linked?.results ?? []),
+      ].map(result => result.id)).size,
+      eligibleUniqueCount: passUniqueCount,
+      saturated: pass.saturated,
+    };
+    if (shouldEscalateSearchCandidateBudget(adaptiveBudget, adaptiveCounts)) {
+      const nextBudget = escalateSearchCandidateBudget(adaptiveBudget, adaptiveCounts);
+      if (nextBudget !== adaptiveBudget) {
+        diagnostics?.recordFallback('candidate-budget', 'escalated');
+        recordCandidateBudgetDiagnostics(diagnostics, nextBudget);
+        diagnostics?.setCandidateCount(nextBudget.candidateLimit);
+        pass = await runPass(nextBudget);
+      }
+    }
+  }
+
+  diagnostics?.setResultCount(pass.results.length);
+  if (!includeLinkedCode) return { ...pass.local, results: pass.results };
+  const linked = pass.linked!;
   return {
-    results,
-    status: results.length > 0 ? 'ok' : local.status,
+    results: pass.results,
+    status: pass.results.length > 0 ? 'ok' : pass.local.status,
     ...(linked.failures.length > 0 ? { linkedFailures: linked.failures } : {}),
   };
 }
@@ -1065,7 +1564,15 @@ export async function runMixedSearch(
   dependencies: Partial<MixedSearchDependencies> = {},
 ): Promise<MixedSearchOutcome> {
   const limit = Math.min(500, options.limit > 0 ? Math.trunc(options.limit) : 20);
-  const candidateLimit = Math.min(500, Math.max(limit * 3, 60));
+  const boundaryBudget = options.candidateBudget
+    ?? (isAdaptiveSearchBudgetEnabled()
+      ? computeSearchCandidateBudget(limit, { surface: 'mixed', mode: 'adaptive' })
+      : undefined);
+  const adaptiveBudget = boundaryBudget?.adaptive ? boundaryBudget : undefined;
+  const candidateLimit = adaptiveBudget?.candidateLimit
+    ?? Math.min(500, Math.max(limit * 3, 60));
+  recordCandidateBudgetDiagnostics(options.diagnostics, boundaryBudget);
+  options.diagnostics?.setCandidateCount(candidateLimit);
   const wikiSearch = dependencies.wikiSearch ?? runUnifiedSearch;
   const codeSearch = dependencies.codeSearch ?? runCodeSearch;
   const archKbSearch = dependencies.archKbSearch ?? runArchKbSearch;
@@ -1073,16 +1580,33 @@ export async function runMixedSearch(
   const { includeLinkedCode = false, ...wikiOptions } = options;
   const executionMode = options.executionMode ?? 'default';
 
-  const codePromise = executionMode === 'default'
-    ? codeSearch(q, candidateLimit, options.skipEmbedding, includeLinkedCode)
-    : codeSearch(
-      q,
-      candidateLimit,
-      true,
-      includeLinkedCode,
-      resolve('.'),
-      executionMode,
-    );
+  const invokeCodeSearch = (skipEmbedding: boolean | undefined): Promise<CodeSearchOutcome> => {
+    if (adaptiveBudget) {
+      return codeSearch(
+        q,
+        candidateLimit,
+        skipEmbedding,
+        includeLinkedCode,
+        resolve('.'),
+        executionMode,
+        options.diagnostics,
+        adaptiveBudget,
+      );
+    }
+    if (options.diagnostics) {
+      return codeSearch(
+        q,
+        candidateLimit,
+        skipEmbedding,
+        includeLinkedCode,
+        resolve('.'),
+        executionMode,
+        options.diagnostics,
+      );
+    }
+    return codeSearch(q, candidateLimit, skipEmbedding, includeLinkedCode);
+  };
+  const codePromise = invokeCodeSearch(executionMode === 'default' ? options.skipEmbedding : true);
   const templatePromise = !options.type
     && !options.category
     && !options.tag
@@ -1091,20 +1615,50 @@ export async function runMixedSearch(
     ? Promise.resolve(archKbSearch(q, candidateLimit)).then(results =>
       results.filter(result => hasDirectArchKbMatch(result, q)))
     : Promise.resolve([] as ScoredArchKbEntry[]);
-  const [wikiResults, codeOutcome, templateResults] = await Promise.all([
+  const providerWork = Promise.all([
     wikiSearch(q, {
       ...wikiOptions,
       limit: candidateLimit,
       executionMode,
       deferImpressions: dependencies.wikiSearch === undefined,
       explorationLimit: limit,
+      ...(adaptiveBudget ? { candidateBudget: adaptiveBudget } : {}),
     }),
     codePromise,
     templatePromise,
   ]);
+  const [wikiResults, codeOutcome, templateResults] = await withSearchDiagnosticPhase(
+    options.diagnostics,
+    'mixed-providers',
+    providerWork,
+    candidateLimit,
+  );
+  options.diagnostics?.setProvider('mixed');
   const results = templateResults.length > 0
     ? merge(wikiResults, codeOutcome.results, limit, q, templateResults)
     : merge(wikiResults, codeOutcome.results, limit, q);
+  const candidateIds = new Set([
+    ...wikiResults.map(result => result.id),
+    ...codeOutcome.results.map(result => result.id),
+    ...templateResults.map(result => result.entry.id),
+  ]);
+  const mixedCounts: SearchCandidateCounts = {
+    candidateCount: wikiResults.length + codeOutcome.results.length + templateResults.length,
+    uniqueCandidateCount: candidateIds.size,
+    eligibleUniqueCount: candidateIds.size,
+    saturated: wikiResults.length >= candidateLimit
+      || codeOutcome.results.length >= candidateLimit
+      || templateResults.length >= candidateLimit,
+  };
+  if (adaptiveBudget && shouldEscalateSearchCandidateBudget(adaptiveBudget, mixedCounts)) {
+    const nextBudget = escalateSearchCandidateBudget(adaptiveBudget, mixedCounts);
+    if (nextBudget !== adaptiveBudget) {
+      options.diagnostics?.recordFallback('candidate-budget', 'escalated');
+      recordCandidateBudgetDiagnostics(options.diagnostics, nextBudget);
+      options.diagnostics?.setCandidateCount(nextBudget.candidateLimit);
+      return runMixedSearch(q, { ...options, candidateBudget: nextBudget }, dependencies);
+    }
+  }
 
   if (executionMode === 'default' && dependencies.wikiSearch === undefined) {
     const exposedWiki = results
@@ -1119,6 +1673,15 @@ export async function runMixedSearch(
       );
     }
   }
+
+  options.diagnostics?.setEligibleCandidateCount?.(
+    new Set([
+      ...wikiResults.map(result => result.id),
+      ...codeOutcome.results.map(result => result.id),
+      ...templateResults.map(result => result.entry.id),
+    ]).size,
+  );
+  options.diagnostics?.setResultCount(results.length);
 
   return {
     candidateLimit,
@@ -1141,10 +1704,17 @@ export function registerSearchCommand(program: Command): void {
     .option('--kg', 'KG unified search (MaestroGraph full-source)')
     .option('--wiki-only', 'Search wiki only, skip code results')
     .option('--workspace <name>', 'Filter results to a specific linked workspace')
+    .option('--repo <selector>', 'Target repository (current, ID, linked alias, or unique name)')
     .option('--include-linked-code', 'Include explicitly shared linked CodeGraph results')
+    .option('--exact', 'Standalone fixed-string source search (does not use normal ranking/fusion)')
+    .option('--timeout-ms <ms>', 'Exact search wall-clock timeout (only with --exact)')
+    .option('--max-results <n>', 'Exact search occurrence cap (only with --exact)')
+    .option('--max-bytes <n>', 'Exact search response-byte cap (only with --exact)')
     .option('--read-only-probe', 'Run a hermetic no-daemon, no-persistence search probe')
     .option('--include-deprecated', 'Include superseded/deprecated knowledge entries (hidden by default)')
-    .option('--no-emb', 'Skip embedding, use BM25 only')
+    .option('--semantic', 'Enable semantic embedding reranking (BM25 is the low-latency default)')
+    .option('--no-emb', 'Skip embedding, use BM25 only (backward-compatible explicit form)')
+    .option('--diagnostics', 'Include bounded request-scoped JSON diagnostics')
     .option('--json', 'Output as JSON')
     .option('--limit <n>', 'Max results', '20')
     .option('--workflow-root <path>', 'project root containing .workflow', process.cwd())
@@ -1154,8 +1724,18 @@ export function registerSearchCommand(program: Command): void {
         process.chdir(resolve(opts.workflowRoot));
       }
       const limit = Math.min(500, opts.limit > 0 ? Math.trunc(opts.limit) : 20);
-      const resolvedTag = opts.tag ?? opts.kind;
-      const wikiOnly = opts.wikiOnly === true || typeof resolvedTag === 'string';
+      const diagnostics = opts.diagnostics === true ? createSearchDiagnostics() : undefined;
+      const diagnosticsPayload = (): SearchDiagnostics | undefined => {
+        if (!diagnostics) return undefined;
+        return boundedSearchDiagnostics(finishSearchDiagnostics(diagnostics)) ?? undefined;
+      };
+      const withDiagnostics = <T extends Record<string, unknown>>(payload: T): T & { diagnostics?: SearchDiagnostics } => {
+        const snapshot = diagnosticsPayload();
+        return snapshot ? { ...payload, diagnostics: snapshot } : payload;
+      };
+      try {
+        const resolvedTag = opts.tag ?? opts.kind;
+        const wikiOnly = opts.wikiOnly === true || typeof resolvedTag === 'string' || typeof opts.repo === 'string';
       const codeOnly = opts.code === true;
       const kgMode = opts.kg === true;
 
@@ -1179,8 +1759,89 @@ export function registerSearchCommand(program: Command): void {
         console.error('Error: --workspace is not available in local --kg mode');
         process.exit(1);
       }
+      if (opts.repo && kgMode) {
+        console.error('Error: --repo is not available in local --kg mode');
+        process.exit(1);
+      }
 
-      const skipEmbedding = opts.emb === false;
+      // --exact is intentionally a separate, fixed-string route. It must not
+      // initialize the daemon/indexer, enter mixed fusion, or inherit ranking
+      // facets whose semantics do not apply to source occurrences.
+      if (opts.exact === true) {
+        const incompatible: Array<[boolean, string]> = [
+          [Boolean(opts.type), '--type'],
+          [Boolean(opts.category), '--category'],
+          [Boolean(resolvedTag), '--tag/--kind'],
+          [codeOnly, '--code'],
+          [kgMode, '--kg'],
+          [opts.wikiOnly === true, '--wiki-only'],
+          [opts.semantic === true, '--semantic'],
+          [opts.emb === false, '--no-emb'],
+          [opts.includeDeprecated === true, '--include-deprecated'],
+          [opts.diagnostics === true, '--diagnostics'],
+        ];
+        const conflict = incompatible.find(([present]) => present)?.[1];
+        if (conflict) {
+          console.error(`Error: --exact cannot be combined with ${conflict}`);
+          process.exitCode = 1;
+          return;
+        }
+        let exact: ExactSearchOutcome;
+        try {
+          exact = await runExactSearch(q, {
+            projectRoot: resolve('.'),
+            repo: opts.repo,
+            workspace: opts.workspace,
+            includeLinkedCode: opts.includeLinkedCode === true,
+            // Pass raw caps through: exact-search owns validation/clamping and
+            // therefore cannot inherit ranked search's invalid-value defaults.
+            limit: opts.maxResults ?? opts.limit,
+            timeoutMs: opts.timeoutMs,
+            maxBytes: opts.maxBytes,
+          });
+        } catch (error: unknown) {
+          // Exact failures are terminal for this opt-in route. Never fall back
+          // to a broad filesystem scan or the normal indexed search providers.
+          console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+          process.exitCode = 1;
+          return;
+        }
+
+        if (opts.json) {
+          console.log(JSON.stringify({
+            query: q,
+            mode: 'exact',
+            count: exact.results.length,
+            truncated: exact.truncated,
+            timedOut: exact.timedOut,
+            bytesUsed: exact.bytesUsed,
+            results: exact.results,
+          }, null, 2));
+          return;
+        }
+        const status = exact.truncated ? ', truncated' : '';
+        console.log(`Search: "${q}" (exact ${exact.results.length} result${exact.results.length === 1 ? '' : 's'}${status})`);
+        if (exact.results.length === 0) {
+          console.log('  No matches found.');
+          return;
+        }
+        for (const result of exact.results) {
+          const workspaceTag = result.workspace ? `  @${result.workspace}` : '';
+          console.log(`  [exact]  ${result.filePath}:${result.line}:${result.column}${workspaceTag}`);
+          if (result.preview) console.log(`    ${result.preview}`);
+        }
+        return;
+      }
+
+      // Exact-only caps are not meaningful on ranked search and are rejected
+      // rather than silently ignored.
+      if (opts.timeoutMs !== undefined || opts.maxResults !== undefined || opts.maxBytes !== undefined) {
+        console.error('Error: --timeout-ms, --max-results, and --max-bytes require --exact');
+        process.exitCode = 1;
+        return;
+      }
+
+      const skipEmbedding = opts.emb === false || opts.semantic !== true;
       const isTTY = process.stdout.isTTY === true;
       const qTerms = q.toLowerCase().split(/\s+/).filter(Boolean);
       const isDevelopmentQuery = /(?:\b(?:implement|implementation|develop|development|build|feature|refactor|fix|bug|api|class|function|code)\b|组件|开发|实现|功能|重构|修复|代码|接口)/i.test(q);
@@ -1190,11 +1851,15 @@ export function registerSearchCommand(program: Command): void {
       // --type template: exact architecture-template search. This bypasses
       // project Wiki/CodeGraph providers but uses the same result contract.
       if (opts.type === 'template') {
+        const templateStartedAt = performance.now();
         const templateResults = runArchKbSearch(q, limit);
+        diagnostics?.recordPhase('arch-kb-search', performance.now() - templateStartedAt);
+        diagnostics?.setProvider('arch-kb');
         const merged = mergeAndNormalize([], [], limit, q, templateResults);
+        diagnostics?.setResultCount(merged.length);
         const templateHint = `For exact template lookup, use: ${templateSearchCommand}`;
         if (opts.json) {
-          console.log(JSON.stringify({
+          console.log(JSON.stringify(withDiagnostics({
             query: q,
             wikiCount: 0,
             codeCount: 0,
@@ -1202,7 +1867,7 @@ export function registerSearchCommand(program: Command): void {
             typeCounts: { template: merged.length },
             count: merged.length,
             results: merged,
-          }, null, 2));
+          }), null, 2));
           return;
         }
         console.log(`Search: "${q}" (template ${merged.length} results)`);
@@ -1232,10 +1897,14 @@ export function registerSearchCommand(program: Command): void {
             codeOnly: opts.code === true,
             category: opts.category,
             includeDeprecated: opts.includeDeprecated === true,
+            ...(diagnostics ? { diagnostics } : {}),
           },
         );
+        diagnostics?.setProvider('kg');
+        diagnostics?.setResultCount(kgResults.length);
         if (opts.json) {
-          console.log(JSON.stringify({ query: q, engine: 'maestrograph', count: kgResults.length, summary, results: kgResults }, null, 2));
+          diagnostics?.setProvider('kg');
+          console.log(JSON.stringify(withDiagnostics({ query: q, engine: 'maestrograph', count: kgResults.length, summary, results: kgResults }), null, 2));
           return;
         }
         const parts: string[] = [];
@@ -1258,11 +1927,24 @@ export function registerSearchCommand(program: Command): void {
         return;
       }
 
+      let targetRepository: RepositoryContext | undefined;
+      if (opts.repo) {
+        try {
+          targetRepository = resolveRepositoryContext(opts.repo, { projectRoot: process.cwd() });
+        } catch (error) {
+          console.error(`Error: ${(error as Error).message}`);
+          process.exitCode = 1;
+          return;
+        }
+      }
+
       const searchOptions = {
         type: opts.type,
         category: opts.category,
         tag: resolvedTag,
         workspace: opts.workspace,
+        repo: opts.repo,
+        targetRepository,
         limit,
         skipEmbedding,
         includeLinkedCode: opts.includeLinkedCode === true,
@@ -1270,6 +1952,7 @@ export function registerSearchCommand(program: Command): void {
           ? 'read-only-probe' as const
           : 'default' as const,
         includeDeprecated: opts.includeDeprecated === true,
+        ...(diagnostics ? { diagnostics } : {}),
       };
       let wikiResults: SearchResult[];
       let codeOutcome: CodeSearchOutcome;
@@ -1292,11 +1975,13 @@ export function registerSearchCommand(program: Command): void {
               opts.includeLinkedCode === true,
               resolve('.'),
               searchOptions.executionMode,
+              diagnostics,
             ),
         ]);
       }
       const codeResults = codeOutcome.results;
       const codeHint = wikiOnly ? null : codeIndexHint(codeOutcome.status);
+      if (codeOnly) diagnostics?.setResultCount(codeResults.length);
 
       const meta = getLastSearchMeta();
       const embTag = meta.embeddingUsed ? `+emb(${meta.embeddingDocs})` : 'bm25';
@@ -1304,13 +1989,14 @@ export function registerSearchCommand(program: Command): void {
       // --code: code graph results only
       if (codeOnly) {
         if (opts.json) {
-          console.log(JSON.stringify({
+          diagnostics?.setResultCount(codeResults.length);
+          console.log(JSON.stringify(withDiagnostics({
             query: q,
             count: codeResults.length,
             codeIndex: codeOutcome.status,
             ...(codeHint ? { hint: codeHint } : {}),
             results: codeResults,
-          }, null, 2));
+          }), null, 2));
           return;
         }
         console.log(`Search: "${q}" (code ${codeResults.length}, ${embTag})`);
@@ -1330,6 +2016,7 @@ export function registerSearchCommand(program: Command): void {
       const wikiCount = merged.filter(r => r.source === 'wiki').length;
       const codeCount = merged.filter(r => r.source === 'code').length;
       const templateCount = merged.filter(r => r.source === 'arch-kb').length;
+      diagnostics?.setResultCount(merged.length);
 
       if (opts.json) {
         const typeCountsJson: Record<string, number> = {};
@@ -1342,7 +2029,8 @@ export function registerSearchCommand(program: Command): void {
           else dt = r.kind;
           typeCountsJson[dt] = (typeCountsJson[dt] ?? 0) + 1;
         }
-        console.log(JSON.stringify({
+        diagnostics?.setResultCount(merged.length);
+        console.log(JSON.stringify(withDiagnostics({
           query: q,
           wikiCount,
           codeCount,
@@ -1352,7 +2040,7 @@ export function registerSearchCommand(program: Command): void {
           typeCounts: typeCountsJson,
           count: merged.length,
           results: merged,
-        }, null, 2));
+        }), null, 2));
         return;
       }
 
@@ -1421,6 +2109,14 @@ export function registerSearchCommand(program: Command): void {
           console.log(`  [code:${r.kind}]  ${name}  ${r.detail}${sigTag}${workspaceTag}${scoreTag}`);
         }
       }
+      } finally {
+        // Keep human-readable stdout byte-for-byte compatible. Diagnostics are
+        // machine-readable and therefore emitted on stderr unless --json has
+        // already embedded them in the response object.
+        if (diagnostics && !opts.json) {
+          console.error(JSON.stringify({ diagnostics: diagnosticsPayload() }));
+        }
+      }
     });
 
   // ── Search daemon management ───────────────────────────────────────────
@@ -1430,40 +2126,76 @@ export function registerSearchCommand(program: Command): void {
     .description('Manage the resident search daemon (warm ONNX model)')
     .argument('<action>', 'start | stop | status')
     .action(async (action: string) => {
-      const workflowRoot = resolve('.workflow');
+      const currentRepository = resolveRepositoryContext('current', { projectRoot: process.cwd() });
+      const workflowRoot = currentRepository.workflowRoot;
 
       if (action === 'start' || action === 'start-daemon') {
         const info = readDaemonInfo(workflowRoot);
+        if (info && isDaemonInfoV2(info, workflowRoot)) {
+          const health = await healthDaemon(workflowRoot, { timeoutMs: 1000 });
+          if (isDaemonReadyResponse(health)) {
+            console.log(`Search daemon already running (pid=${info.pid}, port=${info.port})`);
+            return;
+          }
+          if (health?.ok && (health.state === 'starting' || health.state === 'draining')) {
+            console.error(`Search daemon is ${health.state} (pid=${info.pid}); wait for that lifecycle transition before starting.`);
+            process.exitCode = 1;
+            return;
+          }
+        }
         if (info && isDaemonAlive(info)) {
-          console.log(`Search daemon already running (pid=${info.pid}, port=${info.port})`);
+          console.error(`Search daemon descriptor is stale/unverified (pid=${info.pid}); refusing to replace or kill it.`);
+          process.exitCode = 1;
           return;
         }
         console.log('Starting search daemon...');
-        const projectPath = process.cwd();
-        const wsConfig = loadWorkspaceConfig(projectPath);
-        const resolved = resolveWorkspaceLinks(projectPath, wsConfig);
-        const linkedWorkspaces = resolved
-          .filter(lw => lw.valid)
-          .map(lw => ({ name: lw.name, workflowRoot: lw.workflowRoot, shareTypes: lw.share }));
-        const { startDaemon } = await import('../search/daemon.js');
-        const { port } = await startDaemon(workflowRoot, { workflowRoot, linkedWorkspaces });
-        console.log(`Search daemon started (pid=${process.pid}, port=${port})`);
-        // Keep process alive
+        const { linkedWorkspaces, repository } = resolveWikiAuthority(currentRepository);
+        try {
+          const { startDaemon } = await import('../search/daemon.js');
+          const { port } = await startDaemon(
+            workflowRoot,
+            { workflowRoot, linkedWorkspaces, repository, role: 'publisher' },
+            { exitOnDrainTimeout: true },
+          );
+          console.log(`Search daemon started (pid=${process.pid}, port=${port})`);
+        } catch (error: unknown) {
+          console.error(`Search daemon failed to start: ${error instanceof Error ? error.message : error}`);
+          process.exitCode = 1;
+        }
+        // The listening server keeps a successful foreground start alive.
         return;
       }
 
       if (action === 'stop') {
-        const stopped = stopDaemon(workflowRoot);
-        console.log(stopped ? 'Search daemon stopped.' : 'No daemon running.');
+        const info = readDaemonInfo(workflowRoot);
+        const stopped = await stopDaemon(workflowRoot);
+        if (stopped) console.log('Search daemon stopped.');
+        else if (info && !isDaemonInfoV2(info, workflowRoot)) {
+          console.log('No verified daemon running (descriptor is stale/unverified).');
+        } else console.log('No daemon running.');
         return;
       }
 
       if (action === 'status') {
         const info = readDaemonInfo(workflowRoot);
         if (!info) { console.log('Search daemon: not running'); return; }
-        const alive = isDaemonAlive(info);
-        console.log(`Search daemon: ${alive ? 'running' : 'stale (pid dead)'}  pid=${info.pid}  port=${info.port}  started=${info.startedAt}`);
-        if (!alive) try { const { unlinkSync } = await import('node:fs'); unlinkSync(getDaemonPath(workflowRoot)); } catch {}
+        if (!isDaemonInfoV2(info, workflowRoot)) {
+          console.log(`Search daemon: stale (unverified descriptor)  pid=${info.pid}  port=${info.port}  started=${info.startedAt}`);
+          return;
+        }
+        const health = await healthDaemon(workflowRoot, { timeoutMs: 1000 });
+        if (health?.ok) {
+          const stateTag = health.state && health.state !== 'ready' ? ` (${health.state})` : '';
+          const idleTag = health.idleTimeoutMs === 0
+            ? '  idle=disabled'
+            : typeof health.idleTimeoutMs === 'number'
+              ? `  idle=${Math.round(health.idleTimeoutMs / 60_000)}m  deadline=${health.idleDeadline ?? 'pending'}`
+              : '';
+          console.log(`Search daemon: running${stateTag}  pid=${info.pid}  port=${info.port}  started=${info.startedAt}${idleTag}`);
+        } else {
+          const staleReason = isDaemonAlive(info) ? 'unreachable/unverified' : 'pid dead';
+          console.log(`Search daemon: stale (${staleReason})  pid=${info.pid}  port=${info.port}  started=${info.startedAt}`);
+        }
         return;
       }
 
@@ -1474,17 +2206,20 @@ export function registerSearchCommand(program: Command): void {
   program
     .command('search-start-daemon', { hidden: true })
     .action(async () => {
-      const workflowRoot = resolve('.workflow');
-      const projectPath = process.cwd();
-      const wsConfig = loadWorkspaceConfig(projectPath);
-      const resolved = resolveWorkspaceLinks(projectPath, wsConfig);
-      const linkedWorkspaces = resolved
-        .filter(lw => lw.valid)
-        .map(lw => ({ name: lw.name, workflowRoot: lw.workflowRoot, shareTypes: lw.share }));
+      const currentRepository = resolveRepositoryContext('current', { projectRoot: process.cwd() });
+      const workflowRoot = currentRepository.workflowRoot;
+      const { linkedWorkspaces, repository } = resolveWikiAuthority(currentRepository);
       try {
         const { startDaemon } = await import('../search/daemon.js');
-        await startDaemon(workflowRoot, { workflowRoot, linkedWorkspaces });
-      } catch { process.exit(0); }
+        await startDaemon(
+          workflowRoot,
+          { workflowRoot, linkedWorkspaces, repository, role: 'publisher' },
+          { exitOnDrainTimeout: true },
+        );
+      } catch (error: unknown) {
+        console.error(`Search daemon failed to start: ${error instanceof Error ? error.message : error}`);
+        process.exitCode = 1;
+      }
     });
 
   program
@@ -1492,7 +2227,8 @@ export function registerSearchCommand(program: Command): void {
     .description('Embedding model status, warmup, and rebuild')
     .argument('[action]', 'status (default), warmup, rebuild', 'status')
     .action(async (action: string) => {
-      const workflowRoot = resolve('.workflow');
+      const currentRepository = resolveRepositoryContext('current', { projectRoot: process.cwd() });
+      const workflowRoot = currentRepository.workflowRoot;
       const { isAvailable, getUnavailableReason, loadEmbeddingIndex, embedTexts, getDeviceSummary, detectDevice, setProgressCallback, DEFAULT_MODEL_ID, isApiMode, getModelId, loadEmbeddingApiConfig, isLocalModelPath, getLocalModelPath } = await import('#maestro-dashboard/wiki/embedding.js');
 
       if (action === 'status') {
@@ -1593,17 +2329,21 @@ export function registerSearchCommand(program: Command): void {
         console.log('Rebuilding embedding index...');
         const { WikiIndexer } = await import('#maestro-dashboard/wiki/wiki-indexer.js');
         const { loadWorkspaceConfig, resolveWorkspaceLinks } = await import('../config/index.js');
-        const projectPath = process.cwd();
+        const projectPath = currentRepository.projectRoot;
         const wsConfig = loadWorkspaceConfig(projectPath);
         const resolved = resolveWorkspaceLinks(projectPath, wsConfig);
         const linkedWorkspaces = resolved.filter(lw => lw.valid).map(lw => ({ name: lw.name, workflowRoot: lw.workflowRoot, shareTypes: lw.share }));
-        const indexer = new WikiIndexer({ workflowRoot, linkedWorkspaces });
+        const indexer = new WikiIndexer({ workflowRoot, linkedWorkspaces, role: 'publisher' });
         const t0 = Date.now();
-        const { embeddingUsed, embeddingDocs } = await indexer.searchWithMeta('warmup', 1);
-        if (embeddingUsed) {
-          console.log(`Index rebuilt: ${embeddingDocs} docs (${Date.now() - t0}ms)`);
-        } else {
-          console.log(`Rebuild failed — check with: maestro embedding status`);
+        try {
+          const { embeddingUsed, embeddingDocs } = await indexer.searchWithMeta('warmup', 1);
+          if (embeddingUsed) {
+            console.log(`Index rebuilt: ${embeddingDocs} docs (${Date.now() - t0}ms)`);
+          } else {
+            console.log(`Rebuild failed — check with: maestro embedding status`);
+          }
+        } finally {
+          await indexer.close({ disposeEmbeddingPipeline: true });
         }
         return;
       }
@@ -1672,10 +2412,20 @@ export interface MergedResult {
   summary?: string;
   signature?: string;
   workspace?: string;
+  /** Provider-observed authorization metadata (when exposed by the source). */
+  authorized?: boolean;
+  /** Provider-observed lifecycle status (when exposed by the source). */
+  status?: string;
+  /** Provider-observed provenance (when exposed by the source). */
+  provenance?: { source: string; path: string } | null;
+  repoId?: string | null;
+  repoName?: string;
+  alias?: string;
   workspaceFence?: string;
+  appliesToRepoIds?: string[] | null;
   category?: string;
   confidence?: string;
-  /** Dedicated command for opening an Arch-KB result. */
+  /** Unified load command for opening an Arch-KB result. */
   openCommand?: string;
   /** Dedicated command for exact template search. */
   searchCommand?: string;
@@ -1844,6 +2594,15 @@ export function mergeAndNormalize(
       snippet: r.snippet ?? undefined,
       summary: r.summary || undefined,
       category: r.category ?? undefined,
+      repoId: r.repoId,
+      repoName: r.repoName,
+      alias: r.alias,
+      workspace: r.workspace,
+      workspaceFence: r.workspaceFence,
+      authorized: r.authorized,
+      status: r.status,
+      provenance: r.provenance,
+      appliesToRepoIds: r.appliesToRepoIds,
       confidence: r.confidence,
       sessionId: r.sessionId,
       runId: r.runId,
@@ -1865,6 +2624,9 @@ export function mergeAndNormalize(
       signature: r.signature,
       workspace: r.workspace,
       workspaceFence: r.workspaceFence,
+      authorized: r.authorized,
+      status: r.status,
+      provenance: r.provenance,
     });
   }
   for (let i = 0; i < templateScored.length; i++) {
@@ -1875,12 +2637,12 @@ export function mergeAndNormalize(
       sourceRef: r.entry.path,
       kind: r.entry.type,
       name: r.entry.title,
-      detail: `${r.entry.path}  (maestro arch-kb show ${r.entry.id})`,
+      detail: `${r.entry.path}  (maestro load --type template --id ${r.entry.id})`,
       rank: templateRanks[i] * ARCH_KB_WEIGHT,
       score: maxTemplateFinal > 0 ? r.finalScore / maxTemplateFinal : 0,
       summary: r.entry.summary || undefined,
       category: 'arch-kb',
-      openCommand: `maestro arch-kb show ${r.entry.id}`,
+      openCommand: `maestro load --type template --id ${r.entry.id}`,
       searchCommand: `maestro arch-kb search ${JSON.stringify(q)} --type template`,
       referenceOnly: true,
       projectRelated: false,

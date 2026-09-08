@@ -1,9 +1,23 @@
+import { lstatSync } from 'node:fs';
 import { readFile, open, readdir } from 'node:fs/promises';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 import type { GraphNode, GraphEdge, Layer, TourStep, KnowledgeGraph } from '../../../../src/graph/types.js';
 import type { WikiEntry, WikiStatus } from './wiki-types.js';
+import { resolveAllowedDirectSourcePath, resolveAllowedSourcePath } from './source-path.js';
+
+async function readAllowedSourceText(candidate: string, allowedRoot: string): Promise<string> {
+  const realPath = resolveAllowedSourcePath(candidate, allowedRoot, 'file');
+  if (!realPath) throw new Error(`source escapes allowed root: ${candidate}`);
+  return readFile(realPath, 'utf-8');
+}
+
+async function readAllowedSourceDir(candidate: string, allowedRoot: string): Promise<string[]> {
+  const realPath = resolveAllowedSourcePath(candidate, allowedRoot, 'directory');
+  if (!realPath) return [];
+  try { return await readdir(realPath); } catch { return []; }
+}
 
 /**
  * Lightweight YAML-subset parser for report.md frontmatter handoff fields
@@ -274,7 +288,10 @@ function kgCategory(nodeType: string): string {
   return KG_NODE_TYPE_CATEGORY[nodeType] ?? 'arch';
 }
 
+const NORMALIZED_KG_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
 function stableKgId(raw: string): string {
+  if (NORMALIZED_KG_ID.test(raw)) return raw;
   return raw.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
@@ -288,17 +305,22 @@ function shortStableHash(raw: string): string {
 }
 
 function buildKgIdMap(rawIds: Iterable<string>, prefix = 'kg'): Map<string, string> {
-  const ids = [...new Set(rawIds)];
+  const seen = new Set<string>();
+  const normalized: Array<{ raw: string; base: string }> = [];
   const baseCounts = new Map<string, number>();
-  for (const raw of ids) {
+  for (const raw of rawIds) {
+    if (seen.has(raw)) continue;
+    seen.add(raw);
     const base = stableKgId(raw) || 'node';
+    normalized.push({ raw, base });
     baseCounts.set(base, (baseCounts.get(base) ?? 0) + 1);
   }
-  return new Map(ids.map(raw => {
-    const base = stableKgId(raw) || 'node';
+  const result = new Map<string, string>();
+  for (const { raw, base } of normalized) {
     const suffix = (baseCounts.get(base) ?? 0) > 1 ? `-${shortStableHash(raw)}` : '';
-    return [raw, `${prefix}-${base}${suffix}`];
-  }));
+    result.set(raw, `${prefix}-${base}${suffix}`);
+  }
+  return result;
 }
 
 export function adaptKnowledgeGraph(
@@ -436,8 +458,14 @@ interface MaestroGraphWikiRow {
   id: string;
   kind: string;
   name: string;
+  qualified_name?: string | null;
   file_path: string | null;
+  language?: string | null;
+  start_line?: number | null;
+  end_line?: number | null;
   source_type: string;
+  docstring?: string | null;
+  signature?: string | null;
   definition: string | null;
   body: string | null;
   category: string | null;
@@ -452,31 +480,59 @@ export function adaptKnowledgeGraphFromDb(
 ): WikiEntry[] {
   const db = new DatabaseSync(dbPath, { readOnly: true });
   try {
-    const nodes = db.prepare(`
-      SELECT id, kind, name, file_path, source_type, definition, body, category, updated_at
+    // MaestroGraph's canonical schema carries symbol/signature/path fields,
+    // while older test/legacy projections may only have the compact columns.
+    // Select optional fields through a schema probe so structured embedding
+    // can reuse existing graph facts without making old DBs unreadable.
+    const nodeColumns = new Set(
+      (db.prepare('PRAGMA table_info(nodes)').all() as Array<{ name?: unknown }>)
+        .map(column => typeof column.name === 'string' ? column.name : ''),
+    );
+    const optionalColumn = (name: string): string => nodeColumns.has(name) ? name : `NULL AS ${name}`;
+    const nodeSelect = [
+      'id', 'kind', 'name', optionalColumn('qualified_name'), 'file_path',
+      optionalColumn('language'), 'source_type', optionalColumn('docstring'),
+      optionalColumn('signature'), 'definition', 'body', 'category',
+      optionalColumn('start_line'), optionalColumn('end_line'), 'updated_at',
+    ].join(', ');
+    // Preserve the canonical non-codegraph-first ordering without sorting an
+    // expression across the entire table. Both branches can use existing
+    // source/name indexes and together are exactly equivalent to the prior
+    // `source_type != 'codegraph' DESC, name` ordering.
+    const knowledgeNodes = db.prepare(`
+      SELECT ${nodeSelect}
       FROM nodes
-      ORDER BY source_type != 'codegraph' DESC, name
+      WHERE source_type != 'codegraph'
+      ORDER BY name
       LIMIT 5000
     `).all() as unknown as MaestroGraphWikiRow[];
+    const remaining = 5000 - knowledgeNodes.length;
+    const codeNodes = remaining > 0
+      ? db.prepare(`
+          SELECT ${nodeSelect}
+          FROM nodes
+          WHERE source_type = 'codegraph'
+          ORDER BY name
+          LIMIT ?
+        `).all(remaining) as unknown as MaestroGraphWikiRow[]
+      : [];
+    const nodes = [...knowledgeNodes, ...codeNodes];
     if (nodes.length === 0) return [];
 
     const idMap = buildKgIdMap(nodes.map(node => node.id));
-    const selectedIds = new Set(idMap.keys());
+    // Pass the already selected IDs into SQLite instead of repeating the
+    // ordered 5,000-node projection in an edge CTE. json_each keeps this a
+    // single bounded parameter and both joins retain the previous membership.
     const projectedEdges = db.prepare(`
-      WITH selected AS (
-        SELECT id FROM nodes
-        ORDER BY source_type != 'codegraph' DESC, name
-        LIMIT 5000
-      )
+      WITH selected(id) AS MATERIALIZED (SELECT value FROM json_each(?))
       SELECT e.source, e.target, e.kind
       FROM edges e
       JOIN selected source_node ON source_node.id = e.source
       JOIN selected target_node ON target_node.id = e.target
       LIMIT 20000
-    `).all() as unknown as Array<{ source: string; target: string; kind: string }>;
+    `).all(JSON.stringify([...idMap.keys()])) as unknown as Array<{ source: string; target: string; kind: string }>;
     const outgoing = new Map<string, Array<{ target: string; kind: string }>>();
     for (const edge of projectedEdges) {
-      if (!selectedIds.has(edge.source) || !selectedIds.has(edge.target)) continue;
       const list = outgoing.get(edge.source) ?? [];
       list.push({ target: edge.target, kind: edge.kind });
       outgoing.set(edge.source, list);
@@ -507,7 +563,14 @@ export function adaptKnowledgeGraphFromDb(
           virtualKind: 'kg-node',
           kgNodeId: node.id,
           nodeType: node.kind,
+          sourceType: node.source_type,
           filePath: node.file_path,
+          qualifiedName: node.qualified_name,
+          language: node.language,
+          startLine: node.start_line,
+          endLine: node.end_line,
+          docstring: node.docstring,
+          signature: node.signature,
           kgEdges: nodeEdges.map(edge => ({
             target: idMap.get(edge.target)!,
             type: edge.kind,
@@ -956,6 +1019,7 @@ async function readRunKnowledge(
   runDir: string,
   run: RunModeRun,
   registry: RunModeRegistry,
+  allowedRoot: string,
 ): Promise<{
   summary: string;
   body: string;
@@ -977,7 +1041,7 @@ async function readRunKnowledge(
     const absPath = resolve(sessionDir, artifact.path);
     if (!absPath.startsWith(`${resolve(sessionDir)}${sep}`)) continue;
     try {
-      const raw = await readFile(absPath, 'utf-8');
+      const raw = await readAllowedSourceText(absPath, allowedRoot);
       bodies.push(raw.slice(0, 50_000));
       if (!summary && artifact.path.toLowerCase().endsWith('.json')) {
         try { summary = extractArtifactSummary(JSON.parse(raw)); } catch { /* malformed artifact is ignored */ }
@@ -986,7 +1050,7 @@ async function readRunKnowledge(
   }
 
   let report = '';
-  try { report = await readFile(join(runDir, 'report.md'), 'utf-8'); } catch { /* projection is optional */ }
+  try { report = await readAllowedSourceText(join(runDir, 'report.md'), allowedRoot); } catch { /* projection is optional */ }
   if (!summary) {
     summary = extractReportSummary(report);
   }
@@ -1164,16 +1228,23 @@ function normalizeRunModeRun(raw: Record<string, unknown>, legacyGates: LegacyRu
 }
 
 /** command-run generations keep canonical gate details in session-level gates.json. */
-async function readLegacySessionGates(sessionDir: string): Promise<LegacyRunModeGate[]> {
+async function readLegacySessionGates(
+  sessionDir: string,
+  allowedRoot: string,
+): Promise<LegacyRunModeGate[]> {
   try {
-    const registry = JSON.parse(await readFile(join(sessionDir, 'gates.json'), 'utf-8')) as {
+    const registry = JSON.parse(await readAllowedSourceText(join(sessionDir, 'gates.json'), allowedRoot)) as {
       gates?: Record<string, LegacyRunModeGate>;
     };
     return Object.entries(registry.gates ?? {}).map(([id, gate]) => ({ ...gate, id }));
   } catch { return []; }
 }
 
-async function readPromotedKnowledgeRefs(sessionDir: string, runNames: string[]): Promise<string[]> {
+async function readPromotedKnowledgeRefs(
+  sessionDir: string,
+  runNames: string[],
+  allowedRoot: string,
+): Promise<string[]> {
   const paths = [
     join(sessionDir, 'knowledge-delta.json'),
     ...runNames.map(runName => join(sessionDir, 'runs', runName, 'knowledge-delta.json')),
@@ -1181,7 +1252,7 @@ async function readPromotedKnowledgeRefs(sessionDir: string, runNames: string[])
   const refs: string[] = [];
   for (const path of paths) {
     try {
-      const delta = JSON.parse(await readFile(path, 'utf-8')) as {
+      const delta = JSON.parse(await readAllowedSourceText(path, allowedRoot)) as {
         candidates?: Array<{ status?: string; target?: string; promoted_id?: string | null }>;
       };
       for (const candidate of delta.candidates ?? []) {
@@ -1199,9 +1270,12 @@ async function readPromotedKnowledgeRefs(sessionDir: string, runNames: string[])
 export async function loadRunModeSessionEntries(
   sessionAbsPath: string,
   sessionRelPath: string,
+  allowedRoot = dirname(sessionAbsPath),
 ): Promise<WikiEntry[]> {
+  const realSessionPath = resolveAllowedSourcePath(sessionAbsPath, allowedRoot, 'file');
+  if (!realSessionPath) return [];
   let session: RunModeSession | null;
-  try { session = normalizeRunModeSession(JSON.parse(await readFile(sessionAbsPath, 'utf-8'))); } catch { return []; }
+  try { session = normalizeRunModeSession(JSON.parse(await readAllowedSourceText(realSessionPath, allowedRoot))); } catch { return []; }
   if (!session) {
     if (process.env.MAESTRO_DEBUG === '1') {
       warn(`run-session-schema:${sessionAbsPath}`, `unsupported run-mode session schema at ${sessionAbsPath}`);
@@ -1210,13 +1284,13 @@ export async function loadRunModeSessionEntries(
   }
   if (!isIndexedSessionLifecycle(session)) return [];
 
-  const sessionDir = dirname(sessionAbsPath);
+  const sessionDir = dirname(realSessionPath);
   const sessionId = session.session_id ?? basename(sessionDir);
   const sessionSlug = slugify(sessionId);
   if (!sessionSlug) return [];
 
   let registry: RunModeRegistry | null = null;
-  try { registry = normalizeRunModeRegistry(JSON.parse(await readFile(join(sessionDir, 'artifacts.json'), 'utf-8'))); } catch { /* missing registry → unsupported */ }
+  try { registry = normalizeRunModeRegistry(JSON.parse(await readAllowedSourceText(join(sessionDir, 'artifacts.json'), allowedRoot))); } catch { /* missing registry → unsupported */ }
   if (!registry) {
     if (process.env.MAESTRO_DEBUG === '1') {
       warn(`run-artifacts-schema:${sessionDir}`, `unsupported run-mode artifact registry schema at ${sessionDir}`);
@@ -1224,14 +1298,14 @@ export async function loadRunModeSessionEntries(
     return [];
   }
 
-  const legacyGates = await readLegacySessionGates(sessionDir);
+  const legacyGates = await readLegacySessionGates(sessionDir, allowedRoot);
   const runEntries: WikiEntry[] = [];
   const runsRoot = join(sessionDir, 'runs');
-  const runNames = (await safeReadDirNames(runsRoot)).sort(compareRunDirectories);
+  const runNames = (await readAllowedSourceDir(runsRoot, allowedRoot)).sort(compareRunDirectories);
   for (const runName of runNames) {
     const runDir = join(runsRoot, runName);
     let run: RunModeRun | null;
-    try { run = normalizeRunModeRun(JSON.parse(await readFile(join(runDir, 'run.json'), 'utf-8')), legacyGates); } catch { continue; }
+    try { run = normalizeRunModeRun(JSON.parse(await readAllowedSourceText(join(runDir, 'run.json'), allowedRoot)), legacyGates); } catch { continue; }
     if (!run) {
       if (process.env.MAESTRO_DEBUG === '1') {
         warn(`run-schema:${runDir}`, `unsupported run schema at ${runDir}`);
@@ -1241,7 +1315,7 @@ export async function loadRunModeSessionEntries(
     if (!isIndexedRunLifecycle(run)) continue;
     const runId = run.run_id ?? runName;
     const command = run.command?.trim() || 'run';
-    const knowledge = await readRunKnowledge(sessionDir, runDir, run, registry);
+    const knowledge = await readRunKnowledge(sessionDir, runDir, run, registry, allowedRoot);
     const runRel = `${sessionRelPath.replace(/\/session\.json$/, '')}/runs/${runName}/run.json`;
     const verdictTag = run.handoff?.verdict ? [`verdict:${run.handoff.verdict}`] : [];
     const constraintTag = knowledge.hasLockedConstraints ? ['constraint'] : [];
@@ -1294,7 +1368,7 @@ export async function loadRunModeSessionEntries(
   const summary = latest?.summary || session.lifecycle?.seal_summary || session.intent || '';
   const promotedRefs = [...new Set([
     ...(session.lifecycle?.promoted ?? []).map(ref => ref.trim()).filter(Boolean),
-    ...(await readPromotedKnowledgeRefs(sessionDir, runNames)),
+    ...(await readPromotedKnowledgeRefs(sessionDir, runNames, allowedRoot)),
   ])];
   const sessionEntry: WikiEntry = {
     id: `session-${sessionSlug}`,
@@ -1321,10 +1395,6 @@ export async function loadRunModeSessionEntries(
     parent: null,
   };
   return [sessionEntry, ...runEntries];
-}
-
-async function safeReadDirNames(dir: string): Promise<string[]> {
-  try { return await readdir(dir); } catch { return []; }
 }
 
 // ── Claude Code / Codex session adapters ─────────────────────────────────
@@ -1369,10 +1439,16 @@ function deriveRelatedFromPaths(filePaths: Set<string>, sessionCwd: string): str
   return related.slice(0, 20);
 }
 
-async function readSessionHead(absPath: string, maxBytes = MAX_SESSION_READ_BYTES): Promise<string[]> {
+async function readSessionHead(
+  absPath: string,
+  maxBytes = MAX_SESSION_READ_BYTES,
+  allowedRoot = dirname(absPath),
+): Promise<string[]> {
+  const realPath = resolveAllowedDirectSourcePath(absPath, allowedRoot, 'file');
+  if (!realPath) return [];
   let handle;
   try {
-    handle = await open(absPath, 'r');
+    handle = await open(realPath, 'r');
     const buf = Buffer.alloc(maxBytes);
     const { bytesRead } = await handle.read(buf, 0, buf.length, 0);
     const text = buf.subarray(0, bytesRead).toString('utf-8');
@@ -1386,8 +1462,8 @@ async function readSessionHead(absPath: string, maxBytes = MAX_SESSION_READ_BYTE
   }
 }
 
-async function peekSessionCwd(absPath: string): Promise<string | null> {
-  const lines = await readSessionHead(absPath, MAX_SESSION_PEEK_BYTES);
+async function peekSessionCwd(absPath: string, allowedRoot: string): Promise<string | null> {
+  const lines = await readSessionHead(absPath, MAX_SESSION_PEEK_BYTES, allowedRoot);
   for (const line of lines.slice(0, 10)) {
     try {
       const row = JSON.parse(line) as Record<string, unknown>;
@@ -1621,8 +1697,10 @@ export async function loadClaudeCodeSessions(
   maxAgeDays: number,
   maxFiles: number,
 ): Promise<WikiEntry[]> {
-  const names = await safeReaddirLocal(projectDir);
-  const jsonlFiles = names.filter(n => n.endsWith('.jsonl'));
+  const realProjectDir = resolveAllowedSourcePath(projectDir, projectDir, 'directory');
+  if (!realProjectDir) return [];
+  const names = await readAllowedSourceDir(realProjectDir, realProjectDir);
+  const jsonlFiles = names.filter(n => n.endsWith('.jsonl')).slice(0, maxFiles * 3);
   const cutoff = Date.now() - maxAgeDays * 86400000;
   const { stat: fsStat } = await import('node:fs/promises');
 
@@ -1630,7 +1708,9 @@ export async function loadClaudeCodeSessions(
   const candidates: FileInfo[] = [];
   for (const name of jsonlFiles) {
     try {
-      const s = await fsStat(`${projectDir}/${name}`);
+      const candidate = resolveAllowedDirectSourcePath(join(realProjectDir, name), realProjectDir, 'file');
+      if (!candidate) continue;
+      const s = await fsStat(candidate);
       if (s.mtimeMs >= cutoff && s.size > 200) {
         candidates.push({ name, mtime: s.mtimeMs });
       }
@@ -1640,8 +1720,8 @@ export async function loadClaudeCodeSessions(
 
   const out: WikiEntry[] = [];
   for (const c of candidates.slice(0, maxFiles)) {
-    const absPath = `${projectDir}/${c.name}`;
-    const lines = await readSessionHead(absPath);
+    const absPath = join(realProjectDir, c.name);
+    const lines = await readSessionHead(absPath, MAX_SESSION_READ_BYTES, realProjectDir);
     if (lines.length === 0) continue;
     const entry = adaptClaudeCodeSession(lines, `~/.claude/projects/${projectSlug}/${c.name}`, projectSlug);
     if (entry) out.push(entry);
@@ -1778,10 +1858,10 @@ export interface CodexSessionIndex {
 }
 
 export async function loadCodexSessionIndex(codexRoot: string): Promise<Map<string, string>> {
-  const indexPath = `${codexRoot}/session_index.jsonl`;
+  const indexPath = join(codexRoot, 'session_index.jsonl');
   const titleMap = new Map<string, string>();
   let raw: string;
-  try { raw = await readFile(indexPath, 'utf-8'); } catch { return titleMap; }
+  try { raw = await readAllowedSourceText(indexPath, codexRoot); } catch { return titleMap; }
   for (const line of raw.split(/\r?\n/)) {
     if (!line.trim()) continue;
     try {
@@ -1800,17 +1880,26 @@ export async function loadCodexSessions(
   maxAgeDays: number,
   maxFiles: number,
 ): Promise<WikiEntry[]> {
-  const sessionsDir = `${codexRoot}/sessions`;
-  const titleMap = await loadCodexSessionIndex(codexRoot);
+  const realCodexRoot = resolveAllowedSourcePath(codexRoot, codexRoot, 'directory');
+  if (!realCodexRoot) return [];
+  const sessionsDir = join(realCodexRoot, 'sessions');
+  const titleMap = await loadCodexSessionIndex(realCodexRoot);
   const cutoff = Date.now() - maxAgeDays * 86400000;
-  const { stat: fsStat } = await import('node:fs/promises');
 
-  const allFiles = await findJsonlFilesRecursive(sessionsDir, 3);
+  const allFiles = await findJsonlFilesRecursive(
+    sessionsDir,
+    3,
+    0,
+    realCodexRoot,
+    maxFiles * 3,
+  );
   type FileInfo = { absPath: string; relPath: string; mtime: number };
   const candidates: FileInfo[] = [];
   for (const f of allFiles) {
     try {
-      const s = await fsStat(f.absPath);
+      // findJsonlFilesRecursive already fences each candidate. A synchronous
+      // stat avoids serial libuv round-trips across the bounded 300-file set.
+      const s = lstatSync(f.absPath);
       if (s.mtimeMs >= cutoff && s.size > 200) {
         candidates.push({ ...f, mtime: s.mtimeMs });
       }
@@ -1819,36 +1908,54 @@ export async function loadCodexSessions(
   candidates.sort((a, b) => b.mtime - a.mtime);
 
   const normalizedProjectCwd = projectCwd.replace(/\\/g, '/').toLowerCase();
+  const matchingCandidates: FileInfo[] = [];
+  const peekConcurrency = 64;
+  const recentCandidates = candidates.slice(0, maxFiles * 3);
+  for (let offset = 0; offset < recentCandidates.length; offset += peekConcurrency) {
+    const matches = await Promise.all(
+      recentCandidates.slice(offset, offset + peekConcurrency).map(async candidate => {
+        // Phase 1: peek only 8KB. Independent files are checked concurrently
+        // so unrelated Codex histories do not add one I/O latency each.
+        const sessionCwd = await peekSessionCwd(candidate.absPath, realCodexRoot);
+        if (!sessionCwd) return null;
+        const normalizedSessionCwd = sessionCwd.replace(/\\/g, '/').toLowerCase();
+        return normalizedSessionCwd === normalizedProjectCwd ? candidate : null;
+      }),
+    );
+    for (const match of matches) if (match) matchingCandidates.push(match);
+  }
+
   const out: WikiEntry[] = [];
+  const readConcurrency = 8;
+  for (let offset = 0;
+    offset < matchingCandidates.length && out.length < maxFiles;
+    offset += readConcurrency) {
+    const entries = await Promise.all(
+      matchingCandidates.slice(offset, offset + readConcurrency).map(async candidate => {
+        // Phase 2: full bounded read only for project-matching sessions.
+        const lines = await readSessionHead(candidate.absPath, MAX_SESSION_READ_BYTES, realCodexRoot);
+        if (lines.length === 0) return null;
 
-  for (const c of candidates.slice(0, maxFiles * 3)) {
-    if (out.length >= maxFiles) break;
-
-    // Phase 1: peek first 8KB to check CWD match (avoids reading 512KB for non-matching sessions)
-    const sessionCwd = await peekSessionCwd(c.absPath);
-    if (!sessionCwd) continue;
-    const normalizedSessionCwd = sessionCwd.replace(/\\/g, '/').toLowerCase();
-    if (normalizedSessionCwd !== normalizedProjectCwd) continue;
-
-    // Phase 2: full read only for matching sessions
-    const lines = await readSessionHead(c.absPath);
-    if (lines.length === 0) continue;
-
-    let sessionId: string | null = null;
-    for (const line of lines.slice(0, 5)) {
-      try {
-        const row = JSON.parse(line) as Record<string, unknown>;
-        if (row.type === 'session_meta') {
-          const p = row.payload as Record<string, unknown>;
-          sessionId = asString(p?.id) || null;
-          break;
+        let sessionId: string | null = null;
+        for (const line of lines.slice(0, 5)) {
+          try {
+            const row = JSON.parse(line) as Record<string, unknown>;
+            if (row.type === 'session_meta') {
+              const p = row.payload as Record<string, unknown>;
+              sessionId = asString(p?.id) || null;
+              break;
+            }
+          } catch { continue; }
         }
-      } catch { continue; }
-    }
 
-    const threadName = sessionId ? (titleMap.get(sessionId) ?? null) : null;
-    const entry = adaptCodexSession(lines, `~/.codex/${c.relPath}`, threadName);
-    if (entry) out.push(entry);
+        const threadName = sessionId ? (titleMap.get(sessionId) ?? null) : null;
+        return adaptCodexSession(lines, `~/.codex/${candidate.relPath}`, threadName);
+      }),
+    );
+    for (const entry of entries) {
+      if (entry) out.push(entry);
+      if (out.length >= maxFiles) break;
+    }
   }
   return out;
 }
@@ -1857,32 +1964,39 @@ async function findJsonlFilesRecursive(
   dir: string,
   maxDepth: number,
   currentDepth = 0,
+  allowedRoot = dir,
+  maxResults = 2_000,
 ): Promise<Array<{ absPath: string; relPath: string }>> {
   if (currentDepth > maxDepth) return [];
+  const realDir = resolveAllowedDirectSourcePath(dir, allowedRoot, 'directory');
+  if (!realDir) return [];
   const out: Array<{ absPath: string; relPath: string }> = [];
-  const names = await safeReaddirLocal(dir);
-  const { stat: fsStat } = await import('node:fs/promises');
+  const names = (await readAllowedSourceDir(realDir, allowedRoot)).sort().reverse();
 
   for (const name of names) {
-    const full = `${dir}/${name}`;
+    const full = join(realDir, name);
     try {
-      const s = await fsStat(full);
+      const realChild = resolveAllowedDirectSourcePath(full, allowedRoot, 'any');
+      if (!realChild) continue;
+      const s = lstatSync(realChild);
       if (s.isDirectory()) {
-        const sub = await findJsonlFilesRecursive(full, maxDepth, currentDepth + 1);
+        const sub = await findJsonlFilesRecursive(
+          realChild,
+          maxDepth,
+          currentDepth + 1,
+          allowedRoot,
+          Math.max(0, maxResults - out.length),
+        );
         out.push(...sub);
       } else if (name.endsWith('.jsonl')) {
-        const sessionsIdx = full.replace(/\\/g, '/').indexOf('/sessions/');
-        const relPath = sessionsIdx >= 0 ? `sessions${full.replace(/\\/g, '/').slice(sessionsIdx + '/sessions'.length)}` : name;
-        out.push({ absPath: full, relPath });
+        const sessionsIdx = realChild.replace(/\\/g, '/').indexOf('/sessions/');
+        const relPath = sessionsIdx >= 0 ? `sessions${realChild.replace(/\\/g, '/').slice(sessionsIdx + '/sessions'.length)}` : name;
+        out.push({ absPath: realChild, relPath });
       }
+      if (out.length >= maxResults) break;
     } catch { continue; }
   }
-  return out;
-}
-
-async function safeReaddirLocal(dir: string): Promise<string[]> {
-  const { readdir: fsReaddir } = await import('node:fs/promises');
-  try { return await fsReaddir(dir); } catch { return []; }
+  return out.slice(0, maxResults);
 }
 
 export function cwdToClaudeProjectSlug(cwd: string): string {

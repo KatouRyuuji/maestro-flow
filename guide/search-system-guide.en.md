@@ -211,7 +211,7 @@ During index building, WikiIndexer automatically selects the corresponding BM25F
 
 ### CLI Session Transcripts
 
-Claude Code and Codex JSONL transcripts are parsed into lightweight note entries (category `session`), filterable with `--type session`; mixed search caps each source at 3 results to prevent low-value spam. The daemon monitors CLI session directories at startup and discovers new sessions automatically.
+Claude Code and Codex JSONL transcripts are parsed into lightweight note entries (category `session`), filterable with `--type session`; mixed search caps each source at 3 results to prevent low-value spam. The daemon checks source snapshots on search/load work and on invalidation notifications from knowledge-write hooks; it is not a continuous file watcher.
 
 ### Run-mode Session/Run Entries
 
@@ -234,14 +234,16 @@ Search hits asynchronously update node `search_hits` counts (via `CredibilitySto
 
 ## Search Cache Invalidator Hook
 
-`search-cache-invalidator` is a PostToolUse hook that automatically rebuilds WikiIndexer cache after file modifications:
+`search-cache-invalidator` is a PostToolUse hook that invalidates WikiIndexer generations after file modifications and requests a rebuild:
 
 - **Trigger condition**: After Write or Edit tool calls
 - **Scope**: Only active in workspace (`requiresWorkspace: true`)
-- **Behavior**: Automatically rebuilds WikiIndexer index, ensuring search results reflect latest file content
-- **Persisted version**: `search-cache.json` currently uses **cache v5** (`version: 5`); legacy cache generations are rejected and atomically rebuilt through the existing cache path
+- **Roles and write ownership**: a `publisher` atomically publishes generations through a single-writer publication lease; a `reader` only consumes the persisted cache; a `hermetic` role neither reads nor writes persisted state. The legacy `filesystem`/`read-only`/`memory-only` configurations map to these three roles respectively
+- **Persisted version**: the default writer still publishes **cache v8** canonical entries. Only with `MAESTRO_SEARCH_COMPILED_POSTINGS=1` does it publish **v9** with compiled BM25F postings; readers stay compatible with v7/v8/v9
+- **Safe fallback**: without compiled postings enabled, a v9 payload is never activated even if read; corrupted, policy-mismatched or generation-inconsistent state is rebuilt from canonical entries/source files and fails closed without mixing generations
+- **Freshness**: authorized user-level CLI transcripts are detected for append via bounded membership/metadata and head/tail digests; resident readers/publishers reconcile at least every 4 minutes, and the timer does not block short-lived process exit
 
-This hook is enabled by default in the standard hook collection, no manual configuration needed. When modifying spec/knowhow files under `.workflow/` via Write|Edit, the search index automatically updates.
+This hook is enabled by default in the standard hook collection, no manual configuration needed. When modifying spec/knowhow files under `.workflow/` via Write|Edit, the next authorized rebuild reflects the latest content; only a publisher writes to disk.
 
 ---
 
@@ -249,18 +251,18 @@ This hook is enabled by default in the standard hook collection, no manual confi
 
 | Optimization | Improvement | Description |
 |--------------|-------------|-------------|
-| Cold start optimization | ~3200ms → ~280ms | daemon hot path + BM25-only fallback + background daemon startup |
+| Cold start optimization | Amortized by project size in a resident process | daemon hot path + low-latency BM25 default + background daemon startup |
 | Backlinks construction | O(n²) → O(1) | Using Set instead of Array.includes |
 | Inverted index | Pre-built | Built on first load, reused subsequently |
 | Candidate set pruning | 3x limit | Search candidates are 3x limit, filtered before return |
 | Workspace filtering | Applied before limit | Filters before truncation to avoid losing valid entries |
-| Embedding skip | Auto-skip for non-embedding queries | Falls back to BM25-only when daemon unavailable, avoiding ONNX cold start penalty |
+| Embedding skip | BM25 by default, semantic search is explicit | `--semantic` waits for embeddings; slow semantic requests have a bounded BM25 fallback |
 
 ---
 
 ## Search Daemon (Resident Process)
 
-Search daemon is a resident background process that keeps WikiIndexer and ONNX embedding model hot-cached, avoiding cold start overhead for each search.
+Search daemon is a resident background process that keeps WikiIndexer and the ONNX embedding model hot-cached. It serves both `maestro search` and `maestro load`, avoiding a full source-snapshot validation in every CLI process.
 
 ### Basic Operations
 
@@ -279,23 +281,27 @@ maestro search-daemon status
 
 - **Protocol**: TCP localhost, line-delimited JSON
 - **Lock file**: `.workflow/search-daemon.json` (records PID + port)
-- **Idle timeout**: Auto-shuts down after 30 minutes of no requests
-- **ONNX hot cache**: Daemon pre-loads embedding model at startup, subsequent searches don't need to reload
+- **Idle timeout**: Auto-shuts down after 4 hours without search/load/invalidate work; set `MAESTRO_SEARCH_DAEMON_IDLE_MS`, or `0` to disable idle shutdown
+- **Health checks**: ping/health do not refresh the work-idle deadline, so monitoring cannot pin the service accidentally
+- **ONNX hot cache**: Daemon pre-loads the embedding model; only `--semantic` requests semantic reranking
 
 ### Automatic Fallback Strategy
 
-When daemon is unavailable, search command automatically falls back:
+The search command uses a bounded fallback strategy:
 
-1. Uses BM25-only mode (skips embedding) to avoid ONNX cold start (~1800ms)
-2. Automatically spawns daemon in background, so subsequent searches get embedding acceleration
+1. Use the daemon's BM25 hot path by default, keeping ONNX inference out of interactive latency
+2. If an explicit `--semantic` request exceeds its short budget, retry BM25 in the same daemon
+3. If the daemon is unavailable, fall back to local BM25 and spawn the daemon in the background
 
 ```bash
-# When daemon available: hot path, includes embedding
-maestro search "query"          # ~280ms
+# Recommended: daemon BM25 hot path
+maestro search "query"
 
-# When daemon unavailable: falls back to BM25-only
-maestro search "query"          # ~280ms (BM25-only)
-maestro search "query" --no-emb # Explicitly skip embedding
+# Explicit semantic reranking, still with bounded fallback
+maestro search "query" --semantic
+
+# Backward-compatible explicit BM25 form
+maestro search "query" --no-emb
 ```
 
 ---
@@ -452,7 +458,7 @@ If an entry has abnormally high score, it may be due to:
 
 ```bash
 # Unified search (recommended)
-maestro search <query> [--type <type>] [--category <cat>] [--kind <kind>] [--code] [--kg] [--no-emb] [--json]
+maestro search <query> [--type <type>] [--category <cat>] [--kind <kind>] [--code] [--kg] [--semantic|--no-emb] [--json]
 
 # Wiki system search
 maestro wiki search <query> [--json]
