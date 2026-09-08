@@ -89,11 +89,57 @@ describe('statusline chain rendering', () => {
   it('renders canonical artifact paths without old phase directories', () => {
     setup({ intent: 'Search migration', runs: [
       { id: '20260713-001-review', sequence: 1, status: 'sealed', command: 'review' },
+      { id: '20260713-002-execute', sequence: 2, status: 'running', command: 'execute' },
     ], artifacts: [
       { id: 'ART-001', kind: 'review-findings', status: 'sealed', runId: '20260713-001-review', path: 'runs/20260713-001-review/outputs/findings.json' },
     ] });
     const out = plain(formatStatusline({ workspace: { current_dir: workspace } }));
     assert.match(out, /Search migration/);
     assert.ok(!out.includes('phases/'));
+  });
+});
+
+describe('statusline completed-session hiding', () => {
+  beforeEach(() => { workspace = ''; });
+  afterEach(teardown);
+
+  it('hides a running Session whose Runs are all sealed', () => {
+    setup({ intent: 'MVP', runs: [
+      { id: '20260713-001-analyze', sequence: 1, status: 'sealed', command: 'analyze' },
+    ] });
+    const out = plain(formatStatusline({ workspace: { current_dir: workspace } }));
+    assert.ok(!out.includes('MVP'), `completed running session should be hidden: ${out}`);
+  });
+
+  it('hides a paused Session whose Runs are all sealed', () => {
+    setup({ intent: 'MVP', sessionStatus: 'paused', runs: [
+      { id: '20260713-001-analyze', sequence: 1, status: 'sealed', command: 'analyze' },
+    ] });
+    const out = plain(formatStatusline({ workspace: { current_dir: workspace } }));
+    assert.ok(!out.includes('MVP'), `completed paused session should be hidden: ${out}`);
+  });
+
+  it('keeps a running Session with a failed Run visible', () => {
+    setup({ intent: 'MVP', runs: [
+      { id: '20260713-001-analyze', sequence: 1, status: 'sealed', command: 'analyze' },
+      { id: '20260713-002-plan', sequence: 2, status: 'failed', command: 'plan' },
+    ] });
+    const out = plain(formatStatusline({ workspace: { current_dir: workspace } }));
+    assert.match(out, /\bMVP\b/, `session with failed run should stay visible: ${out}`);
+  });
+
+  it('counts Runs with status completed toward progress', () => {
+    setup({ intent: 'MVP', runs: [
+      { id: '20260713-001-analyze', sequence: 1, status: 'completed', command: 'analyze' },
+      { id: '20260713-002-plan', sequence: 2, status: 'running', command: 'plan' },
+    ] });
+    const out = plain(formatStatusline({ workspace: { current_dir: workspace } }));
+    assert.match(out, /1\/2/, `completed run should count toward progress: ${out}`);
+  });
+
+  it('keeps a fresh running Session with zero Runs visible', () => {
+    setup({ intent: 'MVP', runs: [] });
+    const out = plain(formatStatusline({ workspace: { current_dir: workspace } }));
+    assert.match(out, /\bMVP\b/, `zero-run session should stay visible: ${out}`);
   });
 });
