@@ -36,8 +36,8 @@
 
 - 分支：本地 `master` = 远程 `fork/master`
 - 跟踪：`fork/master`
-- 相对上游 `origin/master`：超前 39 个 commit，落后 0
-- 尖端：`5bc2c06c` — `fix: extra MCP 按 targetId 去重，MCP delegate 补齐仓库身份`
+- 相对上游 `origin/master`：超前 40 个 commit，落后 0
+- 尖端：`acf1accb` — `docs: 增加分支账本与 branch-hygiene skill`
 - 用途：本机安装、Grok 适配完整产品（含 child-scope、覆盖脚本、INSTALL.md 等）
 - 本账本与 skill 只存在于这条线上
 
@@ -53,8 +53,8 @@
 
 | 项 | 当前值 |
 |---|---|
-| 本地 | `master` @ `5bc2c06c` |
-| 远程 | `fork/master` @ `5bc2c06c`（与本地一致） |
+| 本地 | `master` @ `acf1accb` |
+| 远程 | `fork/master`（推送本尖端后与本地一致） |
 | 上游对照 | `origin/master` @ `bf4a4f54`（v0.5.86） |
 | 合入上游方式 | 不直接 push `origin`；用投稿线开 PR |
 
@@ -77,7 +77,7 @@ git push fork master
 
 | 本地分支 | 跟踪 | 尖端 | 用途 |
 |---|---|---|---|
-| `master` | `fork/master` | `5bc2c06c` | 产品主干 |
+| `master` | `fork/master` | `acf1accb` | 产品主干 |
 
 ### 上游投稿（Open PR）
 
