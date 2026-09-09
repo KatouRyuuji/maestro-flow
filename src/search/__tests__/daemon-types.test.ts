@@ -13,6 +13,7 @@ import {
   isDaemonInfoV2,
   isDaemonReadyResponse,
   readDaemonInfo,
+  reclaimDeadDaemonDescriptor,
   validateDaemonRequest,
 } from '../daemon-types.js';
 import type { DaemonInfoV2 } from '../daemon-types.js';
@@ -92,6 +93,31 @@ describe('daemon descriptor v2 validation', () => {
     expect(existsSync(getDaemonPath(workflowRoot))).toBe(true);
     expect(deleteDaemonInfoIfOwned(workflowRoot, current)).toBe(true);
     expect(existsSync(getDaemonPath(workflowRoot))).toBe(false);
+  });
+
+  it('reclaims a dead-pid v2 descriptor for this workflow and leaves live ones', () => {
+    const workflowRoot = root();
+    const dead = { ...info(workflowRoot), pid: 2_147_483_647 };
+    writeFileSync(getDaemonPath(workflowRoot), JSON.stringify(dead));
+
+    expect(reclaimDeadDaemonDescriptor(workflowRoot)).toBe(true);
+    expect(existsSync(getDaemonPath(workflowRoot))).toBe(false);
+
+    writeFileSync(getDaemonPath(workflowRoot), JSON.stringify(info(workflowRoot)));
+    expect(reclaimDeadDaemonDescriptor(workflowRoot)).toBe(false);
+    expect(existsSync(getDaemonPath(workflowRoot))).toBe(true);
+  });
+
+  it('does not reclaim a foreign-workflow dead descriptor', () => {
+    const workflowRoot = root();
+    const otherRoot = root();
+    writeFileSync(getDaemonPath(workflowRoot), JSON.stringify({
+      ...info(otherRoot),
+      pid: 2_147_483_647,
+    }));
+
+    expect(reclaimDeadDaemonDescriptor(workflowRoot)).toBe(false);
+    expect(existsSync(getDaemonPath(workflowRoot))).toBe(true);
   });
 });
 
