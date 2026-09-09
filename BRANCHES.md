@@ -4,7 +4,7 @@
 
 配套流程：仓库根目录 `branch-hygiene.SKILL.md`（Grok 加载入口：`.grok/skills/branch-hygiene/SKILL.md`）。
 
-账本核对基准：2026-09-09。
+账本核对基准：2026-09-10。
 
 ---
 
@@ -19,7 +19,7 @@
 | 提交 | 本地 `git commit` |
 | 推送 | 把主分支送到远端：`git push fork master` |
 
-默认工作在主分支 `master` 上进行。只有用户特别说明时才切到分支上工作。
+默认工作在主分支 `master` 上进行。只有用户特别说明时才切到分支上工作。默认「拉新」指把远端合进本地主分支（`git pull --ff-only fork master`）。只有用户说「同步上游」时才把上游主分支合进主分支。
 
 ---
 
@@ -49,13 +49,13 @@
 
 | 项 | 当前值 |
 |---|---|
-| 本地主分支 | `master` @ `a03565ec` — `docs: 账本与 skill 采用上游/远端/本地/分支/提交/推送用语` |
-| 远端 | `fork/master` @ `a03565ec` |
-| 上游主分支 | `origin/master` @ `bf4a4f54` — `chore(release): prepare v0.5.86` |
-| 相对上游主分支 | 超前 42，落后 0 |
+| 本地主分支 | `master` @ `dea23d95` — `fix: 修复 Windows 测试门禁（路径/锁/WASM/attestation）` |
+| 远端 | `fork/master` @ `dea23d95` |
+| 上游主分支 | `origin/master` @ `9834a145` — `Merge pull request #38 from KatouRyuuji/pr/feat-goal-native-host` |
+| 相对上游主分支 | 超前 47，落后 9 |
 | 用途 | 完整产品（Grok 适配、安装落点、本账本与 skill） |
 
-把上游主分支合进主分支的现行做法：
+落后 9 来自上游合入 #35–#38 的 GitHub merge commit，不是缺产品提交。要把这些 merge commit 接进主分支，等用户说「同步上游」再执行：
 
 ```text
 git fetch origin
@@ -64,7 +64,7 @@ git merge origin/master
 git push fork master
 ```
 
-然后更新本节尖端、超前数量与核对基准。
+然后更新本节尖端、超前/落后数量与核对基准。
 
 本账本与 skill 只提交到主分支，并推送到远端。
 
@@ -78,20 +78,18 @@ git push fork master
 
 | 分支 | 跟踪 | 尖端 | 相对上游主分支 | 上游 PR | 状态 |
 |---|---|---|---|---|---|
-| `pr/fix-kg-sync-and-runtime-bugs` | `fork/pr/fix-kg-sync-and-runtime-bugs` | `d42198e6` | 超前 2 | [#35](https://github.com/catlog22/maestro-flow/pull/35) | Open |
-| `pr/fix-http-hooks` | `fork/pr/fix-http-hooks` | `7879df90` | 超前 1 | [#36](https://github.com/catlog22/maestro-flow/pull/36) | Open |
-| `pr/feat-grok-build-cli` | `fork/pr/feat-grok-build-cli` | `2c9ad4f9` | 超前 1 | [#37](https://github.com/catlog22/maestro-flow/pull/37) | Open |
-| `pr/feat-goal-native-host` | `fork/pr/feat-goal-native-host` | `a70d1bea` | 超前 2（含 #37） | [#38](https://github.com/catlog22/maestro-flow/pull/38) | Open |
+| `pr/fix-kg-root-daemon` | `fork/pr/fix-kg-root-daemon` | `6e0deb0a` | 超前 1 | [#39](https://github.com/catlog22/maestro-flow/pull/39) | Open |
+| `pr/fix-windows-test-gate` | `fork/pr/fix-windows-test-gate` | `1c0cf089` | 超前 1 | [#40](https://github.com/catlog22/maestro-flow/pull/40) | Open |
 
-#38 叠在 #37 上。合入顺序：#35 与 #36 可并行，然后 #37，然后 #38。
+两条投稿分支都从 `origin/master` 拉出，文件无重叠，可并行审阅。#40 不含 fork 专用的 `scripts/__tests__/install-grok.test.mjs`。
 
-GitHub fork 上除远端（`master`）外还有上表四条同名引用，供上游 PR 取头。
+GitHub fork 上除远端（`master`）外还有上表两条同名引用，供上游 PR 取头。
 
 ### 本地遗留分支
 
 | 分支 | 跟踪 | 尖端 | 说明 |
 |---|---|---|---|
-| `feat/grok-cli-support` | `origin/master`（ahead 10, behind 42） | `e59e6eb3` | 已关闭上游 PR [#29](https://github.com/catlog22/maestro-flow/pull/29)；GitHub fork 已无此引用；内容在主分支 |
+| `feat/grok-cli-support` | `origin/master`（ahead 10, behind 51） | `e59e6eb3` | 已关闭上游 PR [#29](https://github.com/catlog22/maestro-flow/pull/29)；GitHub fork 已无此引用；内容在主分支 |
 
 ---
 
@@ -102,6 +100,10 @@ GitHub fork 上除远端（`master`）外还有上表四条同名引用，供上
 | [#26](https://github.com/catlog22/maestro-flow/pull/26) | Closed | 否 |
 | [#28](https://github.com/catlog22/maestro-flow/pull/28) | Closed | 否 |
 | [#29](https://github.com/catlog22/maestro-flow/pull/29) | Closed | 否 |
+| [#35](https://github.com/catlog22/maestro-flow/pull/35) | Merged | 是 |
+| [#36](https://github.com/catlog22/maestro-flow/pull/36) | Merged | 是 |
+| [#37](https://github.com/catlog22/maestro-flow/pull/37) | Merged | 是 |
+| [#38](https://github.com/catlog22/maestro-flow/pull/38) | Merged | 是 |
 
 ---
 

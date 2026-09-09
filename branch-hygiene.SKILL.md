@@ -20,6 +20,8 @@ description: 按「上游 / 远端 / 本地 / 分支 / 提交 / 推送」管理�
 
 默认在主分支 `master` 上工作。切到分支、向 GitHub fork 发布专题引用、向上游开 PR，都要用户特别说明。
 
+默认「拉新」只把远端合进本地主分支：`git fetch --prune fork` 后 `git pull --ff-only fork master`。不要为此 `git fetch origin` 或 `git merge origin/master`。只有用户说「同步上游」时才把上游主分支合进主分支。
+
 ## 何时用
 
 任务涉及：主分支、远端、上游、分支、提交、推送、上游 PR、同步官方仓库、更新 `BRANCHES.md`。
