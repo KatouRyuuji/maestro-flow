@@ -12,8 +12,8 @@ Maestro-Flow installation has two steps: global CLI install and project initiali
 ## Quick Install
 
 ```bash
-# 1. Install the global CLI (this repo tracks 0.5.82)
-npm install -g maestro-flow@0.5.82
+# 1. Install the global CLI (this repo tracks 0.5.86)
+npm install -g maestro-flow@0.5.86
 
 # 2. Initialize the project (run in the project root)
 maestro install
@@ -182,7 +182,7 @@ maestro install --force --extra-mcp grok,cursor
 
 ## Grok Build
 
-Grok is a first-class host and a delegate backend. Install official `maestro-flow@0.5.82` first, then run `.\install.ps1` / `./install.sh` from the **repo root**. Five steps: deps → official version → Grok CLI → simulate → confirm. If the overlay is already applied and only assets are missing, run the same script again.
+Grok is a first-class host and a delegate backend. Install official `maestro-flow@0.5.86` first, then run `.\install.ps1` / `./install.sh` from the **repo root**. Five steps: deps → official version → Grok CLI → simulate → confirm. If the overlay is already applied and only assets are missing, run the same script again.
 
 ```bash
 # Install the Grok CLI (macOS / Linux)
@@ -196,7 +196,7 @@ irm https://x.ai/cli/install.ps1 | iex
 maestro install --force --components workflows,prepare,ref,arch-kb,templates,overlays,grok-context,grok-md-chinese,grok-skills,grok-agents --extra-mcp grok
 ```
 
-Destinations: `.grok/rules/maestro.md`, `.grok/skills/`, `.grok/agents/` (not `AGENTS.md`). Reinstall strips leftover Maestro sections from `.grok/AGENTS.md`. Project assets go to the caller cwd (`--path` supported). A mismatched official version fails; it does not auto-downgrade. After install, teach only v3: `session open` → `run next` → `run complete --advance` → `session complete`. Authenticate with `grok login` or `XAI_API_KEY`. Verify:
+Destinations: `.grok/rules/maestro.md`, `.grok/skills/`, `.grok/agents/` (not `AGENTS.md`). Reinstall strips leftover Maestro sections from `.grok/AGENTS.md`. Project assets go to the caller cwd (`--path` supported). A mismatched official version fails with a prompt to install the matching version. After install, teach only v3: `session open` → `run next` → `run complete --advance` → `session complete`. Authenticate with `grok login` or `XAI_API_KEY`. Verify:
 
 ```bash
 grok inspect

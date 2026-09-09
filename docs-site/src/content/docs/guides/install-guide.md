@@ -10,8 +10,8 @@ Maestro-Flow 安装分为全局 CLI 安装和项目初始化两步。
 ## 快速安装
 
 ```bash
-# 1. 安装全局 CLI（本仓库对齐 0.5.82）
-npm install -g maestro-flow@0.5.82
+# 1. 安装全局 CLI（本仓库对齐 0.5.86）
+npm install -g maestro-flow@0.5.86
 
 # 2. 初始化项目（在项目根目录执行）
 maestro install
@@ -187,7 +187,7 @@ maestro install --force --extra-mcp grok,cursor
 
 ## Grok Build
 
-Grok 是一等宿主与 delegate 后端。先装官方 `maestro-flow@0.5.82`，再在**仓库根**跑 `.\install.ps1` / `./install.sh`。五步：检查依赖 → 官方版本 → Grok CLI → 模拟 → 确认。补丁已叠、只缺资产时，再跑一次同一脚本即可。
+Grok 是一等宿主与 delegate 后端。先装官方 `maestro-flow@0.5.86`，再在**仓库根**跑 `.\install.ps1` / `./install.sh`。五步：检查依赖 → 官方版本 → Grok CLI → 模拟 → 确认。补丁已叠、只缺资产时，再跑一次同一脚本即可。
 
 ```bash
 # 安装 Grok CLI（macOS / Linux）
@@ -201,7 +201,7 @@ irm https://x.ai/cli/install.ps1 | iex
 maestro install --force --components workflows,prepare,ref,arch-kb,templates,overlays,grok-context,grok-md-chinese,grok-skills,grok-agents --extra-mcp grok
 ```
 
-资产落点：`.grok/rules/maestro.md`、`.grok/skills/`、`.grok/agents/`（不是 `AGENTS.md`）。重装会剥离旧 `.grok/AGENTS.md` 里的 Maestro 段。项目资产写到调用方当前目录，可用 `--path`。官方版本不一致会失败，不会自动降级。装完只教 v3：`session open` → `run next` → `run complete --advance` → `session complete`。认证用 `grok login` 或 `XAI_API_KEY`。验证：
+资产落点：`.grok/rules/maestro.md`、`.grok/skills/`、`.grok/agents/`（不是 `AGENTS.md`）。重装会剥离旧 `.grok/AGENTS.md` 里的 Maestro 段。项目资产写到调用方当前目录，可用 `--path`。官方版本不一致时脚本失败并提示手装匹配版本。装完只教 v3：`session open` → `run next` → `run complete --advance` → `session complete`。认证用 `grok login` 或 `XAI_API_KEY`。验证：
 
 ```bash
 grok inspect

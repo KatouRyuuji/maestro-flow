@@ -9,8 +9,8 @@ Maestro-Flow installation is a two-step process: global CLI install and project 
 ## Quick Install
 
 ```bash
-# 1. Install the global CLI (this repo tracks 0.5.82)
-npm install -g maestro-flow@0.5.82
+# 1. Install the global CLI (this repo tracks 0.5.86)
+npm install -g maestro-flow@0.5.86
 
 # 2. Initialize in your project root
 maestro install
@@ -300,7 +300,7 @@ maestro install --force --extra-mcp grok,cursor
 
 Grok is a first-class host and a delegate backend. After install you can use Maestro skills in the Grok TUI, or run `maestro delegate --to grok`.
 
-This repo's overlay uses an interactive installer (official `maestro-flow@0.5.82` first, then overlay + Grok assets / MCP):
+This repo's overlay uses an interactive installer (official `maestro-flow@0.5.86` first, then overlay + Grok assets / MCP):
 
 ```powershell
 # Windows: run from the repo root; do not cd into repo/
@@ -312,7 +312,7 @@ This repo's overlay uses an interactive installer (official `maestro-flow@0.5.82
 ./install.sh
 ```
 
-Five steps: check deps → check official version → check Grok CLI → simulate → confirm before writing. Each check prints the current status and how to install. Project `.grok/` is written to the caller's cwd; override with `--path`. A mismatched official version fails and does not auto-downgrade. If the overlay is already applied and only `.grok/rules/maestro.md` is missing, run the same script again.
+Five steps: check deps → check official version → check Grok CLI → simulate → confirm before writing. Each check prints the current status and how to install. Project `.grok/` is written to the caller's cwd; override with `--path`. A mismatched official version fails with a prompt to install the matching version. If the overlay is already applied and only `.grok/rules/maestro.md` is missing, run the same script again.
 
 ### Install the Grok CLI
 

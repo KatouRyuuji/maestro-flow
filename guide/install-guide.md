@@ -9,8 +9,8 @@ Maestro-Flow 安装分为全局 CLI 安装和项目初始化两步。
 ## 快速安装
 
 ```bash
-# 1. 安装全局 CLI（本仓库对齐 0.5.82）
-npm install -g maestro-flow@0.5.82
+# 1. 安装全局 CLI（本仓库对齐 0.5.86）
+npm install -g maestro-flow@0.5.86
 
 # 2. 初始化项目（在项目根目录执行）
 maestro install
@@ -383,7 +383,7 @@ maestro install --force --extra-mcp grok,cursor
 
 Grok 是一等宿主与 delegate 后端。安装后可在 Grok TUI 中使用 Maestro 技能，也可 `maestro delegate --to grok`。
 
-本仓库适配层推荐交互安装（先官方 `maestro-flow@0.5.82`，再覆盖 + Grok 资产 / MCP）：
+本仓库适配层推荐交互安装（先官方 `maestro-flow@0.5.86`，再覆盖 + Grok 资产 / MCP）：
 
 ```powershell
 # Windows：在仓库根跑
@@ -395,7 +395,7 @@ Grok 是一等宿主与 delegate 后端。安装后可在 Grok TUI 中使用 Mae
 ./install.sh
 ```
 
-五步：检查依赖 → 检查官方版本 → 检查 Grok CLI → 模拟安装 → 确认后才写盘。每步会打印现状和安装方法。项目 `.grok/` 写到调用方当前目录，可用 `--path` 覆盖。官方版本不一致会失败，不会自动降级。补丁已叠、只缺 `.grok/rules/maestro.md` 时，再跑一次同一脚本即可。
+五步：检查依赖 → 检查官方版本 → 检查 Grok CLI → 模拟安装 → 确认后才写盘。每步会打印现状和安装方法。项目 `.grok/` 写到调用方当前目录，可用 `--path` 覆盖。官方版本不一致时脚本失败并提示手装匹配版本。补丁已叠、只缺 `.grok/rules/maestro.md` 时，再跑一次同一脚本即可。
 
 ### 安装 Grok CLI
 
