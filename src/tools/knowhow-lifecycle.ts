@@ -209,6 +209,32 @@ function isContainedPath(canonicalRoot: string, candidate: string): boolean {
   return target === root || target.startsWith(`${root}/`);
 }
 
+/** Expand 8.3 names without following junctions/symlinks. */
+function canonicalizeExistingPrefix(path: string): string {
+  const abs = resolve(path);
+  const parts = abs.split(/[\\/]+/).filter(part => part.length > 0);
+  if (parts.length === 0) return abs;
+  let acc = process.platform === 'win32' && /^[A-Za-z]:$/.test(parts[0])
+    ? `${parts[0]}${sep}`
+    : (abs.startsWith(sep) ? join(sep, parts[0]) : parts[0]);
+  const start = process.platform === 'win32' && /^[A-Za-z]:$/.test(parts[0])
+    ? 1
+    : (abs.startsWith(sep) ? 1 : 1);
+  for (let index = start; index < parts.length; index += 1) {
+    const next = join(acc, parts[index]);
+    try {
+      const stat = lstatSync(next);
+      if (stat.isSymbolicLink()) {
+        return join(next, ...parts.slice(index + 1));
+      }
+      acc = realpathSync.native(next);
+    } catch {
+      return join(acc, ...parts.slice(index));
+    }
+  }
+  return acc;
+}
+
 function unsafeLifecyclePath(input: string, reason: string): Error {
   return new Error(`Unsafe knowhow lifecycle path: ${input} (${reason})`);
 }
@@ -220,9 +246,11 @@ export function resolveLifecyclePath(
 ): string {
   const canonicalRoot = realpathSync.native(projectRoot);
   const normalizedInput = input.replaceAll('\\', sep);
-  const lexicalTarget = isAbsolute(normalizedInput)
-    ? resolve(normalizedInput)
-    : resolve(canonicalRoot, normalizedInput);
+  const lexicalTarget = canonicalizeExistingPrefix(
+    isAbsolute(normalizedInput)
+      ? resolve(normalizedInput)
+      : resolve(canonicalRoot, normalizedInput),
+  );
   if (!isContainedPath(canonicalRoot, lexicalTarget)) {
     throw unsafeLifecyclePath(input, 'outside canonical project root');
   }
@@ -290,11 +318,13 @@ interface LifecycleLockOwnerView {
 }
 
 function lifecycleRelativePath(projectRoot: string, input: string): string {
-  const root = resolve(projectRoot);
+  const root = canonicalizeExistingPrefix(projectRoot);
   const normalizedInput = input.replaceAll('\\', sep);
-  const absolute = isAbsolute(normalizedInput)
-    ? resolve(normalizedInput)
-    : resolve(root, normalizedInput);
+  const absolute = canonicalizeExistingPrefix(
+    isAbsolute(normalizedInput)
+      ? resolve(normalizedInput)
+      : resolve(root, normalizedInput),
+  );
   if (!isContainedPath(root, absolute)) {
     throw unsafeLifecyclePath(input, 'outside project root');
   }
