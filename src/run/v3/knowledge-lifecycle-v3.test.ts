@@ -722,7 +722,7 @@ describe('session/3.0 knowledge lifecycle', () => {
     })).toThrow(/stale reconciliation|corpus fingerprint|candidate fingerprint changed/i);
   });
 
-  it('fails completion closed on unreconcilable candidate frontmatter without sealing authority', () => {
+  it('seals with concerns when candidate frontmatter cannot be reconciled', () => {
     const { store } = setup('s-fail-closed', 'run-fail-closed');
     writeFileSync(
       join(store.runDir('s-fail-closed', 'run-fail-closed'), 'report.md'),
@@ -735,17 +735,18 @@ describe('session/3.0 knowledge lifecycle', () => {
       'utf8',
     );
 
-    expect(() => completeRunAndAdvance(store, {
+    const mutation = completeRunAndAdvance(store, {
       ...completionIdentity('s-fail-closed', 'req-fail-closed'),
       runId: 'run-fail-closed',
       expectedRunRevision: 0,
       expectedOrchestrationRevision: 0,
       verdict: 'done',
       knowledgeReconciliation: null,
-    })).toThrow(/candidate-bearing report frontmatter that cannot be reconciled/);
-    expect(store.readRunV30('s-fail-closed', 'run-fail-closed').status).toBe('running');
-    expect(store.readSessionV30('s-fail-closed').orchestration_revision).toBe(0);
-    expect(existsSync(join(store.runDir('s-fail-closed', 'run-fail-closed'), 'knowledge-reconciliation.json')))
-      .toBe(false);
+    });
+    expect(store.readRunV30('s-fail-closed', 'run-fail-closed').status).toBe('sealed');
+    expect(store.readSessionV30('s-fail-closed').orchestration_revision).toBe(1);
+    expect(mutation.transition.result).toEqual(expect.objectContaining({
+      concerns: [expect.stringMatching(/knowledge reconciliation failed:/)],
+    }));
   });
 });

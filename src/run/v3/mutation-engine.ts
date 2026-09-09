@@ -16,7 +16,6 @@ import {
 import {
   addCandidate,
   readRunKnowledgeDelta,
-  reportKnowledgeCandidateDrafts,
   runKnowledgeDeltaPath,
   runKnowledgeDeltaSchema,
   upgradeKnowledgeLedgerForStaging,
@@ -25,6 +24,7 @@ import {
 import { CURRENT_REPOSITORY_ALIAS, resolveRepositoryContext } from '../../repository/context.js';
 import {
   artifactRegistrySchema,
+  reportFrontmatterSchema,
   type ArtifactRegistry,
   type RunV30,
   type SessionStateV30,
@@ -1135,7 +1135,16 @@ export function completeRunAndAdvance(
     const runDir = store.runDir(identity.sessionId, runId);
 
     // ── report.md frontmatter summary fallback ─────────────────────────────
-    const frontmatter = readReportFrontmatter(runDir);
+    const knowledgeConcerns: string[] = [];
+    let frontmatter: ReportFrontmatter;
+    try {
+      frontmatter = readReportFrontmatter(runDir);
+    } catch (error) {
+      frontmatter = reportFrontmatterSchema.parse({});
+      knowledgeConcerns.push(
+        `knowledge reconciliation failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     const summary = input.summary !== undefined && input.summary !== null && input.summary.trim() !== ''
       ? input.summary
       : frontmatter.summary;
@@ -1175,9 +1184,7 @@ export function completeRunAndAdvance(
     }, identity.recordedAt, session.orchestration_revision + 1);
 
     // ── knowledge staging + reconciliation receipt (atomic with the seal) ──
-    const frontmatterCandidates = reportKnowledgeCandidateDrafts(frontmatter, runId);
     let knowledgeReceipt: KnowledgeReconciliation | null = null;
-    const knowledgeConcerns: string[] = [];
     try {
       const corpusFingerprint = currentKnowledgeCorpusFingerprint(store.projectRoot);
       const persisted = readKnowledgeReconciliation(store, identity.sessionId, runId, true);
@@ -1203,16 +1210,6 @@ export function completeRunAndAdvance(
         throw new Error('reconciliation changed while completing the Run');
       }
     } catch (error) {
-      if (frontmatterCandidates.length > 0) {
-        throw new V3StructuredError(
-          'INVALID_STATE_TRANSITION',
-          `Run ${runId} has candidate-bearing report frontmatter that cannot be reconciled`,
-          {
-            details: { cause: error instanceof Error ? error.message : String(error) },
-            next_actions: [`maestro knowledge review ${identity.sessionId} --refresh`],
-          },
-        );
-      }
       knowledgeReceipt = null;
       knowledgeConcerns.push(
         `knowledge reconciliation failed: ${error instanceof Error ? error.message : String(error)}`,

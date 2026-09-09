@@ -29,6 +29,7 @@ import {
 import {
   generateV3RunKnowledgeReconciliation,
   readV3KnowledgeReconciliation,
+  V3KnowledgeReconciliationError,
   v3ReconciliationSummary,
 } from '../run/v3/knowledge-v3.js';
 import { ensureV3RunShell } from '../run/v3/run-shell.js';
@@ -203,11 +204,17 @@ export function registerRunV3Command(program: Command): void {
         // Knowledge reconciliation is generated BEFORE the mutation (pure
         // computation, no writes) and committed atomically with the staged
         // knowledge delta inside completeRunAndAdvance — receipt and delta
-        // can never diverge. A missing/unreadable report yields null and both
-        // are omitted.
-        const knowledgeReconciliation = generateV3RunKnowledgeReconciliation(
-          store.projectRoot, resolved.session, runId,
-        );
+        // can never diverge. Missing report.md yields null. Generation
+        // failures are passed as null so completeRunAndAdvance records
+        // concerns instead of aborting the CLI before the mutation.
+        let knowledgeReconciliation = null;
+        try {
+          knowledgeReconciliation = generateV3RunKnowledgeReconciliation(
+            store.projectRoot, resolved.session, runId,
+          );
+        } catch (error) {
+          if (!(error instanceof V3KnowledgeReconciliationError)) throw error;
+        }
         const mutation = completeRunAndAdvance(store, {
           ...mutationIdentity(resolved), runId,
           expectedRunRevision: resolved.expectedRunRevision!,

@@ -233,6 +233,33 @@ describe('v3 knowledge reconciliation hook', () => {
       .toThrow(V3KnowledgeReconciliationError);
   });
 
+  it('run complete records concerns when reconciliation fails and still seals', async () => {
+    const root = cliFixture({ report: RUN_REPORT_TEMPLATE });
+    const runPath = join(root, '.workflow', 'sessions', 's-v3', 'runs', 'run-1', 'run.json');
+    const runDoc = JSON.parse(readFileSync(runPath, 'utf8')) as RunV30;
+    writeFileSync(runPath, `${JSON.stringify({
+      ...runDoc, status: 'running', started_at: '2026-08-12T00:01:00.000Z',
+    }, null, 2)}\n`, 'utf8');
+    writeFileSync(
+      join(root, '.workflow', 'sessions', 's-v3', 'runs', 'run-1', 'report.md'),
+      '---\nverdict: [unterminated\n---\n',
+      'utf8',
+    );
+
+    const completed = await invoke(registerRunV3Command, [
+      'run', 'complete', 'run-1', '--summary', 'done', '--advance',
+      '--expected-orchestration-revision', '0', '--expected-run-revision', '0',
+      '--session', 's-v3', '--participant', 'actor', '--actor', 'actor',
+      '--request-id', 'req-visible-fail', '--reason', 'visible fail test',
+      '--json', '--workflow-root', root,
+    ]);
+    expect(completed).toMatchObject({ operation: 'complete', ok: true });
+    const completedResult = completed.result as { concerns?: string[]; knowledge_reconciliation?: unknown };
+    expect(completedResult.concerns).toEqual([
+      expect.stringMatching(/knowledge reconciliation failed:/),
+    ]);
+  });
+
   it('returns null for a missing or corrupted receipt and validates the JSON shape', () => {
     const store = setup();
     expect(readV3KnowledgeReconciliation(store, 's-1', 'r-2')).toBeNull();
