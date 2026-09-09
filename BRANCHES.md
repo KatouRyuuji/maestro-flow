@@ -78,7 +78,7 @@ git push fork master
 
 | 分支 | 跟踪 | 尖端 | 相对上游主分支 | 上游 PR | 状态 |
 |---|---|---|---|---|---|
-| `pr/fix-kg-sync-and-runtime-bugs` | `fork/pr/fix-kg-sync-and-runtime-bugs` | `59637a33` | 超前 1 | [#35](https://github.com/catlog22/maestro-flow/pull/35) | Open |
+| `pr/fix-kg-sync-and-runtime-bugs` | `fork/pr/fix-kg-sync-and-runtime-bugs` | `d42198e6` | 超前 2 | [#35](https://github.com/catlog22/maestro-flow/pull/35) | Open |
 | `pr/fix-http-hooks` | `fork/pr/fix-http-hooks` | `7879df90` | 超前 1 | [#36](https://github.com/catlog22/maestro-flow/pull/36) | Open |
 | `pr/feat-grok-build-cli` | `fork/pr/feat-grok-build-cli` | `2c9ad4f9` | 超前 1 | [#37](https://github.com/catlog22/maestro-flow/pull/37) | Open |
 | `pr/feat-goal-native-host` | `fork/pr/feat-goal-native-host` | `a70d1bea` | 超前 2（含 #37） | [#38](https://github.com/catlog22/maestro-flow/pull/38) | Open |
