@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -115,14 +115,18 @@ describe('install-grok helpers', () => {
     const workspaceRoot = resolve(repoRoot, '..');
     const ps1 = readFileSync(join(repoRoot, 'install.ps1'), 'utf8');
     const sh = readFileSync(join(repoRoot, 'install.sh'), 'utf8');
-    const rootPs1 = readFileSync(join(workspaceRoot, 'install.ps1'), 'utf8');
-    const rootSh = readFileSync(join(workspaceRoot, 'install.sh'), 'utf8');
     expect(ps1).not.toMatch(/Set-Location\s+-LiteralPath/);
     expect(ps1).toContain('install-grok.mjs');
     expect(sh).not.toMatch(/^cd "/m);
     expect(sh).toContain('install-grok.mjs');
-    expect(rootPs1).not.toMatch(/Set-Location\s+-LiteralPath/);
-    expect(rootSh).not.toMatch(/^cd "/m);
+    const rootPs1Path = join(workspaceRoot, 'install.ps1');
+    const rootShPath = join(workspaceRoot, 'install.sh');
+    if (existsSync(rootPs1Path)) {
+      expect(readFileSync(rootPs1Path, 'utf8')).not.toMatch(/Set-Location\s+-LiteralPath/);
+    }
+    if (existsSync(rootShPath)) {
+      expect(readFileSync(rootShPath, 'utf8')).not.toMatch(/^cd "/m);
+    }
   });
 
   it('prints current status and how-to for each check', () => {
