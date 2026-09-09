@@ -1,4 +1,4 @@
-import { describe, it, beforeEach, afterEach } from 'vitest';
+import { describe, it, beforeEach, afterEach, vi } from 'vitest';
 import assert from 'node:assert';
 import {
   mkdtempSync,
@@ -94,7 +94,11 @@ function writeState(current_phase?: number, current_task_id?: string): void {
 }
 
 async function loadModule() {
-  return import('../team-monitor.js');
+  // 查询串动态 import（?t=...）在 vitest/vite 下会触发 "Unknown variable dynamic import"；
+  // vi.resetModules() 是标准的模块缓存绕过方式
+  vi.resetModules();
+  const mod = await import('../team-monitor.js');
+  return mod as typeof import('../team-monitor.js');
 }
 
 function readActivityLines(): Record<string, unknown>[] {

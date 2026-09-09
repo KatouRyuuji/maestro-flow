@@ -9,8 +9,10 @@ import { runResponseV12Schema } from '../protocol-schemas.js';
 import type { RunV30, SessionStateV30 } from '../schemas.js';
 import { SessionStore } from '../store.js';
 import {
+  generateV3RunKnowledgeReconciliation,
   readV3KnowledgeReconciliation,
   reconcileV3RunKnowledge,
+  V3KnowledgeReconciliationError,
   v3ReconciliationSummary,
 } from './knowledge-v3.js';
 
@@ -219,6 +221,16 @@ describe('v3 knowledge reconciliation hook', () => {
     expect(second!.candidate_snapshot_hash).toBe(receipt!.candidate_snapshot_hash);
     expect(readFileSync(join(store.sessionDir('s-1'), 'session.json'), 'utf8')).toBe(sessionBefore);
     expect(readFileSync(join(runDir, 'run.json'), 'utf8')).toBe(runBefore);
+  });
+
+  it('returns null only when report.md is missing and throws on unreadable frontmatter', () => {
+    const root = cliFixture({ report: null });
+    expect(generateV3RunKnowledgeReconciliation(root, 's-v3', 'run-1')).toBeNull();
+
+    const runDir = join(root, '.workflow', 'sessions', 's-v3', 'runs', 'run-1');
+    writeFileSync(join(runDir, 'report.md'), '---\nverdict: [unterminated\n---\n', 'utf8');
+    expect(() => generateV3RunKnowledgeReconciliation(root, 's-v3', 'run-1'))
+      .toThrow(V3KnowledgeReconciliationError);
   });
 
   it('returns null for a missing or corrupted receipt and validates the JSON shape', () => {

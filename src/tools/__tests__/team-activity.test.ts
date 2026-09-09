@@ -1,4 +1,4 @@
-import { describe, it, beforeEach, afterEach } from 'vitest';
+import { describe, it, beforeEach, afterEach, vi } from 'vitest';
 import assert from 'node:assert';
 import {
   mkdtempSync,
@@ -35,7 +35,10 @@ function teardown(): void {
 }
 
 async function loadModule() {
-  return import('../team-activity.js');
+  // 查询串动态 import 在 vitest/vite 下触发 "Unknown variable dynamic import"，改用 vi.resetModules()
+  vi.resetModules();
+  const mod = await import('../team-activity.js');
+  return mod as typeof import('../team-activity.js');
 }
 
 function isoMinutesAgo(minutes: number): string {

@@ -1,4 +1,4 @@
-import { describe, it, beforeEach, afterEach } from 'vitest';
+import { describe, it, beforeEach, afterEach, vi } from 'vitest';
 import assert from 'node:assert';
 import {
   mkdtempSync,
@@ -11,7 +11,6 @@ import {
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execSync } from 'node:child_process';
-import * as teamMembers from '../team-members.js';
 
 // ---------------------------------------------------------------------------
 // Fixture helpers
@@ -19,8 +18,6 @@ import * as teamMembers from '../team-members.js';
 //
 // These tests isolate the project root via MAESTRO_PROJECT_ROOT so that
 // getProjectRoot() from path-validator points at a fresh tmp dir per test.
-// team-members resolves that environment variable when its functions are
-// called, so a static import is safe and compatible with Vitest workers.
 // ---------------------------------------------------------------------------
 
 let tmpDir: string;
@@ -62,8 +59,15 @@ function cdBack(): void {
   process.chdir(prevCwd);
 }
 
-function loadModule(): typeof teamMembers {
-  return teamMembers;
+// ---------------------------------------------------------------------------
+// Module loader (cache-busted per test so internal state is fresh)
+// ---------------------------------------------------------------------------
+
+async function loadModule() {
+  // 查询串动态 import 在 vitest/vite 下触发 "Unknown variable dynamic import"，改用 vi.resetModules()
+  vi.resetModules();
+  const mod = await import('../team-members.js');
+  return mod as typeof import('../team-members.js');
 }
 
 // ---------------------------------------------------------------------------
