@@ -323,10 +323,17 @@ function readWorkflowState(dir: string): WorkflowInfo {
         }).filter((run): run is { run_id: string; sequence: number; status: string } => run !== null)
       : [];
     const sequenceByRun = new Map(runs.map(run => [run.run_id, run.sequence]));
+    // Hide sessions whose work is done but were never sealed: every Run is in
+    // a terminal-success state, so the milestone line would otherwise linger
+    // forever. Zero-Run sessions are just getting started and stay visible;
+    // a failed Run keeps it visible too.
+    const sessionLive = session.status === 'running' || session.status === 'paused';
+    const allRunsDone = runs.length > 0 && runs.every(run => run.status === 'sealed' || run.status === 'completed');
+    if (sessionLive && allRunsDone) return { ...emptyWf, workspaceRoot: root };
     result.milestone = session.intent ?? sessionId;
     result.status = session.status ?? '';
     result.total = runs.length;
-    result.completed = runs.filter(run => run.status === 'sealed').length;
+    result.completed = runs.filter(run => run.status === 'sealed' || run.status === 'completed').length;
     result.inProgress = runs.filter(run => run.status === 'running' || run.status === 'blocked').length;
     result.currentPhase = session.active_run_id ? (sequenceByRun.get(session.active_run_id) ?? 0) : 0;
     const artifacts: ArtifactInfo[] = Object.entries(registry.artifacts ?? {}).map(([id, artifact]) => ({

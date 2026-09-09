@@ -442,6 +442,79 @@ describe('KG sync runtime', () => {
     expect(lstatSync(guardPath).isDirectory()).toBe(true);
   });
 
+  it('reclaims an expired mutation guard left by a crashed holder', () => {
+    const project = root();
+    const guardPath = join(project, '.workflow', '.kg-sync-worker-mutation.lock');
+    mkdirSync(guardPath);
+    writeFileSync(join(guardPath, 'owner.json'), JSON.stringify({
+      schema_version: 'kg-sync-worker-mutation-guard/1.0',
+      pid: 424242,
+      token: '77777777-7777-4777-8777-777777777777',
+      created_at: Date.now() - 10 * 60_000,
+    }));
+
+    const acquired = acquireKgSyncWorkerToken(project, 'worker');
+    expect(acquired.acquired).toBe(true);
+    // The stale guard was reclaimed and the critical section already released:
+    // the guard directory is gone and the marker belongs to this process.
+    expect(existsSync(guardPath)).toBe(false);
+    expect(inspectKgSyncWorkerMarker(project).owner).toMatchObject({ pid: process.pid });
+    if (acquired.acquired) releaseKgSyncWorkerToken(acquired.token);
+    expect(existsSync(guardPath)).toBe(false);
+  });
+
+  it('keeps waiting on a fresh mutation guard and preserves it after timing out', () => {
+    const project = root();
+    const guardPath = join(project, '.workflow', '.kg-sync-worker-mutation.lock');
+    mkdirSync(guardPath);
+    writeFileSync(join(guardPath, 'owner.json'), JSON.stringify({
+      schema_version: 'kg-sync-worker-mutation-guard/1.0',
+      pid: 424242,
+      token: '88888888-8888-4888-8888-888888888888',
+      created_at: Date.now(),
+    }));
+
+    expect(() => acquireKgSyncWorkerToken(project, 'worker'))
+      .toThrow('Timed out acquiring KG sync worker mutation guard');
+    expect(lstatSync(guardPath).isDirectory()).toBe(true);
+  });
+
+  it('fences a holder whose guard is reclaimed mid-section', () => {
+    const project = root();
+    const path = kgSyncWorkerMarkerPath(project);
+    const base = Date.now();
+    const deadToken = '11111111-1111-4111-8111-111111111111';
+    writeFileSync(path, serializeKgSyncWorkerMarker(424242, deadToken, base - 200, 'worker'));
+    const staleTime = new Date(base - 200);
+    utimesSync(path, staleTime, staleTime);
+    const guardPath = join(project, '.workflow', '.kg-sync-worker-mutation.lock');
+
+    // isPidLive fires inside the critical section, right before the stale
+    // marker would be unlinked. Swap the guard there to simulate a
+    // competitor reclaiming it while this holder is suspended.
+    expect(() => acquireKgSyncWorkerToken(project, 'worker', {
+      staleMs: 100,
+      isPidLive: () => {
+        rmSync(guardPath, { recursive: true, force: true });
+        mkdirSync(guardPath);
+        writeFileSync(join(guardPath, 'owner.json'), JSON.stringify({
+          schema_version: 'kg-sync-worker-mutation-guard/1.0',
+          pid: process.pid,
+          token: '99999999-9999-4999-8999-999999999999',
+          created_at: Date.now(),
+        }));
+        return false; // dead marker owner → reclaimable
+      },
+    })).toThrow('guard release both failed');
+
+    // The fence must fire before the destructive unlink: without it the
+    // stale marker is removed and a new one created inside the stolen
+    // section, and the guard swap is only detected on release.
+    expect(readFileSync(path, 'utf8')).toContain(deadToken);
+
+    rmSync(guardPath, { recursive: true });
+  });
+
   it('serializes a stale reclaim against a deterministic second contender', async () => {
     const project = root();
     const path = kgSyncWorkerMarkerPath(project);
