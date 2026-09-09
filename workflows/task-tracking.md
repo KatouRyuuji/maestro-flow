@@ -29,18 +29,19 @@ Task 工具是 session 权威状态的 **UI 镜像**，不替代 session 状态�
 
 ## Goal 设置
 
-Goal 是 LLM 内置的终止条件追踪器，与 task 工具互补：
+Goal 跟各宿主原生 `/goal` 走。Maestro 不改 Goal 行为。
 - **task** = 步骤进度镜像（UI 投影）
-- **goal** = 终止条件（LLM 自主判断何时停止）
+- **goal** = 宿主自己的终止条件（设定 / 暂停 / 继续 / 清除都由宿主管理）
 
-Goal 工具是 LLM 内置工具，不检测可用性——LLM 能调就调，不能调就不调。
+用户清除 Goal 之后，不要重建、不要刷新。外观必须保持消失。
 
-| 平台 | 设置方式 | 说明 |
-|------|----------|------|
-| Claude | 输出 `/goal` 提示词，用户复制输入 | 非阻塞，执行中可随时输入 |
-| Codex | 调用 `create_goal` / `update_goal` | LLM 内置工具 |
-| Pi | 调用 `goal({ action: "create" })` | harness 内置工具 |
-| Agents-Standard | `create_task` 作为 session goal | 镜像协议 |
+| 平台 | 原生用法 | Maestro |
+|------|----------|---------|
+| Claude Code | 用户输入 `/goal`；清除/关闭由宿主管理 | 可提示一次；clear 后不要再贴 `/goal` |
+| Cursor | `/goal <objective>` → `CreateGoal`；完成才 `UpdateGoal complete`；暂停后继续才 `active` | 不要用 `UpdateGoal` 刷新外观；clear 后不要重建 |
+| Grok | `/goal <objective>` / `status` / `pause` / `resume` / `clear` | clear/pause 后不要再 `create_goal` / `update_goal` |
+| Codex | `create_goal` / `update_goal` | 跟宿主工具走 |
+| Pi | `goal({ action: "create" })` | 跟宿主工具走 |
 
 ### 启用方式
 

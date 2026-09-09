@@ -179,7 +179,7 @@ reads:     # 开工要先读什么
 ---
 name: <step>
 description: <一句话：动作 + 产出物>
-goal: true                # 可选。长周期 step 声明后，run prepare/skill 按平台返回 goal_mode 创建指引（用户加载即为显式启用；平台无 goal 工具时为 null）
+goal: true                # 可选。长周期 step 声明后，按宿主返回原生 /goal 规则（不改 Goal 行为；用户 clear 后不得重建；平台无 goal 工具时为 null）
 argument-hint: "[args] [flags]"
 contract_version: 2.1
 contract:

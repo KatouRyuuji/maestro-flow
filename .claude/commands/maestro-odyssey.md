@@ -137,7 +137,7 @@ All base invariants apply (evidence append-only, session-as-state, phase goal tr
 5. **Read-only** (security, defensive) — NEVER modify source code, configuration, or dependencies. Security and defensive audits produce reports only; fixes route to `--mode improve`.
 6. **Acceptance criteria are sacred** (planex) — no "close enough", no manual override without explicit escalation.
 7. **Browser is truth** (ui) — verify in real rendering, not just code review. Diverge before converge.
-8. **Goal tracking 与 session 双写** — 各 phase 进入/退出时同步创建/更新 goal，补充 session.json 的 UI 可见进度。
+8. **Goal 跟宿主原生 /goal 走** — session.json 是权威进度。不要为了刷新外观去重建 Goal；用户 clear 之后外观必须保持消失。
 </invariants>
 
 <task_tracking>

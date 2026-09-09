@@ -169,6 +169,10 @@ Read `ralph-amend-goal.md`, use `maestro session status --session {session_id} -
 
 </state_machine>
 
+<task_tracking>
+@~/.maestro/workflows/task-tracking.md
+</task_tracking>
+
 <success_criteria>
 - Public flags are `-y`, `-c`, `--amend`.
 - Initial classification is auditable and the Session exists before step execution.
