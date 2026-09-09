@@ -29,6 +29,7 @@ export {
   isDaemonInfoV2,
   isDaemonReadyResponse,
   readDaemonInfo,
+  reclaimDeadDaemonDescriptor,
 } from './daemon-types.js';
 
 import {
@@ -36,7 +37,7 @@ import {
   SEARCH_DAEMON_PROTOCOL,
   daemonIdentityRequest,
   deleteDaemonInfoIfOwned,
-  deleteDaemonInfoIfStale,
+  reclaimDeadDaemonDescriptor,
   getDaemonPath,
   getDaemonSpawnLockPath,
   isDaemonAlive,
@@ -337,13 +338,16 @@ export function claimSpawnLock(workflowRoot: string): string | null {
 function descriptorBlocksSpawn(workflowRoot: string): boolean {
   const path = getDaemonPath(workflowRoot);
   if (!existsSync(path)) return false;
+  // Dead-pid v2 descriptors for this workflow are reclaimed so search can
+  // spawn a successor. Malformed, foreign, and live descriptors stay put.
+  if (reclaimDeadDaemonDescriptor(workflowRoot) && !existsSync(getDaemonPath(workflowRoot))) {
+    return false;
+  }
   const existing = readDaemonInfo(workflowRoot);
-  // Malformed, foreign-workflow, and live legacy descriptors are unverified.
-  // Preserve them instead of guessing ownership.
   if (!existing) return true;
   if (isDaemonInfoV2(existing) && !isDaemonInfoV2(existing, workflowRoot)) return true;
   if (isDaemonAlive(existing)) return true;
-  return !deleteDaemonInfoIfStale(workflowRoot, existing);
+  return true;
 }
 
 export async function spawnDaemon(workflowRoot: string): Promise<void> {
