@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { transformContentForPlatform } from './skill-converter.js';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { buildCursorSkills, transformContentForPlatform } from './skill-converter.js';
 
 describe('Pi Maestro platform conversion', () => {
   it('binds platform on Session and Run creation and content-loading commands', () => {
@@ -146,3 +158,181 @@ On callback: consume result`;
     expect(converted.match(/--platform pi/g)).toHaveLength(3);
   });
 });
+
+describe('Grok platform conversion', () => {
+  it('rewrites Claude tool calls to grok-native tools', () => {
+    const source = [
+      'Agent({ description: "x", prompt: "do it" })',
+      'Read({ file_path: "a.ts" })',
+      'Write({ file_path: "b.ts" })',
+      'Edit({ file_path: "c.ts" })',
+      'Bash({ command: "ls" })',
+      'Grep({ pattern: "foo" })',
+      'Glob({ pattern: "*.ts" })',
+    ].join('\n');
+
+    const converted = transformContentForPlatform(source, 'grok');
+
+    expect(converted).toContain('spawn_subagent(');
+    expect(converted).toContain('read_file(');
+    expect(converted).toContain('write_file(');
+    expect(converted).toContain('search_replace(');
+    expect(converted).toContain('run_terminal_command(');
+    expect(converted).toContain('grep(');
+    expect(converted).toContain('list_dir(');
+    expect(converted).not.toContain('delegate_subagent');
+    expect(converted).not.toContain('spawn_agent(');
+  });
+
+  it('maps other-platform subagent tool names to grok-native ones', () => {
+    const source = 'use delegate_subagent / spawn_agent then wait_agent and interrupt_agent';
+    const converted = transformContentForPlatform(source, 'grok');
+    expect(converted).toContain('spawn_subagent');
+    expect(converted).toContain('get_command_or_subagent_output');
+    expect(converted).toContain('kill_command_or_subagent');
+    expect(converted).not.toContain('delegate_subagent');
+    expect(converted).not.toContain('wait_agent');
+  });
+
+  it('binds --platform grok on run content-loading commands', () => {
+    const converted = transformContentForPlatform('maestro run brief run-1 --session demo', 'grok');
+    expect(converted).toContain('--platform grok');
+  });
+
+  it('maps Agent() fields per TOOL_FIELD_MAP: background rename, name/model/mode dropped', () => {
+    const source = 'Agent({ prompt: "do it", description: "d", subagent_type: "worker", run_in_background: true, name: "w1", model: "grok-4", mode: "write" })';
+    const converted = transformContentForPlatform(source, 'grok');
+    expect(converted).toContain('spawn_subagent({');
+    expect(converted).toContain('prompt: "do it"');
+    expect(converted).toContain('subagent_type: "worker"');
+    expect(converted).toContain('background: true');
+    expect(converted).not.toContain('run_in_background');
+    expect(converted).not.toContain('name:');
+    expect(converted).not.toContain('model:');
+    expect(converted).not.toContain('mode:');
+  });
+
+  it('adds grok subagent tools to restricted allowed-tools when body calls Agent()', () => {
+    const source = [
+      '---',
+      'name: demo',
+      'allowed-tools: Read, Grep',
+      '---',
+      'Run Agent({ prompt: "x", subagent_type: "w" }) now.',
+    ].join('\n');
+    const converted = transformContentForPlatform(source, 'grok');
+    expect(converted).toContain('spawn_subagent');
+    expect(converted).toContain('get_command_or_subagent_output');
+    expect(converted).toContain('kill_command_or_subagent');
+    expect(converted).toContain('wait_commands_or_subagents');
+    expect(converted).toContain('read_file');
+    // frontmatter 已映射,正文裸 Agent( 不残留
+    expect(converted).not.toMatch(/\bAgent\s*\(/);
+  });
+
+  it('keeps unrestricted frontmatter without allowed-tools untouched by subagent injection', () => {
+    const source = ['---', 'name: demo', '---', 'plain body'].join('\n');
+    const converted = transformContentForPlatform(source, 'grok');
+    expect(converted).not.toContain('spawn_subagent');
+  });
+
+  it('preserves expression and multiline Agent() values, renames mapped keys', () => {
+    const source = [
+      'Agent({',
+      '  prompt: buildPrompt({ topic: "t" }),',
+      '  subagent_type: workerType,',
+      '  run_in_background: enabled,',
+      '  model: preferredModel,',
+      '})',
+    ].join('\n');
+    const converted = transformContentForPlatform(source, 'grok');
+    expect(converted).toContain('spawn_subagent({');
+    expect(converted).toContain('prompt: buildPrompt({ topic: "t" })');
+    expect(converted).toContain('subagent_type: workerType');
+    expect(converted).toContain('background: enabled');
+    expect(converted).not.toContain('run_in_background');
+    expect(converted).not.toContain('preferredModel');
+  });
+
+  it('keeps unknown Agent() fields verbatim instead of dropping them', () => {
+    const source = 'Agent({ prompt: "x", team_name: "t1" })';
+    const converted = transformContentForPlatform(source, 'grok');
+    expect(converted).toContain('spawn_subagent({');
+    expect(converted).toContain('prompt: "x"');
+    expect(converted).toContain('team_name: "t1"');
+  });
+
+  it('treats a quote after an even run of backslashes as the string end', () => {
+    // 文本为 Agent({ prompt: "C:\\" }):引号前两个反斜杠是字面量,引号闭合
+    const source = 'Agent({ prompt: "C:\\\\" })';
+    const converted = transformContentForPlatform(source, 'grok');
+    expect(converted).toContain('spawn_subagent({ prompt: "C:\\\\" })');
+  });
+
+  it('keeps Grok-native /goal clear rules', () => {
+    const converted = transformContentForPlatform('<task_tracking>\nold\n</task_tracking>', 'grok');
+    expect(converted).toContain('/goal clear');
+    expect(converted).toContain('不要再 `create_goal`');
+    expect(converted).not.toContain('保持 active 以刷新外观');
+  });
+});
+
+describe('Cursor platform conversion', () => {
+  it('keeps Cursor-native /goal rules and does not remap tasks onto Goal', () => {
+    const source = [
+      '<task_tracking>',
+      'TaskCreate session goal',
+      '</task_tracking>',
+      '',
+      'Then TaskCreate({ subject: "Step 1" }) and TaskUpdate({ status: "completed" }).',
+    ].join('\n');
+
+    const converted = transformContentForPlatform(source, 'cursor');
+
+    expect(converted).toContain('Goal 跟 Cursor 原生');
+    expect(converted).toContain('用户清除或关闭 Goal 后');
+    expect(converted).toContain('create_task({ subject: "Step 1" })');
+    expect(converted).toContain('update_task({ status: "completed" })');
+    expect(converted).not.toContain('保持 active 以刷新外观');
+    expect(converted).not.toContain('TaskCreate');
+    expect(converted).not.toContain('Grok 原生');
+  });
+
+  it('binds --platform cursor on run content-loading commands', () => {
+    const converted = transformContentForPlatform('maestro run brief run-1 --session demo', 'cursor');
+    expect(converted).toContain('--platform cursor');
+  });
+
+  it('replaces a skill junction so Cursor writes do not land in another host', () => {
+    const root = mkdtempSync(join(tmpdir(), 'maestro-cursor-junc-'));
+    try {
+      const claudeDir = join(root, '.claude');
+      mkdirSync(join(claudeDir, 'commands'), { recursive: true });
+      writeFileSync(
+        join(claudeDir, 'commands', 'maestro.md'),
+        '<task_tracking>\nold\n</task_tracking>\n',
+        'utf8',
+      );
+      const shared = join(root, 'claude-skills', 'maestro');
+      mkdirSync(shared, { recursive: true });
+      writeFileSync(join(shared, 'SKILL.md'), 'CLAUDE CANARY\n', 'utf8');
+      const cursorSkills = join(root, 'cursor-skills');
+      mkdirSync(cursorSkills, { recursive: true });
+      const cursorMaestro = join(cursorSkills, 'maestro');
+      symlinkSync(shared, cursorMaestro, process.platform === 'win32' ? 'junction' : 'dir');
+
+      buildCursorSkills(claudeDir, cursorSkills);
+
+      expect(readFileSync(join(shared, 'SKILL.md'), 'utf8')).toBe('CLAUDE CANARY\n');
+      expect(existsSync(cursorMaestro)).toBe(true);
+      expect(lstatSync(cursorMaestro).isSymbolicLink()).toBe(false);
+      const out = readFileSync(join(cursorMaestro, 'SKILL.md'), 'utf8');
+      expect(out).toContain('Goal 跟 Cursor 原生');
+      expect(out).not.toContain('CLAUDE CANARY');
+      expect(out).not.toContain('Grok 原生');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
