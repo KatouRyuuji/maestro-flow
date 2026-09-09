@@ -24,6 +24,33 @@ afterAll(() => {
   rmSync(testHome, { recursive: true, force: true });
 });
 
+describe('recordExtraMcp', () => {
+  it('upserts by targetId instead of appending duplicates', () => {
+    const m = manifestApi.createManifest('global', testHome);
+    manifestApi.recordExtraMcp(m, {
+      targetId: 'grok',
+      configPath: '/home/.grok/config.toml',
+      serverName: 'maestro-tools',
+    });
+    manifestApi.recordExtraMcp(m, {
+      targetId: 'cursor',
+      configPath: '/home/.cursor/mcp.json',
+      serverName: 'maestro-tools',
+    });
+    manifestApi.recordExtraMcp(m, {
+      targetId: 'grok',
+      configPath: '/home/.grok/config.toml',
+      serverName: 'maestro-tools',
+    });
+
+    expect(m.mcp?.extras).toEqual([
+      { targetId: 'grok', configPath: '/home/.grok/config.toml', serverName: 'maestro-tools' },
+      { targetId: 'cursor', configPath: '/home/.cursor/mcp.json', serverName: 'maestro-tools' },
+    ]);
+    expect(manifestApi.uniqueExtraMcpTargetIds(m.mcp?.extras)).toEqual(['grok', 'cursor']);
+  });
+});
+
 describe('createManifest', () => {
   it('should store hookLevel and selectedComponentIds', () => {
     const m = manifestApi.createManifest('global', testHome, {
@@ -249,6 +276,26 @@ describe('cleanManifestFiles content-managed safety', () => {
   it('treats copilot-instructions.md as content-managed (not hard-deleted)', () => {
     const dir = tempDir();
     const fp = join(dir, 'copilot-instructions.md');
+    writeFileSync(fp, [
+      'user note',
+      '',
+      '<!-- maestro:start section="core" -->',
+      '# Maestro',
+      '<!-- maestro:end section="core" -->',
+      '',
+    ].join('\n'));
+
+    const result = cleanupManifest([{ path: fp, type: 'file' }]);
+
+    expect(result.removed).toBe(1);
+    expect(existsSync(fp)).toBe(true);
+    expect(readFileSync(fp, 'utf8')).toContain('user note');
+    expect(readFileSync(fp, 'utf8')).not.toContain('maestro:start');
+  });
+
+  it('treats maestro.md as content-managed (not hard-deleted)', () => {
+    const dir = tempDir();
+    const fp = join(dir, 'maestro.md');
     writeFileSync(fp, [
       'user note',
       '',

@@ -12,7 +12,7 @@ import type { HookLevel } from '../commands/hooks.js';
 import { getHooksForLevel } from '../commands/hooks.js';
 import type { ExtraMcpTargetId } from '../commands/install-backend.js';
 import { MCP_TOOLS } from '../commands/install-backend.js';
-import { findManifest, type Manifest } from './manifest.js';
+import { findManifest, uniqueExtraMcpTargetIds, type Manifest } from './manifest.js';
 import { COMPONENT_DEFS } from './component-defs.js';
 import { paths } from '../config/paths.js';
 
@@ -243,7 +243,7 @@ export function manifestToProfile(manifest: Manifest): InstallProfile {
     ),
     extraMcp: {
       enabled: !!(manifest.mcp?.extras?.length),
-      targetIds: (manifest.mcp?.extras?.map(e => e.targetId) ?? []) as ExtraMcpTargetId[],
+      targetIds: uniqueExtraMcpTargetIds(manifest.mcp?.extras) as ExtraMcpTargetId[],
     },
     backup: { claudeMd: true, all: false },
     plugin: manifest.plugin
@@ -339,7 +339,7 @@ export function exportProfileFromManifest(
     ),
     extraMcp: {
       enabled: !!(manifest?.mcp?.extras?.length),
-      targetIds: (manifest?.mcp?.extras?.map((e) => e.targetId) ?? []) as ExtraMcpTargetId[],
+      targetIds: uniqueExtraMcpTargetIds(manifest?.mcp?.extras) as ExtraMcpTargetId[],
     },
     backup: { claudeMd: true, all: false },
   };
