@@ -251,6 +251,10 @@ When every Run is sealed, every decision is terminal, every goal is done, no req
 
 </state_machine>
 
+<task_tracking>
+@~/.maestro/workflows/task-tracking.md
+</task_tracking>
+
 <success_criteria>
 - Public flags are exactly `-y`, `-c`, `--amend`.
 - No legacy Ralph driver, private Session type, or independent Skills CLI appears in normal flow.

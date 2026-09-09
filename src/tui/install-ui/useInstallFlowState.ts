@@ -13,11 +13,16 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { scanComponents, countExistingTargetFiles, MCP_TOOLS, COMPONENT_DEFS, migrateComponentIds, type ExtraMcpTargetId, type ComponentDef } from '../../commands/install-backend.js';
 import { detectStatusline, getHooksForLevel, getAllHookNames, type HookLevel } from '../../commands/hooks.js';
-import { findManifest, type Manifest } from '../../core/manifest.js';
+import { findManifest, uniqueExtraMcpTargetIds, type Manifest } from '../../core/manifest.js';
 import { exportProfile, importProfile, listProfiles, configToProfile, profileToStateValues } from '../../core/install-profile.js';
 import { paths } from '../../config/paths.js';
 import { buildGroupedHubItems } from './GroupedHub.js';
 import { scanEntrySteps, DEFAULT_ENTRY_STEPS, type EntryStepInfo } from '../../core/entry-command-generator.js';
+import {
+  defaultStatuslineEnabled,
+  shouldInstallStatusline,
+  syncStatuslineSwitches,
+} from './statusline-enable.logic.js';
 
 export type FlowStep =
   | 'platforms' | 'hub'
@@ -99,7 +104,7 @@ export function useInstallFlowState(opts: UseInstallFlowStateOptions) {
     codexMcp: initialStepIds ? initialStepIds.includes('codexMcp') : prior.codexMcp,
     agyHooks: initialStepIds ? initialStepIds.includes('agyHooks') : prior.agyHooks,
     extraMcp: initialStepIds ? initialStepIds.includes('extraMcp') : prior.extraMcp,
-    statusline: initialStepIds ? initialStepIds.includes('statusline') : prior.statusline,
+    statusline: defaultStatuslineEnabled(initialStepIds),
     backup: initialStepIds ? initialStepIds.includes('backup') : true,
     pluginClaude: initialStepIds ? initialStepIds.includes('pluginClaude') : false,
     pluginCodex: initialStepIds ? initialStepIds.includes('pluginCodex') : false,
@@ -116,7 +121,7 @@ export function useInstallFlowState(opts: UseInstallFlowStateOptions) {
     'autohand-code', 'augment', 'bob', 'cline', 'codearts-agent',
     'codemaker', 'codestudio', 'command-code', 'continue', 'cortex',
     'crush', 'deepagents', 'dexto', 'eve', 'firebender',
-    'forgecode', 'goose', 'hermes-agent', 'inference-sh', 'jazz',
+    'forgecode', 'goose', 'grok', 'hermes-agent', 'inference-sh', 'jazz',
     'junie', 'iflow-cli', 'kimi-code-cli', 'kode', 'lingma',
     'loaf', 'mcpjam', 'mistral-vibe', 'moxby', 'mux',
     'openhands', 'ona', 'qwen-code', 'replit',
@@ -151,7 +156,7 @@ export function useInstallFlowState(opts: UseInstallFlowStateOptions) {
       ['command-code', '.commandcode'], ['continue', '.continue'], ['cortex', '.cortex'],
       ['crush', '.crush'], ['deepagents', '.deepagents'], ['dexto', '.dexto'],
       ['eve', 'agent'], ['firebender', '.firebender'], ['forgecode', '.forge'],
-      ['goose', '.goose'], ['hermes-agent', '.hermes'], ['inference-sh', '.inferencesh'],
+      ['goose', '.goose'], ['grok', '.grok'], ['hermes-agent', '.hermes'], ['inference-sh', '.inferencesh'],
       ['jazz', '.jazz'], ['junie', '.junie'], ['iflow-cli', '.iflow'],
       ['kimi-code-cli', '.kimi-code'], ['kode', '.kode'], ['lingma', '.lingma'],
       ['loaf', '.loaf'], ['mcpjam', '.mcpjam'], ['mistral-vibe', '.vibe'],
@@ -361,11 +366,11 @@ export function useInstallFlowState(opts: UseInstallFlowStateOptions) {
 
   // --- Extra MCP ---
   const [extraMcpTargetIds, setExtraMcpTargetIds] = useState<ExtraMcpTargetId[]>(
-    () => (lastManifest?.mcp?.extras?.map((e) => e.targetId as ExtraMcpTargetId)) ?? [],
+    () => uniqueExtraMcpTargetIds(lastManifest?.mcp?.extras) as ExtraMcpTargetId[],
   );
 
   // --- Statusline ---
-  const [installStatusline, setInstallStatusline] = useState(() => prior.statusline || !lastManifest);
+  const [installStatusline, setInstallStatuslineState] = useState(() => defaultStatuslineEnabled(initialStepIds));
   const [statuslineTheme, setStatuslineTheme] = useState(() => lastManifest?.statusline?.theme || 'notion');
   const statuslineDetected = useMemo(() => detectStatusline({ project: mode === 'project' }), [mode]);
 
@@ -408,7 +413,7 @@ export function useInstallFlowState(opts: UseInstallFlowStateOptions) {
       codexMcp: prior.codexMcp,
       agyHooks: prior.agyHooks,
       extraMcp: prior.extraMcp,
-      statusline: prior.statusline || !lastManifest,
+      statusline: defaultStatuslineEnabled(),
       backup: true,
       pluginClaude: false,
       pluginCodex: false,
@@ -417,7 +422,7 @@ export function useInstallFlowState(opts: UseInstallFlowStateOptions) {
     setCodexHooksSelection(makeHooksSelection((lastManifest?.hooks?.codex?.level as HookLevel) || 'standard', 'codex'));
     setAgyHooksSelection(makeHooksSelection((lastManifest?.hooks?.agy?.level as HookLevel) || 'standard', 'agy'));
     setExtraMcpTargetIds((lastManifest?.mcp?.extras?.map((e) => e.targetId as ExtraMcpTargetId)) ?? []);
-    setInstallStatusline(prior.statusline || !lastManifest);
+    setInstallStatuslineState(defaultStatuslineEnabled());
     setStatuslineTheme(lastManifest?.statusline?.theme || 'notion');
   }, [mode, lastManifest, prior, isSubcommand]);
 
@@ -452,7 +457,12 @@ export function useInstallFlowState(opts: UseInstallFlowStateOptions) {
     installExtraMcp: enabledSteps.extraMcp && extraMcpTargetIds.length > 0,
     extraMcpTargetIds,
     genericHookLevels,
-    installStatusline: enabledSteps.statusline && installStatusline,
+    installStatusline: shouldInstallStatusline({
+      claudeSelected: selectedPlatforms.has('claude'),
+      hubEnabled: !!enabledSteps.statusline,
+      configEnabled: installStatusline,
+    }),
+    statuslineApplicable: selectedPlatforms.has('claude'),
     statuslineTheme,
     hookLevel,
     componentCount: selectedComponents.length,
@@ -559,6 +569,9 @@ export function useInstallFlowState(opts: UseInstallFlowStateOptions) {
     }
     setEnabledSteps((prev) => {
       const next = !prev[id];
+      if (id === 'statusline') {
+        setInstallStatuslineState(syncStatuslineSwitches(next).configEnabled);
+      }
       if (next) {
         if (id === 'hooks') setClaudeHooksSelection((sel) =>
           sel.basePreset === 'none' ? makeHooksSelection('standard', 'claude') : sel);
@@ -570,6 +583,12 @@ export function useInstallFlowState(opts: UseInstallFlowStateOptions) {
       return { ...prev, [id]: next };
     });
   }, [togglePlatform, toggleAddon, ADDON_IDS]);
+
+  const setInstallStatusline = useCallback((v: boolean) => {
+    const synced = syncStatuslineSwitches(v);
+    setInstallStatuslineState(synced.configEnabled);
+    setEnabledSteps((prev) => ({ ...prev, statusline: synced.hubEnabled }));
+  }, []);
 
   const enterConfig = useCallback((id: string) => {
     if (id.startsWith('mcp-') || id.startsWith('ghooks-')) return;
@@ -621,7 +640,7 @@ export function useInstallFlowState(opts: UseInstallFlowStateOptions) {
       setAgyHooksSelection(v.agyHooks);
       setGenericHookLevels(v.genericHookLevels);
       setExtraMcpTargetIds(v.extraMcpTargetIds);
-      setInstallStatusline(v.installStatusline);
+      setInstallStatuslineState(v.installStatusline);
       setStatuslineTheme(v.statuslineTheme);
       setBackupClaudeMd(v.backupClaudeMd);
       setBackupAll(v.backupAll);
