@@ -359,14 +359,25 @@ function descriptorBlocksSpawn(workflowRoot: string): boolean {
   return true;
 }
 
+function ownsSpawnLock(workflowRoot: string, token: string): boolean {
+  try {
+    return readFileSync(getDaemonSpawnLockPath(workflowRoot), 'utf-8') === token;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Drop a dead-pid descriptor while holding the spawn lock so unlink cannot
  * delete a successor published by another startup.
+ * claimSpawnLock may return a fallback token without owning the lock file;
+ * that path must not unlink.
  */
 export function reclaimDeadDaemonDescriptor(workflowRoot: string): boolean {
   const token = claimSpawnLock(workflowRoot);
   if (!token) return false;
   try {
+    if (!ownsSpawnLock(workflowRoot, token)) return false;
     return reclaimDeadDaemonDescriptorUnlocked(workflowRoot);
   } finally {
     releaseDaemonSpawnLock(workflowRoot, token);
@@ -379,9 +390,13 @@ export async function spawnDaemon(workflowRoot: string): Promise<void> {
   const token = claimSpawnLock(workflowRoot);
   if (!token) return;
 
-  // Reclaim dead descriptors only while holding the spawn lock.
-  if (descriptorBlocksSpawn(workflowRoot)) {
-    releaseDaemonSpawnLock(workflowRoot, token);
+  if (ownsSpawnLock(workflowRoot, token)) {
+    // Reclaim dead descriptors only while holding the spawn lock.
+    if (descriptorBlocksSpawn(workflowRoot)) {
+      releaseDaemonSpawnLock(workflowRoot, token);
+      return;
+    }
+  } else if (liveOrForeignDescriptorBlocksSpawn(workflowRoot)) {
     return;
   }
 
