@@ -110,6 +110,21 @@ describe('daemon client protocol boundaries', () => {
     expect(readFileSync(lockPath, 'utf-8')).toBe(stalePrimary);
   });
 
+  it('does not reclaim when claimSpawnLock falls back without owning the lock', () => {
+    const root = workflowRoot();
+    writeFileSync(getDaemonPath(root), JSON.stringify({
+      ...descriptor(root, 32123),
+      pid: 2_147_483_647,
+    }));
+    const lockPath = getDaemonSpawnLockPath(root);
+    writeFileSync(lockPath, '0:1:stale-primary');
+    writeFileSync(`${lockPath}.reclaim`, '0:2:stale-reclaimer');
+
+    expect(reclaimDeadDaemonDescriptor(root)).toBe(false);
+    expect(existsSync(getDaemonPath(root))).toBe(true);
+    expect(readFileSync(lockPath, 'utf-8')).toBe('0:1:stale-primary');
+  });
+
   it('does not reclaim a dead descriptor while the spawn lock is held', () => {
     const root = workflowRoot();
     writeFileSync(getDaemonPath(root), JSON.stringify({
