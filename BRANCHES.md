@@ -4,7 +4,7 @@
 
 配套流程：仓库根目录 `branch-hygiene.SKILL.md`（Grok 加载入口：`.grok/skills/branch-hygiene/SKILL.md`）。
 
-账本核对基准：2026-09-10。
+账本核对基准：2026-09-10（记忆 MCP PR #43）。
 
 ---
 
@@ -49,10 +49,10 @@
 
 | 项 | 当前值 |
 |---|---|
-| 本地主分支 | `master` @ `b35c0ff4` — `fix: spawn lock fallback token 不持锁时不回收 descriptor` |
-| 远端 | `fork/master` @ `b35c0ff4` |
+| 本地主分支 | `master` @ `1a4da5e8` — `feat: 编排层记忆 MCP、Grok PreToolUse 注入与本机 skill` |
+| 远端 | `fork/master` @ `1a4da5e8` |
 | 上游主分支 | `origin/master` @ `9834a145` — `Merge pull request #38 from KatouRyuuji/pr/feat-goal-native-host` |
-| 相对上游主分支 | 超前 52，落后 9 |
+| 相对上游主分支 | 超前 54，落后 9 |
 | 用途 | 完整产品（Grok 适配、安装落点、本账本与 skill） |
 
 落后 9 来自上游合入 #35–#38 的 GitHub merge commit，不是缺产品提交。要把这些 merge commit 接进主分支，等用户说「同步上游」再执行：
@@ -80,6 +80,7 @@ git push fork master
 |---|---|---|---|---|---|
 | `pr/fix-kg-root-daemon` | `fork/pr/fix-kg-root-daemon` | `d7de3b9d` | 超前 3 | [#39](https://github.com/catlog22/maestro-flow/pull/39) | Open |
 | `pr/fix-windows-test-gate` | `fork/pr/fix-windows-test-gate` | `c6616b8f` | 超前 2 | [#40](https://github.com/catlog22/maestro-flow/pull/40) | Open |
+| `pr/feat-memory-mcp` | `fork/pr/feat-memory-mcp` | `08eae90a` | 超前 1 | [#43](https://github.com/catlog22/maestro-flow/pull/43) | Open |
 
 两条投稿分支都从 `origin/master` 拉出，文件无重叠，可并行审阅。#40 不含 fork 专用的 `scripts/__tests__/install-grok.test.mjs`。
 
