@@ -6,7 +6,7 @@ import {
   readdirSync,
   realpathSync,
 } from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 
 import {
   getKnowhowDir,
@@ -209,27 +209,26 @@ function isContainedPath(canonicalRoot: string, candidate: string): boolean {
   return target === root || target.startsWith(`${root}/`);
 }
 
-/** Expand 8.3 names without following junctions/symlinks. */
-function canonicalizeExistingPrefix(path: string): string {
+/**
+ * Expand 8.3 names without following junctions/symlinks.
+ * Accumulator starts at parse(abs).root so Windows UNC (`\\server\share\`) is kept.
+ */
+export function canonicalizeExistingPrefix(path: string): string {
   const abs = resolve(path);
-  const parts = abs.split(/[\\/]+/).filter(part => part.length > 0);
-  if (parts.length === 0) return abs;
-  let acc = process.platform === 'win32' && /^[A-Za-z]:$/.test(parts[0])
-    ? `${parts[0]}${sep}`
-    : (abs.startsWith(sep) ? join(sep, parts[0]) : parts[0]);
-  const start = process.platform === 'win32' && /^[A-Za-z]:$/.test(parts[0])
-    ? 1
-    : (abs.startsWith(sep) ? 1 : 1);
-  for (let index = start; index < parts.length; index += 1) {
-    const next = join(acc, parts[index]);
+  const root = parse(abs).root;
+  const rest = abs.slice(root.length).split(/[\\/]+/).filter(part => part.length > 0);
+  if (rest.length === 0) return abs;
+  let acc = root;
+  for (let index = 0; index < rest.length; index += 1) {
+    const next = join(acc, rest[index]);
     try {
       const stat = lstatSync(next);
       if (stat.isSymbolicLink()) {
-        return join(next, ...parts.slice(index + 1));
+        return join(next, ...rest.slice(index + 1));
       }
       acc = realpathSync.native(next);
     } catch {
-      return join(acc, ...parts.slice(index));
+      return join(acc, ...rest.slice(index));
     }
   }
   return acc;
