@@ -61,6 +61,14 @@ describe('maestroHookCommand', () => {
     );
   });
 
+  it('falls back to PATH node when execPath contains a shell metacharacter', () => {
+    const execPath = 'C:\\nodejs\\node&more.exe';
+    const packageRoot = 'D:\\pkg';
+    expect(maestroHookCommand('session-context', { platform: 'win32', execPath, packageRoot })).toBe(
+      `node "${join(packageRoot, 'bin', 'maestro.js')}" hooks run session-context`,
+    );
+  });
+
   it('survives PowerShell -Command and cmd shell:true on Windows', () => {
     if (process.platform !== 'win32') return;
     const command = maestroHookCommand('session-context', {

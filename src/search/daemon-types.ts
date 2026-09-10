@@ -233,6 +233,8 @@ export function deleteDaemonInfoIfStale(
 /**
  * Drop a dead-pid descriptor for this workflow so a successor can spawn.
  * Live, foreign, and malformed descriptors are left in place.
+ * Legacy files in this directory are reclaimed when their PID is dead;
+ * the path itself is the workspace identity for that generation.
  */
 export function reclaimDeadDaemonDescriptor(workflowRoot: string): boolean {
   const path = getDaemonPath(workflowRoot);

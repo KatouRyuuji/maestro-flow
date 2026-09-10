@@ -119,6 +119,18 @@ describe('daemon descriptor v2 validation', () => {
     expect(reclaimDeadDaemonDescriptor(workflowRoot)).toBe(false);
     expect(existsSync(getDaemonPath(workflowRoot))).toBe(true);
   });
+
+  it('reclaims a dead-pid legacy descriptor in this workflow directory', () => {
+    const workflowRoot = root();
+    writeFileSync(getDaemonPath(workflowRoot), JSON.stringify({
+      pid: 2_147_483_647,
+      port: 32123,
+      startedAt: 'legacy',
+    }));
+
+    expect(reclaimDeadDaemonDescriptor(workflowRoot)).toBe(true);
+    expect(existsSync(getDaemonPath(workflowRoot))).toBe(false);
+  });
 });
 
 describe('daemon readiness', () => {
