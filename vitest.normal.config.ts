@@ -10,6 +10,7 @@ export default defineConfig({
     exclude: [
       '**/node_modules/**',
       '**/dist/**',
+      '**/*.e2e.test.ts',
       ...NODE_TEST_FILES,
       ...HEAVY_VITEST_FILES,
     ],

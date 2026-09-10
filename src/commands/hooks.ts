@@ -95,7 +95,7 @@ export const HOOK_LEVELS: readonly HookLevel[] = ['none', 'minimal', 'standard',
 export const HOOK_LEVEL_DESCRIPTIONS: Record<HookLevel, string> = {
   none: 'No hooks',
   minimal: 'Statusline + spec-injector',
-  standard: '+ session-context + search-daemon + kg-auto-init (SessionStart) + delegate-monitor + team/telemetry/coordinator(Stop) + skill-context + kg-sync + keyword/spec/wiki/KG prompt context + search-cache-invalidator',
+  standard: '+ session-context + search-daemon + kg-auto-init (SessionStart) + delegate-monitor + team/telemetry/coordinator(Stop) + skill-context + kg-sync + keyword/spec/wiki/KG prompt context + working-memory inject/extract + search-cache-invalidator',
   full: '+ workflow-guard (PreToolUse) + prompt-guard (UserPromptSubmit)',
 };
 
@@ -114,6 +114,10 @@ export const HOOK_DEFS: Record<string, HookDef> = {
   'kg-auto-init': { event: 'SessionStart', matcher: 'startup', level: 'standard', requiresWorkspace: true },
   'search-cache-invalidator': { event: 'PostToolUse', matcher: 'Write|Edit', level: 'standard', requiresWorkspace: true },
   'search-daemon-start': { event: 'SessionStart', matcher: 'startup', level: 'standard', requiresWorkspace: true },
+  'memory-extract': { event: 'Stop', level: 'standard', requiresWorkspace: true },
+  'memory-extract-end': { event: 'SessionEnd', level: 'standard', requiresWorkspace: true, runner: 'memory-extract' },
+  'memory-inject-start': { event: 'SessionStart', matcher: 'startup|resume', level: 'standard', requiresWorkspace: true, runner: 'memory-inject' },
+  'memory-inject-prompt': { event: 'UserPromptSubmit', level: 'standard', requiresWorkspace: true, runner: 'memory-inject' },
   'workflow-guard': { event: 'PreToolUse', matcher: 'Bash|Write|Edit', level: 'full', requiresWorkspace: true },
   'prompt-guard': { event: 'UserPromptSubmit', level: 'full', requiresWorkspace: false },
   // child-scope：子代理生命周期登记（Join/Reap/Unregister 观察面，只记账不阻塞）
@@ -152,6 +156,10 @@ export const CODEX_HOOK_DEFS: Record<string, CodexHookDef> = {
   'spec-validator':        { event: 'PreToolUse', matcher: 'Write', level: 'standard', requiresWorkspace: true, statusMessage: 'Validating against specs' },
   'search-daemon-start':   { event: 'SessionStart', matcher: 'startup', level: 'standard', requiresWorkspace: true, statusMessage: 'Starting search daemon' },
   'search-cache-invalidator': { event: 'PostToolUse', matcher: 'Write|Edit', level: 'standard', requiresWorkspace: true },
+  'memory-extract':        { event: 'Stop', level: 'standard', requiresWorkspace: true },
+  'memory-extract-end':    { event: 'SessionEnd', level: 'standard', requiresWorkspace: true, runner: 'memory-extract' },
+  'memory-inject-start':   { event: 'SessionStart', matcher: 'startup|resume', level: 'standard', requiresWorkspace: true, runner: 'memory-inject' },
+  'memory-inject-prompt':  { event: 'UserPromptSubmit', level: 'standard', requiresWorkspace: true, runner: 'memory-inject' },
   'workflow-guard':        { event: 'PreToolUse', matcher: 'Bash', level: 'full', requiresWorkspace: true, statusMessage: 'Checking command safety' },
   'prompt-guard':          { event: 'UserPromptSubmit', level: 'full', requiresWorkspace: false },
 };
@@ -159,7 +167,7 @@ export const CODEX_HOOK_DEFS: Record<string, CodexHookDef> = {
 export const CODEX_HOOK_LEVEL_DESCRIPTIONS: Record<HookLevel, string> = {
   none: 'No hooks',
   minimal: 'Session context (SessionStart)',
-  standard: '+ keyword/spec/wiki/KG context (UserPromptSubmit) + skill-context + kg-sync + kg-auto-init(SessionStart) + delegate-monitor + coordinator/team/telemetry(Stop) + preflight/spec guards + search-daemon-start(SessionStart) + search-cache-invalidator',
+  standard: '+ keyword/spec/wiki/KG context (UserPromptSubmit) + skill-context + kg-sync + kg-auto-init(SessionStart) + delegate-monitor + coordinator/team/telemetry(Stop) + preflight/spec guards + search-daemon-start(SessionStart) + working-memory inject/extract + search-cache-invalidator',
   full: '+ workflow-guard (PreToolUse, Bash only) + prompt-guard (UserPromptSubmit)',
 };
 
@@ -184,6 +192,11 @@ export const GROK_HOOK_DEFS: Record<string, CodexHookDef> = {
   'coordinator-tracker':   { event: 'Stop', level: 'standard', requiresWorkspace: true },
   'team-monitor':          { event: 'Stop', level: 'standard' },
   'telemetry':             { event: 'Stop', level: 'standard' },
+  'memory-extract':        { event: 'Stop', level: 'standard', requiresWorkspace: true },
+  'memory-extract-end':    { event: 'SessionEnd', level: 'standard', requiresWorkspace: true, runner: 'memory-extract' },
+  'memory-inject-start':   { event: 'SessionStart', matcher: 'startup|resume', level: 'standard', requiresWorkspace: true, runner: 'memory-inject' },
+  // Grok 只把 PreToolUse 的 additionalContext 送进模型；无 matcher，第一次工具调用注入。
+  'memory-inject-prompt':  { event: 'PreToolUse', level: 'standard', requiresWorkspace: true, runner: 'memory-inject' },
   'workflow-guard':        { event: 'PreToolUse', matcher: 'run_terminal_command|write_file|search_replace', level: 'full', requiresWorkspace: true },
   'prompt-guard':          { event: 'UserPromptSubmit', level: 'full', requiresWorkspace: false },
   // child-scope：子代理生命周期登记（观察面，只记账不阻塞）
@@ -197,7 +210,7 @@ export const GROK_HOOK_DEFS: Record<string, CodexHookDef> = {
 export const GROK_HOOK_LEVEL_DESCRIPTIONS: Record<HookLevel, string> = {
   none: 'No hooks',
   minimal: 'Session context (SessionStart) + spec-injector (spawn_subagent)',
-  standard: '+ keyword/spec/KG context (UserPromptSubmit) + kg-auto-init + delegate-monitor + coordinator/team/telemetry(Stop) + guards + child-scope (SubagentStart/Stop, SessionEnd, StopCancelled)',
+  standard: '+ keyword/spec/KG context (UserPromptSubmit) + kg-auto-init + delegate-monitor + coordinator/team/telemetry(Stop) + working-memory inject (PreToolUse) / extract (Stop) + guards + child-scope (SubagentStart/Stop, SessionEnd, StopCancelled)',
   full: '+ workflow-guard (PreToolUse) + prompt-guard (UserPromptSubmit)',
 };
 
@@ -502,27 +515,41 @@ export function loadCodexHooks(hooksPath: string): CodexHooksFile {
   catch { return {}; }
 }
 
+function commandLooksLikeMaestro(command: string, hookNames?: string[]): boolean {
+  if (!command) return false;
+  if (hookNames && hookNames.length > 0) {
+    return hookNames.some((name) => command.includes(`hooks run ${name}`));
+  }
+  return command.includes(HOOK_MARKER);
+}
+
+function isCodexHookGroupArray(value: unknown): value is CodexHookGroup[] {
+  return Array.isArray(value)
+    && value.some((item) => item && typeof item === 'object' && Array.isArray((item as CodexHookGroup).hooks));
+}
+
 export function removeCodexMaestroHooks(hooksFile: CodexHooksFile, hookNames?: string[]): void {
   if (!hooksFile.hooks) return;
-  const targets = hookNames && hookNames.length > 0
-    ? new Set(hookNames.map((n) => `hooks run ${n}`))
-    : null;
 
-  const events = ['SessionStart', 'SessionEnd', 'PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop', 'StopCancelled', 'SubagentStart', 'SubagentStop'] as const;
-  for (const eventKey of events) {
-    const groups = hooksFile.hooks[eventKey] as CodexHookGroup[] | undefined;
-    if (!groups) continue;
-    for (const group of groups) {
-      group.hooks = group.hooks.filter((h) => {
-        const command = h.command ?? '';
-        if (targets) return ![...targets].some((needle) => command.includes(needle));
-        return !command.includes(HOOK_MARKER);
-      });
+  for (const eventKey of Object.keys(hooksFile.hooks)) {
+    const value = hooksFile.hooks[eventKey];
+    if (!Array.isArray(value)) continue;
+
+    if (isCodexHookGroupArray(value)) {
+      for (const group of value) {
+        if (!Array.isArray(group.hooks)) continue;
+        group.hooks = group.hooks.filter((h) => !commandLooksLikeMaestro(h.command ?? '', hookNames));
+      }
+      const kept = value.filter((group) => Array.isArray(group.hooks) && group.hooks.length > 0);
+      if (kept.length === 0) delete hooksFile.hooks[eventKey];
+      else hooksFile.hooks[eventKey] = kept as never;
+      continue;
     }
-    hooksFile.hooks[eventKey] = groups.filter((g) => g.hooks.length > 0) as never;
-    if ((hooksFile.hooks[eventKey] as CodexHookGroup[]).length === 0) {
-      delete hooksFile.hooks[eventKey];
-    }
+
+    const kept = (value as Array<{ command?: string }>)
+      .filter((item) => !commandLooksLikeMaestro(item?.command ?? '', hookNames));
+    if (kept.length === 0) delete hooksFile.hooks[eventKey];
+    else hooksFile.hooks[eventKey] = kept as never;
   }
   if (Object.keys(hooksFile.hooks).length === 0) {
     delete hooksFile.hooks;
@@ -641,7 +668,7 @@ export interface GenericHooksPlatform {
 export const GENERIC_HOOKS_PLATFORMS: GenericHooksPlatform[] = [
   {
     id: 'cursor', label: 'Cursor',
-    supportedEvents: new Set(['SessionStart', 'PreToolUse', 'UserPromptSubmit']),
+    supportedEvents: new Set(['SessionStart', 'SessionEnd', 'PreToolUse', 'UserPromptSubmit', 'Stop']),
     hooksPath: (opts) => opts.project ? join(process.cwd(), '.cursor', 'hooks.json') : join(homedir(), '.cursor', 'hooks.json'),
   },
   {
@@ -698,15 +725,112 @@ export function getGenericHooksPlatform(platformId: string): GenericHooksPlatfor
   return GENERIC_HOOKS_PLATFORMS.find((p) => p.id === platformId);
 }
 
+/** Cursor native event names (camelCase). Claude-compat PascalCase is dual-written when the file already uses it. */
+const CURSOR_NATIVE_EVENTS: Partial<Record<CodexEvent, string>> = {
+  SessionStart: 'sessionStart',
+  SessionEnd: 'sessionEnd',
+  PreToolUse: 'preToolUse',
+  PostToolUse: 'postToolUse',
+  UserPromptSubmit: 'beforeSubmitPrompt',
+  Stop: 'stop',
+  SubagentStart: 'subagentStart',
+  SubagentStop: 'subagentStop',
+};
+
+function cursorFileUsesClaudeKeys(hooks: Record<string, unknown> | undefined): boolean {
+  if (!hooks) return false;
+  return Object.keys(hooks).some((key) => /^[A-Z]/.test(key));
+}
+
+function pushCursorNativeCommand(
+  hooks: Record<string, unknown>,
+  eventKey: string,
+  entry: { command: string; timeout?: number; statusMessage?: string },
+): void {
+  const current = hooks[eventKey];
+  const list = Array.isArray(current) ? [...current] as Array<Record<string, unknown>> : [];
+  if (list.some((item) => item && item.command === entry.command && !Array.isArray(item.hooks))) return;
+  const next: Record<string, unknown> = { command: entry.command };
+  if (entry.timeout) next.timeout = entry.timeout;
+  if (entry.statusMessage) next.statusMessage = entry.statusMessage;
+  list.push(next);
+  hooks[eventKey] = list;
+}
+
+function pushCursorClaudeCommand(
+  hooks: Record<string, unknown>,
+  eventKey: string,
+  entry: { command: string; timeout?: number; statusMessage?: string },
+  matcher?: string,
+): void {
+  if (!hooks[eventKey]) hooks[eventKey] = [];
+  const groups = hooks[eventKey] as CodexHookGroup[];
+  const hookEntry: CodexHookGroup['hooks'][number] = { type: 'command', command: entry.command };
+  if (entry.statusMessage) hookEntry.statusMessage = entry.statusMessage;
+  if (entry.timeout) hookEntry.timeout = entry.timeout;
+  const group: CodexHookGroup = { hooks: [hookEntry] };
+  if (matcher) group.matcher = matcher;
+  groups.push(group);
+}
+
+/**
+ * Install Maestro hooks in Cursor's native hooks.json shape:
+ * `{ version: 1, hooks: { stop: [{ command }], beforeSubmitPrompt: [...] } }`.
+ * Existing Claude-compat PascalCase entries (kk-mem, older Maestro installs) are preserved;
+ * when those keys already exist, Maestro commands are also written there so this machine's
+ * Cursor still fires them.
+ */
+export function installCursorHooksByLevel(
+  level: HookLevel,
+  opts: { project?: boolean; hooksPath?: string; selectedHooks?: string[]; defs?: Record<string, CodexHookDef> } = {},
+): InstallHooksResult {
+  if (level === 'none' && !opts.selectedHooks?.length) {
+    return { settingsPath: '', installedHooks: [], level };
+  }
+
+  const defs = opts.defs ?? CODEX_HOOK_DEFS;
+  const hooksPath = opts.hooksPath ?? getGenericHooksPlatform('cursor')?.hooksPath({ project: opts.project }) ?? '';
+  const hooksFile = loadCodexHooks(hooksPath);
+  if (!hooksFile.hooks) hooksFile.hooks = {};
+  hooksFile.version = 1;
+  removeCodexMaestroHooks(hooksFile);
+  if (!hooksFile.hooks) hooksFile.hooks = {};
+
+  const keepClaudeCompat = cursorFileUsesClaudeKeys(hooksFile.hooks);
+  const customSet = opts.selectedHooks ? new Set(opts.selectedHooks) : null;
+  const installedHooks: string[] = [];
+
+  for (const [name, def] of Object.entries(defs)) {
+    if (customSet ? !customSet.has(name) : !hookIncludedInLevel(def.level, level)) continue;
+    const nativeKey = CURSOR_NATIVE_EVENTS[def.event];
+    if (!nativeKey) continue;
+
+    const entry = {
+      command: maestroHookCommand(def.runner ?? name),
+      timeout: def.timeout,
+      statusMessage: def.statusMessage,
+    };
+    pushCursorNativeCommand(hooksFile.hooks, nativeKey, entry);
+    if (keepClaudeCompat) {
+      pushCursorClaudeCommand(hooksFile.hooks, def.event, entry, def.matcher);
+    }
+    installedHooks.push(name);
+  }
+
+  paths.ensure(join(hooksPath, '..'));
+  writeFileSync(hooksPath, JSON.stringify(hooksFile, null, 2));
+  return { settingsPath: hooksPath, installedHooks, level };
+}
+
 export function installGenericHooksByLevel(
   platformId: string,
   level: HookLevel,
-  opts: { project?: boolean; selectedHooks?: string[] } = {},
+  opts: { project?: boolean; selectedHooks?: string[]; hooksPath?: string } = {},
 ): InstallHooksResult {
   const platform = getGenericHooksPlatform(platformId);
   if (!platform) return { settingsPath: '', installedHooks: [], level };
 
-  const hooksPath = platform.hooksPath({ project: opts.project });
+  const hooksPath = opts.hooksPath ?? platform.hooksPath({ project: opts.project });
   const defs = platform.defs ?? CODEX_HOOK_DEFS;
 
   const filteredHooks = opts.selectedHooks
@@ -720,6 +844,15 @@ export function installGenericHooksByLevel(
 
   if (filteredHooks.length === 0 && level !== 'none') {
     return { settingsPath: hooksPath, installedHooks: [], level };
+  }
+
+  if (platformId === 'cursor') {
+    return installCursorHooksByLevel(level, {
+      project: opts.project,
+      hooksPath,
+      selectedHooks: filteredHooks.length > 0 ? filteredHooks : undefined,
+      defs,
+    });
   }
 
   return installCodexHooksByLevel(level, {
@@ -769,6 +902,8 @@ interface AgyHookDef {
   level: HookLevel;
   requiresWorkspace?: boolean;
   timeout?: number;
+  /** Runner name when different from the def key (multiple defs → one runner) */
+  runner?: string;
 }
 
 /**
@@ -799,6 +934,8 @@ export const AGY_HOOK_DEFS: Record<string, AgyHookDef> = {
 
   'search-daemon-start':   { event: 'PreInvocation', level: 'standard', requiresWorkspace: true },
   'search-cache-invalidator': { event: 'PostToolUse', matcher: 'write_to_file|replace_file_content|multi_replace_file_content', level: 'standard', requiresWorkspace: true },
+  'memory-extract':        { event: 'Stop', level: 'standard', requiresWorkspace: true },
+  'memory-inject':         { event: 'PreInvocation', level: 'standard', requiresWorkspace: true },
 
   // Full — guards
   'preflight-guard':       { event: 'PreToolUse', matcher: 'run_command|write_to_file|replace_file_content|multi_replace_file_content|invoke_subagent', level: 'standard', requiresWorkspace: true },
@@ -810,7 +947,7 @@ export const AGY_HOOK_DEFS: Record<string, AgyHookDef> = {
 export const AGY_HOOK_LEVEL_DESCRIPTIONS: Record<HookLevel, string> = {
   none: 'No hooks',
   minimal: 'spec-injector (PreToolUse on invoke_subagent)',
-  standard: '+ session/skill/keyword/spec/wiki/KG context (PreInvocation) + delegate-monitor (PostToolUse) + team/telemetry/coordinator (Stop) + preflight/spec guards + search-daemon-start(PreInvocation) + search-cache-invalidator',
+  standard: '+ session/skill/keyword/spec/wiki/KG context (PreInvocation) + delegate-monitor (PostToolUse) + team/telemetry/coordinator (Stop) + working-memory inject/extract + preflight/spec guards + search-daemon-start(PreInvocation) + search-cache-invalidator',
   full: '+ workflow-guard (PreToolUse on shell/file writes) + prompt-guard (PreInvocation)',
 };
 
@@ -921,7 +1058,7 @@ export function installAgyHooksByLevel(
     if (customSet ? !customSet.has(name) : !hookIncludedInLevel(def.level, level)) continue;
 
     const hookName = `${AGY_HOOK_NAME_PREFIX}${name}`;
-    const handler: AgyHookHandler = { type: 'command', command: maestroHookCommand(name) };
+    const handler: AgyHookHandler = { type: 'command', command: maestroHookCommand(def.runner ?? name) };
     if (def.timeout) handler.timeout = def.timeout;
 
     const config: AgyHookConfig = {};
@@ -1017,6 +1154,62 @@ function extractHookInputData(raw: string): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function firstHookString(data: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = data[key];
+    if (typeof value === 'string' && value.trim()) return value;
+  }
+  return undefined;
+}
+
+export function parseHookStdinObject(raw: string): Record<string, unknown> {
+  try {
+    if (!raw) return {};
+    const data = JSON.parse(raw) as unknown;
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return {};
+    return data as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+export function conversationPayloadFromHook(data: Record<string, unknown>, cwd: string): {
+  session_id?: string;
+  run_id?: string;
+  maestro_session_id?: string;
+  cwd: string;
+  messages?: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>;
+  transcript?: string;
+  transcript_path?: string;
+  user_prompt?: string;
+  hook_event_name?: string;
+} {
+  const prompt = typeof data.user_prompt === 'string' ? data.user_prompt
+    : typeof data.prompt === 'string' ? data.prompt
+    : typeof data.userPrompt === 'string' ? data.userPrompt
+    : undefined;
+  const transcriptPath = typeof data.transcript_path === 'string' ? data.transcript_path
+    : typeof data.transcriptPath === 'string' ? data.transcriptPath
+    : undefined;
+  return {
+    session_id: firstHookString(data, ['session_id', 'sessionId', 'conversation_id', 'conversationId']),
+    run_id: typeof data.run_id === 'string' ? data.run_id
+      : typeof data.runId === 'string' ? data.runId
+      : undefined,
+    maestro_session_id: typeof data.maestro_session_id === 'string' ? data.maestro_session_id
+      : typeof data.maestroSessionId === 'string' ? data.maestroSessionId
+      : undefined,
+    cwd,
+    messages: Array.isArray(data.messages) ? data.messages as Array<{ role: 'user' | 'assistant' | 'system'; content: string }> : undefined,
+    transcript: typeof data.transcript === 'string' ? data.transcript : undefined,
+    transcript_path: transcriptPath,
+    user_prompt: prompt,
+    hook_event_name: typeof data.hook_event_name === 'string' ? data.hook_event_name
+      : typeof data.hookEventName === 'string' ? data.hookEventName
+      : undefined,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1442,6 +1635,66 @@ const HOOK_RUNNERS: Record<string, HookRunner> = {
     await spawnDaemon(workflowRoot);
   },
 
+  'memory-extract': async () => {
+    const config = loadHooksConfig();
+    if (config.toggles['memoryExtract'] === false) return;
+    const raw = await readStdin();
+    const data = parseHookStdinObject(raw);
+    const workspace = resolveWorkspace(data);
+    if (!workspace) return;
+    const cwd = typeof data.cwd === 'string' && data.cwd.trim() ? data.cwd : workspace;
+    const { retainWorkingMemory } = await import('../memory/retain.js');
+    try {
+      await retainWorkingMemory(workspace, conversationPayloadFromHook(data, cwd));
+    } catch {
+      /* fail-open: extract must not block the host */
+    }
+  },
+
+  'memory-inject': async () => {
+    const config = loadHooksConfig();
+    if (config.toggles['memoryInject'] === false) return;
+    const raw = await readStdin();
+    const data = parseHookStdinObject(raw);
+    const workspace = resolveWorkspace(data);
+    if (!workspace) return;
+    const cwd = typeof data.cwd === 'string' && data.cwd.trim() ? data.cwd : workspace;
+    const { isExtractEnabled, isInjectEnabled, loadMemoryConfig } = await import('../memory/index.js');
+    const memoryConfig = loadMemoryConfig(workspace);
+    if (!isInjectEnabled(memoryConfig.auto)) return;
+    const payload = conversationPayloadFromHook(data, cwd);
+    if (isExtractEnabled(memoryConfig.auto) && payload.user_prompt) {
+      const { retainWorkingMemory } = await import('../memory/retain.js');
+      try {
+        await retainWorkingMemory(workspace, payload, { config: memoryConfig });
+      } catch {
+        /* fail-open: extract must not skip recall */
+      }
+    }
+    const { recallWorkingMemory } = await import('../memory/recall.js');
+    try {
+      const recalled = await recallWorkingMemory(workspace, payload.user_prompt ?? '', {
+        config: memoryConfig,
+        sessionId: payload.session_id,
+      });
+      if (recalled.content) {
+        const eventName = typeof data.hook_event_name === 'string' && data.hook_event_name
+          ? data.hook_event_name
+          : typeof data.hookEventName === 'string' && data.hookEventName
+            ? data.hookEventName
+            : 'UserPromptSubmit';
+        process.stdout.write(JSON.stringify({
+          hookSpecificOutput: {
+            hookEventName: eventName,
+            additionalContext: recalled.content,
+          },
+        }));
+      }
+    } catch {
+      /* fail-open: inject must not block the host */
+    }
+  },
+
   // child-scope：子代理生命周期登记 + SessionEnd/StopCancelled reap（fail-open）
   'child-scope': async () => {
     if (loadHooksConfig().toggles['childScope'] === false) return;
@@ -1471,20 +1724,21 @@ export function registerHooksCommand(program: Command): void {
         process.exit(1);
       }
 
-      // Workspace gate — hooks with requiresWorkspace exit silently
-      // when no Maestro workspace (.workflow/ + valid state.json) is found.
-      // This avoids stdin parsing + evaluator overhead for non-workflow projects.
-      const def = HOOK_DEFS[name] ?? CODEX_HOOK_DEFS[name] ?? AGY_HOOK_DEFS[name];
-      const cwd = process.cwd();
+      // Read stdin first. Cursor user-level hooks often start with cwd=~/.cursor;
+      // the real project is in workspace_roots / CURSOR_PROJECT_DIR / CLAUDE_PROJECT_DIR.
+      const stdinRaw = await readStdin();
+      const hookPayload = parseHookStdinObject(stdinRaw);
+      const inputData = extractHookInputData(stdinRaw);
+
+      const def = HOOK_DEFS[name] ?? CODEX_HOOK_DEFS[name] ?? GROK_HOOK_DEFS[name] ?? AGY_HOOK_DEFS[name];
+      const cwd = typeof hookPayload.cwd === 'string' && hookPayload.cwd.trim()
+        ? hookPayload.cwd
+        : process.cwd();
       if (def?.requiresWorkspace) {
-        if (!resolveWorkspace({ cwd })) {
+        if (!resolveWorkspace(hookPayload)) {
           process.exit(0);
         }
       }
-
-      // Pre-read stdin so runners get cached data and we can log input params
-      const stdinRaw = await readStdin();
-      const inputData = extractHookInputData(stdinRaw);
 
       // Track subprocess hook invocation
       const startMs = Date.now();
