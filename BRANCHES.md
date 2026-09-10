@@ -49,10 +49,10 @@
 
 | 项 | 当前值 |
 |---|---|
-| 本地主分支 | `master` @ `dea23d95` — `fix: 修复 Windows 测试门禁（路径/锁/WASM/attestation）` |
-| 远端 | `fork/master` @ `dea23d95` |
+| 本地主分支 | `master` @ `aaf855ba` — `fix: Windows hook argv0 避开 shell 元字符，descriptor 回收在 spawn lock 内完成` |
+| 远端 | `fork/master` @ `aaf855ba` |
 | 上游主分支 | `origin/master` @ `9834a145` — `Merge pull request #38 from KatouRyuuji/pr/feat-goal-native-host` |
-| 相对上游主分支 | 超前 47，落后 9 |
+| 相对上游主分支 | 超前 50，落后 9 |
 | 用途 | 完整产品（Grok 适配、安装落点、本账本与 skill） |
 
 落后 9 来自上游合入 #35–#38 的 GitHub merge commit，不是缺产品提交。要把这些 merge commit 接进主分支，等用户说「同步上游」再执行：
@@ -78,8 +78,8 @@ git push fork master
 
 | 分支 | 跟踪 | 尖端 | 相对上游主分支 | 上游 PR | 状态 |
 |---|---|---|---|---|---|
-| `pr/fix-kg-root-daemon` | `fork/pr/fix-kg-root-daemon` | `6e0deb0a` | 超前 1 | [#39](https://github.com/catlog22/maestro-flow/pull/39) | Open |
-| `pr/fix-windows-test-gate` | `fork/pr/fix-windows-test-gate` | `1c0cf089` | 超前 1 | [#40](https://github.com/catlog22/maestro-flow/pull/40) | Open |
+| `pr/fix-kg-root-daemon` | `fork/pr/fix-kg-root-daemon` | `8f1313c4` | 超前 2 | [#39](https://github.com/catlog22/maestro-flow/pull/39) | Open |
+| `pr/fix-windows-test-gate` | `fork/pr/fix-windows-test-gate` | `c6616b8f` | 超前 2 | [#40](https://github.com/catlog22/maestro-flow/pull/40) | Open |
 
 两条投稿分支都从 `origin/master` 拉出，文件无重叠，可并行审阅。#40 不含 fork 专用的 `scripts/__tests__/install-grok.test.mjs`。
 
