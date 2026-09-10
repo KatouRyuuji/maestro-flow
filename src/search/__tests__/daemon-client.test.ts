@@ -8,6 +8,7 @@ import {
   claimSpawnLock,
   invalidateSearchIndex,
   queryDaemon,
+  reclaimDeadDaemonDescriptor,
   stopDaemon,
   tryDaemonLoad,
 } from '../daemon-client.js';
@@ -107,6 +108,23 @@ describe('daemon client protocol boundaries', () => {
 
     expect(claimSpawnLock(root)).not.toBeNull();
     expect(readFileSync(lockPath, 'utf-8')).toBe(stalePrimary);
+  });
+
+  it('does not reclaim a dead descriptor while the spawn lock is held', () => {
+    const root = workflowRoot();
+    writeFileSync(getDaemonPath(root), JSON.stringify({
+      ...descriptor(root, 32123),
+      pid: 2_147_483_647,
+    }));
+    const token = claimSpawnLock(root);
+    expect(token).not.toBeNull();
+
+    expect(reclaimDeadDaemonDescriptor(root)).toBe(false);
+    expect(existsSync(getDaemonPath(root))).toBe(true);
+
+    expect(releaseDaemonSpawnLock(root, token!)).toBe(true);
+    expect(reclaimDeadDaemonDescriptor(root)).toBe(true);
+    expect(existsSync(getDaemonPath(root))).toBe(false);
   });
 
   it('serializes facet filters and diagnostics opt-in in the search request', async () => {

@@ -61,9 +61,9 @@ function winNodeScriptCommand(scriptName: string, extraArgs: string[], opts: Mcp
   // Grok (and other PowerShell -Command hosts) treat a leading quoted token as a
   // string, not a program: `"C:\Program Files\nodejs\node.exe" "script" args`
   // fails with ParserError at character 36. Keep argv0 unquoted. When the real
-  // node path contains spaces, use PATH `node` so Program Files does not need
-  // quotes around the executable. cmd.exe shell:true still accepts this form.
-  const argv0 = /\s/.test(execPath) ? 'node' : execPath;
+  // node path contains spaces or shell metacharacters, use PATH `node` so the
+  // executable does not need quotes. cmd.exe shell:true still accepts this form.
+  const argv0 = /[\s&|<>()^%!`$;{}'",]/.test(execPath) ? 'node' : execPath;
   return [argv0, script, ...extraArgs].join(' ');
 }
 
