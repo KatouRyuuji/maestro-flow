@@ -64,6 +64,7 @@ export function findWorkspaceRoot(startDir: string): string | null {
   return findRepositoryRoot(startDir);
 }
 
+/** Loose hook payload shape: fields arrive untyped from host CLIs. */
 export interface WorkspaceHint {
   cwd?: unknown;
   workspace_roots?: unknown;
@@ -72,6 +73,7 @@ export interface WorkspaceHint {
 
 const CHILD_WORKSPACE_SKIP = new Set(['node_modules', 'dist', 'coverage', 'dashboard']);
 
+/** Append value to dirs when it is a non-blank string; ignore everything else. */
 function pushDir(dirs: string[], value: unknown): void {
   if (typeof value !== 'string') return;
   const trimmed = value.trim();
@@ -131,6 +133,7 @@ export function findWorkspaceInImmediateChildren(dir: string): string | null {
   return null;
 }
 
+/** Resolve one candidate directory: walk up first, then probe immediate children. */
 function resolveFromStart(startDir: string): string | null {
   return findWorkspaceRoot(startDir) ?? findWorkspaceInImmediateChildren(startDir);
 }
