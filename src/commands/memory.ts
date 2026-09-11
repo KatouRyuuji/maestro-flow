@@ -6,6 +6,7 @@ import { extractWorkingMemoryFacts } from '../memory/extract.js';
 import { promotePendingFacts, promoteWorkingMemoryFact } from '../memory/promote.js';
 import { recallWorkingMemory } from '../memory/recall.js';
 import { forgetFact, listFacts, rememberFact, upsertFacts } from '../memory/store.js';
+import { collectGlobalAutoWrites, markTriageDone, parseSince, readTriageDone } from '../memory/triage.js';
 import type { MemoryScope } from '../memory/types.js';
 
 export function registerMemoryCommand(program: Command): void {
@@ -155,5 +156,47 @@ export function registerMemoryCommand(program: Command): void {
         console.error(error instanceof Error ? error.message : String(error));
         process.exitCode = 1;
       }
+    });
+
+  memory
+    .command('triage')
+    .description('List kk-mem auto-extracted memories that fell into global scope, for ownership review')
+    .option('--since <duration>', 'Only entries newer than this (e.g. 24h, 7d)')
+    .option('--all', 'Include ids already marked done')
+    .option('--mark-done <ids>', 'Mark comma-separated ids as reviewed')
+    .option('--json', 'Output as JSON')
+    .action((opts: { since?: string; all?: boolean; markDone?: string; json?: boolean }) => {
+      if (opts.markDone) {
+        const ids = opts.markDone.split(',').map((s) => s.trim()).filter(Boolean);
+        const added = markTriageDone(ids);
+        if (opts.json) {
+          console.log(JSON.stringify({ marked: added }));
+          return;
+        }
+        console.log(`marked ${added} id(s) done`);
+        return;
+      }
+      let sinceMs: number | undefined;
+      if (opts.since) {
+        const span = parseSince(opts.since);
+        if (span === undefined) {
+          console.error(`Invalid --since duration: ${opts.since} (expected like 24h or 7d)`);
+          process.exitCode = 1;
+          return;
+        }
+        sinceMs = Date.now() - span;
+      }
+      const candidates = collectGlobalAutoWrites({ sinceMs });
+      const done = readTriageDone();
+      const visible = opts.all ? candidates : candidates.filter((c) => !done.has(c.id));
+      if (opts.json) {
+        console.log(JSON.stringify(visible));
+        return;
+      }
+      if (visible.length === 0) {
+        console.log('0 candidates');
+        return;
+      }
+      for (const c of visible) console.log(`${c.id}\t${c.at}\t${c.host}\t${c.text}`);
     });
 }
