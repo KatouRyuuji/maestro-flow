@@ -95,7 +95,7 @@ export function triageDonePath(home: string = osHomedir()): string {
 export function readTriageDone(home: string = osHomedir()): Set<string> {
   try {
     const data = JSON.parse(readFileSync(triageDonePath(home), 'utf8'));
-    const ids = Array.isArray(data?.done) ? data.done : [];
+    const ids: unknown[] = Array.isArray(data?.done) ? data.done : [];
     return new Set(ids.filter((x): x is string => typeof x === 'string'));
   } catch {
     return new Set();
