@@ -268,6 +268,19 @@ function commandLooksLikeMaestro(command: string): boolean {
     && (command.includes('hooks run ') || command.includes('hook-runner.js'));
 }
 
+function commandMatchesNamedMaestroHook(command: string, hookName: string): boolean {
+  return commandLooksLikeMaestro(command)
+    && (command.includes(`hooks run ${hookName}`)
+      || command.includes(`hook-runner.js") ${hookName}`)
+      || command.includes(`hook-runner.js" ${hookName}`));
+}
+
+function shouldRemoveMaestroHookCommand(command: string, hookNames?: string[]): boolean {
+  if (!commandLooksLikeMaestro(command)) return false;
+  if (!hookNames || hookNames.length === 0) return true;
+  return hookNames.some((name) => commandMatchesNamedMaestroHook(command, name));
+}
+
 /**
  * Remove maestro hooks from Claude settings.
  *
@@ -278,9 +291,6 @@ function commandLooksLikeMaestro(command: string): boolean {
  */
 export function removeMaestroHooks(settings: ClaudeSettings, hookNames?: string[]): void {
   if (!settings.hooks) return;
-  const targets = hookNames && hookNames.length > 0
-    ? new Set(hookNames.map((n) => `hooks run ${n}`))
-    : null;
 
   for (const eventKey of ALL_CLAUDE_EVENTS) {
     const groups = settings.hooks[eventKey] as HookGroup[] | undefined;
@@ -288,8 +298,7 @@ export function removeMaestroHooks(settings: ClaudeSettings, hookNames?: string[
     for (const group of groups) {
       group.hooks = group.hooks.filter((h) => {
         const command = h.command ?? '';
-        if (targets) return ![...targets].some((needle) => command.includes(needle));
-        return !commandLooksLikeMaestro(command);
+        return !shouldRemoveMaestroHookCommand(command, hookNames);
       });
     }
     settings.hooks[eventKey] = groups.filter((g) => g.hooks.length > 0) as never;
@@ -353,10 +362,7 @@ function findHookInSettings(settings: ClaudeSettings, hookName: string): boolean
   for (const eventKey of ALL_CLAUDE_EVENTS) {
     const groups = settings.hooks[eventKey] as HookGroup[] | undefined;
     if (!groups) continue;
-    if (groups.some((g) => g.hooks.some((h) => {
-      const command = h.command ?? '';
-      return command.includes(`hooks run ${hookName}`) || command.includes(`hook-runner.js") ${hookName}`) || command.includes(`hook-runner.js" ${hookName}`);
-    }))) {
+    if (groups.some((g) => g.hooks.some((h) => commandMatchesNamedMaestroHook(h.command ?? '', hookName)))) {
       return true;
     }
   }
@@ -504,9 +510,6 @@ export function loadCodexHooks(hooksPath: string): CodexHooksFile {
 
 export function removeCodexMaestroHooks(hooksFile: CodexHooksFile, hookNames?: string[]): void {
   if (!hooksFile.hooks) return;
-  const targets = hookNames && hookNames.length > 0
-    ? new Set(hookNames.map((n) => `hooks run ${n}`))
-    : null;
 
   const events = ['SessionStart', 'SessionEnd', 'PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop', 'StopCancelled', 'SubagentStart', 'SubagentStop'] as const;
   for (const eventKey of events) {
@@ -515,8 +518,7 @@ export function removeCodexMaestroHooks(hooksFile: CodexHooksFile, hookNames?: s
     for (const group of groups) {
       group.hooks = group.hooks.filter((h) => {
         const command = h.command ?? '';
-        if (targets) return ![...targets].some((needle) => command.includes(needle));
-        return !commandLooksLikeMaestro(command);
+        return !shouldRemoveMaestroHookCommand(command, hookNames);
       });
     }
     hooksFile.hooks[eventKey] = groups.filter((g) => g.hooks.length > 0) as never;

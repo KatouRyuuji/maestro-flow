@@ -125,4 +125,40 @@ describe('maestro hook command detection', () => {
       .flatMap((group) => group.hooks.map((hook) => hook.command));
     expect(commands).toEqual([thirdPartyHook.command]);
   });
+
+  it('targeted Claude removal keeps vendor hooks run <name> and strips Maestro plus legacy hook-runner', () => {
+    const vendor = { type: 'command', command: 'vendor hooks run session-context' };
+    const maestro = { type: 'command', command: 'maestro hooks run session-context' };
+    const otherMaestro = { type: 'command', command: 'maestro hooks run session-end' };
+    const legacy = { type: 'command', command: 'node "C:\\maestro-flow\\dist\\hook-runner.js" session-context' };
+    const settings = {
+      hooks: {
+        SessionStart: [
+          { hooks: [vendor, maestro, otherMaestro, legacy, { ...thirdPartyHook }] },
+        ],
+      },
+    };
+    removeMaestroHooks(settings, ['session-context']);
+    const commands = settings.hooks.SessionStart
+      .flatMap((group) => group.hooks.map((hook) => hook.command));
+    expect(commands).toEqual([vendor.command, otherMaestro.command, thirdPartyHook.command]);
+  });
+
+  it('targeted Codex removal keeps vendor hooks run <name> and strips Maestro plus legacy hook-runner', () => {
+    const vendor = { type: 'command', command: 'vendor hooks run session-context' };
+    const maestro = { type: 'command', command: 'maestro hooks run session-context' };
+    const otherMaestro = { type: 'command', command: 'maestro hooks run session-end' };
+    const legacy = { type: 'command', command: 'node "C:\\maestro-flow\\dist\\hook-runner.js" session-context' };
+    const hooksFile = {
+      hooks: {
+        SessionStart: [
+          { matcher: 'startup|resume', hooks: [vendor, maestro, otherMaestro, legacy, { ...thirdPartyHook }] },
+        ],
+      },
+    };
+    removeCodexMaestroHooks(hooksFile, ['session-context']);
+    const commands = hooksFile.hooks.SessionStart
+      .flatMap((group) => group.hooks.map((hook) => hook.command));
+    expect(commands).toEqual([vendor.command, otherMaestro.command, thirdPartyHook.command]);
+  });
 });
