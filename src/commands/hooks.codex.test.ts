@@ -7,6 +7,8 @@ import {
   CODEX_HOOK_DEFS,
   getGenericHooksForLevel,
   installCodexHooksByLevel,
+  removeCodexMaestroHooks,
+  removeMaestroHooks,
 } from './hooks.js';
 
 const roots: string[] = [];
@@ -80,5 +82,47 @@ describe('Codex prompt context lifecycle', () => {
     expect(getGenericHooksForLevel('cursor', 'standard')).not.toContain('kg-context-injector');
     expect(getGenericHooksForLevel('cursor', 'standard')).not.toContain('kg-unified-injector');
     expect(getGenericHooksForLevel('cursor', 'standard')).not.toContain('kg-unified-injector-agent');
+  });
+});
+
+describe('maestro hook command detection', () => {
+  const thirdPartyHook = {
+    type: 'command',
+    command: String.raw`C:\Users\fengl\.grok\bin\python3.exe D:\PersonalProject\kk+maestro\kkmem\kk-mem\hooks\session-start.py`,
+    timeout: 20,
+  };
+
+  it('keeps third-party Codex hooks whose path merely contains "maestro"', () => {
+    const hooksFile = {
+      hooks: {
+        SessionStart: [
+          { matcher: 'startup|resume', hooks: [{ type: 'command', command: 'maestro hooks run session-context' }] },
+          { matcher: 'startup|resume', hooks: [thirdPartyHook] },
+        ],
+      },
+    };
+    removeCodexMaestroHooks(hooksFile);
+    const commands = hooksFile.hooks.SessionStart
+      .flatMap((group) => group.hooks.map((hook) => hook.command));
+    expect(commands).toEqual([thirdPartyHook.command]);
+  });
+
+  it('strips legacy hook-runner.js entries while keeping third-party hooks', () => {
+    const settings = {
+      hooks: {
+        SessionStart: [
+          {
+            hooks: [
+              { type: 'command', command: 'node "C:\maestro-flow\dist\hook-runner.js" session-context' },
+              { ...thirdPartyHook },
+            ],
+          },
+        ],
+      },
+    };
+    removeMaestroHooks(settings);
+    const commands = settings.hooks.SessionStart
+      .flatMap((group) => group.hooks.map((hook) => hook.command));
+    expect(commands).toEqual([thirdPartyHook.command]);
   });
 });

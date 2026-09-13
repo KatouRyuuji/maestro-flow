@@ -258,12 +258,23 @@ const HOOK_MARKER = 'maestro';
 const ALL_CLAUDE_EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Notification', 'SessionStart', 'Stop', 'SubagentStart', 'SubagentStop', 'SessionEnd', 'StopCancelled'] as const;
 
 /**
+ * 判定一条 hook command 是否为 maestro 安装：必须同时命中 "maestro" 字样与
+ * maestro 的 hook 调用形态（`hooks run <name>` 或 legacy `hook-runner.js`）。
+ * 裸子串匹配会把路径恰好含 "maestro" 的第三方 hook（例如 kk+maestro 仓下的
+ * kk-mem python hook）误判为 maestro 条目并在重装/卸载时误删。
+ */
+function commandLooksLikeMaestro(command: string): boolean {
+  return command.includes(HOOK_MARKER)
+    && (command.includes('hooks run ') || command.includes('hook-runner.js'));
+}
+
+/**
  * Remove maestro hooks from Claude settings.
  *
  * @param settings  Parsed settings.json object (mutated in place)
  * @param hookNames Optional whitelist of hook names to remove. When omitted,
- *                  every command containing the "maestro" substring is stripped
- *                  (legacy uninstall behavior).
+ *                  every maestro-shaped hook command is stripped (see
+ *                  commandLooksLikeMaestro).
  */
 export function removeMaestroHooks(settings: ClaudeSettings, hookNames?: string[]): void {
   if (!settings.hooks) return;
@@ -278,7 +289,7 @@ export function removeMaestroHooks(settings: ClaudeSettings, hookNames?: string[
       group.hooks = group.hooks.filter((h) => {
         const command = h.command ?? '';
         if (targets) return ![...targets].some((needle) => command.includes(needle));
-        return !command.includes(HOOK_MARKER);
+        return !commandLooksLikeMaestro(command);
       });
     }
     settings.hooks[eventKey] = groups.filter((g) => g.hooks.length > 0) as never;
@@ -505,7 +516,7 @@ export function removeCodexMaestroHooks(hooksFile: CodexHooksFile, hookNames?: s
       group.hooks = group.hooks.filter((h) => {
         const command = h.command ?? '';
         if (targets) return ![...targets].some((needle) => command.includes(needle));
-        return !command.includes(HOOK_MARKER);
+        return !commandLooksLikeMaestro(command);
       });
     }
     hooksFile.hooks[eventKey] = groups.filter((g) => g.hooks.length > 0) as never;
