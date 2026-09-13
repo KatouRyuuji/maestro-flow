@@ -10,6 +10,13 @@ function makeRequest(): DelegateExecutionRequest {
     workDir: process.cwd(),
     execId: 'cld-test-entry',
     backend: 'direct',
+    repositoryContext: {
+      currentRepoId: '11111111-1111-4111-8111-111111111111',
+      currentRepoName: 'actor',
+      currentProjectRoot: process.cwd(),
+      identityPersisted: true,
+      linkedRepositories: [],
+    },
   };
 }
 
@@ -17,7 +24,9 @@ describe('detached delegate worker entry script', () => {
   it('defaults to the package CLI entry (bin/maestro.js), not argv[1]', () => {
     // MCP server 进程里 argv[1] 是 bin/maestro-mcp.js：worker 必须以
     // CLI 入口启动，否则 delegate --worker 永不执行、job 卡 queued。
-    const args = buildDetachedDelegateWorkerArgs(makeRequest());
+    const request = makeRequest();
+    expect(request.repositoryContext.currentProjectRoot).toBe(request.workDir);
+    const args = buildDetachedDelegateWorkerArgs(request);
     const entry = args[0];
     expect(entry).toMatch(/bin[\\/]maestro\.js$/);
     expect(entry).not.toMatch(/maestro-mcp\.js$/);
