@@ -6,7 +6,13 @@ import { extractWorkingMemoryFacts } from '../memory/extract.js';
 import { promotePendingFacts, promoteWorkingMemoryFact } from '../memory/promote.js';
 import { recallWorkingMemory } from '../memory/recall.js';
 import { forgetFact, listFacts, rememberFact, upsertFacts } from '../memory/store.js';
-import type { MemoryScope } from '../memory/types.js';
+import { MEMORY_SCOPES, type MemoryScope } from '../memory/types.js';
+
+/** `undefined`/empty → project. Unknown values return null so the CLI can reject them. */
+export function resolveMemoryScope(value: string | undefined): MemoryScope | null {
+  if (value === undefined || value === '') return 'project';
+  return (MEMORY_SCOPES as readonly string[]).includes(value) ? value as MemoryScope : null;
+}
 
 export function registerMemoryCommand(program: Command): void {
   const memory = program
@@ -21,9 +27,12 @@ export function registerMemoryCommand(program: Command): void {
     .option('--workflow-root <path>', 'Project root containing .workflow', process.cwd())
     .option('--json', 'Output as JSON')
     .action((text: string, opts: { scope: string; session?: string; workflowRoot: string; json?: boolean }) => {
-      const scope = (['user', 'project', 'session'] as const).includes(opts.scope as MemoryScope)
-        ? opts.scope as MemoryScope
-        : 'project';
+      const scope = resolveMemoryScope(opts.scope);
+      if (!scope) {
+        console.error('memory remember --scope must be user | project | session');
+        process.exitCode = 1;
+        return;
+      }
       if (scope === 'session' && !opts.session) {
         console.error('memory remember --scope session requires --session <id>');
         process.exitCode = 1;

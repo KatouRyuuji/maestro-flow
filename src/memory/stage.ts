@@ -49,10 +49,11 @@ export function stageFactToKnowledge(
   };
   if (target.runId) {
     const staged = stageRunKnowledgeCandidate(projectRoot, target.runId, payload, target.sessionId);
-    patchFact(projectRoot, fact.id, {
+    const patched = patchFact(projectRoot, fact.id, {
       promotion_state: 'staged',
       knowledge_candidate_id: staged.candidate_id,
     });
+    if (!patched) return { fact_id: fact.id, skipped: true, reason: 'patch-failed' };
     return {
       fact_id: fact.id,
       candidate_id: staged.candidate_id,
@@ -63,10 +64,11 @@ export function stageFactToKnowledge(
   }
   if (target.sessionId) {
     const staged = stageSessionKnowledgeCandidate(projectRoot, target.sessionId, payload);
-    patchFact(projectRoot, fact.id, {
+    const patched = patchFact(projectRoot, fact.id, {
       promotion_state: 'staged',
       knowledge_candidate_id: staged.candidate_id,
     });
+    if (!patched) return { fact_id: fact.id, skipped: true, reason: 'patch-failed' };
     return {
       fact_id: fact.id,
       candidate_id: staged.candidate_id,

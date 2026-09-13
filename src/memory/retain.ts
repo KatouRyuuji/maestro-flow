@@ -45,6 +45,8 @@ export async function retainWorkingMemory(
     fetchImpl?: Mem0Fetch;
     autoStage?: boolean;
     mcpSession?: McpMemorySession;
+    /** Prompt-time inject keeps local extract; Stop/SessionEnd runners own remote writes. */
+    remoteWrite?: boolean;
   } = {},
 ): Promise<RetainResult> {
   const config = options.config ?? loadMemoryConfig(projectRoot);
@@ -61,15 +63,18 @@ export async function retainWorkingMemory(
   if (!isExtractEnabled(config.auto) && !isMcpWriteEnabled(config)) {
     return empty;
   }
-  const extracted = isExtractEnabled(config.auto) ? extractWorkingMemoryFacts(payload) : [];
+  const messages = conversationMessagesFromPayload(payload);
+  const extractPayload = { ...payload, messages };
+  const extracted = isExtractEnabled(config.auto) ? extractWorkingMemoryFacts(extractPayload) : [];
   const upserted = isExtractEnabled(config.auto)
     ? upsertFacts(projectRoot, extracted, config)
     : { added: [] as WorkingMemoryFact[], updated: [] as WorkingMemoryFact[], superseded: [] as WorkingMemoryFact[] };
-  const messages = conversationMessagesFromPayload(payload);
   let mem0: RetainResult['mem0'] = { skipped: true };
   let mcp: RetainResult['mcp'] = { skipped: true };
-  if (isMcpWriteEnabled(config)) {
-    const statement = statementForMcpRetain(payload);
+  if (options.remoteWrite === false) {
+    /* local-only */
+  } else if (isMcpWriteEnabled(config)) {
+    const statement = statementForMcpRetain(extractPayload);
     let opened: { session: McpMemorySession; owned: boolean } | null = null;
     try {
       opened = await openConfiguredMcpSession(config, options.mcpSession);

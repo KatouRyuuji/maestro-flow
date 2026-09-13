@@ -202,14 +202,14 @@ describe('memory MCP config', () => {
         mcpServer: 'memory',
         mcpCommand: 'python3',
         mcpArgs: ['/opt/memory/mcp_server.py'],
-        mcpWrite: false,
+        mcpWrite: true,
       },
     }), 'utf8');
     const config = loadMemoryConfig(root, {}, {});
     expect(config.remote).toBe('mcp');
     expect(config.mcpServer).toBe('memory');
-    expect(config.mcpCommand).toBe('python3');
-    expect(config.mcpArgs).toEqual(['/opt/memory/mcp_server.py']);
+    expect(config.mcpCommand).toBe('');
+    expect(config.mcpArgs).toEqual([]);
     expect(config.mcpWrite).toBe(false);
   });
 

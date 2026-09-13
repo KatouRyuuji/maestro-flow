@@ -3,11 +3,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { resolveMemoryScope } from '../commands/memory.js';
 import { loadMemoryConfig } from './config.js';
 import {
   conversationMessagesFromPayload,
   extractWorkingMemoryFacts,
+  MAX_TRANSCRIPT_MESSAGES,
 } from './extract.js';
+import { mem0Add, memoriesFromSearchBody, resolveMem0RequestUrl } from './mem0-client.js';
 import {
   composeWithSpecPriority,
   formatRecalledMemory,
@@ -15,11 +18,12 @@ import {
   MEMORY_WRAP_OPEN,
   selectWorkingMemory,
 } from './inject.js';
-import { memoriesFromSearchBody, mem0Add } from './mem0-client.js';
+
 import { recallWorkingMemory } from './recall.js';
 import { retainWorkingMemory } from './retain.js';
 import { retrieveFacts } from './retrieve.js';
-import { bagOfWordsEmbedder, embeddingScoresForFacts } from './semantic.js';
+import { bagOfWordsEmbedder, embeddingScoresForFacts, extractSemanticDraft } from './semantic.js';
+import { stageFactToKnowledge } from './stage.js';
 import { promoteWorkingMemoryFact } from './promote.js';
 import { addFacts, factIdForText, forgetFact, listFacts, normalizeFact, patchFact, rememberFact, upsertFacts, visibleFacts, workingMemoryPath } from './store.js';
 import { factsConflict, topicFromText } from './topic.js';
@@ -97,6 +101,31 @@ describe('working-memory extract', () => {
       confidence: 0.72,
       promotion_state: 'pending',
     });
+  });
+
+  it('does not store the opposite of a negated adopt decision', () => {
+    const draft = extractSemanticDraft('we decided not to adopt bun');
+    expect(draft?.text).not.toBe('bun');
+    const facts = extractWorkingMemoryFacts({
+      messages: [{ role: 'user', content: 'we decided not to adopt bun' }],
+    });
+    expect(facts.some(fact => fact.text === 'bun')).toBe(false);
+  });
+
+  it('caps explicit messages and inline transcripts to the tail window', () => {
+    const dropped = { role: 'user' as const, content: 'remember: always use yarn not npm' };
+    const kept = { role: 'user' as const, content: 'remember: always use pnpm not npm' };
+    const filler = Array.from({ length: MAX_TRANSCRIPT_MESSAGES - 1 }, (_, i) => ({
+      role: 'assistant' as const,
+      content: `ack ${i}`,
+    }));
+    const messages = conversationMessagesFromPayload({ messages: [dropped, ...filler, kept] });
+    expect(messages).toHaveLength(MAX_TRANSCRIPT_MESSAGES);
+    expect(messages[0]).toEqual(filler[0]);
+    expect(messages.at(-1)).toEqual(kept);
+    const facts = extractWorkingMemoryFacts({ messages: [dropped, ...filler, kept] });
+    expect(facts.some(fact => fact.text.includes('yarn'))).toBe(false);
+    expect(facts.some(fact => fact.text.includes('pnpm'))).toBe(true);
   });
 });
 
@@ -511,6 +540,26 @@ describe('working-memory retain modes', () => {
     expect(result.mem0.skipped).toBe(true);
     expect(called).toBe(false);
   });
+
+  it('prompt-time remoteWrite:false keeps local extract and skips Mem0', async () => {
+    const root = tempProject();
+    let called = false;
+    const result = await retainWorkingMemory(root, {
+      messages: [{ role: 'user', content: 'remember: always use pnpm not npm' }],
+    }, {
+      config: { ...isolated, auto: 'extract', mem0ApiKey: 'test-key', mem0BaseUrl: 'https://api.mem0.ai' },
+      fetchImpl: async () => {
+        called = true;
+        return new Response('{}', { status: 200 });
+      },
+      autoStage: false,
+      remoteWrite: false,
+    });
+    expect(result.added).toHaveLength(1);
+    expect(result.mem0.skipped).toBe(true);
+    expect(result.mcp.skipped).toBe(true);
+    expect(called).toBe(false);
+  });
 });
 
 describe('working-memory knowledge handoff', () => {
@@ -538,6 +587,25 @@ describe('working-memory knowledge handoff', () => {
     expect(receipt.candidates.some(item => item.candidate_id === staged.candidate_id)).toBe(true);
     expect(summary.candidates.find(item => item.candidate_id === staged.candidate_id)?.status).toBe('pending');
   });
+
+  it('reports patch-failed when the fact id is absent', () => {
+    const root = tempProject();
+    writeFileSync(join(root, '.workflow', 'config.json'), JSON.stringify({
+      session_schema: {
+        schema_version: 'session-schema-selection/1.0',
+        writer: 'session/3.0',
+        features: { session_statusless: false },
+      },
+    }), 'utf8');
+    mkdirSync(join(root, 'src'), { recursive: true });
+    writeFileSync(join(root, 'src', 'evidence.ts'), '// memory evidence\n', 'utf8');
+    const session = ensureSyntheticKnowledgeSession(root, 'memory-host');
+    const fact = rememberFact(root, 'prefer named exports in src/memory');
+    forgetFact(root, fact.id);
+    const result = stageFactToKnowledge(root, fact, { sessionId: session.sessionId });
+    expect(result.skipped).toBe(true);
+    expect(result.reason).toBe('patch-failed');
+  });
 });
 
 describe('memory config and mem0 helpers', () => {
@@ -564,5 +632,42 @@ describe('memory config and mem0 helpers', () => {
       messages: [{ role: 'user', content: 'hi' }],
     });
     expect(result).toEqual({ skipped: true });
+  });
+
+  it('rejects non-HTTPS or non-Mem0 hosts before attaching credentials', async () => {
+    expect(resolveMem0RequestUrl('https://api.mem0.ai', '/v3/memories/add/')).toBe('https://api.mem0.ai/v3/memories/add/');
+    expect(resolveMem0RequestUrl('http://api.mem0.ai', '/v3/memories/add/')).toBeNull();
+    expect(resolveMem0RequestUrl('https://evil.example/steal', '/v3/memories/add/')).toBeNull();
+    let called = false;
+    const skipped = await mem0Add({
+      ...DEFAULT_MEMORY_CONFIG,
+      mem0ApiKey: 'secret-token',
+      mem0BaseUrl: 'https://evil.example',
+    }, { messages: [{ role: 'user', content: 'hi' }] }, async () => {
+      called = true;
+      return new Response('{}', { status: 200 });
+    });
+    expect(skipped).toEqual({ skipped: true });
+    expect(called).toBe(false);
+  });
+
+  it('defaults mcpWrite to false', () => {
+    expect(DEFAULT_MEMORY_CONFIG.mcpWrite).toBe(false);
+  });
+
+  it('rejects an invalid memory scope and defaults only when omitted', () => {
+    expect(resolveMemoryScope(undefined)).toBe('project');
+    expect(resolveMemoryScope('user')).toBe('user');
+    expect(resolveMemoryScope('session')).toBe('session');
+    expect(resolveMemoryScope('global')).toBeNull();
+  });
+
+  it('patchFact ignores text changes so the hash id stays stable', () => {
+    const root = tempProject();
+    const fact = rememberFact(root, 'prefer named exports');
+    const patched = patchFact(root, fact.id, { text: 'prefer default exports', use_count: 3 });
+    expect(patched?.id).toBe(fact.id);
+    expect(patched?.text).toBe('prefer named exports');
+    expect(patched?.use_count).toBe(3);
   });
 });

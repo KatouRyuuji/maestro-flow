@@ -25,7 +25,7 @@ interface SpeechActFrame {
 
 const SPEECH_ACTS: SpeechActFrame[] = [
   {
-    match: /(?:standardize\s+on|standardise\s+on|统一(?:用|使用)|必须(?:用|使用)|let'?s\s+(?:standardize\s+on|standardise\s+on|use)|adopt)\s+(.{2,120})/i,
+    match: /(?:^|\b(?:we|team|let'?s)\s+)(?:standardize\s+on|standardise\s+on|统一(?:用|使用)|必须(?:用|使用)|adopt)\s+(.{2,120})/i,
     type: 'user',
   },
   {
@@ -76,6 +76,8 @@ export function hasConcreteMemoryObject(text: string): boolean {
  * Speech-act frames used only after the regex/structured rule path misses.
  * Requires a concrete object (tool, export style, test layout, …).
  */
+const NEGATED_LEAD = /\b(not|don['\u2019]t|do not|never|no longer|cannot|can['\u2019]t)\b|不再|不要|别/i;
+
 export function extractSemanticDraft(text: string): SemanticDraft | null {
   const trimmed = text.trim().replace(/\s+/g, ' ');
   if (!trimmed) return null;
@@ -84,6 +86,10 @@ export function extractSemanticDraft(text: string): SemanticDraft | null {
     if (!matched) continue;
     const extracted = (matched[1] ?? trimmed).trim();
     if (!hasConcreteMemoryObject(extracted) && !hasConcreteMemoryObject(trimmed)) continue;
+    const leadIn = matched.index !== undefined
+      ? trimmed.slice(0, matched.index + (matched[0].length - extracted.length))
+      : trimmed;
+    if (NEGATED_LEAD.test(leadIn)) continue;
     return {
       text: extracted || trimmed,
       type: frame.type,

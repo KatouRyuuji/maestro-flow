@@ -34,6 +34,24 @@ function requireEntity(ids: Record<string, string>): Record<string, string> {
   return ids;
 }
 
+const MEM0_HOST_SUFFIX = '.mem0.ai';
+const MEM0_HOSTS = new Set(['api.mem0.ai', 'mem0.ai']);
+
+/** HTTPS Mem0 hosts only. Arbitrary base URLs never receive the API token. */
+export function resolveMem0RequestUrl(baseUrl: string, path: string): string | null {
+  try {
+    const url = new URL(baseUrl);
+    if (url.protocol !== 'https:') return null;
+    const host = url.hostname.toLowerCase();
+    if (!MEM0_HOSTS.has(host) && !host.endsWith(MEM0_HOST_SUFFIX)) return null;
+    const origin = url.origin.replace(/\/$/, '');
+    const suffix = path.startsWith('/') ? path : `/${path}`;
+    return `${origin}${suffix}`;
+  } catch {
+    return null;
+  }
+}
+
 function headers(apiKey: string): Record<string, string> {
   return {
     Authorization: `Token ${apiKey}`,
@@ -58,7 +76,8 @@ export async function mem0Add(
     appId: input.appId ?? config.mem0AppId,
     runId: input.runId,
   }));
-  const url = `${config.mem0BaseUrl.replace(/\/$/, '')}/v3/memories/add/`;
+  const url = resolveMem0RequestUrl(config.mem0BaseUrl, '/v3/memories/add/');
+  if (!url) return { skipped: true };
   const response = await fetchImpl(url, {
     method: 'POST',
     headers: headers(apiKey),
@@ -83,7 +102,8 @@ export async function mem0Search(
     appId: input.appId ?? config.mem0AppId,
     runId: input.runId,
   }));
-  const url = `${config.mem0BaseUrl.replace(/\/$/, '')}/v3/memories/search/`;
+  const url = resolveMem0RequestUrl(config.mem0BaseUrl, '/v3/memories/search/');
+  if (!url) return { skipped: true };
   const response = await fetchImpl(url, {
     method: 'POST',
     headers: headers(apiKey),

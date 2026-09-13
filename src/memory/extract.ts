@@ -17,7 +17,13 @@ const CORRECTION = /\b(not npm|not yarn|pnpm|named exports?|tests? live)\b|测�
 const SESSION_SCOPE = /\b(this (?:run|session|turn)|这次|本轮|这个会话)\b/i;
 
 const MAX_TRANSCRIPT_BYTES = 256 * 1024;
-const MAX_TRANSCRIPT_MESSAGES = 40;
+export const MAX_TRANSCRIPT_MESSAGES = 40;
+
+function capTranscriptMessages(messages: ConversationMessage[]): ConversationMessage[] {
+  return messages.length > MAX_TRANSCRIPT_MESSAGES
+    ? messages.slice(-MAX_TRANSCRIPT_MESSAGES)
+    : messages;
+}
 
 function textFromContent(content: unknown): string {
   if (typeof content === 'string') return content;
@@ -128,13 +134,13 @@ function asConversationMessages(value: unknown): ConversationMessage[] {
 /** Resolve host hook payloads: explicit messages → transcript → transcript_path → user_prompt. */
 export function conversationMessagesFromPayload(payload: ConversationPayload): ConversationMessage[] {
   const explicit = asConversationMessages(payload.messages);
-  if (explicit.length > 0) return explicit;
+  if (explicit.length > 0) return capTranscriptMessages(explicit);
   if (typeof payload.transcript === 'string' && payload.transcript.trim()) {
-    return parseTranscriptText(payload.transcript);
+    return capTranscriptMessages(parseTranscriptText(payload.transcript));
   }
   if (typeof payload.transcript_path === 'string' && payload.transcript_path.trim()) {
     const fromPath = readTranscriptMessages(payload.transcript_path.trim());
-    if (fromPath.length > 0) return fromPath.slice(-MAX_TRANSCRIPT_MESSAGES);
+    if (fromPath.length > 0) return capTranscriptMessages(fromPath);
   }
   const prompt = payload.user_prompt?.trim();
   if (prompt) return [{ role: 'user', content: prompt }];

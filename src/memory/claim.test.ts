@@ -15,6 +15,7 @@ describe('working-memory claim polarity', () => {
   it('does not treat a bare "not" as avoid', () => {
     expect(polarityFromText('I do not think we need named exports')).toBe('neutral');
     expect(polarityFromText("don't use yarn for this repo")).toBe('avoid');
+    expect(polarityFromText('don’t use yarn for this repo')).toBe('avoid');
     expect(polarityFromText('never use default exports')).toBe('avoid');
   });
 

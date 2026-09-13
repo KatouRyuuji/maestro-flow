@@ -54,20 +54,24 @@ function parseArgsEnv(value: string | undefined): string[] | undefined {
   return trimmed.split(/\s+/).filter(Boolean);
 }
 
-function pickMemory(raw: Record<string, unknown> | undefined): Partial<MemoryConfig> {
+function pickMemory(
+  raw: Record<string, unknown> | undefined,
+  options: { allowSpawn?: boolean } = {},
+): Partial<MemoryConfig> {
   if (!raw) return {};
   const auto = asMode(raw.auto);
   const semantic = asSemantic(raw.semantic);
   const remote = asRemote(raw.remote);
-  const mcpArgs = asStringList(raw.mcpArgs);
+  const allowSpawn = options.allowSpawn === true;
+  const mcpArgs = allowSpawn ? asStringList(raw.mcpArgs) : undefined;
   return {
     ...(auto ? { auto } : {}),
     ...(semantic ? { semantic } : {}),
     ...(remote ? { remote } : {}),
     ...(typeof raw.mcpServer === 'string' ? { mcpServer: raw.mcpServer } : {}),
-    ...(typeof raw.mcpCommand === 'string' ? { mcpCommand: raw.mcpCommand } : {}),
+    ...(allowSpawn && typeof raw.mcpCommand === 'string' ? { mcpCommand: raw.mcpCommand } : {}),
     ...(mcpArgs ? { mcpArgs } : {}),
-    ...(typeof raw.mcpWrite === 'boolean' ? { mcpWrite: raw.mcpWrite } : {}),
+    ...(allowSpawn && typeof raw.mcpWrite === 'boolean' ? { mcpWrite: raw.mcpWrite } : {}),
     ...(typeof raw.mem0ApiKey === 'string' ? { mem0ApiKey: raw.mem0ApiKey } : {}),
     ...(typeof raw.mem0BaseUrl === 'string' ? { mem0BaseUrl: raw.mem0BaseUrl } : {}),
     ...(typeof raw.mem0UserId === 'string' ? { mem0UserId: raw.mem0UserId } : {}),
@@ -92,7 +96,7 @@ function readProjectMemory(projectRoot: string): Partial<MemoryConfig> {
     if (!existsSync(filePath)) continue;
     try {
       const raw = JSON.parse(readFileSync(filePath, 'utf8')) as { memory?: Record<string, unknown> };
-      const picked = pickMemory(raw.memory);
+      const picked = pickMemory(raw.memory, { allowSpawn: false });
       if (Object.keys(picked).length > 0) return picked;
     } catch {
       continue;
@@ -103,7 +107,7 @@ function readProjectMemory(projectRoot: string): Partial<MemoryConfig> {
 
 function readGlobalMemory(): Partial<MemoryConfig> {
   try {
-    return pickMemory(loadConfig().memory as Record<string, unknown> | undefined);
+    return pickMemory(loadConfig().memory as Record<string, unknown> | undefined, { allowSpawn: true });
   } catch {
     return {};
   }
@@ -137,7 +141,9 @@ export function loadMemoryConfig(
   // recall/inject uses it. Explicit remote=off stays local-only. Vitest skips
   // discovery unless MAESTRO_MEMORY_MCP_DISCOVER=1.
   if (specifiedRemote !== 'off' && !mcpCommand && shouldDiscoverMemoryMcp(env)) {
-    const found = discoverMemoryMcpLaunch({ env });
+    const found = env === process.env
+      ? discoverMemoryMcpLaunch()
+      : discoverMemoryMcpLaunch({ env });
     if (found) {
       remote = 'mcp';
       mcpCommand = found.command;

@@ -369,7 +369,7 @@ export function patchFact(
         ...fact,
         ...patch,
         id: fact.id,
-        text: patch.text ?? fact.text,
+        text: fact.text,
         promotion_state: patch.promotion_state
           ? mergePromotion(fact.promotion_state, patch.promotion_state)
           : fact.promotion_state,

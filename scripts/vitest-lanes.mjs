@@ -7,6 +7,9 @@ import path from 'node:path';
  */
 export const VITEST_INCLUDE = ['src/**/*.test.ts', 'scripts/**/*.test.mjs'];
 
+/** E2E files match VITEST_INCLUDE (`*.test.ts`) but stay out of both Vitest lanes. */
+export const VITEST_E2E_EXCLUDE = ['src/**/*.e2e.test.ts'];
+
 /** Files that use Node's test runner and therefore are not Vitest lanes. */
 export const NODE_TEST_FILES = [
   'scripts/__tests__/check-search-ranking-release-machine.test.mjs',

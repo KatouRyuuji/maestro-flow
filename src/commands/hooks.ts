@@ -1532,7 +1532,7 @@ const HOOK_RUNNERS: Record<string, HookRunner> = {
     if (isExtractEnabled(memoryConfig.auto) && payload.user_prompt) {
       const { retainWorkingMemory } = await import('../memory/retain.js');
       try {
-        await retainWorkingMemory(workspace, payload, { config: memoryConfig });
+        await retainWorkingMemory(workspace, payload, { config: memoryConfig, remoteWrite: false });
       } catch {
         /* fail-open: extract must not skip recall */
       }

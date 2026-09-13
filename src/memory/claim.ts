@@ -22,7 +22,7 @@ const OBJECT_ALIASES: Array<{ id: string; family: string; needles: RegExp }> = [
 /** Chosen-tool sentences: "use X not Y" / "用 X 不要用 Y" count as prefer, not avoid. */
 const USE_NOT = /(?:请用|用|use)\s+.+\s*(?:，|,)?\s*(?:不要用|别用|而不是|instead of|not)\s+/i;
 const PREFER = /\b(prefer|always use|standardize on|standardise on|adopt)\b|请用|统一用|必须用|我们约定/i;
-const AVOID = /\b(never use|don't use|do not use|stop using)\b|不要用|别用|弃用|不再(?:用|使用)/i;
+const AVOID = /\b(never use|don['\u2019]t use|do not use|stop using)\b|不要用|别用|弃用|不再(?:用|使用)/i;
 
 const MEMORY_LEAD = /^(remember(?:\s+that)?|记住(?:一下)?|请记住|我们约定|从此以后|以后都)\s*[:：]?\s*/i;
 const USE_LEAD = /^(always\s+)?(never\s+)?(please\s+)?(use|using|请用|使用|用)\s+/i;

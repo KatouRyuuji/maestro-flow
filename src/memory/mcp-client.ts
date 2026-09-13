@@ -189,6 +189,8 @@ export async function openStdioMcpSession(
     windowsHide: true,
     env: options.env ?? process.env,
   });
+  child.stdin.on('error', () => { /* fail-open: EPIPE must not crash the host */ });
+  child.stderr?.resume();
   const pending = new Map<JsonRpcId, {
     resolve: (value: unknown) => void;
     reject: (error: Error) => void;
