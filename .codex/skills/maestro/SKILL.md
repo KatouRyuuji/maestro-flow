@@ -174,6 +174,19 @@ Read `ralph-amend-goal.md`, use `maestro session status --session {session_id} -
 
 </state_machine>
 
+<task_tracking>
+
+**时机与操作**（plan 是 session 权威状态的 UI 镜像，不替代 session 状态）：
+
+| 时机 | 操作 | 示例 |
+|------|------|------|
+| Session 创建后 | update_plan 初始化步骤清单 | `update_plan({ plan: [{ step: "Step {index}: {step.skill}", status: "pending" }, ...] })` |
+| Step 派发时 | update_plan 标记当前 step | `update_plan({ plan: [..., 当前 step status: "in_progress"] })` |
+| Step 完成时 | update_plan 标记完成 | `update_plan({ plan: [..., 该 step status: "completed"] })` |
+| Step 失败时 | update_plan + explanation 说明 | `update_plan({ explanation: "Step {index} failed: {reason}", plan: [...] })` |
+
+</task_tracking>
+
 <success_criteria>
 - Public flags are `-y`, `-c`, `--amend`.
 - Initial classification is auditable and the Session exists before step execution.
