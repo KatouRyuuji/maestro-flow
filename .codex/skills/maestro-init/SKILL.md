@@ -18,7 +18,7 @@ allowed-tools:
   - spawn_agents_on_csv
   - wait_agent
 session-mode: bootstrap
-version: 0.5.86-grok.1
+version: 0.5.86-grok.3
 ---
 
 <bootstrap_mode>
