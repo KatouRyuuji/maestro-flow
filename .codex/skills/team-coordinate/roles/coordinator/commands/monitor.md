@@ -99,10 +99,10 @@ Read-only status report. No pipeline advancement.
 Before generating status output, read worker milestones:
 
 ```javascript
-const progressMsgs = mcp__maestro__team_msg({
+const progressMsgs = team_msg({
   operation: "list", session_id: sessionId, type: "progress", last: 50
 })
-const blockerMsgs = mcp__maestro__team_msg({
+const blockerMsgs = team_msg({
   operation: "list", session_id: sessionId, type: "blocker", last: 10
 })
 

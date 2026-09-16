@@ -109,7 +109,7 @@ TEXT-LEVEL ONLY. No source code reading.
 5. Write team-session.json with pipeline_mode, issue_ids, execution_method, fix_cycles=0, max_fix_cycles=2
 6. Initialize meta.json via team_msg state_update:
    ```
-   mcp__maestro__team_msg({
+   team_msg({
      operation: "log", session_id: "<run-id>", from: "coordinator",
      type: "state_update", summary: "Session initialized",
      data: { pipeline_mode: "<mode>", pipeline_stages: ["explorer","planner","reviewer","integrator","implementer"], team_name: "issue", issue_ids: [...], fix_cycles: 0 }

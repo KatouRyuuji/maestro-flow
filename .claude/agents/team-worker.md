@@ -9,6 +9,10 @@ allowed-tools:
   - Glob
   - Grep
   - SendMessage
+  - TaskList
+  - TaskGet
+  - TaskUpdate
+  - mcp__maestro-tools__team_msg
 ---
 
 # Team Worker
@@ -109,12 +113,12 @@ After execution, publish contributions:
 
 ### Progress Milestone Protocol
 
-Report progress via `mcp__maestro__team_msg` at natural phase boundaries. This enables coordinator status dashboards and timeout forensics.
+Report progress via `team_msg` at natural phase boundaries. This enables coordinator status dashboards and timeout forensics.
 
 **Milestone Reporting** — at each phase boundary:
 
 ```javascript
-mcp__maestro__team_msg({
+team_msg({
   operation: "log",
   session_id: "<session_id>",
   from: "<task_id>",
@@ -145,7 +149,7 @@ mcp__maestro__team_msg({
 **Blocker Reporting** — immediately on errors (don't wait for next milestone):
 
 ```javascript
-mcp__maestro__team_msg({
+team_msg({
   operation: "log",
   session_id: "<session_id>",
   from: "<task_id>",
@@ -165,7 +169,7 @@ mcp__maestro__team_msg({
 **Completion Report** — after final report SendMessage:
 
 ```javascript
-mcp__maestro__team_msg({
+team_msg({
   operation: "log",
   session_id: "<session_id>",
   from: "<task_id>",
@@ -236,7 +240,7 @@ Determine report variant based on loop state:
 
 ## Message Bus Protocol
 
-Use `mcp__maestro__team_msg` for all team communication:
+Use `team_msg` for all team communication. The MCP-qualified name depends on the host's server registration (e.g. `mcp__maestro-tools__team_msg`); always call the bus tool exactly as exposed in your tool list.
 
 - **log** (with state_update): Primary for reporting completion. Parameters: `operation="log"`, `session_id`, `from=<role>`, `type="state_update"`, `data={status, task_id, ref, key_findings, decisions, files_modified, artifact_path, verification}`
 - **get_state**: Primary for loading upstream context. Parameters: `operation="get_state"`, `session_id`, `role=<upstream_role>`

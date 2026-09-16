@@ -94,7 +94,7 @@ TEXT-LEVEL ONLY. No source code reading.
 5. Write team-session.json with parallel_mode, max_branches, branches, independent_targets, fix_cycles
 6. Initialize meta.json via team_msg state_update:
    ```
-   mcp__maestro__team_msg({
+   team_msg({
      operation: "log", session_id: "<run-id>", from: "coordinator",
      type: "state_update", summary: "Session initialized",
      data: { pipeline_mode: "<mode>", pipeline_stages: ["analyzer","designer","refactorer","validator","reviewer"], team_name: "arch-opt" }

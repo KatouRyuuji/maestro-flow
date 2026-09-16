@@ -875,6 +875,9 @@ const AGY_PROFILE: ConversionProfile = {
     [/<task_tracking>[\s\S]*?<\/task_tracking>/g, ''],
     [/\bmaestro run (prepare|skill|brief)\b(?![^\n`]*--platform)/g, 'maestro run $1 --platform agy'],
     [/\bmcp__exa__web_search_exa\b/g, 'search_web'],
+    // 总线工具限定名平台中立化：宿主注册名不一（Claude mcp__maestro-tools__、
+    // Grok maestro-tools__），agy 端统一收敛为裸名 team_msg，由模型按实际暴露名匹配
+    [/\bmcp__maestro(?:-tools)?__team_msg\b/g, 'team_msg'],
     [/\bSendMessage\b/g, 'send_message'],
     [/\bAskUserQuestion\b/g, 'ask_question'],
     [/\bRead\s*\(/g, 'view_file('],
@@ -900,7 +903,10 @@ const AGY_PROFILE: ConversionProfile = {
     'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet',
     'TodoWrite',
     'Skill',
+    // team_msg 限定名与宿主注册相关，agy 白名单不声明（行为由 MCP/file IO 兜底）
     'mcp__ccw-tools__team_msg',
+    'mcp__maestro__team_msg',
+    'mcp__maestro-tools__team_msg',
   ]),
   subagentTools: ['define_subagent', 'invoke_subagent', 'send_message', 'manage_subagents'],
   rewriteAgentCalls: true,
@@ -943,6 +949,8 @@ const CODEX_PROFILE: ConversionProfile = {
     // --platform option on run brief; only the skills catalog keeps a platform.
     [/\bmaestro run (prepare|skill)\b(?![^\n`]*--platform)/g, 'maestro run $1 --platform codex'],
     [/\bAskUserQuestion\b/g, 'request_user_input'],
+    // 总线工具限定名平台中立化：收敛为裸名 team_msg，由模型按宿主实际暴露名匹配
+    [/\bmcp__maestro(?:-tools)?__team_msg\b/g, 'team_msg'],
     [/\bSendMessage\s*\(\s*\{\s*to:/g, 'followup_task({ target:'],
     [/\bSendMessage\b/g, 'send_message'],
     [/\bTaskCreate\b/g, 'update_plan'],
@@ -975,6 +983,8 @@ const CODEX_PROFILE: ConversionProfile = {
   removedTools: new Set([
     'TeamCreate', 'TeamDelete',
     'mcp__ccw-tools__team_msg',
+    'mcp__maestro__team_msg',
+    'mcp__maestro-tools__team_msg',
     'ExitPlanMode', 'EnterPlanMode',
     'ExitWorktree', 'EnterWorktree',
     'NotebookEdit', 'Monitor',
@@ -1064,6 +1074,9 @@ const PI_PROFILE: ConversionProfile = {
   },
   removedTools: new Set([
     'TeamCreate', 'TeamDelete',
+    'mcp__ccw-tools__team_msg',
+    'mcp__maestro__team_msg',
+    'mcp__maestro-tools__team_msg',
     'ExitPlanMode', 'EnterPlanMode',
     'ExitWorktree', 'EnterWorktree',
     'NotebookEdit', 'Monitor',
@@ -1448,6 +1461,8 @@ const AGENTS_STANDARD_PROFILE: ConversionProfile = {
     [/<task_tracking>[\s\S]*?<\/task_tracking>/g, STD_TASK_TRACKING_BLOCK],
     [/\bmaestro run (prepare|skill|brief)\b(?![^\n`]*--platform)/g, 'maestro run $1 --platform agents-standard'],
     [/\bAskUserQuestion\b/g, 'ask_user'],
+    // 总线工具限定名平台中立化：收敛为裸名 team_msg，由模型按宿主实际暴露名匹配
+    [/\bmcp__maestro(?:-tools)?__team_msg\b/g, 'team_msg'],
     [/\bSendMessage\b/g, 'send_message'],
     [/\bExitPlanMode\b/g, 'exit_plan_mode'],
     [/\bExitWorktree\b/g, 'exit_worktree'],
@@ -1522,6 +1537,8 @@ const AGENTS_STANDARD_PROFILE: ConversionProfile = {
     Agent: 'delegate_subagent',
     Skill: 'invoke_skill',
   },
+  // 开放标准镜像白名单保留本仓规范名 mcp__maestro-tools__*（用户各端注册名一致）；
+  // 死名由 lint-mcp-tool-names 防守
   removedTools: new Set(),
   subagentTools: [],
   rewriteAgentCalls: false,
@@ -1594,6 +1611,8 @@ const GROK_PROFILE: ConversionProfile = {
     [/\binterrupt_agent\b/g, 'kill_command_or_subagent'],
     [/\bWebSearch\b/g, 'web_search'],
     [/\bWebFetch\b/g, 'web_fetch'],
+    // 总线工具限定名：Grok MCP 以 <服务器key>__<tool> 暴露，本仓安装固定 maestro-tools
+    [/\bmcp__maestro(?:-tools)?__team_msg\b/g, 'maestro-tools__team_msg'],
     [/\bMonitor\b/g, 'monitor'],
     [/\bLSP\b/g, 'lsp'],
     [/\bRead\s*\(/g, 'read_file('],
@@ -1624,6 +1643,8 @@ const GROK_PROFILE: ConversionProfile = {
     WebFetch: 'web_fetch',
     Monitor: 'monitor',
     LSP: 'lsp',
+    'mcp__maestro-tools__team_msg': 'maestro-tools__team_msg',
+    mcp__maestro__team_msg: 'maestro-tools__team_msg',
   },
   removedTools: new Set([
     // grok 无对应工具：skills 走 /slash 或自动触发，无 task 跟踪工具，无 teams

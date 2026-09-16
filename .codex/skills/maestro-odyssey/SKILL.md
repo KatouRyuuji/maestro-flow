@@ -28,7 +28,7 @@ contract:
   discovery: self-described
   consumes: []
   produces: []
-version: 0.5.86-grok.3
+version: 0.5.86-grok.4
 ---
 
 <required_reading>

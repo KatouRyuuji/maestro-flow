@@ -16,7 +16,7 @@ allowed-tools:
   - Write
   - request_user_input
 session-mode: none
-version: 0.5.86-grok.3
+version: 0.5.86-grok.4
 ---
 
 <purpose>

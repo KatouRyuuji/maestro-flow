@@ -9,7 +9,7 @@ allowed-tools:
   - Read
   - request_user_input
 session-mode: none
-version: 0.5.86-grok.3
+version: 0.5.86-grok.4
 ---
 
 # Maestro Help

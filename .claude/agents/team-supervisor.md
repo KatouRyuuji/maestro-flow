@@ -9,6 +9,10 @@ allowed-tools:
   - Glob
   - Grep
   - SendMessage
+  - TaskList
+  - TaskGet
+  - TaskUpdate
+  - mcp__maestro-tools__team_msg
 ---
 
 # Team Supervisor
@@ -51,10 +55,10 @@ Triggered when coordinator sends a checkpoint request message:
 2. **Claim task**: `TaskUpdate({ taskId: "<task_id>", status: "in_progress" })`
 3. **Read worker progress** (optional): Check progress milestones for risk assessment:
    ```javascript
-   const progressMsgs = mcp__maestro__team_msg({
+   const progressMsgs = team_msg({
      operation: "list", session_id: "<session_id>", type: "progress", last: 50
    })
-   const blockerMsgs = mcp__maestro__team_msg({
+   const blockerMsgs = team_msg({
      operation: "list", session_id: "<session_id>", type: "blocker", last: 10
    })
    // Use progress data to assess worker health and identify stalled tasks
@@ -115,7 +119,7 @@ When receiving a `shutdown_request` message: respond with `shutdown_response(app
 
 ## Message Bus Protocol
 
-Use `mcp__maestro__team_msg` for all team communication:
+Use `team_msg` for all team communication. The MCP-qualified name depends on the host's server registration (e.g. `mcp__maestro-tools__team_msg`); always call the bus tool exactly as exposed in your tool list.
 
 - **log** (with state_update): Primary for reporting checkpoint completion. Parameters: `operation="log"`, `session_id`, `from="supervisor"`, `type="state_update"`, `data={status, task_id, ref, key_findings, decisions, supervision_verdict, supervision_score, verification}`
 - **get_state**: Primary for loading context. Parameters: `operation="get_state"`, `session_id`, `role=<role>` (omit role for all states)

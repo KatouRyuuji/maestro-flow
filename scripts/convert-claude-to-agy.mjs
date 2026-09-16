@@ -63,6 +63,8 @@ const BODY_REPLACEMENTS = [
   [/maestro skills --platform claude\b/g, 'maestro skills --platform agy'],
   // Tier B — bare-word, unambiguous
   [/\bmcp__exa__web_search_exa\b/g, 'search_web'],
+  // 总线工具限定名平台中立化：agy 端统一收敛为裸名 team_msg
+  [/\bmcp__maestro(?:-tools)?__team_msg\b/g, 'team_msg'],
   [/\bSendMessage\b/g, 'send_message'],
   [/\bAskUserQuestion\b/g, 'ask_question'],
   // Tier A — call-site only (require open paren)
@@ -96,6 +98,9 @@ const REMOVED_TOOLS = new Set([
   'Skill',
   // mcp__ccw-tools__team_msg becomes file IO; drop from declared tools.
   'mcp__ccw-tools__team_msg',
+  // 现行/安装限定名同理：不声明进白名单，正文已收敛为裸名 team_msg
+  'mcp__maestro__team_msg',
+  'mcp__maestro-tools__team_msg',
 ]);
 
 // Tools added when sub-agent orchestration is present.

@@ -2,7 +2,7 @@
 name: team-coordinate
 disable-model-invocation: true
 description: Universal team coordination skill with dynamic role generation. Uses team-worker agent architecture with role-spec files. Only coordinator is built-in -- all worker roles are generated at runtime as role-specs and spawned via team-worker agent. Beat/cadence model for orchestration. Triggers on "Team Coordinate ".
-allowed-tools: TeamCreate(*), TeamDelete(*), SendMessage(*), TaskCreate(*), TaskUpdate(*), TaskList(*), TaskGet(*), Agent(*), AskUserQuestion(*), Read(*), Write(*), Edit(*), Bash(*), Glob(*), Grep(*), mcp__maestro__team_msg(*)
+allowed-tools: TeamCreate(*), TeamDelete(*), SendMessage(*), TaskCreate(*), TaskUpdate(*), TaskList(*), TaskGet(*), Agent(*), AskUserQuestion(*), Read(*), Write(*), Edit(*), Bash(*), Glob(*), Grep(*), mcp__maestro-tools__team_msg(*)
 session-mode: run
 ---
 
@@ -45,7 +45,7 @@ Universal team coordination skill: analyze task -> generate role-specs -> dispat
 | Session prefix | `TC` |
 | Session path | `{run_dir}/work/team/` |
 | Worker agent | `team-worker` |
-| Message bus | `mcp__maestro__team_msg(session_id=<run-id>, ...)` |
+| Message bus | `team_msg(session_id=<run-id>, ...)` |
 | CLI analysis | `maestro delegate --mode analysis` |
 | CLI write | `maestro delegate --mode write` |
 | Max roles | 5 |

@@ -84,7 +84,7 @@ TEXT-LEVEL ONLY. No source code reading.
 5. Read specs/pipelines.md -> select pipeline based on mode
 6. Initialize pipeline via team_msg state_update:
    ```
-   mcp__maestro__team_msg({
+   team_msg({
      operation: "log", session_id: "<run-id>", from: "coordinator",
      type: "state_update", summary: "Session initialized",
      data: {

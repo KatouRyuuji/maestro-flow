@@ -1,6 +1,6 @@
 {
   "name": "maestro-flow",
-  "version": "0.5.86-grok.3",
+  "version": "0.5.86-grok.4",
   "description": "Intent-driven workflow orchestration for multi-agent AI development with adaptive lifecycle engine and self-reinforcing knowledge graph",
   "type": "module",
   "imports": {
@@ -66,7 +66,8 @@
     "test:kg": "vitest run src/graph",
     "lint": "tsc --noEmit",
     "lint:session-execution-prompts": "node scripts/lint-session-execution-prompts.mjs",
-    "lint:session-run": "node scripts/lint-invocation-policy.mjs && node scripts/lint-session-execution-prompts.mjs && node scripts/lint-session-run-prompts.mjs && node scripts/lint-session-run-mirrors.mjs",
+    "lint:session-run": "node scripts/lint-invocation-policy.mjs && node scripts/lint-session-execution-prompts.mjs && node scripts/lint-session-run-prompts.mjs && node scripts/lint-session-run-mirrors.mjs && node scripts/lint-mcp-tool-names.mjs",
+    "lint:mcp-tool-names": "node scripts/lint-mcp-tool-names.mjs",
     "lint:invocation-policy": "node scripts/lint-invocation-policy.mjs",
     "sync:invocation-policy": "node scripts/sync-invocation-policy.mjs && node scripts/sync-invocation-policy.mjs --check",
     "sync:codex-skills": "node scripts/sync-codex-run-mode.mjs --write && node scripts/sync-codex-run-mode.mjs --check && node scripts/lint-session-run-mirrors.mjs",
@@ -87,7 +88,7 @@
     "lint:codex-agents": "node scripts/sync-codex-agents.mjs --check",
     "migrate:session-run-prompts": "node scripts/migrate-session-run-prompts.mjs --write",
     "clean": "rm -rf dist",
-    "build:mirrors": "node scripts/build-instructions.mjs && node scripts/lint-session-execution-prompts.mjs && node scripts/lint-session-run-prompts.mjs && node scripts/convert-claude-to-agy.mjs && node scripts/build-agents-standard.mjs && node scripts/build-codex-skills.mjs && node scripts/sync-codex-run-mode.mjs --write && node scripts/sync-codex-run-mode.mjs --check && node scripts/sync-codex-agents.mjs --check && node scripts/lint-session-run-mirrors.mjs",
+    "build:mirrors": "node scripts/build-instructions.mjs && node scripts/lint-session-execution-prompts.mjs && node scripts/lint-session-run-prompts.mjs && node scripts/convert-claude-to-agy.mjs && node scripts/build-agents-standard.mjs && node scripts/build-codex-skills.mjs && node scripts/sync-codex-run-mode.mjs --write && node scripts/sync-codex-run-mode.mjs --check && node scripts/sync-codex-agents.mjs --check && node scripts/lint-session-run-mirrors.mjs && node scripts/lint-mcp-tool-names.mjs",
     "prepublishOnly": "npm run build:arch-kb && npm run check:instructions && node scripts/lint-invocation-policy.mjs && node scripts/lint-session-execution-prompts.mjs && node scripts/lint-session-run-prompts.mjs && npm run check:docs-reference && npm run check:session-run-contract-parity && npm run check:search-ranking-release-machine:source && npm run build && npm run check:search-ranking-release-machine:built && npm run check:session-run-release-machine && npm run build:mirrors && npm run check:session-run-packaged-install && npm run check:session-run-skill-surface"
   },
   "engines": {

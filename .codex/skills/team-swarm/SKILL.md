@@ -16,7 +16,6 @@ allowed-tools:
   - followup_task
   - interrupt_agent
   - list_agents
-  - mcp__maestro__team_msg
   - request_user_input
   - send_message
   - spawn_agent
@@ -24,7 +23,7 @@ allowed-tools:
   - update_plan
   - wait_agent
 session-mode: run
-version: 0.5.86-grok.3
+version: 0.5.86-grok.4
 contract:
   discovery: self-described
   consumes: []
@@ -95,7 +94,7 @@ Parse `$ARGUMENTS`:
 - **Session path**: `{run_dir}/work/team/`
 - **Team name**: `swarm`
 - **Script root**: `<skill_root>/scripts/aco.py` (Python 3.10+)
-- **Message bus**: `mcp__maestro__team_msg(session_id=<run-id>, ...)`
+- **Message bus**: `team_msg(session_id=<run-id>, ...)`
 
 ## Worker Spawn Template
 

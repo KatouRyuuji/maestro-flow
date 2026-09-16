@@ -2,7 +2,7 @@
 name: team-perf-opt
 disable-model-invocation: true
 description: Unified team skill for performance optimization. Coordinator orchestrates pipeline, workers are team-worker agents. Supports single/fan-out/independent parallel modes. Triggers on "team perf-opt".
-allowed-tools: Agent, TaskCreate, TaskList, TaskGet, TaskUpdate, TeamCreate, TeamDelete, SendMessage, AskUserQuestion, Read, Write, Edit, Bash, Glob, Grep, mcp__maestro__team_msg
+allowed-tools: Agent, TaskCreate, TaskList, TaskGet, TaskUpdate, TeamCreate, TeamDelete, SendMessage, AskUserQuestion, Read, Write, Edit, Bash, Glob, Grep, mcp__maestro-tools__team_msg
 session-mode: run
 ---
 
@@ -76,7 +76,7 @@ Parse `$ARGUMENTS`:
 - **Session path**: `{run_dir}/work/team/`
 - **Team name**: `perf-opt`
 - **CLI tools**: `maestro delegate --mode analysis` (read-only), `maestro delegate --mode write` (modifications)
-- **Message bus**: `mcp__maestro__team_msg(session_id=<run-id>, ...)`
+- **Message bus**: `team_msg(session_id=<run-id>, ...)`
 
 ## Worker Spawn Template
 
