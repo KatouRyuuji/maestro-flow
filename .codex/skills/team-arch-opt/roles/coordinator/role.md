@@ -90,7 +90,7 @@ TEXT-LEVEL ONLY. No source code reading.
    - `skill_root` = `<project_root>/.claude/skills/team-arch-opt`
 2. Generate session ID: `TAO-<slug>-<date>`
 3. Create session folder structure
-4. TeamCreate with team name `arch-opt`
+4. Team is implicit — no creation step; team name `arch-opt` is recorded in session state
 5. Write team-session.json with parallel_mode, max_branches, branches, independent_targets, fix_cycles
 6. Initialize meta.json via team_msg state_update:
    ```
@@ -153,7 +153,7 @@ Delegate to @commands/monitor.md#handleSpawnNext:
 
 5. Execute completion action per session.completion_action:
    - interactive -> request_user_input (Archive/Keep/Export)
-   - auto_archive -> Archive & Clean (status=completed, TeamDelete)
+   - auto_archive -> Archive & Clean (status=completed; send shutdown_request to each teammate — implicit team cleans up on session exit)
    - auto_keep -> Keep Active (status=paused)
 
 ## Error Handling

@@ -172,6 +172,13 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       args.push('--settings', config.settingsFile);
     }
 
+    // Pin the delegated model explicitly; otherwise the CLI resolves the model
+    // from the inherited ANTHROPIC_MODEL env, which belongs to the parent
+    // session and may not be valid for the delegate.
+    if (config.model) {
+      args.push('--model', config.model);
+    }
+
     // Reasoning effort level (low, medium, high, max)
     if (config.reasoningEffort) {
       args.push('--effort', config.reasoningEffort);
@@ -194,6 +201,8 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
     const envOverrides: Record<string, string | undefined> = { ...envFromFile, ...config.env };
     if (config.baseUrl) envOverrides.ANTHROPIC_BASE_URL = config.baseUrl;
     if (config.apiKey) envOverrides.ANTHROPIC_API_KEY = config.apiKey;
+    // An explicit delegate model wins: drop the inherited parent-session model.
+    if (config.model) envOverrides.ANTHROPIC_MODEL = undefined;
     const childEnv = cleanSpawnEnv(envOverrides);
 
     const cliPath = resolveClaudeCliPath();

@@ -23,7 +23,7 @@ allowed-tools:
   - update_plan
   - wait_agent
 session-mode: run
-version: 0.5.86-grok.4
+version: 0.5.86-grok.5
 contract:
   discovery: self-described
   consumes: []
@@ -150,7 +150,6 @@ When coordinator spawns workers, use `team-worker` agent with role-spec path:
 spawn_agent({
   subagent_type: "team-worker",
   description: "Spawn <role> worker",
-  team_name: <team-name>,
   name: "<role>",
   run_in_background: true,
   prompt: `## Role Assignment
@@ -202,7 +201,7 @@ request_user_input({
 
 | Choice | Steps |
 |--------|-------|
-| Archive & Clean | Update session status="completed" -> TeamDelete -> output final summary with artifact paths |
+| Archive & Clean | Update session status="completed" -> send shutdown_request to each teammate (the implicit team cleans up automatically on session exit) -> output final summary with artifact paths |
 | Keep Active | Update session status="paused" -> output: "Resume with: spawn_agent({ task_name: "team_coordinate", message: "Execute skill team-coordinate, args: resume" })" |
 | Export Results | request_user_input(target path) -> copy artifacts to target -> Archive & Clean |
 

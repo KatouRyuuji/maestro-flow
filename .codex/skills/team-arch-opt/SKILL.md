@@ -22,7 +22,7 @@ allowed-tools:
   - update_plan
   - wait_agent
 session-mode: run
-version: 0.5.86-grok.4
+version: 0.5.86-grok.5
 contract:
   discovery: self-described
   consumes: []

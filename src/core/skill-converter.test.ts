@@ -224,7 +224,7 @@ describe('Grok platform conversion', () => {
     expect(converted).toContain('spawn_subagent');
     expect(converted).toContain('get_command_or_subagent_output');
     expect(converted).toContain('kill_command_or_subagent');
-    expect(converted).toContain('wait_commands_or_subagents');
+    expect(converted).not.toContain('wait_commands_or_subagents');
     expect(converted).toContain('read_file');
     // frontmatter 已映射,正文裸 Agent( 不残留
     expect(converted).not.toMatch(/\bAgent\s*\(/);
@@ -255,11 +255,63 @@ describe('Grok platform conversion', () => {
   });
 
   it('keeps unknown Agent() fields verbatim instead of dropping them', () => {
+    const source = 'Agent({ prompt: "x", priority: "p1" })';
+    const converted = transformContentForPlatform(source, 'grok');
+    expect(converted).toContain('spawn_subagent({');
+    expect(converted).toContain('prompt: "x"');
+    expect(converted).toContain('priority: "p1"');
+  });
+
+  it('drops the team_name parameter — grok spawn_subagent has no such schema field', () => {
     const source = 'Agent({ prompt: "x", team_name: "t1" })';
     const converted = transformContentForPlatform(source, 'grok');
     expect(converted).toContain('spawn_subagent({');
     expect(converted).toContain('prompt: "x"');
-    expect(converted).toContain('team_name: "t1"');
+    expect(converted).not.toContain('team_name');
+  });
+
+  it('strips team_name parameter lines from spawn templates but keeps payload fields', () => {
+    const source = [
+      'Agent({',
+      '  subagent_type: "team-worker",',
+      '  description: "Spawn <role> worker",',
+      '  team_name: <team-name>,',
+      '  name: "<role>",',
+      '  run_in_background: true,',
+      '  prompt: `## Role Assignment',
+      'team_name: <team-name>',
+      'requirement: <task-description>`',
+      '})',
+    ].join('\n');
+    const converted = transformContentForPlatform(source, 'grok');
+    expect(converted).toContain('spawn_subagent({');
+    expect(converted).not.toMatch(/team_name:\s*<team-name>,/);
+    expect(converted).toContain('team_name: <team-name>\n');
+  });
+
+  it('strips team_name lines from multiline spawn_subagent templates that escape field-level rewriting', () => {
+    const source = [
+      'spawn_subagent({',
+      '  subagent_type: "team-worker",',
+      '  team_name: "t1",',
+      '  prompt: `payload',
+      'team_name: <team-name>',
+      'end`',
+      '})',
+    ].join('\n');
+    const converted = transformContentForPlatform(source, 'grok');
+    expect(converted).not.toMatch(/^\s*team_name:[^\n]*,$/m);
+    expect(converted).toContain('team_name: <team-name>');
+  });
+
+  it('converts the checked-in team-coordinate skill without team_name spawn parameters', () => {
+    const source = readFileSync(
+      join(process.cwd(), '.claude', 'skills', 'team-coordinate', 'SKILL.md'),
+      'utf8',
+    );
+    const converted = transformContentForPlatform(source, 'grok');
+    expect(converted).not.toMatch(/^\s*team_name:[^\n]*,$/m);
+    expect(converted).toContain('team_name: <team-name>');
   });
 
   it('treats a quote after an even run of backslashes as the string end', () => {

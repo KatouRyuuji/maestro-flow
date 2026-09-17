@@ -82,7 +82,7 @@ TEXT-LEVEL ONLY. No source code reading.
    - `skill_root` = `<project_root>/.claude/skills/team-testing`
 2. Generate session ID: TST-<slug>-<date>
 3. Create `{run_dir}/work/team/wisdom/` and `{run_dir}/outputs/{strategy,tests/L1-unit,tests/L2-integration,tests/L3-e2e,results,analysis}/`
-4. TeamCreate with team name "testing"
+4. Team is implicit — no creation step; team name "testing" is recorded in session state
 5. Read specs/pipelines.md -> select pipeline based on mode
 6. Initialize pipeline via team_msg state_update:
    ```

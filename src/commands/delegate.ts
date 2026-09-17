@@ -30,6 +30,24 @@ function statusLabel(meta: ExecutionMeta): string {
   return s === 'completed' ? 'done' : s === 'unknown' ? `exit:${meta.exitCode ?? '?'}` : s;
 }
 
+/**
+ * History-only status can report "running" forever for crashed workers.
+ * Cross-check the broker job's workerPid liveness; a dead (or absent) worker
+ * means the entry is stale, not running.
+ */
+function livenessAwareStatus(meta: ExecutionMeta, broker: DelegateBrokerClient): string {
+  const job = broker.getJob(meta.execId);
+  const derived = deriveDelegateStatus(meta, job);
+  if (derived !== 'running' && derived !== 'cancelling') {
+    return derived === 'completed' ? 'done' : derived === 'unknown' ? `exit:${meta.exitCode ?? '?'}` : derived;
+  }
+  const workerPid = job?.metadata?.workerPid;
+  if (typeof workerPid === 'number' && isProcessAlive(workerPid)) {
+    return derived;
+  }
+  return 'stale';
+}
+
 function summarizeHistoryEntry(entry: EntryLike): string {
   switch (entry.type) {
     case 'assistant_message':
@@ -412,13 +430,8 @@ export function registerDelegateCommand(program: Command): void {
               `Available tools: ${available.join(', ') || '(none)'}`,
             );
           }
-          // Attempt fallback to first enabled tool
-          selected = selectTool(undefined, config);
-          if (selected) {
-            process.stderr.write(`Falling back to "${selected.name}".\n`);
-          } else {
-            process.exit(1);
-          }
+          // Explicit --to must never silently fall back to another tool.
+          process.exit(1);
         }
       } else if (opts.role) {
         selected = selectToolByRole(opts.role, config);
@@ -644,6 +657,7 @@ export function registerDelegateCommand(program: Command): void {
     .option('--all', 'Include full history')
     .action((opts: { all?: boolean }) => {
       const store = new CliHistoryStore();
+      const broker = new DelegateBrokerClient();
       const limit = opts.all ? 100 : 20;
       const items = store.listRecent(limit);
 
@@ -674,7 +688,7 @@ export function registerDelegateCommand(program: Command): void {
           padRight(meta.execId, colId),
           padRight(meta.tool, colTool),
           padRight(meta.mode, colMode),
-          padRight(statusLabel(meta), colStatus),
+          padRight(livenessAwareStatus(meta, broker), colStatus),
           padRight(truncate(meta.prompt, colPrompt), colPrompt),
         ].join('  ');
         console.log(row);

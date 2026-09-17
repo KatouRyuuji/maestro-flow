@@ -105,7 +105,7 @@ TEXT-LEVEL ONLY. No source code reading.
    ```
    Bash("mkdir -p {run_dir}/work/team/{explorations,queue,wisdom,.msg} {run_dir}/outputs/{solutions,audits,builds}")
    ```
-4. TeamCreate with team name `issue`
+4. Team is implicit — no creation step; team name `issue` is recorded in session state
 5. Write team-session.json with pipeline_mode, issue_ids, execution_method, fix_cycles=0, max_fix_cycles=2
 6. Initialize meta.json via team_msg state_update:
    ```
@@ -179,7 +179,7 @@ Delegate to @commands/monitor.md#handleSpawnNext:
 
 | Choice | Steps |
 |--------|-------|
-| Archive & Clean | Verify all completed -> update session status="completed" -> TeamDelete() -> output final summary |
+| Archive & Clean | Verify all completed -> update session status="completed" -> send shutdown_request to each teammate (implicit team cleans up on session exit) -> output final summary |
 | Keep Active | Update session status="paused" -> output: "Resume with: spawn_agent({ task_name: "team_issue", message: "Execute skill team-issue, args: resume" })" |
 | New Batch | Return to Phase 1 |
 

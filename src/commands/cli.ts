@@ -75,13 +75,25 @@ export function registerCliCommand(program: Command): void {
           process.stderr.write(`Warning: --tool overrides --role; using tool "${opts.tool}" directly.\n`);
         }
         selected = selectTool(opts.tool, config);
+        if (!selected) {
+          const available = Object.entries(config.tools ?? {})
+            .filter(([, e]) => e.enabled)
+            .map(([n]) => n);
+          const exists = opts.tool in (config.tools ?? {});
+          console.error(
+            exists
+              ? `Error: tool "${opts.tool}" is disabled.\nEnabled tools: ${available.join(', ') || '(none)'}`
+              : `Error: unknown tool "${opts.tool}".\nAvailable tools: ${available.join(', ') || '(none)'}`,
+          );
+          process.exit(1);
+        }
       } else if (opts.role) {
         selected = selectToolByRole(opts.role, config);
       } else {
         selected = selectTool(undefined, config);
       }
 
-      const toolName = selected?.name ?? opts.tool ?? 'gemini';
+      const toolName = selected?.name ?? 'gemini';
       const model = opts.model ?? selected?.entry?.primaryModel;
       const mode = opts.mode as 'analysis' | 'write';
 

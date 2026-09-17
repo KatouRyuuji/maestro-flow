@@ -22,6 +22,10 @@ import {
   applyCodexAgentOverrides,
   assertNoUnsupportedCodexTaskBoardTokens,
 } from './codex-agent-overrides.js';
+import {
+  applyGrokAgentOverrides,
+  assertNoUnsupportedGrokTokens,
+} from './grok-agent-overrides.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -323,6 +327,8 @@ export const TOOL_FIELD_MAP: Record<string, Record<string, FieldMapping>> = {
         name: null,
         model: null,
         mode: null,
+        // grok spawn_subagent schema 无 team_name 参数
+        team_name: null,
       },
     },
   },
@@ -1583,7 +1589,7 @@ const CURSOR_PROFILE: ConversionProfile = {
 // Grok 原生工具集（docs/user-guide）：read_file / write_file / search_replace /
 // grep / list_dir / run_terminal_command / web_search / web_fetch / monitor /
 // spawn_subagent / get_command_or_subagent_output / kill_command_or_subagent /
-// wait_commands_or_subagents / create_goal / update_goal / get_goal。
+// create_goal / update_goal / get_goal。
 // 无 update_plan / invoke_skill / delegate_subagent / task 系列工具；
 // 子代理深度限制为 1（嵌套 spawn 直接失败）。
 // ---------------------------------------------------------------------------
@@ -1603,12 +1609,13 @@ const GROK_PROFILE: ConversionProfile = {
     [/<task_tracking>[\s\S]*?<\/task_tracking>/g, GROK_TASK_TRACKING_BLOCK],
     [/\bmaestro run (prepare|skill|brief)\b(?![^\n`]*--platform)/g, 'maestro run $1 --platform grok'],
     // 深度限制 1：凡含多 agent 编排段的 agent 文件，补嵌套 spawn 失败警告
-    [/## Multi-Agent Orchestration\n/, '## Multi-Agent Orchestration\n\n> **Grok depth limit 1**：本 executor 若以子代理身份运行，调用 `spawn_subagent` 会因 depth-limit 直接失败。此时不得嵌套派发，应在返回结果中声明 wave 需求（`needs_wave` + worker 任务清单），由父会话（顶层）执行 spawn 并用 `wait_commands_or_subagents` 等齐。\n'],
+    [/## Multi-Agent Orchestration\n/, '## Multi-Agent Orchestration\n\n> **Grok depth limit 1**：本 executor 若以子代理身份运行，调用 `spawn_subagent` 会因 depth-limit 直接失败。此时不得嵌套派发，应在返回结果中声明 wave 需求（`needs_wave` + worker 任务清单），由父会话（顶层）执行 spawn 并用 `get_command_or_subagent_output` 逐个等齐。\n'],
     // 其他平台的子代理工具名（若源文本混入）→ grok 原生
     [/\bdelegate_subagent\b/g, 'spawn_subagent'],
     [/\bspawn_agent\b/g, 'spawn_subagent'],
     [/\bwait_agent\b/g, 'get_command_or_subagent_output'],
     [/\binterrupt_agent\b/g, 'kill_command_or_subagent'],
+    [/\bwait_commands_or_subagents\b/g, 'get_command_or_subagent_output'],
     [/\bWebSearch\b/g, 'web_search'],
     [/\bWebFetch\b/g, 'web_fetch'],
     // 总线工具限定名：Grok MCP 以 <服务器key>__<tool> 暴露，本仓安装固定 maestro-tools
@@ -1626,6 +1633,11 @@ const GROK_PROFILE: ConversionProfile = {
     [/\bAgent\s*\(/g, 'spawn_subagent('],
     [/\bTaskStop\s*\(/g, 'kill_command_or_subagent('],
     [/\bTaskOutput\s*\(/g, 'get_command_or_subagent_output('],
+    // spawn 模板参数区剥除 team_name 参数行（grok spawn_subagent schema 无该参数）。
+    // 字段级重写（TOOL_FIELD_MAP.Agent.grok: team_name → null）覆盖可解析调用；
+    // 此处兜底未闭合/未解析的多行模板。扫行在含反引号的行（prompt 模板字符串）前停止，
+    // 参数行要求行尾带逗号 —— payload 里的 `team_name: <team-name>`（行尾无逗号）保留。
+    [/(spawn_subagent\s*\(\s*\{(?:\n(?![^\n]*`)[^\n]*){0,30}?)^[ \t]*team_name:[^\n]*,[ \t]*\r?\n/gm, '$1'],
   ],
   frontmatterToolMap: {
     Read: 'read_file',
@@ -1664,7 +1676,6 @@ const GROK_PROFILE: ConversionProfile = {
     'spawn_subagent',
     'get_command_or_subagent_output',
     'kill_command_or_subagent',
-    'wait_commands_or_subagents',
   ],
   rewriteAgentCalls: false,
   rewriteSkillCalls: false,
@@ -1838,6 +1849,46 @@ function buildCodexAgentsToml(
 }
 
 // ---------------------------------------------------------------------------
+// Grok agent builder — converts .claude/agents/*.md → .grok/agents/*.md
+// Applies explicit section overrides before generic tool-name conversion:
+// Claude-only collaboration semantics (task board, SendMessage inbox, teams)
+// have no Grok equivalent and must not leak into generated agents.
+// ---------------------------------------------------------------------------
+
+function buildGrokAgentsMd(
+  claudeDir: string,
+  targetAgentsDir: string,
+): BuildStats {
+  const agentsDir = join(claudeDir, 'agents');
+  const overrideDir = join(dirname(claudeDir), '.grok', 'agent-overrides');
+  const stats: BuildStats = { commands: 0, skills: 0, agents: 0, files: 0 };
+
+  if (!existsSync(agentsDir)) return stats;
+
+  for (const entry of readdirSync(agentsDir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+    const src = join(agentsDir, entry.name);
+    const raw = readFileSync(src, 'utf8');
+    const agentName = entry.name.replace(/\.md$/, '');
+    const { frontmatter, raw: rawFrontmatter, body } = splitFrontmatter(raw);
+
+    const overriddenBody = applyGrokAgentOverrides(agentName, body, overrideDir);
+    assertNoUnsupportedGrokTokens(agentName, overriddenBody);
+
+    const doc = frontmatter ? `---\n${rawFrontmatter}\n---\n${overriddenBody}` : overriddenBody;
+    const out = convertTextGrok(doc, GROK_PROFILE, false);
+
+    const dest = join(targetAgentsDir, entry.name);
+    ensureDir(dirname(dest));
+    writeFileSync(dest, out, 'utf8');
+    stats.agents++;
+    stats.files++;
+  }
+
+  return stats;
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -1948,12 +1999,12 @@ export function buildGrokSkills(
   return { files: stats.files };
 }
 
-/** Build grok agents only — no skills/commands. */
+/** Build grok agents only — section overrides + token assertion, no skills/commands. */
 export function buildGrokAgents(
   claudeDir: string,
   targetDir: string,
 ): { files: number } {
-  const stats = buildAgentsOnly(claudeDir, targetDir, GROK_PROFILE, convertTextGrok);
+  const stats = buildGrokAgentsMd(claudeDir, targetDir);
   return { files: stats.files };
 }
 

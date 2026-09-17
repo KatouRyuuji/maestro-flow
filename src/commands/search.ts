@@ -2232,7 +2232,7 @@ export function registerSearchCommand(program: Command): void {
     .action(async (action: string) => {
       const currentRepository = resolveRepositoryContext('current', { projectRoot: process.cwd() });
       const workflowRoot = currentRepository.workflowRoot;
-      const { isAvailable, getUnavailableReason, loadEmbeddingIndex, embedTexts, getDeviceSummary, detectDevice, setProgressCallback, DEFAULT_MODEL_ID, isApiMode, getModelId, loadEmbeddingApiConfig, isLocalModelPath, getLocalModelPath } = await import('#maestro-dashboard/wiki/embedding.js');
+      const { isAvailable, getUnavailableReason, loadEmbeddingIndex, embedTexts, getDeviceSummary, detectDevice, setProgressCallback, DEFAULT_MODEL_ID, isApiMode, getModelId, loadEmbeddingApiConfig, isLocalModelPath, getLocalModelPath, isModelCached } = await import('#maestro-dashboard/wiki/embedding.js');
 
       if (action === 'status') {
         const apiMode = isApiMode();
@@ -2257,6 +2257,19 @@ export function registerSearchCommand(program: Command): void {
             console.log(`Model: local → ${getLocalModelPath()}`);
           } else {
             console.log(`Model: ${DEFAULT_MODEL_ID} (~465 MB)`);
+          }
+          // Library availability alone does not prove the cached ONNX files are
+          // intact (a truncated model still prints "available"). When the model
+          // is cached, probe-load it so corruption is visible in status output.
+          if (avail && isModelCached()) {
+            try {
+              await embedTexts(['status-probe']);
+              console.log('Model load: OK');
+            } catch (probeError) {
+              const msg = probeError instanceof Error ? probeError.message : String(probeError);
+              console.log(`Model load: FAILED (${msg})`);
+              console.log('Cached model files are likely corrupt — delete the transformers cache and run "maestro install embedding --download".');
+            }
           }
         }
         console.log(`Active model: ${getModelId()}`);

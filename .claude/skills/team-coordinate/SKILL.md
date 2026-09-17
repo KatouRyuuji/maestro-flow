@@ -2,7 +2,7 @@
 name: team-coordinate
 disable-model-invocation: true
 description: Universal team coordination skill with dynamic role generation. Uses team-worker agent architecture with role-spec files. Only coordinator is built-in -- all worker roles are generated at runtime as role-specs and spawned via team-worker agent. Beat/cadence model for orchestration. Triggers on "Team Coordinate ".
-allowed-tools: TeamCreate(*), TeamDelete(*), SendMessage(*), TaskCreate(*), TaskUpdate(*), TaskList(*), TaskGet(*), Agent(*), AskUserQuestion(*), Read(*), Write(*), Edit(*), Bash(*), Glob(*), Grep(*), mcp__maestro-tools__team_msg(*)
+allowed-tools: SendMessage(*), TaskCreate(*), TaskUpdate(*), TaskList(*), TaskGet(*), Agent(*), AskUserQuestion(*), Read(*), Write(*), Edit(*), Bash(*), Glob(*), Grep(*), mcp__maestro-tools__team_msg(*)
 session-mode: run
 ---
 
@@ -119,7 +119,6 @@ When coordinator spawns workers, use `team-worker` agent with role-spec path:
 Agent({
   subagent_type: "team-worker",
   description: "Spawn <role> worker",
-  team_name: <team-name>,
   name: "<role>",
   run_in_background: true,
   prompt: `## Role Assignment
@@ -171,7 +170,7 @@ AskUserQuestion({
 
 | Choice | Steps |
 |--------|-------|
-| Archive & Clean | Update session status="completed" -> TeamDelete -> output final summary with artifact paths |
+| Archive & Clean | Update session status="completed" -> send shutdown_request to each teammate (the implicit team cleans up automatically on session exit) -> output final summary with artifact paths |
 | Keep Active | Update session status="paused" -> output: "Resume with: Skill(skill='team-coordinate', args='resume')" |
 | Export Results | AskUserQuestion(target path) -> copy artifacts to target -> Archive & Clean |
 

@@ -77,7 +77,7 @@ TEXT-LEVEL ONLY. No source code reading.
    - `skill_root` = `<project_root>/.claude/skills/team-lifecycle-v4`
 2. Generate session ID: TLV4-<slug>-<date>
 3. Create session folder structure
-4. TeamCreate with team name
+4. Team is implicit — no creation step; record the team name in session state
 5. Read specs/pipelines.md -> select pipeline
 6. Register roles in team-session.json
 7. Initialize shared infrastructure (wisdom/*.md, explorations/cache-index.json)

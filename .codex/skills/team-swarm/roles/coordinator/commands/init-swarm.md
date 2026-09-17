@@ -31,11 +31,9 @@ Validate before write:
 - `swarm.n_ants` >= 2 (single-ant defeats swarm purpose)
 - `convergence.max_iterations` >= 1
 
-### Step 4: Create team
+### Step 4: Team (implicit)
 
-```
-TeamCreate({ name: "swarm" })
-```
+No explicit team creation — the team is implicit per session. The team name `swarm` is recorded in team-session.json (Step 7) and carried in team_msg metadata.
 
 ### Step 5: Write role-binding.json
 
@@ -133,9 +131,9 @@ Do NOT spawn any workers in this command. First spawn happens in iterate.md step
 | Config invalid | request_user_input, regenerate, retry |
 | `aco.py init` runtime error | Log to issues.md, retry once, then request_user_input (abort/refine) |
 | Directory creation fails | Check disk space / permissions, retry |
-| TeamCreate fails | Resolve the exact `run_id` / `run_dir`, inspect its one `work/team/team-session.json`, and offer resume only if lifecycle reconciliation verifies a matching active/paused `team-swarm` session; otherwise fail closed |
+| team-session.json already exists at init | Resolve the exact `run_id` / `run_dir`, inspect its one `work/team/team-session.json`, and offer resume only if lifecycle reconciliation verifies a matching active/paused `team-swarm` session; otherwise fail closed |
 
-### TeamCreate Conflict Recovery Contract
+### Session Conflict Recovery Contract
 
 1. Start from the birth-packet `run_id` / `run_dir`. Do not scan sibling Runs and do not treat an arbitrary existing team name as a resumable match.
 2. Inspect the exact team session and reconcile canonical Run status, broker-backed live agents, non-terminal tasks, and ordered activity timestamps through the runtime lifecycle adapter.

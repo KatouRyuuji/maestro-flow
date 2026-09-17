@@ -163,6 +163,18 @@ export class AgentSdkAdapter extends BaseAgentAdapter {
       settingSources: ['project'],
     };
 
+    // An explicit model selection must win over the ambient ANTHROPIC_MODEL
+    // inherited from the parent shell (the SDK gives the env var precedence
+    // over options.model, so a stale/foreign ANTHROPIC_MODEL would silently
+    // override the delegated model and can surface as unrecognized_model).
+    const baseEnv = (): NodeJS.ProcessEnv => {
+      const env = { ...process.env };
+      if (config.model) {
+        delete env.ANTHROPIC_MODEL;
+      }
+      return env;
+    };
+
     // When settingsFile is set, use settings file path and dontAsk mode
     if (config.settingsFile) {
       (options as Record<string, unknown>).settings = config.settingsFile;
@@ -170,14 +182,14 @@ export class AgentSdkAdapter extends BaseAgentAdapter {
     } else {
       // Existing env-based behavior
       if (config.env || config.baseUrl || config.apiKey) {
-        options.env = { ...process.env, ...config.env };
+        options.env = { ...baseEnv(), ...config.env };
       }
       if (config.baseUrl) {
-        options.env = options.env ?? { ...process.env };
+        options.env = options.env ?? baseEnv();
         options.env.ANTHROPIC_BASE_URL = config.baseUrl;
       }
       if (config.apiKey) {
-        options.env = options.env ?? { ...process.env };
+        options.env = options.env ?? baseEnv();
         options.env.ANTHROPIC_API_KEY = config.apiKey;
       }
 
@@ -191,6 +203,12 @@ export class AgentSdkAdapter extends BaseAgentAdapter {
       } else {
         options.allowDangerouslySkipPermissions = true;
       }
+    }
+
+    // When an explicit model is delegated, never let an inherited
+    // ANTHROPIC_MODEL leak through the default env passthrough.
+    if (config.model && !options.env) {
+      options.env = baseEnv();
     }
 
     // Inject issue MCP server if available

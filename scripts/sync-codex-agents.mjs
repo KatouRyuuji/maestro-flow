@@ -31,7 +31,9 @@ function transpileSource(sourcePath, outputPath) {
     const messages = diagnostics.map(diagnostic => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
     throw new Error(`Cannot transpile ${sourcePath}:\n${messages.join('\n')}`);
   }
-  writeFileSync(outputPath, result.outputText.replace('./codex-agent-overrides.js', './codex-agent-overrides.mjs'), 'utf8');
+  writeFileSync(outputPath, result.outputText
+    .replace('./codex-agent-overrides.js', './codex-agent-overrides.mjs')
+    .replace('./grok-agent-overrides.js', './grok-agent-overrides.mjs'), 'utf8');
 }
 
 function tomlFiles(dir) {
@@ -44,8 +46,10 @@ function tomlFiles(dir) {
 
 try {
   const overrideModule = join(tempDir, 'codex-agent-overrides.mjs');
+  const grokOverrideModule = join(tempDir, 'grok-agent-overrides.mjs');
   const converterModule = join(tempDir, 'skill-converter.mjs');
   transpileSource(join(root, 'src', 'core', 'codex-agent-overrides.ts'), overrideModule);
+  transpileSource(join(root, 'src', 'core', 'grok-agent-overrides.ts'), grokOverrideModule);
   transpileSource(join(root, 'src', 'core', 'skill-converter.ts'), converterModule);
 
   const [{ buildCodexAgents }, { lintCodexAgentToml }] = await Promise.all([

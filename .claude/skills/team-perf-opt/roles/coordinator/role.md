@@ -98,7 +98,7 @@ Triggered when an active/paused session is detected on coordinator entry.
 2. Create session directory with explorations/, wisdom/, discussions/ subdirs (deliverables go to {run_dir}/outputs/)
 3. Write team-session.json with extended fields (parallel_mode, max_branches, branches, fix_cycles)
 4. Initialize meta.json with pipeline metadata via team_msg
-5. Call `TeamCreate({ team_name: "perf-opt" })`
+5. Team is implicit — no creation step; team name "perf-opt" is recorded in session state
 
 ### Run Lifecycle Integration
 

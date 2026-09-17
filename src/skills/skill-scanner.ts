@@ -12,6 +12,8 @@
 //   - ~/.agents/skills/*/SKILL.md           type: skill,   scope: global,  platform: agent
 //   - <cwd>/.agy/skills/*/SKILL.md          type: skill,   scope: project, platform: agy
 //   - ~/.agy/skills/*/SKILL.md              type: skill,   scope: global,  platform: agy
+//   - <cwd>/.grok/skills/*/SKILL.md         type: skill,   scope: project, platform: grok
+//   - ~/.grok/skills/*/SKILL.md             type: skill,   scope: global,  platform: grok
 //   - <pi-maestro-flow>/<pi.skills>/*/SKILL.md
 //     discovered from the npm package manifest; project package overrides runtime package
 // ---------------------------------------------------------------------------
@@ -22,7 +24,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseSkillManifest } from './skill-resolver.js';
 
-export type SkillPlatform = 'claude' | 'codex' | 'agent' | 'agy' | 'pi';
+export type SkillPlatform = 'claude' | 'codex' | 'agent' | 'agy' | 'pi' | 'grok';
 
 export interface ScannedSkill {
   type: 'command' | 'skill';
@@ -247,6 +249,15 @@ export function scanAllSkills(
     {
       files: collectSkillFiles(join(workflowRoot, '.agy', 'skills')),
       type: 'skill', scope: 'project', platform: 'agy', nameFn: skillName,
+    },
+    // Grok CLI (.grok/)
+    {
+      files: collectSkillFiles(join(home, '.grok', 'skills')),
+      type: 'skill', scope: 'global', platform: 'grok', nameFn: skillName,
+    },
+    {
+      files: collectSkillFiles(join(workflowRoot, '.grok', 'skills')),
+      type: 'skill', scope: 'project', platform: 'grok', nameFn: skillName,
     },
     // Pi Agent (pi-maestro-flow npm package)
     ...discoverPiSkillSources(workflowRoot).map(source => ({

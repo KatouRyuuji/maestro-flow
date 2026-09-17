@@ -2,7 +2,7 @@
 name: team-arch-opt
 disable-model-invocation: true
 description: Unified team skill for architecture optimization. Uses team-worker agent architecture with role directories for domain logic. Coordinator orchestrates pipeline, workers are team-worker agents. Triggers on "team arch-opt".
-allowed-tools: Agent, TaskCreate, TaskList, TaskGet, TaskUpdate, TeamCreate, TeamDelete, SendMessage, AskUserQuestion, Read, Write, Edit, Bash, Glob, Grep, mcp__maestro-tools__team_msg
+allowed-tools: Agent, TaskCreate, TaskList, TaskGet, TaskUpdate, SendMessage, AskUserQuestion, Read, Write, Edit, Bash, Glob, Grep, mcp__maestro-tools__team_msg
 session-mode: run
 ---
 

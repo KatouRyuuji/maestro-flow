@@ -92,7 +92,6 @@ Phase 1 needs task analysis
 | commands/dispatch.md | Command | Task chain creation |
 | commands/monitor.md | Command | Pipeline monitoring and handlers |
 | team-worker | Subagent | Worker spawning |
-| TeamCreate / TeamDelete | System | Team lifecycle |
 | update_plan / list_agents / wait_agent / update_plan | System | Task lifecycle |
 | team_msg | System | Message bus operations |
 | send_message | System | Inter-agent communication |
@@ -147,7 +146,7 @@ For callback/check/resume/adapt/complete: load `@commands/monitor.md` and execut
 3. Reset any in_progress tasks -> pending (they were interrupted)
 4. Detect fast-advance orphans (in_progress without recent activity) -> reset to pending
 5. Determine remaining pipeline from reconciled state
-6. Rebuild team if disbanded (TeamCreate + spawn needed workers only)
+6. Rebuild team if disbanded (spawn needed workers only — the team is implicit per session, no creation step)
 7. Create missing tasks, set dependencies via update_plan({ addBlockedBy })
 8. Verify dependency chain integrity
 9. Update session file with reconciled state
@@ -232,7 +231,7 @@ Regardless of complexity score or role count, coordinator MUST:
        +-- .msg/
    ```
 
-5. **Call TeamCreate** with team name derived from session ID
+5. **Team is implicit** — no creation call needed; derive the team name from the session ID and carry it in team-session.json and team_msg metadata
 
 ### Run Lifecycle Integration
 

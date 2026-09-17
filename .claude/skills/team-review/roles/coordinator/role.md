@@ -80,7 +80,7 @@ TEXT-LEVEL ONLY. No source code reading.
    - `skill_root` = `<project_root>/.claude/skills/team-review`
 2. Generate session ID: RV-<slug>-<date>
 3. Create `{run_dir}/work/team/wisdom/` and formal directories `{run_dir}/outputs/{scan,review,fix}/`
-4. TeamCreate with team name "review"
+4. Team is implicit — no creation step; team name "review" is recorded in session state
 5. Read specs/pipelines.md -> select pipeline based on mode
 6. Initialize pipeline via team_msg state_update:
    ```

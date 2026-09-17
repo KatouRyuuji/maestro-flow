@@ -614,6 +614,18 @@ function resolveLocalModel(): string {
   return localConf ? localConf.modelPath : DEFAULT_LOCAL_MODEL;
 }
 
+/** Any quantized/dtype variant counts as cached: model.onnx, model_fp16.onnx, … */
+function hasOnnxModelFile(dir: string): boolean {
+  try {
+    if (readdirSync(dir).some(f => /^model.*\.onnx$/.test(f))) return true;
+  } catch { /* dir missing */ }
+  try {
+    return readdirSync(join(dir, 'onnx')).some(f => /^model.*\.onnx$/.test(f));
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Check if the local ONNX model is already downloaded in the HuggingFace cache.
  * Returns true for API mode (no local model needed).
@@ -623,9 +635,7 @@ export function isModelCached(): boolean {
 
   const localConf = loadLocalEmbeddingConfig();
   if (localConf) {
-    const p = localConf.modelPath;
-    return existsSync(join(p, 'onnx', 'model.onnx'))
-      || existsSync(join(p, 'model.onnx'));
+    return hasOnnxModelFile(localConf.modelPath);
   }
 
   const cacheKey = DEFAULT_LOCAL_MODEL.replace('/', '--');
@@ -638,7 +648,7 @@ export function isModelCached(): boolean {
     try {
       const snapshots = readdirSync(snapshotsDir);
       for (const snap of snapshots) {
-        if (existsSync(join(snapshotsDir, snap, 'onnx', 'model.onnx'))) return true;
+        if (hasOnnxModelFile(join(snapshotsDir, snap))) return true;
       }
     } catch { /* ignore */ }
   }
@@ -652,7 +662,7 @@ export function isModelCached(): boolean {
     const idx = normalized.indexOf(marker);
     if (idx >= 0) {
       const tjsRoot = tjsMainPath.slice(0, idx + marker.length);
-      if (existsSync(join(tjsRoot, '.cache', DEFAULT_LOCAL_MODEL, 'onnx', 'model.onnx'))) return true;
+      if (hasOnnxModelFile(join(tjsRoot, '.cache', DEFAULT_LOCAL_MODEL))) return true;
     }
   } catch { /* transformers not resolvable */ }
 

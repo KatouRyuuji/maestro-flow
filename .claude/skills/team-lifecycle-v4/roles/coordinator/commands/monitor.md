@@ -189,7 +189,7 @@ Pipeline done. Generate report and completion action.
 2. Generate summary (deliverables, stats, discussions)
 3. Read session.completion_action:
    - interactive -> AskUserQuestion (Archive/Keep/Export)
-   - auto_archive -> Archive & Clean (status=completed, TeamDelete)
+   - auto_archive -> Archive & Clean (status=completed; send shutdown_request to each teammate — implicit team cleans up on session exit)
    - auto_keep -> Keep Active (status=paused)
 
 ## handleAdapt

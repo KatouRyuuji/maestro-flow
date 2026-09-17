@@ -262,6 +262,8 @@ export function registerInstallCommand(program: Command): void {
     .option('--codex-hooks <level>', 'Codex hook level for --force mode: none, minimal, standard, full')
     .option('--mcp', 'Register Claude MCP server in --force mode')
     .option('--codex-mcp', 'Register Codex MCP server in --force mode')
+    .option('--mcp-project-root <dir>', 'Bind Claude/extra MCP servers to this repository root (writes MAESTRO_PROJECT_ROOT/MAESTRO_REPO_ID)')
+    .option('--codex-mcp-project-root <dir>', 'Bind the Codex MCP server to this repository root')
     .option('--agy-hooks <level>', 'Agy (Antigravity) hook level for --force mode: none, minimal, standard, full')
     .option('--extra-mcp <targets>', 'Comma-separated extra MCP targets (cursor,qoder,trae,kiro,roo,vscode-copilot,gemini-cli,grok)')
     .option('--components <ids>', 'Comma-separated component IDs to install (with --force)')

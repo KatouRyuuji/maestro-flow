@@ -161,12 +161,14 @@ export function selectTool(
 ): SelectedTool | undefined {
   const tools = config.tools ?? {};
 
-  // Exact match by name
-  if (name && tools[name]?.enabled) {
-    return { name, entry: tools[name] };
+  if (name) {
+    // Explicit selection is strict: a named-but-disabled/unknown tool must
+    // resolve to undefined so callers can fail closed instead of silently
+    // dispatching to a different CLI.
+    return tools[name]?.enabled ? { name, entry: tools[name] } : undefined;
   }
 
-  // Fallback: first enabled tool in config order
+  // No preference: first enabled tool in config order
   for (const [toolName, entry] of Object.entries(tools)) {
     if (entry.enabled) {
       return { name: toolName, entry };

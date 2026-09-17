@@ -191,7 +191,7 @@ Pipeline done. Generate report and completion action.
 5. Update session: pipeline_status='complete', completed_at=<timestamp>
 6. Read session.completion_action:
    - interactive -> request_user_input (Archive/Keep/Export)
-   - auto_archive -> Archive & Clean (status=completed, TeamDelete)
+   - auto_archive -> Archive & Clean (status=completed; send shutdown_request to each teammate — implicit team cleans up on session exit)
    - auto_keep -> Keep Active (status=paused)
 
 ## handleAdapt

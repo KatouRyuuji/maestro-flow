@@ -320,7 +320,10 @@ export function registerRunV3Command(program: Command): void {
     });
 
   addV3ReadOptions(run.command('brief <run-id>').description('Return the v3 Resume Packet for a Run'))
-    .action((runId: string, options: { session?: string; workflowRoot: string }) => {
+    // Cross-platform skill mirrors inject "--platform <name>" into this command;
+    // the v3 Resume Packet is platform-neutral, so the flag is accepted and ignored.
+    .option('--platform <name>', 'accepted for cross-platform skill compatibility; ignored')
+    .action((runId: string, options: { session?: string; workflowRoot: string; platform?: string }) => {
       try {
         const { store, options: resolved } = resolveV3Options(options);
         const value = readRunOrThrow(store, resolved.session, runId);

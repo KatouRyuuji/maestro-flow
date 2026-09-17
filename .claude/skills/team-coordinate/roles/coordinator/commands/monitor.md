@@ -187,7 +187,6 @@ Ready tasks found?
 Agent({
   subagent_type: "team-worker",
   description: "Spawn <role> worker for <subject>",
-  team_name: <team-name>,
   name: "<role>",
   run_in_background: true,
   prompt: `## Role Assignment
@@ -245,7 +244,7 @@ All tasks completed (no pending, no in_progress)
       |   })
       |   +- "Archive & Clean":
       |   |   Update session status="completed"
-      |   |   TeamDelete()
+      |   |   Send shutdown_request to each teammate (the implicit team cleans up automatically on session exit)
       |   |   Output final summary with artifact paths
       |   +- "Keep Active":
       |   |   Update session status="paused"

@@ -132,7 +132,7 @@ Delegate to `@commands/init-swarm.md`:
    ├── .msg/
    └── role-binding.json    (paths to role.md files)
    ```
-3. TeamCreate with team_name = `swarm`
+3. Team is implicit — no creation step; team_name `swarm` is recorded in session state
 4. Bash: `python <skill_root>/scripts/aco.py --session {run_dir}/work/team init`
 5. Parse stdout JSON: capture `n_nodes`, `n_edges`, `pheromone_path`
 6. Initialize team-session.json with `iteration: 0`, `status: "active"`

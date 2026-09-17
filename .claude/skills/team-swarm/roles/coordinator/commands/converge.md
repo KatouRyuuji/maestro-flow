@@ -139,7 +139,7 @@ AskUserQuestion({
 
 | Choice | Steps |
 |--------|-------|
-| Archive & Clean | session.status = "completed"; TeamDelete; output final summary |
+| Archive & Clean | session.status = "completed"; send shutdown_request to each teammate (implicit team cleans up on session exit); output final summary |
 | Keep Active | session.status = "paused"; output resume instructions |
 | Export Best Solution | AskUserQuestion(target path); copy best-solution.md + best.json; then Archive & Clean |
 | Run Another Round | AskUserQuestion(additional K); reset convergence counters; re-enter Phase 3 iterate.md |

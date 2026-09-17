@@ -18,6 +18,7 @@ import {
   renameSync,
   unlinkSync,
   rmSync,
+  lstatSync,
 } from 'node:fs';
 import { paths } from '../config/paths.js';
 import { resolveAgentRepositoryContext } from '../repository/context.js';
@@ -180,11 +181,18 @@ export function getClaudeMcpConfigPath(scope: 'global' | 'project', projectPath:
 
 export function buildMcpRepositoryEnv(projectRoot: string | undefined): Record<string, string> {
   if (!projectRoot) return {};
-  const context = resolveAgentRepositoryContext(projectRoot, { allowLegacyReadFallback: true });
-  return {
-    MAESTRO_PROJECT_ROOT: context.currentProjectRoot,
-    ...(context.currentRepoId ? { MAESTRO_REPO_ID: context.currentRepoId } : {}),
-  };
+  try {
+    const context = resolveAgentRepositoryContext(projectRoot, { allowLegacyReadFallback: true });
+    return {
+      MAESTRO_PROJECT_ROOT: context.currentProjectRoot,
+      ...(context.currentRepoId ? { MAESTRO_REPO_ID: context.currentRepoId } : {}),
+    };
+  } catch {
+    // Unresolvable identity (e.g. path not yet initialized): still record the
+    // requested root so registration succeeds; without MAESTRO_REPO_ID the MCP
+    // server stays fail-closed at runtime with an explicit binding error.
+    return { MAESTRO_PROJECT_ROOT: projectRoot };
+  }
 }
 
 /**
@@ -586,6 +594,10 @@ export function copyRecursive(
       stats.skipped++;
       return;
     }
+    // Never write through a symlink/junction: it would clobber the link target.
+    try {
+      if (lstatSync(dest).isSymbolicLink()) rmSync(dest, { force: true });
+    } catch { /* dest does not exist */ }
     copyFileSync(src, dest);
     stats.files++;
     addFile(manifest, dest);
@@ -593,6 +605,14 @@ export function copyRecursive(
   }
 
   // Directory copy
+  // A symlink/junction at dest would redirect writes into another host's
+  // directory (e.g. a .codex/skills link pointing at .grok/skills). Platform
+  // mirrors are not interchangeable — replace the link with a real directory.
+  try {
+    if (existsSync(dest) && lstatSync(dest).isSymbolicLink()) {
+      rmSync(dest, { recursive: true, force: true });
+    }
+  } catch { /* fall through to mkdir/copy errors */ }
   if (!existsSync(dest)) {
     mkdirSync(dest, { recursive: true });
     stats.dirs++;
@@ -613,6 +633,9 @@ export function copyRecursive(
     if (st.isDirectory()) {
       copyRecursive(srcPath, destPath, stats, manifest);
     } else {
+      try {
+        if (lstatSync(destPath).isSymbolicLink()) rmSync(destPath, { force: true });
+      } catch { /* destPath does not exist */ }
       copyFileSync(srcPath, destPath);
       stats.files++;
       addFile(manifest, destPath);
@@ -962,8 +985,11 @@ function tomlBasicString(value: string): string {
 /** Render the `[mcp_servers.maestro-tools]` TOML table (trailing newline included) */
 function buildTomlServerSection(enabledTools: string[], projectRoot?: string): string {
   const launch = resolveMaestroMcpLaunch();
+  const repositoryEnv = buildMcpRepositoryEnv(projectRoot);
   const envPairs = [`MAESTRO_ENABLED_TOOLS = ${tomlBasicString(enabledTools.join(','))}`];
-  if (projectRoot) envPairs.push(`MAESTRO_PROJECT_ROOT = ${tomlBasicString(projectRoot)}`);
+  for (const [name, value] of Object.entries(repositoryEnv)) {
+    envPairs.push(`${name} = ${tomlBasicString(value)}`);
+  }
   return [
     `[mcp_servers.${MAESTRO_MCP_SERVER_NAME}]`,
     `command = ${tomlBasicString(launch.command)}`,

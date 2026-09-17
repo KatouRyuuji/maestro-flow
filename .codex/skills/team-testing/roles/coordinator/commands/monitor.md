@@ -224,7 +224,7 @@ Pipeline done. Generate report and completion action.
    - Generate summary (deliverables, task count, GC rounds, coverage metrics)
 4. Read session.completion_action:
    - interactive -> request_user_input (Archive/Keep/Deepen Coverage)
-   - auto_archive -> Archive & Clean (status=completed, TeamDelete)
+   - auto_archive -> Archive & Clean (status=completed; send shutdown_request to each teammate — implicit team cleans up on session exit)
    - auto_keep -> Keep Active (status=paused)
 
 ## handleAdapt
