@@ -1,6 +1,6 @@
 # Maestro Grok 适配版安装指南
 
-本仓库是 maestro-flow 的 **Grok Build** 适配层：先装官方 `maestro-flow@0.5.86`，再叠本项目的按文件补丁，使 Grok 成为一等宿主与 delegate 后端。
+本仓库是独立迭代的 maestro-flow **fork**（版本号 `0.5.86-grok.N`）：先全局安装本仓构建的 tgz，再叠本项目的按文件补丁，使 Grok 成为一等宿主与 delegate 后端。
 
 产品级安装说明（组件、平台、toggle、profile）见 `guide/install-guide.md`。
 
@@ -8,10 +8,10 @@
 
 ## 应用场景
 
-1. 已经（或先）全局安装官方包：`npm install -g maestro-flow@0.5.86`
-2. 再在本仓库跑安装脚本，把本项目补丁叠到那个官方目录
+1. 已经（或先）全局安装本仓 fork 构建：`npm run build && npm pack && npm install -g ./maestro-flow-*.tgz`
+2. 再在本仓库跑安装脚本，把本项目补丁叠到那个全局目录
 
-官方版本必须与本仓库一致（当前 `0.5.86`）。不一致时脚本失败并提示手装匹配版本。源码比编译产物新时，一键脚本会先 `npm run build` 再覆盖。
+全局包版本必须与本仓库一致（当前 `0.5.86-grok.N`，以 `package.json` 为准）。不一致时脚本失败并提示手装匹配版本。源码比编译产物新时，一键脚本会先 `npm run build` 再覆盖。
 
 ---
 
@@ -19,7 +19,7 @@
 
 在**要写入项目资产的目录**跑（一般是你的项目根；本适配仓库则是仓库根）：项目 `.grok/` 跟调用时的 cwd，不是脚本所在目录。
 
-官方包已经是 `0.5.86`、补丁已经叠上、只缺 `.grok/rules/maestro.md` 时，也可以直接再跑一次。脚本会再覆盖一遍（幂等），然后跑 `maestro install` 写资产。
+全局包已是本仓当前版本、补丁已经叠上、只缺 `.grok/rules/maestro.md` 时，也可以直接再跑一次。脚本会再覆盖一遍（幂等），然后跑 `maestro install` 写资产。
 
 ```powershell
 # Windows（在本仓库根即可）
@@ -34,13 +34,13 @@
 ./install.sh --path /path/to/your-project
 ```
 
-按提示确认即可。脚本会：检查官方 `maestro-flow` 版本 → 叠 Grok 按文件覆盖 → 写全局 MCP / 宿主资产 → 给调用方当前目录（或 `--path`）写 `.grok/`。
+按提示确认即可。脚本会：检查全局 `maestro-flow` 版本 → 叠 Grok 按文件覆盖 → 写全局 MCP / 宿主资产 → 给调用方当前目录（或 `--path`）写 `.grok/`。
 
-官方包未装、或版本不等于本仓库（当前 `0.5.86`）时脚本失败并提示手动安装。
+全局包未装、或版本不等于本仓库（以 `package.json` 为准）时脚本失败并提示手动安装。
 
 常用标志：`--dry-run` 只检查不写盘；`-y` 跳过确认；`--rebuild` 强制重编译；`--path <dir>` 覆盖项目资产目录。
 
-升级官方包之后覆盖会被冲掉，再跑一次本脚本即可。
+重装或升级全局包之后覆盖会被冲掉，再跑一次本脚本即可。
 
 ---
 
@@ -50,7 +50,7 @@
 |----|------|------------|
 | Node.js | 能跑脚本即可装覆盖；推荐 ≥ 22.19（`repo/package.json` `engines.node`） | **没有 Node 或低于 22** 会停。22.14 这类 22.x 旧补丁只警告，Grok 覆盖仍装 |
 | npm | 能执行 `npm install -g` | 没有 npm 会停 |
-| 官方 Maestro | 必须已安装且版本等于本仓库（当前 `0.5.86`） | 未安装或版本不一致时脚本失败并提示手动安装 |
+| 全局 Maestro | 必须已安装本仓 fork 构建且版本等于本仓库 `package.json` | 未安装或版本不一致时脚本失败并提示手动安装 |
 | Grok Build CLI | [官方安装](https://docs.x.ai/build/overview)，然后 `grok login` 或设置 `XAI_API_KEY` | 脚本不代装，只警告；装完才能派活 |
 
 ```bash
@@ -108,7 +108,7 @@ macOS / Linux：用 nvm 或 fnm 安装 22.19+，例如 `nvm install 22`。
 ## 脚本在做什么
 
 1. **检查依赖** — Node、npm、FTS5、本仓库 `node_modules`、编译产物
-2. **检查官方版本** — 全局 `maestro-flow` 是否等于本仓库版本；官方目录里有没有 Grok 覆盖
+2. **检查全局版本** — 全局 `maestro-flow` 是否等于本仓库版本；全局目录里有没有 Grok 覆盖
 3. **检查 Grok CLI** — 能否找到 `grok`（不代装）
 4. **模拟安装** — 列出将要执行的命令，不写盘
 5. **确认安装** — 回车或 `y` 才真正执行；成功后剥离旧 `.grok/AGENTS.md` 的 Maestro 段，并提示未信任的文件夹
@@ -119,12 +119,12 @@ macOS / Linux：用 nvm 或 fnm 安装 22.19+，例如 `nvm install 22`。
 
 ## 分步安装（备用）
 
-覆盖脚本只替换清单里的已编译文件（Grok adapter / 安装落点 / 本项目的 v3 hook 与知识可见性补丁 / hooks 遍历 http webhook 兼容补丁），**不整树替换** `dist/` / Dashboard，也**不改**官方 `node_modules` 依赖。官方目录会留下 `.maestro-grok-overlay.json` 方便核对叠了哪些文件。官方版本不一致时直接失败。
+覆盖脚本只替换清单里的已编译文件（Grok adapter / 安装落点 / 本项目的 v3 hook 与知识可见性补丁 / hooks 遍历 http webhook 兼容补丁），**不整树替换** `dist/` / Dashboard，也**不改**全局包的 `node_modules` 依赖。全局目录会留下 `.maestro-grok-overlay.json` 方便核对叠了哪些文件。全局版本不一致时直接失败。
 
 PowerShell 里 `--components` 的逗号列表必须加引号，否则会被拆成多个参数。
 
 ```powershell
-npm install -g maestro-flow@0.5.86
+npm run build && npm pack && npm install -g ./maestro-flow-*.tgz
 # 以下在本仓库根执行
 npm install
 npm run build
@@ -134,7 +134,7 @@ maestro install --force --global --components "workflows,prepare,ref,arch-kb,tem
 maestro install --force --path "D:\PersonalProject\maestrogrok" --components "grok-context,grok-md-chinese,grok-skills,grok-agents"
 ```
 
-`apply-to-official` 只做按文件覆盖。一键脚本会跑 `maestro install`，但**不会**自动安装或降级官方包。
+`apply-to-official` 只做按文件覆盖。一键脚本会跑 `maestro install`，但**不会**自动安装或降级全局包。
 
 ---
 
@@ -188,17 +188,17 @@ maestro delegate "读 README 并总结" --to grok --mode analysis
 2. **`--extra-mcp` 必须用真实目标 ID**：`cursor`、`qoder`、`trae`、`kiro`、`roo`、`vscode-copilot`、`gemini-cli`、`grok`。写成 `vscode` / `gemini` 不会命中。
 3. **Grok 平台组件 ID**：`grok-context`、`grok-md-chinese`、`grok-skills`、`grok-agents`。
 4. **delegate**：`--to grok`，执行 ID 前缀 `grk-`，默认模型 `grok-4.6`。prompt 走 `--prompt-file`。`maestro delegate message` 的 inject 会停掉当前 headless 轮次并以 `grok --continue` 重拉。Grok 已列入 `roleMappings` fallbackChain。MCP 工具 `delegate` 默认 mode 是 `analysis`，改文件必须显式 `mode=write`。Grok 项目指令只写 `.grok/rules/maestro.md`，不要 `.grok/AGENTS.md`，也不写仓库根 `AGENTS.md`。
-5. **`npm update -g maestro-flow` 会冲掉覆盖**。再跑 `.\install.ps1` 即可。
+5. **重装或升级全局 `maestro-flow` 会冲掉覆盖**。再跑 `.\install.ps1` 即可。
 6. **知识库 `maestro kg init`** 依赖本机 Node 的 SQLite FTS5。部分 Windows Node 发行版没有 `fts5` 模块；这不影响 Grok 安装与派活。
 7. **旧 `.grok/AGENTS.md` 迁移**：写入 `rules/maestro.md` 时剥离旧文件里的 Maestro 段，不整文件删除用户正文。
 8. **文件夹信任**：一键脚本只检测并提示，不自动写入 `trusted_folders.toml`。
-9. **http webhook hook 兼容**：覆盖清单含 `dist/src/commands/hooks.js`。官方 hooks 遍历对 `h.command` 直接调 `includes`，遇到 `type:"http"`（只有 `url`、没有 `command`）的第三方 webhook hook 会崩溃并卡在安装「hooks」步；补丁改为 `(h.command ?? '')` 守卫，http hook 不匹配 maestro 标记，既不崩溃也不误删。
+9. **http webhook hook 兼容**：覆盖清单含 `dist/src/commands/hooks.js`。上游 hooks 遍历对 `h.command` 直接调 `includes`，遇到 `type:"http"`（只有 `url`、没有 `command`）的第三方 webhook hook 会崩溃并卡在安装「hooks」步；补丁改为 `(h.command ?? '')` 守卫，http hook 不匹配 maestro 标记，既不崩溃也不误删。
 
 ---
 
 ## 备选：直接使用本仓库 CLI
 
-不经过官方包时，在本仓库根构建后：
+不经全局 tgz 安装、直接用本仓库源码时，在本仓库根构建后：
 
 ```bash
 npm install
@@ -209,16 +209,16 @@ maestro --version
 maestro install
 ```
 
-`npm link` 把本仓库链到全局 `maestro`。官方包与 link 不要混用。
+`npm link` 把本仓库链到全局 `maestro`。tgz 全局安装与 link 不要混用。
 
 ---
 
 ## 卸载覆盖
 
-覆盖没有单独回滚命令。恢复官方文件：
+覆盖没有单独回滚命令。恢复为干净的全局包（重装本仓 fork 构建）：
 
 ```bash
-npm install -g maestro-flow@0.5.86
+npm install -g ./maestro-flow-*.tgz
 ```
 
 卸 Maestro 资产（保留 `.workflow/` 项目数据）：

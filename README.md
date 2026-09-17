@@ -39,14 +39,17 @@
 
 ## 安装
 
+本仓是独立迭代的 fork（版本号 `<上游基线>-grok.N`），以 tgz 发行：
+
 ```bash
-npm install -g maestro-flow@0.5.86
+npm run build && npm pack          # 产出 maestro-flow-<version>.tgz
+npm install -g ./maestro-flow-*.tgz
 maestro install          # 交互式选择安装组件
 ```
 
 需要 Node.js ≥ 22.19 和至少一个宿主 CLI：[Claude Code](https://docs.anthropic.com/en/docs/claude-code)（默认）和/或 [Grok Build](https://docs.x.ai/build/overview)。多 Agent 工作流还可选装 Codex CLI、agy CLI。
 
-Grok 一等适配：先装官方 `maestro-flow@0.5.86`，再在**仓库根**跑 `.\install.ps1` / `./install.sh`（可用 `--path`）。项目指令落到 `.grok/rules/maestro.md`；旧 `.grok/AGENTS.md` 里的 Maestro 段会在重装时剥离。官方版本不一致时脚本失败并提示手装匹配版本。补丁已叠、只缺项目资产时，再跑一次同一脚本即可。项目级 MCP / hooks 需在该目录信任 Grok 文件夹（交互确认或 `/hooks-trust`）；用户级 `maestro-tools` 不依赖信任。详见仓库根 `INSTALL.md`。产品安装细节见 [安装指南](guide/install-guide.md)。
+Grok 一等适配：先全局安装本 fork 构建（同上），再在**仓库根**跑 `.\install.ps1` / `./install.sh`（可用 `--path`）。项目指令落到 `.grok/rules/maestro.md`；旧 `.grok/AGENTS.md` 里的 Maestro 段会在重装时剥离。全局包版本与本仓不一致时脚本失败并提示手装匹配版本。补丁已叠、只缺项目资产时，再跑一次同一脚本即可。项目级 MCP / hooks 需在该目录信任 Grok 文件夹（交互确认或 `/hooks-trust`）；用户级 `maestro-tools` 不依赖信任。详见仓库根 `INSTALL.md`。产品安装细节见 [安装指南](guide/install-guide.md)。
 
 装完命令只教 v3：`maestro session open` → `maestro run next` → `maestro run complete --advance` → `maestro session complete`。
 

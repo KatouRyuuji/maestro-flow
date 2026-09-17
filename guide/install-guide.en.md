@@ -9,8 +9,8 @@ Maestro-Flow installation is a two-step process: global CLI install and project 
 ## Quick Install
 
 ```bash
-# 1. Install the global CLI (this repo tracks 0.5.86)
-npm install -g maestro-flow@0.5.86
+# 1. Install the global CLI (this fork build; version in package.json)
+npm run build && npm pack && npm install -g ./maestro-flow-*.tgz
 
 # 2. Initialize in your project root
 maestro install
@@ -300,7 +300,7 @@ maestro install --force --extra-mcp grok,cursor
 
 Grok is a first-class host and a delegate backend. After install you can use Maestro skills in the Grok TUI, or run `maestro delegate --to grok`.
 
-This repo's overlay uses an interactive installer (official `maestro-flow@0.5.86` first, then overlay + Grok assets / MCP):
+This repo's overlay uses an interactive installer (install this fork's global build first, then overlay + Grok assets / MCP):
 
 ```powershell
 # Windows: run from the repo root; do not cd into repo/

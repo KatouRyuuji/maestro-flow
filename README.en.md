@@ -39,14 +39,17 @@
 
 ## Install
 
+This repo is an independently iterated fork (versioned `<upstream-baseline>-grok.N`), distributed as a tgz:
+
 ```bash
-npm install -g maestro-flow@0.5.86
+npm run build && npm pack          # produces maestro-flow-<version>.tgz
+npm install -g ./maestro-flow-*.tgz
 maestro install          # interactive component selector
 ```
 
 Requires Node.js ≥ 22.19 and at least one host CLI: [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (default) and/or [Grok Build](https://docs.x.ai/build/overview). Optionally install Codex CLI or agy CLI for multi-agent workflows.
 
-Grok overlay: install official `maestro-flow@0.5.86` first, then run `.\install.ps1` / `./install.sh` from the **repo root** (`--path` supported). Project instructions land in `.grok/rules/maestro.md`; leftover Maestro sections in `.grok/AGENTS.md` are stripped on reinstall. A mismatched official version fails with a prompt to install the matching version. If the overlay is already applied and only assets are missing, run the same script again. Project-level MCP / hooks need the folder trusted (interactive confirm or `/hooks-trust`); user-level `maestro-tools` does not. Details: root `INSTALL.md`. Product install: [Installation Guide](guide/install-guide.en.md).
+Grok overlay: install this fork's global build first (above), then run `.\install.ps1` / `./install.sh` from the **repo root** (`--path` supported). Project instructions land in `.grok/rules/maestro.md`; leftover Maestro sections in `.grok/AGENTS.md` are stripped on reinstall. A mismatched global package version fails with a prompt to install the matching build. If the overlay is already applied and only assets are missing, run the same script again. Project-level MCP / hooks need the folder trusted (interactive confirm or `/hooks-trust`); user-level `maestro-tools` does not. Details: root `INSTALL.md`. Product install: [Installation Guide](guide/install-guide.en.md).
 
 After install, teach only the v3 CLI: `maestro session open` → `maestro run next` → `maestro run complete --advance` → `maestro session complete`.
 

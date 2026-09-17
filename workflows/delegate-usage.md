@@ -19,7 +19,7 @@ maestro delegate "<PROMPT>" [options]
 | `--resume [id]` | Resume previous session | — |
 | `--includeDirs <dirs>` | Additional directories (comma-separated) | — |
 
-Tool resolution: `--to` > `--role` > first enabled in config.
+Tool resolution: `--to` > `--role` > first enabled in config. An explicit `--to`/`--role` that resolves to a disabled or unknown tool fails closed (exit 1) — it never falls back to another tool.
 
 **`--mode` is authoritative** — `MODE:` in prompt text is a hint only.
 
