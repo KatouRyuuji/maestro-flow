@@ -653,7 +653,10 @@ export function isModelCached(): boolean {
     } catch { /* ignore */ }
   }
 
-  // Check the cache next to the vendored Transformers.js runtime.
+  // Check the stable user-level cache (survives global package upgrades),
+  // then the legacy vendored-runtime cache for backward compatibility.
+  if (hasOnnxModelFile(join(process.env.MAESTRO_EMBEDDING_CACHE_DIR
+    ?? join(homedir(), '.maestro', 'cache', 'transformers'), DEFAULT_LOCAL_MODEL))) return true;
   try {
     const localRequire = createRequire(import.meta.url);
     const tjsMainPath = localRequire.resolve('#maestro-transformers');
@@ -718,6 +721,11 @@ async function getPipeline(): Promise<any> {
     const modelId = resolveLocalModel();
     const { pipeline, env } = await loadTransformers();
     configureRemoteHost(env);
+    // 缓存落到用户级稳定目录：默认的 vendor/.cache 在全局包内部，每次
+    // `npm i -g` 升级都会被整树抹掉（235MB 模型每次重下）。可用
+    // MAESTRO_EMBEDDING_CACHE_DIR 覆盖。
+    env.cacheDir = process.env.MAESTRO_EMBEDDING_CACHE_DIR
+      ?? join(homedir(), '.maestro', 'cache', 'transformers');
     const pipelineOpts: Record<string, unknown> = {
       dtype: config.dtype,
       device: config.device,
