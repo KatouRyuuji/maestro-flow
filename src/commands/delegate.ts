@@ -435,6 +435,16 @@ export function registerDelegateCommand(program: Command): void {
         }
       } else if (opts.role) {
         selected = selectToolByRole(opts.role, config);
+        if (!selected) {
+          const available = Object.entries(config.tools ?? {})
+            .filter(([, e]) => e.enabled)
+            .map(([n]) => n);
+          console.error(
+            `Error: role "${opts.role}" did not resolve to an enabled tool.\n` +
+            `Enabled: ${available.join(', ') || '(none)'}`,
+          );
+          process.exit(1);
+        }
       } else {
         selected = selectTool(undefined, config);
       }

@@ -89,11 +89,25 @@ export function registerCliCommand(program: Command): void {
         }
       } else if (opts.role) {
         selected = selectToolByRole(opts.role, config);
+        if (!selected) {
+          const available = Object.entries(config.tools ?? {})
+            .filter(([, e]) => e.enabled)
+            .map(([n]) => n);
+          console.error(
+            `Error: role "${opts.role}" did not resolve to an enabled tool.\nEnabled: ${available.join(', ') || '(none)'}`,
+          );
+          process.exit(1);
+        }
       } else {
         selected = selectTool(undefined, config);
       }
 
-      const toolName = selected?.name ?? 'gemini';
+      if (!selected) {
+        console.error('Error: no enabled tool found in cli-tools.json.');
+        process.exit(1);
+      }
+
+      const toolName = selected.name;
       const model = opts.model ?? selected?.entry?.primaryModel;
       const mode = opts.mode as 'analysis' | 'write';
 
